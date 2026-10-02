@@ -338,6 +338,44 @@ pub fn build(b: *std.Build) void {
         sound_check_step.dependOn(&b.addFail("sound-check needs -Drom=ROM and -Dremaster=DIR").step);
     }
 
+    // The renderer's checks (src/tools/render_check.zig, not installed): `render-bench` times the
+    // composition of a synthetic frame; `render-check` composes screens from the content of the
+    // ROM -Drom=PATH into PNG pictures in -Drender-out=DIR (default <prefix>/render), and compares
+    // them with sor-remaster's pictures in -Dremaster-shots=DIR when given.
+    const render_check_exe = b.addExecutable(.{
+        .name = "sorz-render-check",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tools/render_check.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "sorz", .module = shared },
+                .{ .name = "extract", .module = extract },
+            },
+        }),
+    });
+    const render_bench = b.addRunArtifact(render_check_exe);
+    render_bench.addArg("--bench");
+    render_bench.has_side_effects = true;
+    b.step("render-bench", "Time the composition of a synthetic frame").dependOn(&render_bench.step);
+    const render_out = b.option([]const u8, "render-out", "Where render-check writes its pictures (default: <prefix>/render)");
+    const remaster_shots = b.option([]const u8, "remaster-shots", "sor-remaster's pictures for render-check to compare with");
+    const render_check_step = b.step("render-check", "Compose screens from the content of -Drom=PATH into pictures, compared with -Dremaster-shots=DIR");
+    if (rom_path) |rom| {
+        const pictures = b.addRunArtifact(render_check_exe);
+        pictures.addArg(rom);
+        if (render_out) |dir| {
+            pictures.addArg(dir);
+        } else {
+            pictures.addDirectoryArg2(.{ .relative = .{ .base = .install_prefix, .sub_path = "render" } }, .{ .make_absolute = true });
+        }
+        if (remaster_shots) |dir| pictures.addArg(dir);
+        pictures.has_side_effects = true;
+        render_check_step.dependOn(&pictures.step);
+    } else {
+        render_check_step.dependOn(&b.addFail("the render-check step needs the user's ROM: -Drom=PATH").step);
+    }
+
     // Unit tests of every module. The tests of the SDL module link SDL2 as the host does.
     const test_step = b.step("test", "Run the unit tests of every module");
     const unit_modules = [_]*std.Build.Module{ shared, agent, native, sdl, web_parts, extract };
