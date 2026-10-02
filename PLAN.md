@@ -44,7 +44,7 @@
 
 ## F2 — Content and presentation
 
-- [ ] **06 — Content model and extractor (art)** — Depends: 02.
+- [x] **06 — Content model and extractor (art)** — Depends: 02.
   - The content's schema, versioned and validated; the extractor from the ROM for palettes, art,
     fonts, tile maps and sprite frames (with their pieces), by name.
   - Gate: two extractions are byte-identical; every file loads; the art equals sor-remaster's
