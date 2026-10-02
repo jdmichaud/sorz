@@ -55,8 +55,8 @@ pub const silence_ns: u64 = 10 * std.time.ns_per_s;
 /// The largest stretch of the sound, in parts per million (0.5 %).
 pub const max_stretch_ppm: u32 = 5000;
 
-/// A display tick's time in nanoseconds (sound_out.zig), for the input delay.
-const tick_ns: u64 = 16_688_154;
+/// A display tick's time in nanoseconds, for the input delay.
+const tick_ns: u64 = @import("../sound_out.zig").tick_ps / 1000;
 
 pub const Phase = enum {
     /// No session yet: the host waits for a guest, the guest for its connection.
