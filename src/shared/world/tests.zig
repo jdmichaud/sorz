@@ -16,6 +16,7 @@ const systems = @import("systems.zig");
 const tick_mod = @import("tick.zig");
 const draw_list = @import("draw_list.zig");
 const schedule = @import("schedule.zig");
+const trace = @import("trace.zig");
 
 const Fixed = fixed.Fixed;
 const Vec3 = fixed.Vec3;
@@ -599,4 +600,86 @@ test "binding refuses a definition its behaviour cannot run, and names the field
         var buf: [128]u8 = undefined;
         try testing.expectEqualStrings(c.want, try std.fmt.bufPrint(&buf, "{f}", .{&diag}));
     }
+}
+
+test "the semantic trace: sor-remaster's vocabulary, line by line" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    var w: World = undefined;
+    _ = try withHero(&f, &w);
+    _ = try w.spawn(&f.kinds, f.kind("dummy"), .pixels(120, 100, 0), .left);
+    var rng: random.Random = .{};
+    var out: Output = .{};
+    var text: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer text.deinit();
+    var tw: trace.Writer = .init(&text.writer);
+    try tw.begin("power-on");
+    tw.startScene(.{ .name = "round", .round = 1 });
+    tw.setPhase("play");
+    for (1..6) |i| {
+        step(&w, &f, &rng, &out, if (i == 1) .{ .pad1 = .{ .b = true } } else .{});
+        try tw.observe(2 * i, &w, &f.kinds, &out);
+    }
+    try tw.end();
+    try testing.expectEqualStrings(
+        \\{"ev":"begin","format":"sor-trace","version":1,"program":"sorz","fixed":16,"start":"power-on"}
+        \\{"v":2,"t":0,"ev":"scene","scene":"round","round":1,"demo":false}
+        \\{"v":2,"t":0,"ev":"phase","phase":"play"}
+        \\{"v":2,"t":0,"ev":"pad","pad":1,"held":"B"}
+        \\{"v":2,"t":0,"ev":"pad","pad":2,"held":""}
+        \\{"v":2,"t":0,"ev":"rng","draws":1,"values":[32743],"_draws":["sparring_wait"]}
+        \\{"v":2,"t":0,"ev":"spawn","e":1,"kind":"hero","player":1,"x":6553600,"d":6553600,"h":0,"vx":0,"vd":0,"vh":0,"state":"attack","facing":"right","health":80,"_slot":0}
+        \\{"v":2,"t":0,"ev":"spawn","e":3,"kind":"dummy","x":7864320,"d":6553600,"h":0,"vx":0,"vd":0,"vh":0,"state":"stand","facing":"left","health":24,"_slot":1}
+        \\{"v":2,"t":0,"ev":"lives","player":1,"lives":0,"specials":0}
+        \\{"v":2,"t":0,"ev":"lives","player":2,"lives":0,"specials":0}
+        \\{"v":2,"t":0,"ev":"score","player":1,"score":0}
+        \\{"v":2,"t":0,"ev":"score","player":2,"score":0}
+        \\{"v":2,"t":0,"ev":"camera","x":0,"y":0}
+        \\{"v":2,"t":0,"ev":"camera_stop","x":2147483647,"y_min":0,"y_max":2147483647}
+        \\{"v":2,"t":0,"ev":"section","section":0}
+        \\{"v":2,"t":0,"ev":"sound","sound":"swing"}
+        \\{"v":4,"t":1,"ev":"pad","pad":1,"held":""}
+        \\{"v":8,"t":3,"ev":"state","e":3,"state":"reel","facing":"left"}
+        \\{"v":8,"t":3,"ev":"hit","e":3,"by":1,"damage":10,"health":14,"reaction":"reel"}
+        \\{"v":8,"t":3,"ev":"health","e":3,"health":14,"delta":-10}
+        \\{"v":8,"t":3,"ev":"sound","sound":"ouch"}
+        \\{"v":8,"t":3,"ev":"sound","sound":"smack"}
+        \\{"v":10,"t":4,"ev":"end","events":22}
+        \\
+    , text.written());
+}
+
+test "the trace's ids: new entities by kind's name and place; removals; pick-ups by id" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    var w: World = .{};
+    var rng: random.Random = .{};
+    var out: Output = .{};
+    var text: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer text.deinit();
+    var tw: trace.Writer = .init(&text.writer);
+    // Spawned in one tick: the apples (by their x) before the prop, whatever their places.
+    _ = try w.spawn(&f.kinds, f.kind("prop"), .pixels(5, 50, 0), .right);
+    _ = try w.spawn(&f.kinds, f.kind("apple"), .pixels(30, 50, 0), .right);
+    const apple = try w.spawn(&f.kinds, f.kind("apple"), .pixels(20, 50, 0), .right);
+    step(&w, &f, &rng, &out, .{});
+    try tw.observe(2, &w, &f.kinds, &out);
+    try testing.expect(std.mem.indexOf(u8, text.written(), "\"e\":3,\"kind\":\"apple\",\"x\":1310720,") != null);
+    try testing.expect(std.mem.indexOf(u8, text.written(), "\"e\":4,\"kind\":\"apple\",\"x\":1966080,") != null);
+    try testing.expect(std.mem.indexOf(u8, text.written(), "\"e\":5,\"kind\":\"prop\",") != null);
+    text.clearRetainingCapacity();
+    // The hero arrives and picks up the apple at x 20 (id 3); the apple goes.
+    const hero = try w.spawn(&f.kinds, f.kind("hero"), .pixels(16, 50, 0), .right);
+    w.players[0].entity = hero;
+    w.get(hero).?.flags.wants_pickup = true;
+    step(&w, &f, &rng, &out, .{});
+    try tw.observe(4, &w, &f.kinds, &out);
+    try testing.expect(w.get(apple) == null);
+    const lines = text.written();
+    try testing.expect(std.mem.indexOf(u8, lines, "{\"v\":4,\"t\":1,\"ev\":\"remove\",\"e\":3,\"kind\":\"apple\"}\n") != null);
+    try testing.expect(std.mem.indexOf(u8, lines, "\"ev\":\"spawn\",\"e\":1,\"kind\":\"hero\",\"player\":1,") != null);
+    try testing.expect(std.mem.indexOf(u8, lines, "{\"v\":4,\"t\":1,\"ev\":\"pickup\",\"e\":3,\"kind\":\"apple\",\"by\":1}\n") != null);
+    // The order of the kinds of event: remove, spawn, pickup.
+    try testing.expect(std.mem.indexOf(u8, lines, "remove").? < std.mem.indexOf(u8, lines, "spawn").?);
+    try testing.expect(std.mem.indexOf(u8, lines, "spawn").? < std.mem.indexOf(u8, lines, "pickup").?);
 }

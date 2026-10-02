@@ -22,6 +22,7 @@ pub const tick = @import("tick.zig");
 pub const systems = @import("systems.zig");
 pub const draw_list = @import("draw_list.zig");
 pub const schedule = @import("schedule.zig");
+pub const trace = @import("trace.zig");
 const world = @import("world.zig");
 
 pub const Fixed = fixed.Fixed;
