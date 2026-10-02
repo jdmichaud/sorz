@@ -958,7 +958,7 @@ function sorzTransport(Socket, events, limits = {}) {
     message.textContent = text;
     detail.textContent = more;
     detail.classList.toggle('hidden', more === '');
-    overlay.classList.remove('hidden', 'screen');
+    overlay.classList.remove('hidden', 'screen', 'over');
   }
 
   // A message on the module's screen, over the game's picture once it has one; the page's own text
@@ -977,6 +977,8 @@ function sorzTransport(Socket, events, limits = {}) {
   function stop(text, more = '') {
     started = false;
     phase = 'stopped';
+    // Network play's messages are over: the stop's own stays.
+    session.on = false;
     net.onRelay = null;
     // A page that no longer plays makes room on the relay for the next one.
     net.transport.leaveRelay();
@@ -1040,7 +1042,10 @@ function sorzTransport(Socket, events, limits = {}) {
       } else if (session.text !== session.shownText) {
         session.shownText = session.text;
         if (session.text === '') overlay.classList.add('hidden');
-        else say(session.text);
+        else {
+          say(session.text);
+          overlay.classList.add('over');
+        }
       }
     }
     return result;
@@ -1442,6 +1447,8 @@ function sorzTransport(Socket, events, limits = {}) {
     get manual() { return checks.manual; },
     setPacing(perUpdate) { wasm.gp_set_pacing(perUpdate ? 1 : 0); },
     step(count) {
+      // A page that stopped runs nothing more.
+      if (phase === 'stopped') return 1;
       let result = 0;
       for (let i = 0; i < count && result === 0; i++) {
         if (phase === 'ready' || phase === 'settings') menuTick();

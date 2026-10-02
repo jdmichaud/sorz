@@ -26,6 +26,10 @@
   #overlay.screen { background: transparent; }
   #overlay.screen > * { visibility: hidden; }
   #overlay[data-state="ready"] { cursor: pointer; }
+  /* A message over the game's held picture (network play's), on a black strip: the picture shows
+     around it, and the clicks go to the game. */
+  #overlay.over { background: transparent; pointer-events: none; cursor: auto; }
+  #overlay.over #panel { background: #000; }
   #panel { max-width: 40em; padding: 1.5em; text-align: center; }
   #message { margin: 0; text-transform: uppercase; white-space: pre-line; }
   #detail { margin: 1.2em 0 0; font-size: 14px; white-space: pre-line; }

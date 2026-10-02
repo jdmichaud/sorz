@@ -221,8 +221,10 @@ const canvasBase64 = `(() => {
 
 // The page at `url`, its files loaded from its server, on the choice that starts the game.
 async function openGame(page, url) {
+  // The document before the navigation is marked, so that its state is not taken for the new one's.
+  await page.evaluate('window.__stale = true').catch(() => {});
   await page.navigate(url);
-  await page.waitFor(`window.sorz !== undefined && (sorz.phase === 'ready' || sorz.phase === 'stopped')`, 120000, 'the game to be ready');
+  await page.waitFor(`window.__stale === undefined && window.sorz !== undefined && (sorz.phase === 'ready' || sorz.phase === 'stopped')`, 120000, 'the game to be ready');
   const phase = await page.evaluate('sorz.phase');
   if (phase !== 'ready') throw new Error('the page did not get ready: ' + await page.evaluate('sorz.message'));
 }
@@ -329,11 +331,13 @@ async function netplaySession(browser, realtime) {
     const guest = await page.evaluate('sorz.inspect()');
     const stats = await page.evaluate('sorz.stats()');
     const hostGame = result.host || {};
+    const errors = page.console.filter((m) => m.type === 'error' || m.type === 'exception');
     const inStep = realtime
       ? !guest.net.difference && !log.includes('differ')
       : state.state_hash === hostGame.state_hash && state.ticks === hostGame.ticks && state.net.phase === 'playing';
     return {
-      pass: code === 0 && result.verdict === 'ok' && mode === 'native' && invitation === '1 PLAYER (not here)\n▶ 2 PLAYERS\nSETTINGS (not here)' && inStep,
+      pass: code === 0 && result.verdict === 'ok' && mode === 'native' && invitation === '1 PLAYER (not here)\n▶ 2 PLAYERS\nSETTINGS (not here)' && inStep &&
+        errors.length === 0,
       fields: {
         mode,
         invitation,
@@ -345,6 +349,7 @@ async function netplaySession(browser, realtime) {
           ? { ticks: guest.ticks, net: guest.net, ticks_per_second: Math.round(guest.ticks / seconds * 100) / 100, audio_underruns: stats.audio_underruns }
           : { ticks: state.ticks, state_hash: state.state_hash, net: state.net },
         host_log: log.trim().split('\n').filter((line) => line.includes('netplay')).slice(-6),
+        errors: errors.slice(0, 5),
       },
     };
   } finally {
@@ -394,7 +399,12 @@ async function pressEnter(page) {
   await page.send('Input.dispatchKeyEvent', { type: 'keyUp', ...keyEvents.enter });
 }
 
-const pageText = `({ message: sorz.message, phase: sorz.phase, relay: sorz.relayState })`;
+// What the page means to show (`sorz.message`), and what it shows: its own text, and whether its
+// overlay is up and over the picture.
+const pageText = `({ message: sorz.message, phase: sorz.phase, relay: sorz.relayState,
+  text: document.getElementById('message').textContent,
+  overlay: getComputedStyle(document.getElementById('overlay')).display !== 'none',
+  over: document.getElementById('overlay').classList.contains('over') })`;
 
 // The tick counts of pages, once and again a second later.
 async function advancing(pages) {
@@ -541,11 +551,13 @@ async function relayCheck(browser, chromium, profile) {
     const nextState = await joinRelay(next, false);
     reports.push(['relay_rules', thirdState === 'busy' && turnedAway.phase === 'ready' &&
       turnedAway.message === '▶ 1 PLAYER\n2 PLAYERS (not here)\nSETTINGS (not here)\nTWO PLAYERS ARE PLAYING HERE' && playingOn.every((n) => n > 30) &&
-      hostAlone.message === 'PLAYER 2 LEFT\nWAITING FOR PLAYER 2' && hostAlone.ticks_in_1_s === 0 &&
+      hostAlone.message === 'PLAYER 2 LEFT\nWAITING FOR PLAYER 2' && hostAlone.text === hostAlone.message && hostAlone.overlay && hostAlone.over &&
+      hostAlone.ticks_in_1_s === 0 &&
       newGuestState === 'guest' && newSession.every((s) => s.net.phase === 'playing') &&
       newSession[0].net.epoch === 2 && newSession[1].net.epoch === 1 && newPlaying.every((n) => n > 30) &&
       guestAlone.relay === 'host_left' && guestAlone.phase === 'stopped' &&
-      guestAlone.message === 'PLAYER 1 LEFT\nRELOAD THE PAGE TO PLAY AGAIN' && nextState === 'host', {
+      guestAlone.message === 'PLAYER 1 LEFT\nRELOAD THE PAGE TO PLAY AGAIN' && guestAlone.text === guestAlone.message && guestAlone.overlay &&
+      !guestAlone.over && nextState === 'host', {
       third: { relay: thirdState, message: turnedAway.message, the_two_play_on: playingOn },
       guest_left: { host: hostAlone },
       new_guest: { relay: newGuestState, epochs: newSession.map((s) => s.net.epoch), ticks: newSession.map((s) => s.ticks), playing: newPlaying },
@@ -744,8 +756,8 @@ async function main() {
       if (!shots.includes(frame)) continue;
       const png = readRgbaPng(path.join(scratch, `agent-${frame}.png`));
       const pixels = Buffer.from(await page.evaluate(canvasBase64), 'base64');
-      let differing = 0;
-      for (let i = 0; i < png.pixels.length; i++) if (pixels[i] !== png.pixels[i]) differing += 1;
+      let differing = Math.abs(pixels.length - png.pixels.length);
+      for (let i = 0; i < Math.min(pixels.length, png.pixels.length); i++) if (pixels[i] !== png.pixels[i]) differing += 1;
       const hashDiffers = fnv64(png.pixels) !== hashes[frame];
       pictures.compared += 1;
       if ((differing !== 0 || hashDiffers) && !pictures.first_difference) pictures.first_difference = { tick: target, bytes: differing, hash: hashes[frame], agent_hash: fnv64(png.pixels) };
@@ -754,7 +766,7 @@ async function main() {
     const end = await page.evaluate('sorz.inspect()');
     const tapped = await page.evaluate('__tap');
     const sound = compareSound(tapped, stream);
-    const soundWhole = sound.first_difference === null && sound.frames * 4 === stream.length;
+    const soundWhole = sound.first_difference === null && sound.frames * 4 === stream.length && sound.blocks === tapped.frames.length;
     report('steps', pictures.first_difference === null && pictures.compared === shots.length && end.frame_hash === agent.frame_hash &&
       end.state_hash === agent.state_hash && soundWhole, {
       browser: version.product,
