@@ -8,3 +8,7 @@
 # writes it (`0xFFFF`, `vblank_count`), or a class of terms: hex, vblank, register, vdp, vram, cram,
 # vsram, cpu. WHY says why the term is not the console's place or name. An entry that allows
 # nothing is an error.
+src/shared/audio/chips/ hex -- the sound chips' models (YM2612, PSG, DAC, model 1): the chips' registers, tables and masks are the hardware's (DESIGN.md 10.6 A3)
+src/shared/audio/chips/ cpu -- the chip models name the processors that write to the chips, as the hardware's documentation does (A3)
+src/shared/audio/chips/ vdp -- the PSG sits in the console's video chip; its model says so (A3)
+src/shared/audio/chips/ vblank -- the synthesiser counts chip cycles per display tick, the hardware's clock ratio (A3)

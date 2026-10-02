@@ -15,6 +15,7 @@ pub const sound_out = @import("sound_out.zig");
 pub const net = @import("net/root.zig");
 pub const input = @import("input.zig");
 pub const settings = @import("settings/root.zig");
+pub const audio = @import("audio/root.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
