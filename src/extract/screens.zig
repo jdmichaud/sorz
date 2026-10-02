@@ -233,8 +233,9 @@ const options = Screen{
 };
 
 /// The character select (0x1634): its art (pattern-load entries $35, $20 and 3), its frame
-/// (0x71C6C unpacked at $FF8000, word rectangle 4), its texts (byte rectangles $11 to $16), the
-/// pictures word rectangles 6 and 7 change (0x1AA4), and its colours.
+/// (0x71C6C unpacked at $FF8000, word rectangle 4), its texts (byte rectangles $11 to $16), Axel's
+/// eye in his portrait, open and closed (word rectangles 6 and 7, drawn in turn by 0x17DA), and its
+/// colours.
 const select = Screen{
     .name = "select",
     .what = "the character select (0x1634, mode $20)",
@@ -251,8 +252,8 @@ const select = Screen{
         .{ .byte_rect = .{ .entry = 0x14, .map = "select/adam_name" } },
         .{ .byte_rect = .{ .entry = 0x15, .map = "select/axel_name" } },
         .{ .byte_rect = .{ .entry = 0x16, .map = "select/blaze_name" } },
-        .{ .word_rect = .{ .entry = 6, .map = "select/picture_1" } },
-        .{ .word_rect = .{ .entry = 7, .map = "select/picture_2" } },
+        .{ .word_rect = .{ .entry = 6, .map = "select/eye_open" } },
+        .{ .word_rect = .{ .entry = 7, .map = "select/eye_closed" } },
         .{ .palette = .{ .list = 0x71F30, .name = "select/colours", .why = "the character select's colours" } },
         .{ .palette = .{ .list = 0x1706, .name = "select/cursors_two", .why = "the cursors' colours with two players" } },
         .{ .palette = .{ .list = 0x1708, .name = "select/cursors_one", .why = "the cursor's colour with one player" } },
@@ -356,10 +357,10 @@ const ending = Screen{
         .{ .screen_rect = .{ .entry = 14, .add = 0x0000, .map = "ending/picture_2" } },
         .{ .screen_rect = .{ .entry = 15, .add = 0x2299, .map = "ending/picture_3" } },
         .{ .screen_rect = .{ .entry = 16, .add = 0x212E, .map = "ending/picture_4" } },
-        .{ .screen_rect = .{ .entry = 17, .add = 0x4100, .map = "ending/scene_1" } },
-        .{ .screen_rect = .{ .entry = 18, .add = 0x8100, .map = "ending/scene_2" } },
-        .{ .screen_rect = .{ .entry = 19, .add = 0xA12E, .map = "ending/scene_3" } },
-        .{ .screen_rect = .{ .entry = 20, .add = 0xA12E, .map = "ending/scene_4" } },
+        .{ .screen_rect = .{ .entry = 17, .add = 0x4100, .map = "ending/sky" } },
+        .{ .screen_rect = .{ .entry = 18, .add = 0x8100, .map = "ending/car" } },
+        .{ .screen_rect = .{ .entry = 19, .add = 0xA12E, .map = "ending/mask_left" } },
+        .{ .screen_rect = .{ .entry = 20, .add = 0xA12E, .map = "ending/mask_right" } },
         .{ .screen_palette = .{ .index = 0, .name = "ending/colours_00", .why = "faded in on palette 1 with the first picture (type $83, 0xC17C)" } },
         .{ .screen_palette = .{ .index = 1, .name = "ending/colours_01", .why = "faded in on palette 1 with the second picture (type $83)" } },
         .{ .screen_palette = .{ .index = 2, .name = "ending/colours_02", .why = "faded in on palette 2 with the second picture (type $83)" } },
