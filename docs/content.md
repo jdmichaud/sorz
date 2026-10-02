@@ -150,7 +150,44 @@ palette, its flips and its priority (`content/art.zig`, `TileMap` and `Cell`).
 
 ## What the tree holds
 
-The art (PLAN 06): palettes, tile sheets, tile maps, sprite frames and fonts of every screen and
-round, and each screen's art set. Moves, rounds' scripts, texts and the sound's sequences come
-with their plan items, each a section of this document (the sound's in
-`docs/content-sound.md`).
+The art (PLAN 06), by set:
+
+| Set | Holds |
+| --- | --- |
+| `fonts` | the fonts' sheets (`main`, `italic`, `intro`, `big`) and the glyphs of `main`, `italic`, `intro` |
+| `segalogo`, `intro`, `title`, `menu`, `options`, `select`, `highscores`, `round_end`, `ending`, `boss_ending` | each screen's sheets, maps (with where the original draws them) and palettes |
+| `play` | the status bar's sheet and maps, play's colours, the arrow, sparks and shadow frames |
+| `offer` | Mr. X's window in round 8 (and in Japan) |
+| `round1` to `round8` | the round's two art sheets, its planes' whole maps (`plane_a`, `plane_b`), its colours and cycles, its props' frames; round 3's waves (four maps, five palettes) |
+| `axel`, `adam`, `blaze` | the players' frames |
+| `galsia`, `signal`, `acrobat`, `brawler`, `juggler` | the enemies' frames and colour variants (`variant_N_palette_P`: variant N for palette P) |
+| `antonio`, `round2_boss`, `round3_boss`, `round4_boss`, `twins`, `mrx` | the bosses' frames and colour variants |
+| `items`, `weapons`, `police`, `special`, `demo` | the items', weapons', police car's, special attack's and demo sign's frames |
+
+A screen's art set is its directory and the sets its `uses` names. Only the sheets that maps and
+fonts draw from are in the tree: a sheet that sprites alone are drawn from is composed into the
+frames, which are the content. A frame's name is its set's prefix and its number in the set's
+order (the order of the original's records): `axel/012`, `items/beef_00`; the animations, which
+name the frames by move, come with the moves (PLAN 11). Where the original gives no meaning to
+tell assets apart, the name numbers them (`ending/colours_03`), and the provenance says where
+each comes from; the scenes' items may rename them when they give them a role.
+
+Not in the tree yet, each with the item that needs it: the texts (the menus' option values, the
+story, the profiles, the endings: PLAN 08); the screens' palette effects that are routines over
+small tables (the Sega logo's sweep, the title's colour steps, the city's lights: PLAN 08); the
+fixed sprite lists of the round's banner, the pause and the game over, drawn from tiles play
+builds itself (PLAN 13); the rounds' cameras, bands and floors (PLAN 13); the moves (PLAN 11).
+
+## Extracting and checking
+
+- `zig build extract -Drom=PATH [-Dcontent=DIR]` writes the tree of the user's ROM into DIR
+  (`<prefix>/content` by default). The ROM's size and SHA-256 are checked first.
+- `zig build extract-check -Drom=PATH` extracts twice and checks that the two trees are
+  byte-identical, that every file loads, and that the loaded content writes the same files.
+- `zig build extract-compare -Drom=PATH -Dremaster-tree=DIR` compares the art with sor-remaster's
+  exported tree (`sorz-agent ROM --export-assets DIR` of sor-remaster): every sheet's tiles, every
+  map's cells, every frame's picture and origin, every palette's and cycle's colours, every font's
+  glyphs, through the ROM record each asset was made from (`src/extract/compare.zig`).
+- In memory, `extract.extract(gpa, rom)` gives the tree's files (`Tree.files`, or
+  `Tree.addTo(source)` for a `MemoryAssetSource`), so a host can play from a ROM; `writeDirectory`
+  writes them to disk.
