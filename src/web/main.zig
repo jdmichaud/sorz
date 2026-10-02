@@ -269,13 +269,18 @@ export fn gp_inspect() u32 {
     var p = backend.asPlatform();
     const audio = p.audioStatus();
     var w: std.Io.Writer = .fixed(&scratch);
+    var frame_hash: [16]u8 = undefined;
+    var state_hash: [16]u8 = undefined;
+    _ = std.fmt.bufPrint(&frame_hash, "{x:0>16}", .{g.lastFrameHash()}) catch unreachable;
+    _ = std.fmt.bufPrint(&state_hash, "{x:0>16}", .{g.stateHash()}) catch unreachable;
     std.json.Stringify.value(.{
-        .phase = @tagName(g.phase),
+        .phase = if (g.finished) "finished" else "playing",
         .update_count = g.update_count,
+        .ticks = g.state.tick,
         .frames_presented = g.frames_presented,
+        .frame_hash = &frame_hash,
+        .state_hash = &state_hash,
         .events_consumed = g.events_consumed,
-        .title = g.title(),
-        .bounces = g.state.bounces,
         .saves_written = g.saves_written,
         .loads_done = g.loads_done,
         .audio_running = audio.running,

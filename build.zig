@@ -267,10 +267,10 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
 
-    // The agent host for a few frames, with a save and a load. It needs no game files and no
-    // display.
+    // The agent host for a few frames, its keys moving a marker of the test pattern. It needs no
+    // game files and no display.
     const smoke = b.addRunArtifact(agent_exe);
-    smoke.addArgs(&.{ "--frames", "60", "--key", "10:f2", "--key", "20:f3" });
+    smoke.addArgs(&.{ "--frames", "60", "--key", "10:right:20", "--key", "20:x:5" });
     smoke.expectExitCode(0);
     b.step("smoke", "Run the agent host for a few frames").dependOn(&smoke.step);
 
