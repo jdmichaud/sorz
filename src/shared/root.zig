@@ -15,6 +15,9 @@ pub const flow = @import("flow.zig");
 pub const library = @import("library.zig");
 pub const view = @import("view.zig");
 pub const setup = @import("setup.zig");
+pub const screens = struct {
+    pub const colours = @import("screens/colours.zig");
+};
 pub const picture = @import("picture.zig");
 pub const sound_out = @import("sound_out.zig");
 pub const net = @import("net/root.zig");

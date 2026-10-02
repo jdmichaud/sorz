@@ -70,12 +70,15 @@ pub const State = struct {
     scenes: scene.Stack = .{},
     /// What the screens decide for play.
     setup: Setup = .{},
-    /// The pads at the last tick: a button held now and not then is pressed.
+    /// The pads at the last reading: a button held now and not then is pressed.
     held: input.Pads = .{},
 
-    /// The state at power-on of a game with its content: the flow's first scene after its load.
+    /// The state at power-on of a game with its content: the flow's first scene, its set-up, and
+    /// the original's wait after it.
     pub fn powerOn(graph: *const flow.Graph) State {
-        return .{ .scenes = scene.powerOn(graph) };
+        var s: State = .{};
+        s.scenes = scene.powerOn(graph, &s.setup);
+        return s;
     }
 
     /// One display tick, with the pads of that tick and whether a second pad is there. Returns
@@ -87,11 +90,15 @@ pub const State = struct {
             .second_pad = second_pad,
             .setup = &self.setup,
         };
-        self.held = pads;
         scene.tick(&self.scenes, &flow.original, &turn, assets);
+        if (turn.release_pads) {
+            self.held = .{ .pad1 = all_buttons, .pad2 = all_buttons };
+        } else if (turn.read_pads) self.held = pads;
         self.tick +%= 1;
         return turn;
     }
+
+    const all_buttons: input.Pad = @bitCast(@as(u8, 0xff));
 
     fn newly(now: input.Pad, before: input.Pad) input.Pad {
         return @bitCast(@as(u8, @bitCast(now)) & ~@as(u8, @bitCast(before)));
@@ -396,7 +403,7 @@ pub const Game = struct {
         const turn = self.state.step(pads, self.secondPad(), if (self.scene_assets) |*a| a else null);
         self.redraw = true;
         if (self.sound) |*s| {
-            const frames = s.play(self.stretchPpm(), turn.requests.slice(), turn.sound_driver);
+            const frames = s.play(self.stretchPpm(), turn.requests.slice(), turn.sound_driver, turn.sound_restart);
             _ = p.audioQueue(self.atVolume(frames)) catch {};
         }
         if (self.netplay) |np| {

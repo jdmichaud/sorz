@@ -70,9 +70,11 @@ pub const SoundOut = struct {
     /// it, as the original's loads hold its driver) with the sounds asked for before, then the
     /// tick's frames, `stretch_ppm` millionths longer (network play's balancing); `requests`, the
     /// sounds the tick asked for, play from the next update on, as the original's driver takes
-    /// the requests of a frame's logic at the next frame. The frames stay valid until the next
-    /// call. Without the content's sound, silence.
-    pub fn play(self: *SoundOut, stretch_ppm: u32, requests: []const audio.sound.Id, driver: bool) []const i16 {
+    /// the requests of a frame's logic at the next frame. `restart` starts the sequencer again
+    /// from its first state after the update (the original's start-up loads its driver again):
+    /// its next update stops every sound, the chips ringing on until then. The frames stay valid
+    /// until the next call. Without the content's sound, silence.
+    pub fn play(self: *SoundOut, stretch_ppm: u32, requests: []const audio.sound.Id, driver: bool, restart: bool) []const i16 {
         const s = if (self.sound) |*s| s else return self.tick(stretch_ppm);
         const ppm = @min(stretch_ppm, max_stretch_ppm);
         if (ppm != self.stretch_ppm) {
@@ -80,6 +82,7 @@ pub const SoundOut = struct {
             self.stretch_ppm = ppm;
         }
         const frames = if (driver) s.tick() else s.output.tick(&.{});
+        if (restart) s.sequencer = .init(s.sounds);
         for (requests) |r| s.play(r);
         return frames;
     }

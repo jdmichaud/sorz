@@ -1,16 +1,25 @@
 //! The game's scenes (DESIGN.md 10.4): a stack whose top scene takes the pads at each display tick,
 //! advances, and draws its state. A scene ends with an exit, and the flow graph (flow.zig) says
-//! which scene follows, after a load if the original waited there. An overlay (S3: the settings,
-//! network play's messages, the pause) will be a scene pushed over another.
+//! which scene follows, and the load after its set-up if the original waited there. A load is a
+//! scene pushed over the new one (S3): it holds it, dark, for the measured time.
 //!
 //! Each scene is a struct with:
 //! - its state, plain values, part of the game's canonical state (no pointer, no slice);
-//! - `start(setup)`, its state when it begins;
+//! - `start(setup)`, its state when it begins; its first tick is its set-up;
 //! - `Assets`, the content it draws and plays, found by name when the game starts (library.zig);
 //! - `tick(turn, assets)`, one display tick: the pads, the sounds it asks for, its exit if it ends;
 //! - `layout`, the boards its picture needs, and `draw(prev, view, assets)`, which draws its state
 //!   on the view: whole when `prev` is null (a new picture), else what changed since `prev`, the
 //!   state it last drew. Sprites and colours are given again at every draw.
+//!
+//! Two of the original's rules hold for every screen (`docs/screens.md`):
+//! - **The picture's colours and sprites are a tick late**: the console takes them as a frame
+//!   starts, so a tick's colours and sprites show at the next tick that runs (after a load, at the
+//!   first tick after it); its tiles show at once. Each scene latches what it shows at the start of
+//!   its tick (`Shown`).
+//! - **A set-up releases the pads**: a scene's set-up counts every button as held, and a load reads
+//!   no pad, so a button held across a screen's change is not a press until it is pressed again
+//!   (`Turn.release_pads`).
 const std = @import("std");
 const input = @import("input.zig");
 const flow = @import("flow.zig");
@@ -39,7 +48,7 @@ pub const Scene = union(Kind) {
     high_scores: StandIn,
     round: StandIn,
 
-    /// The scene of kind `k` as it begins (a load is begun by the flow, with its length).
+    /// The scene of kind `k` as it begins (a load is pushed by the flow, with its length).
     pub fn start(k: Kind, setup: *const Setup) Scene {
         return switch (k) {
             .test_pattern => .{ .test_pattern = .{} },
@@ -64,9 +73,9 @@ pub const Requests = struct {
 };
 
 /// What a scene's tick has: the pads and the setup the screens share; and what it gives: the sounds
-/// it asks for.
+/// it asks for, and what it asks of the pads and the sound's driver.
 pub const Turn = struct {
-    /// The buttons held at this tick, and those newly held (held now, not at the last tick).
+    /// The buttons held at this tick, and those newly held (held now, not at the last reading).
     pads: input.Pads = .{},
     pressed: input.Pads = .{},
     /// Whether a second pad is there (the game menu dims 2 PLAYERS without it).
@@ -75,6 +84,13 @@ pub const Turn = struct {
     requests: Requests = .{},
     /// Whether the sound's driver runs at this tick: a load holds it, as the original's do.
     sound_driver: bool = true,
+    /// Whether the pads are read at this tick: a load reads none.
+    read_pads: bool = true,
+    /// Set by a set-up: every button counts as held, so that none is pressed at the next reading.
+    release_pads: bool = false,
+    /// Set by the start-up: the sound's driver starts again from its first state (the original
+    /// loads it again), which stops every sound at its next update.
+    sound_restart: bool = false,
 
     pub fn play(self: *Turn, s: library.Sound) void {
         if (self.requests.len == self.requests.items.len) return;
@@ -106,6 +122,13 @@ pub const Stack = struct {
     len: u8 = 1,
     /// The scenes started since power-on.
     started: u32 = 1,
+    /// The scene that follows at the next tick: the top scene ended, and its last picture stays
+    /// until the next scene's set-up.
+    next: ?Next = null,
+    /// The load that follows the top scene's next tick, its set-up (0: none).
+    load_after_setup: Load = .{},
+
+    pub const Next = struct { kind: Kind, load: u16, sound_held: bool };
 
     pub fn top(self: *Stack) *Scene {
         return &self.items[self.len - 1];
@@ -138,9 +161,16 @@ pub const Stack = struct {
     }
 };
 
-/// One display tick of the top scene, and the flow that follows its exit. Every scene but the test
-/// pattern needs the content's `assets`.
+/// One display tick of the top scene, and the flow that follows its exit. A load that is over
+/// gives its tick to the scene it held. Every scene but the test pattern needs the content's
+/// `assets`.
 pub fn tick(stack: *Stack, graph: *const flow.Graph, turn: *Turn, assets: ?*const Assets) void {
+    if (stack.top().* == .load and stack.top().load.left == 0) stack.pop();
+    if (stack.next) |n| {
+        stack.replace(.start(n.kind, turn.setup));
+        stack.load_after_setup = .{ .left = n.load, .sound_held = n.sound_held };
+        stack.next = null;
+    }
     const s = stack.top();
     const exit = switch (s.*) {
         .test_pattern => |*t| {
@@ -148,23 +178,26 @@ pub fn tick(stack: *Stack, graph: *const flow.Graph, turn: *Turn, assets: ?*cons
             return;
         },
         inline else => |*payload, tag| payload.tick(turn, assetsOf(assets.?, tag)),
-    } orelse return;
-    // A load ends into the scene it was for.
-    if (s.* == .load) return stack.replace(.start(s.load.next, turn.setup));
-    const edge = graph.next(std.meta.activeTag(s.*), exit) orelse {
-        std.log.warn("the scene {s} ended by {s}, which the flow does not follow", .{ @tagName(s.*), @tagName(exit) });
+    };
+    // The load after a set-up holds the scene from the next tick.
+    if (stack.load_after_setup.left != 0 and s.* != .load) {
+        stack.push(.{ .load = stack.load_after_setup }) catch unreachable;
+        stack.load_after_setup = .{};
+    }
+    const how = exit orelse return;
+    const edge = graph.next(std.meta.activeTag(s.*), how) orelse {
+        std.log.warn("the scene {s} ended by {s}, which the flow does not follow", .{ @tagName(s.*), @tagName(how) });
         return;
     };
-    if (edge.load != 0) {
-        stack.replace(.{ .load = .{ .next = edge.to, .left = edge.load, .sound_held = edge.sound_held } });
-    } else stack.replace(.start(edge.to, turn.setup));
+    stack.next = .{ .kind = edge.to, .load = edge.load, .sound_held = edge.sound_held };
 }
 
-/// The state of the scene before `stack`'s top scene at power-on: the flow's first scene after its
-/// power-on load.
-pub fn powerOn(graph: *const flow.Graph) Stack {
+/// The scenes at power-on: the flow's first scene, its set-up at the first tick, and the original's
+/// wait after it.
+pub fn powerOn(graph: *const flow.Graph, setup: *const Setup) Stack {
     var s: Stack = .{};
-    s.replace(.{ .load = .{ .next = graph.first, .left = graph.power_on } });
+    s.replace(.start(graph.first, setup));
+    s.load_after_setup = .{ .left = graph.power_on };
     return s;
 }
 
@@ -203,8 +236,8 @@ fn assetsOf(assets: *const Assets, comptime k: Kind) *const @FieldType(Scene, @t
 const testing = std.testing;
 
 test "the stack: a scene pushed over another and taken off; every scene its own number" {
-    var s = powerOn(&flow.original);
-    try testing.expect(s.top().* == .load and s.top().load.next == .sega_logo);
+    var s = powerOn(&flow.original, &.{});
+    try testing.expect(s.top().* == .sega_logo and s.load_after_setup.left == flow.original.power_on);
     const first = s.topSerial();
     try s.push(.{ .test_pattern = .{} });
     try testing.expect(s.topSerial() != first);
@@ -217,27 +250,31 @@ test "the stack: a scene pushed over another and taken off; every scene its own 
     try testing.expectError(error.Full, s.push(.{ .test_pattern = .{} }));
 }
 
-test "the flow: a load, then the scene it was for; an exit, its edge, and its load" {
+test "the flow: a set-up, its load over the scene, the scene again; an exit, its edge" {
     var setup: Setup = .{};
     var turn: Turn = .{ .setup = &setup };
     const assets: Assets = undefined;
-    var s = powerOn(&flow.original);
-    for (0..flow.original.power_on) |_| {
-        try testing.expect(s.top().* == .load);
-        tick(&s, &flow.original, &turn, &assets);
-    }
-    try testing.expect(s.top().* == .sega_logo);
-    const graph: flow.Graph = .{ .first = .sega_logo, .power_on = 1, .edges = &.{
-        .{ .from = .sega_logo, .exit = .done, .to = .intro, .load = 2 },
+    // The stand-ins need no content.
+    const graph: flow.Graph = .{ .first = .demo, .power_on = 3, .edges = &.{
+        .{ .from = .demo, .exit = .done, .to = .round, .load = 2 },
     } };
+    var s = powerOn(&graph, &setup);
+    // The set-up's tick, then three ticks of the load, then the scene's own ticks.
+    tick(&s, &graph, &turn, &assets);
+    for (0..3) |_| {
+        try testing.expect(s.top().* == .load);
+        tick(&s, &graph, &turn, &assets);
+    }
+    try testing.expect(s.top().* == .load and s.top().load.left == 0);
+    tick(&s, &graph, &turn, &assets);
+    try testing.expect(s.top().* == .demo and s.len == 1);
     var ticks: usize = 0;
-    while (s.top().* == .sega_logo) : (ticks += 1) {
+    while (s.next == null) : (ticks += 1) {
         try testing.expect(ticks < 10_000);
         tick(&s, &graph, &turn, &assets);
     }
-    try testing.expect(s.top().* == .load and s.top().load.next == .intro);
+    // The demo's last picture stays; the next scene's set-up at the next tick, then its load.
+    try testing.expect(s.top().* == .demo and s.next.?.kind == .round);
     tick(&s, &graph, &turn, &assets);
-    try testing.expect(s.top().* == .load);
-    tick(&s, &graph, &turn, &assets);
-    try testing.expect(s.top().* == .intro);
+    try testing.expect(s.top().* == .load and s.items[0] == .round);
 }

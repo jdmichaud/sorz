@@ -90,6 +90,7 @@ fn findOne(comptime F: type, c: *const Content, name: []const u8, diag: *json.Di
         *const art.Frame => a.frame(name),
         *const art.TileSheet => a.sheet(name),
         *const art.Cycle => a.cycle(name),
+        *const art.PaletteSteps => a.steps(name),
         Text => if (a.font(name)) |f| if (a.sheet(f.sheet)) |s| Text{ .font = f, .sheet = s } else null else null,
         Sound => c.sounds.find(name),
         else => switch (@typeInfo(F)) {
