@@ -105,6 +105,21 @@ fn colourValue(arena: std.mem.Allocator, c: art.Colour) !json.Value {
     return ints(arena, &[_]u8{ c.r, c.g, c.b });
 }
 
+/// Colours for the four palettes: an object of the palettes given ("0" to "3"), each 16 colours
+/// `[r, g, b]` or null.
+fn coloursValue(arena: std.mem.Allocator, colours: *const [art.palette_count][art.palette_size]?art.Colour) !json.Value {
+    var lines: std.ArrayList(json.Field) = .empty;
+    for (colours, 0..) |line, k| {
+        for (line) |c| {
+            if (c != null) break;
+        } else continue;
+        const cs = try arena.alloc(json.Value, art.palette_size);
+        for (cs, line) |*v, c| v.* = if (c) |colour| try colourValue(arena, colour) else .null;
+        try lines.append(arena, .{ .key = try std.fmt.allocPrint(arena, "{d}", .{k}), .value = .{ .array = cs } });
+    }
+    return .{ .object = lines.items };
+}
+
 /// `path`'s join to the set's directory.
 fn setPath(arena: std.mem.Allocator, set: []const u8, file: []const u8) ![]const u8 {
     return std.fmt.allocPrint(arena, "{s}/{s}", .{ set, file });
@@ -139,16 +154,22 @@ fn writeSet(arena: std.mem.Allocator, a: *const art.Art, s: *const art.ArtSet, f
     if (s.palettes.len != 0) {
         const entries = try arena.alloc(json.Field, s.palettes.len);
         for (entries, s.palettes) |*e, *p| {
-            var lines: std.ArrayList(json.Field) = .empty;
-            for (p.colours, 0..) |line, k| {
-                if (!p.touches(k)) continue;
-                const cs = try arena.alloc(json.Value, art.palette_size);
-                for (cs, line) |*v, c| v.* = if (c) |colour| try colourValue(arena, colour) else .null;
-                try lines.append(arena, .{ .key = try std.fmt.allocPrint(arena, "{d}", .{k}), .value = .{ .array = cs } });
-            }
-            e.* = .{ .key = p.name, .value = try assetFields(arena, p.provenance, &.{.{ .key = "colours", .value = .{ .object = lines.items } }}) };
+            e.* = .{ .key = p.name, .value = try assetFields(arena, p.provenance, &.{.{ .key = "colours", .value = try coloursValue(arena, &p.colours) }}) };
         }
         try top.append(arena, .{ .key = "palettes", .value = .{ .object = entries } });
+    }
+
+    if (s.cycles.len != 0) {
+        const entries = try arena.alloc(json.Field, s.cycles.len);
+        for (entries, s.cycles) |*e, *c| {
+            const steps = try arena.alloc(json.Value, c.steps.len);
+            for (steps, c.steps) |*v, *st| v.* = try coloursValue(arena, st);
+            e.* = .{ .key = c.name, .value = try assetFields(arena, c.provenance, &.{
+                .{ .key = "period", .value = json.Value.num(c.period) },
+                .{ .key = "steps", .value = .{ .array = steps } },
+            }) };
+        }
+        try top.append(arena, .{ .key = "cycles", .value = .{ .object = entries } });
     }
 
     if (s.sheets.len != 0) {
@@ -384,7 +405,7 @@ fn readProvenance(n: json.Node) Error![]const u8 {
 
 fn loadSet(arena: std.mem.Allocator, source: platform.AssetSource, name: []const u8, root: json.Node, diag: *Diagnostic) Error!art.ArtSet {
     const p: Pass = .{ .arena = arena, .source = source, .set = name, .diag = diag };
-    try root.only(&.{ "provenance", "uses", "palettes", "tiles", "maps", "frames", "fonts" });
+    try root.only(&.{ "provenance", "uses", "palettes", "cycles", "tiles", "maps", "frames", "fonts" });
     var s: art.ArtSet = .{ .name = name, .provenance = try readProvenance(root) };
     if (try root.opt("uses")) |u| {
         const uses = try arena.alloc([]const u8, try u.len());
@@ -392,6 +413,7 @@ fn loadSet(arena: std.mem.Allocator, source: platform.AssetSource, name: []const
         s.uses = uses;
     }
     if (try root.opt("palettes")) |n| s.palettes = try loadPalettes(p, n);
+    if (try root.opt("cycles")) |n| s.cycles = try loadCycles(p, n);
     if (try root.opt("tiles")) |n| s.sheets = try loadSheets(p, n, root);
     if (try root.opt("frames")) |n| s.frames = try loadFrames(p, n, root);
     if (try root.opt("fonts")) |n| s.fonts = try loadFonts(p, n);
@@ -405,24 +427,49 @@ fn loadPalettes(p: Pass, node: json.Node) Error![]const art.Palette {
         const e = (try it.next()).?;
         try checkName(e.value, e.key);
         try e.value.only(&.{ "provenance", "colours" });
-        pal.* = .{ .name = e.key, .provenance = try readProvenance(e.value) };
-        var lines = try (try e.value.get("colours")).fields();
-        while (try lines.next()) |l| {
-            const k = std.fmt.parseInt(u8, l.key, 10) catch return l.value.fail("not a palette's number (0 to 3)");
-            if (k >= art.palette_count or l.key.len != 1) return l.value.fail("not a palette's number (0 to 3)");
-            if (try l.value.len() != art.palette_size) return l.value.fail("not 16 colours");
-            for (0..art.palette_size) |i| {
-                const c = try l.value.at(i);
-                if (c.isNull()) continue;
-                if (try c.len() != 3) return c.fail("not [red, green, blue]");
-                var rgb: [3]u3 = undefined;
-                for (&rgb, 0..) |*x, j| {
-                    const v = try c.at(j);
-                    x.* = std.math.cast(u3, try v.int(i64)) orelse return v.fail("not 0 to 7");
-                }
-                pal.colours[k][i] = .{ .r = rgb[0], .g = rgb[1], .b = rgb[2] };
+        pal.* = .{ .name = e.key, .provenance = try readProvenance(e.value), .colours = try readColours(try e.value.get("colours")) };
+    }
+    return out;
+}
+
+/// Colours for the four palettes (a palette's, a cycle's step).
+fn readColours(node: json.Node) Error![art.palette_count][art.palette_size]?art.Colour {
+    var out: [art.palette_count][art.palette_size]?art.Colour = @splat(@splat(null));
+    var lines = try node.fields();
+    while (try lines.next()) |l| {
+        const k = std.fmt.parseInt(u8, l.key, 10) catch return l.value.fail("not a palette's number (0 to 3)");
+        if (k >= art.palette_count or l.key.len != 1) return l.value.fail("not a palette's number (0 to 3)");
+        if (try l.value.len() != art.palette_size) return l.value.fail("not 16 colours");
+        for (0..art.palette_size) |i| {
+            const c = try l.value.at(i);
+            if (c.isNull()) continue;
+            if (try c.len() != 3) return c.fail("not [red, green, blue]");
+            var rgb: [3]u3 = undefined;
+            for (&rgb, 0..) |*x, j| {
+                const v = try c.at(j);
+                x.* = std.math.cast(u3, try v.int(i64)) orelse return v.fail("not 0 to 7");
             }
+            out[k][i] = .{ .r = rgb[0], .g = rgb[1], .b = rgb[2] };
         }
+    }
+    return out;
+}
+
+fn loadCycles(p: Pass, node: json.Node) Error![]const art.Cycle {
+    var it = try node.fields();
+    const out = try p.arena.alloc(art.Cycle, it.count());
+    for (out) |*c| {
+        const e = (try it.next()).?;
+        try checkName(e.value, e.key);
+        try e.value.only(&.{ "provenance", "period", "steps" });
+        const period_node = try e.value.get("period");
+        const period = try period_node.int(u16);
+        if (period == 0) return period_node.fail("not 1 or more");
+        const steps_node = try e.value.get("steps");
+        const steps = try p.arena.alloc([art.palette_count][art.palette_size]?art.Colour, try steps_node.len());
+        if (steps.len == 0) return steps_node.fail("no step");
+        for (steps, 0..) |*s, i| s.* = try readColours(try steps_node.at(i));
+        c.* = .{ .name = e.key, .provenance = try readProvenance(e.value), .period = period, .steps = steps };
     }
     return out;
 }
@@ -620,12 +667,17 @@ test "a tree writes, loads back the same, and writes the same bytes again" {
     const maps = [_]art.TileMap{.{ .name = "logo", .file = "logo.tmj", .width = 2, .height = 2, .sheets = &.{ "title/logo", "fonts/main" }, .cells = &cells, .place = .{ .layer = .plane_a, .x = 3, .y = 4 } }};
     var pal: art.Palette = .{ .name = "sky", .provenance = "synthetic" };
     pal.colours[1][3] = .{ .r = 1, .g = 2, .b = 3 };
+    var step_1: [art.palette_count][art.palette_size]?art.Colour = @splat(@splat(null));
+    step_1[2][10] = .{ .r = 7, .g = 7, .b = 0 };
+    var step_2 = step_1;
+    step_2[2][10] = .{ .r = 0, .g = 0, .b = 7 };
+    const cycles = [_]art.Cycle{.{ .name = "neon", .period = 4, .steps = &.{ step_1, step_2 } }};
     const pixels = [_]u8{ 0, 1, 2, 3, 4, 5 };
     const pieces = [_]art.Piece{.{ .x = -1, .y = -2, .width = 1, .height = 1 }};
     const frames = [_]art.Frame{.{ .name = "000", .file = "000.png", .width = 3, .height = 2, .origin_x = 1, .origin_y = 2, .pixels = &pixels, .palette = 3, .priority = true, .pieces = &pieces }};
     const sets = [_]art.ArtSet{
         .{ .name = "fonts", .sheets = &font_sheets, .fonts = &fonts },
-        .{ .name = "title", .provenance = "synthetic", .uses = &.{"fonts"}, .palettes = &.{pal}, .sheets = &sheets, .maps = &maps, .frames = &frames },
+        .{ .name = "title", .provenance = "synthetic", .uses = &.{"fonts"}, .palettes = &.{pal}, .cycles = &cycles, .sheets = &sheets, .maps = &maps, .frames = &frames },
     };
     const content: Content = .{
         .manifest = .{ .extractor = "test", .rom_sha256 = "00", .rom_size = 1, .art = &.{ "fonts", "title" } },
@@ -647,6 +699,9 @@ test "a tree writes, loads back the same, and writes the same bytes again" {
     try std.testing.expectEqualSlices(u8, &tiles[2], &m.tiles[2]);
     try std.testing.expectEqual(art.Place{ .layer = .plane_a, .x = 3, .y = 4 }, m.place.?);
     try std.testing.expect(back.art.palette("title/sky").?.colours[1][3].?.eql(.{ .r = 1, .g = 2, .b = 3 }));
+    const neon = back.art.cycle("title/neon").?;
+    try std.testing.expectEqual(@as(u16, 4), neon.period);
+    try std.testing.expect(neon.steps[1][2][10].?.eql(.{ .r = 0, .g = 0, .b = 7 }) and neon.steps[1][2][9] == null);
     try std.testing.expect(back.art.sheet("title/logo").?.view[1].eql(.{ .r = 7, .g = 0, .b = 0 }));
     const f = back.art.frame("title/000").?;
     try std.testing.expectEqualSlices(u8, &pixels, f.pixels);

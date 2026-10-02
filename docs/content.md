@@ -68,6 +68,9 @@ Every field is optional. The kinds of asset are separate: a sheet and a map may 
   "palettes": {
     "sky": {"provenance": "…", "colours": {"1": [null, [7, 7, 7], …16 entries]}}
   },
+  "cycles": {
+    "cycle_1": {"provenance": "…", "period": 4, "steps": [{"2": […16]}, {"2": […16]}]}
+  },
   "tiles": {
     "city": {"provenance": "…", "file": "city.png", "count": 210}
   },
@@ -91,6 +94,9 @@ Every field is optional. The kinds of asset are separate: a sheet and a map may 
   (`"0"` to `"3"`) to its 16 colours, each `[red, green, blue]` with levels 0 to 7 (the console's
   512 colours), or `null` where the asset leaves the colour as it is. A screen applies several
   in turn; a later one's colours replace an earlier one's.
+- **Cycles.** Colours that change in turn (a round's neon signs, its water): every `period` logic
+  ticks (30 a second in play) the next of the `steps` replaces the colours it gives, the last step
+  followed by the first. A step is a palette's `colours`.
 - **Tile sheets** (`tiles`). `file` is an indexed PNG of 8x8 tiles, read left to right and top to
   bottom (16 a row when the extractor writes it); `count` is the number of tiles, the rest of the
   last row being unused. A pixel is a colour index 0 to 15, 0 transparent; an index above 15 is

@@ -64,6 +64,16 @@ pub const Palette = struct {
     }
 };
 
+/// Colours that change in turn: every `period` logic ticks (30 a second in play) the next step's
+/// colours replace those in the palettes, the last step followed by the first.
+pub const Cycle = struct {
+    name: []const u8,
+    provenance: []const u8 = "",
+    period: u16,
+    /// Each step's colours, as a palette's: for each palette, 16 colours or null.
+    steps: []const [palette_count][palette_size]?Colour,
+};
+
 /// An 8x8 tile: 64 colour indices 0-15, row by row; index 0 is transparent.
 pub const Tile = [64]u8;
 
@@ -191,6 +201,7 @@ pub const ArtSet = struct {
     provenance: []const u8 = "",
     uses: []const []const u8 = &.{},
     palettes: []const Palette = &.{},
+    cycles: []const Cycle = &.{},
     sheets: []const TileSheet = &.{},
     maps: []const TileMap = &.{},
     frames: []const Frame = &.{},
@@ -218,6 +229,9 @@ pub const Art = struct {
     }
     pub fn palette(self: *const Art, name: []const u8) ?*const Palette {
         return find(Palette, "palettes", self.sets, name);
+    }
+    pub fn cycle(self: *const Art, name: []const u8) ?*const Cycle {
+        return find(Cycle, "cycles", self.sets, name);
     }
     pub fn sheet(self: *const Art, name: []const u8) ?*const TileSheet {
         return find(TileSheet, "sheets", self.sets, name);
