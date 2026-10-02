@@ -73,11 +73,15 @@ pub const WINDOWPOS_CENTERED: c_int = @bitCast(@as(u32, 0x2FFF0000));
 pub const WINDOW_SHOWN: u32 = 0x00000004;
 pub const WINDOW_RESIZABLE: u32 = 0x00000020;
 pub const WINDOW_ALLOW_HIGHDPI: u32 = 0x00002000;
+/// SDL_WINDOW_FULLSCREEN | 0x1000: the whole display, at the desktop's mode.
+pub const WINDOW_FULLSCREEN_DESKTOP: u32 = 0x00001001;
 
 pub extern "c" fn SDL_CreateWindow(title: [*:0]const u8, x: c_int, y: c_int, w: c_int, h: c_int, flags: u32) ?*Window;
 pub extern "c" fn SDL_DestroyWindow(window: *Window) void;
 pub extern "c" fn SDL_SetWindowSize(window: *Window, w: c_int, h: c_int) void;
 pub extern "c" fn SDL_GetWindowSize(window: *Window, w: *c_int, h: *c_int) void;
+pub extern "c" fn SDL_SetWindowFullscreen(window: *Window, flags: u32) c_int;
+pub extern "c" fn SDL_GetWindowFlags(window: *Window) u32;
 pub extern "c" fn SDL_SetWindowMinimumSize(window: *Window, min_w: c_int, min_h: c_int) void;
 pub extern "c" fn SDL_GetWindowDisplayIndex(window: *Window) c_int;
 pub extern "c" fn SDL_GetKeyboardFocus() ?*Window;

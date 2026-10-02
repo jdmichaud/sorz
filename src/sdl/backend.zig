@@ -23,6 +23,9 @@ pub const SdlBackend = struct {
     // Host settings outside the shared options. The host sets them between `init` and `start`.
     /// Use SDL's software renderer, not an accelerated one (useful under Xvfb).
     force_software_renderer: bool = false,
+    /// The window covers the display (at the desktop's mode) rather than being the resolution
+    /// times the scale. `setWindowMode` changes it once the window exists.
+    fullscreen: bool = false,
     /// The audio queue capacity in sample frames. 0 means one second at the negotiated rate.
     audio_capacity_frames: u64 = 0,
     /// When set, the backend writes each delivered event to it as one JSON line (`eventlog.zig`).
@@ -368,9 +371,29 @@ pub const SdlBackend = struct {
         self.window_size = size;
     }
 
+    /// The window's mode, as the settings choose it (DESIGN.md 7): `scale` times the resolution
+    /// (less when the display is smaller), or the whole display. Before the window exists, it is
+    /// the mode the window opens in. A mode the display refuses leaves the previous one, with a
+    /// warning; the frame keeps its resolution either way.
+    pub fn setWindowMode(self: *SdlBackend, scale: u32, fullscreen: bool) void {
+        self.options.initial_window_scale = std.math.clamp(scale, 1, max_window_scale);
+        self.fullscreen = fullscreen;
+        const window = self.window orelse return;
+        if (c.SDL_SetWindowFullscreen(window, if (fullscreen) c.WINDOW_FULLSCREEN_DESKTOP else 0) != 0) {
+            std.log.warn("the window cannot change its mode: {s}", .{c.SDL_GetError()});
+            return;
+        }
+        if (fullscreen) return;
+        const res = self.resolution orelse return;
+        const size = fitWindowSize(res.width, res.height, self.options.initial_window_scale, self.displayBounds());
+        c.SDL_SetWindowSize(window, @intCast(size.width), @intCast(size.height));
+        self.window_size = size;
+    }
+
     fn createPresentation(self: *SdlBackend, width: u32, height: u32) platform.PlatformError!void {
         const size = fitWindowSize(width, height, self.options.initial_window_scale, self.displayBounds());
-        const flags = c.WINDOW_SHOWN | c.WINDOW_RESIZABLE | c.WINDOW_ALLOW_HIGHDPI;
+        var flags = c.WINDOW_SHOWN | c.WINDOW_RESIZABLE | c.WINDOW_ALLOW_HIGHDPI;
+        if (self.fullscreen) flags |= c.WINDOW_FULLSCREEN_DESKTOP;
         const window = c.SDL_CreateWindow(self.title.ptr, c.WINDOWPOS_CENTERED, c.WINDOWPOS_CENTERED, @intCast(size.width), @intCast(size.height), flags) orelse {
             std.log.err("SDL_CreateWindow failed: {s}", .{c.SDL_GetError()});
             return error.DeviceFailure;
@@ -1059,6 +1082,26 @@ test "a window the user resized keeps its size and letterboxes the frame" {
     try std.testing.expectEqual(@as(u8, 0), back[35 * 40 * 4]);
 }
 
+test "the window's mode: a scale, the whole display and back" {
+    var backend = try startedBackend(1);
+    defer backend.deinit();
+    var p = backend.asPlatform();
+    _ = try p.start();
+    // Before the window: the mode it opens in.
+    backend.setWindowMode(2, false);
+    try p.setResolution(8, 6);
+    try std.testing.expectEqual(platform.Size{ .width = 16, .height = 12 }, backend.outputSize().?);
+    backend.setWindowMode(3, false);
+    try std.testing.expectEqual(platform.Size{ .width = 24, .height = 18 }, backend.outputSize().?);
+    backend.setWindowMode(3, true);
+    try std.testing.expect(c.SDL_GetWindowFlags(backend.window.?) & c.WINDOW_FULLSCREEN_DESKTOP == c.WINDOW_FULLSCREEN_DESKTOP);
+    var frame: [8 * 6 * 4]u8 = @splat(0x7F);
+    try p.present(.{ .width = 8, .height = 6, .stride = 32, .pixels = &frame });
+    backend.setWindowMode(1, false);
+    try std.testing.expect(c.SDL_GetWindowFlags(backend.window.?) & c.WINDOW_FULLSCREEN_DESKTOP == 0);
+    try std.testing.expectEqual(platform.Size{ .width = 8, .height = 6 }, backend.outputSize().?);
+}
+
 test "audio: open, bounded queue with partial acceptance, status, clear, close" {
     var backend = try startedBackend(1);
     defer backend.deinit();
@@ -1238,6 +1281,10 @@ test "translation: window state, quit and controller events" {
 test "a failed start leaves a backend that deinit cleans up" {
     useVideoDriver("nonexistent");
     defer useDummyDrivers();
+    // The start's warning about the missing video is expected: the build would print it.
+    const level = std.testing.log_level;
+    std.testing.log_level = .err;
+    defer std.testing.log_level = level;
     var backend = try SdlBackend.init(std.testing.allocator, .{ .title = "no display" });
     defer backend.deinit();
     var p = backend.asPlatform();

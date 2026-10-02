@@ -21,10 +21,11 @@ pub const fallback_hz: u32 = 60;
 pub const assets_required = false;
 
 pub const usage =
-    \\usage: sorz-sdl [OPTIONS] [ASSET_PATH]
-    \\  ASSET_PATH           the directory of the original's files
+    \\usage: sorz-sdl [OPTIONS] [DIR]
+    \\  DIR                  the game directory
     \\  --help, -h           show this help
-    \\  --scale N            window scale, 1 to 64 (default 3)
+    \\  --scale N            window scale, 1 to 64, for this run (default: the settings',
+    \\                       3 at first)
     \\  --no-vsync           do not ask for display-paced presentation
     \\  --software           force SDL's software renderer
     \\  --event-log SECONDS  write every polled event to standard output as one JSON line
@@ -94,6 +95,16 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
 
     var game = try sorz.Game.init(gpa, providers.assetSource(), providers.storage());
     defer game.deinit();
+    // The window's mode from the settings (DESIGN.md 7); `--scale` wins for this run, until the
+    // player changes the window's settings.
+    var window: WindowMode = .init(game.settings.window, options.scale);
+    backend.setWindowMode(window.mode.scale, window.mode.fullscreen);
+    std.log.info("settings: {s}, window scale {d}{s}, settings key {s}", .{
+        if (game.notice != .none) "damaged, see above" else if (game.loads_done != 0) "kept" else "the defaults",
+        backend.options.initial_window_scale,
+        if (window.mode.fullscreen) ", full screen" else "",
+        @tagName(game.settings.settings_key),
+    });
 
     var p = backend.asPlatform();
     var pacer: Pacer = .{ .period_ns = std.time.ns_per_s / (options.fps orelse fallback_hz) };
@@ -123,6 +134,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
         }
         if (backend.event_log != null) try out.flush();
         if (result == .finished) break;
+        // TODO(PLAN item 19): whether the settings screen is open, once the game has it.
+        if (window.follow(game.settings.window, false)) |mode| backend.setWindowMode(mode.scale, mode.fullscreen);
         const now = p.nowNs();
         if (deadline_limit) |limit| {
             // The deadline starts when the platform is up, so a slow start does not use log time.
@@ -231,6 +244,64 @@ const SliceArgs = struct {
         return self.items[self.index];
     }
 };
+
+/// The window's mode, from the settings and `--scale`: the option wins for the run until the
+/// player changes the window's settings on the settings screen, and leaving the screen without
+/// saving goes back to the mode it opened with, the option's included.
+pub const WindowMode = struct {
+    pub const Mode = struct { scale: u32, fullscreen: bool };
+    const Window = sorz.settings.Settings.Window;
+
+    /// The settings' window last seen, and the mode applied.
+    window: Window,
+    mode: Mode,
+    /// The window's settings and the mode when the settings screen opened.
+    opened: ?struct { window: Window, mode: Mode } = null,
+
+    pub fn init(window: Window, scale_option: ?u32) WindowMode {
+        return .{ .window = window, .mode = .{ .scale = scale_option orelse window.scale, .fullscreen = window.fullscreen } };
+    }
+
+    /// After an update, with the settings' window and whether the screen is open: the mode to
+    /// apply now, or null when it stays.
+    pub fn follow(self: *WindowMode, window: Window, screen_open: bool) ?Mode {
+        if (screen_open and self.opened == null) self.opened = .{ .window = self.window, .mode = self.mode };
+        var next = self.mode;
+        if (!std.meta.eql(window, self.window)) next = .{ .scale = window.scale, .fullscreen = window.fullscreen };
+        self.window = window;
+        if (!screen_open) {
+            // Closed with the window it opened with (left without saving, or not changed): the
+            // mode it opened with.
+            if (self.opened) |o| if (std.meta.eql(window, o.window)) {
+                next = o.mode;
+            };
+            self.opened = null;
+        }
+        if (std.meta.eql(next, self.mode)) return null;
+        self.mode = next;
+        return next;
+    }
+};
+
+test "the window follows the settings; leaving the screen without saving gives back its mode" {
+    const record: WindowMode.Window = .{ .scale = 3, .fullscreen = false };
+    // `--scale 2` wins over the record's 3 until the screen changes the window.
+    var w: WindowMode = .init(record, 2);
+    try std.testing.expectEqual(WindowMode.Mode{ .scale = 2, .fullscreen = false }, w.mode);
+    try std.testing.expectEqual(@as(?WindowMode.Mode, null), w.follow(record, false));
+    try std.testing.expectEqual(@as(?WindowMode.Mode, null), w.follow(record, true));
+    try std.testing.expectEqual(WindowMode.Mode{ .scale = 4, .fullscreen = false }, w.follow(.{ .scale = 4, .fullscreen = false }, true).?);
+    try std.testing.expectEqual(WindowMode.Mode{ .scale = 3, .fullscreen = true }, w.follow(.{ .scale = 3, .fullscreen = true }, true).?);
+    // Without saving: the record's window again, and the option's scale.
+    try std.testing.expectEqual(WindowMode.Mode{ .scale = 2, .fullscreen = false }, w.follow(record, false).?);
+    // Saved: the new window stays.
+    _ = w.follow(record, true);
+    try std.testing.expectEqual(WindowMode.Mode{ .scale = 5, .fullscreen = false }, w.follow(.{ .scale = 5, .fullscreen = false }, true).?);
+    try std.testing.expectEqual(@as(?WindowMode.Mode, null), w.follow(.{ .scale = 5, .fullscreen = false }, false));
+    // Opened and closed without a change: the mode stays.
+    try std.testing.expectEqual(@as(?WindowMode.Mode, null), w.follow(.{ .scale = 5, .fullscreen = false }, true));
+    try std.testing.expectEqual(@as(?WindowMode.Mode, null), w.follow(.{ .scale = 5, .fullscreen = false }, false));
+}
 
 test "the host options are parsed, bounded and defaulted" {
     const defaults = try parseArgs(SliceArgs{ .items = &.{"sorz-sdl"} });
