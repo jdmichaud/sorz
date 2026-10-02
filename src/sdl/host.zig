@@ -16,8 +16,8 @@ const SdlBackend = @import("backend.zig").SdlBackend;
 /// The rate of the fallback pacer, when the display does not pace the presentation.
 pub const fallback_hz: u32 = 60;
 
-/// Whether the executable refuses to start without an asset path. The placeholder game
-/// runs without files; a port whose game needs the original's files sets this to true.
+/// Whether the executable refuses to start without a game path. The test pattern needs no data;
+/// TODO(PLAN item 06): true once the game reads its content.
 pub const assets_required = false;
 
 pub const usage =
@@ -34,6 +34,12 @@ pub const usage =
     \\  --fps N              the fallback pacer's rate, 1 to 1000 (default 60)
     \\  --saves DIR          where saves are kept (default: the per-user application data
     \\                       directory)
+    \\  --netplay [ADDRESS:]PORT  play with a second player over the network, as the host
+    \\                       (player 1): listen at PORT, where the browser build's page is
+    \\                       served too, with the game's files
+    \\  --join ws://ADDRESS:PORT  join the host at that address, as player 2
+    \\  --delay N            the host's input delay in display ticks, 2 to 6 (default: from
+    \\                       the round trip)
     \\
 ;
 
@@ -62,7 +68,9 @@ pub const Options = struct {
     }
 };
 
-pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Environ.Map, options: Options) !u8 {
+/// `page` is the browser build built into the executable, which `--netplay` serves with the
+/// game's files.
+pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Environ.Map, options: Options, page: native.net.Page) !u8 {
     var ver_buf: [32]u8 = undefined;
     const check = version.checkVersion(&ver_buf);
     std.log.info("SDL2 {s} linked (pinned {s})", .{ check.linked, check.pinned });
@@ -72,10 +80,32 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
     var providers: native.cli.Providers = .empty;
     defer providers.deinit();
     providers.open(gpa, io, environ, options.providers) catch |e| {
-        std.log.err("cannot open the providers: {s}", .{@errorName(e)});
+        std.log.err("cannot open the game's data or saves: {s}", .{native.cli.openErrorText(e)});
         return 1;
     };
     std.log.info("assets: {s}, saves: {s}", .{ @tagName(providers.kind), providers.saves_path });
+
+    // Network play: the WebSocket transport outlives the backend that holds it.
+    const netplay = (options.providers.network() catch .none) == .netplay;
+    var net_side: native.cli.Netplay = undefined;
+    var net_options: sorz.net.netplay.Options = undefined;
+    if (netplay) {
+        const id = providers.dataIdentity() catch |e| {
+            std.log.err("cannot read the game data for its identity: {s}", .{@errorName(e)});
+            return 1;
+        };
+        net_options = options.providers.netplayOptions(id);
+        // A host serves its own files to a guest's page; a guest serves nothing.
+        net_side.init(gpa, io, page, if (net_options.role == .host) providers.assetSource() else null) catch |e| {
+            std.log.err("cannot read the game's files to serve them: {s}", .{@errorName(e)});
+            return 1;
+        };
+        const hex = sorz.net.identity.hex(&id);
+        if (net_options.role == .host) {
+            std.log.info("network play: hosting at {s}, serving its page and the game's files; data {s}, build {s}", .{ net_options.address, hex[0..16], sorz.version.build });
+        } else std.log.info("network play: joining {s}; data {s}, build {s}", .{ net_options.address, hex[0..16], sorz.version.build });
+    }
+    defer if (netplay) net_side.deinit();
 
     // The backend is made before the game and released after it.
     defer c.SDL_Quit();
@@ -95,6 +125,10 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
 
     var game = try sorz.Game.init(gpa, providers.assetSource(), providers.storage());
     defer game.deinit();
+    if (netplay) {
+        backend.transport = net_side.transport.transport();
+        try game.startNetplay(net_options);
+    }
     // The window's mode from the settings (DESIGN.md 7); `--scale` wins for this run, until the
     // player changes the window's settings.
     var window: WindowMode = .init(game.settings.window, options.scale);
@@ -215,6 +249,7 @@ pub fn parseArgs(iter: anytype) ArgError!Options {
         }
     }
     if (assets_required and !options.help and options.providers.assets == null) return error.MissingAssets;
+    _ = options.providers.network() catch |err| return if (err == error.MissingValue) error.MissingAssets else error.BadArguments;
     return options;
 }
 
@@ -316,6 +351,13 @@ test "the host options are parsed, bounded and defaulted" {
     try std.testing.expectEqual(@as(?u64, 1_000_000_000), all.deadlineNs());
     try std.testing.expectEqualStrings("game", all.providers.assets.?);
     try std.testing.expectEqualStrings("saves", all.providers.saves.?);
+    const hosting = try parseArgs(SliceArgs{ .items = &.{ "sorz-sdl", "game", "--netplay", "0.0.0.0:7000", "--delay", "4" } });
+    try std.testing.expectEqualStrings("0.0.0.0:7000", hosting.providers.netplay.?);
+    try std.testing.expectEqual(@as(?u8, 4), hosting.providers.delay);
+    const joining = try parseArgs(SliceArgs{ .items = &.{ "sorz-sdl", "--join", "ws://10.0.0.2:7000" } });
+    try std.testing.expectEqualStrings("ws://10.0.0.2:7000", joining.providers.join.?);
+    // Server mode serves the game's data to its pages.
+    try std.testing.expectError(error.MissingAssets, parseArgs(SliceArgs{ .items = &.{ "sorz-sdl", "--server", "7000" } }));
 
     for ([_][]const []const u8{
         &.{ "sorz-sdl", "--scale", "0" },
@@ -324,6 +366,9 @@ test "the host options are parsed, bounded and defaulted" {
         &.{ "sorz-sdl", "--fps", "0" },
         &.{ "sorz-sdl", "--frobnicate" },
         &.{ "sorz-sdl", "first", "second" },
+        &.{ "sorz-sdl", "game", "--netplay", "nowhere:x" },
+        &.{ "sorz-sdl", "game", "--server", "7000", "--saves", "s" },
+        &.{ "sorz-sdl", "game", "--join", "ws://h:1", "--delay", "3" },
     }) |args| try std.testing.expectError(error.BadArguments, parseArgs(SliceArgs{ .items = args }));
 }
 

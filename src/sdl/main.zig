@@ -4,6 +4,10 @@
 const std = @import("std");
 const sdl = @import("sdl");
 const native = @import("native");
+const web_page = @import("web_page");
+
+/// The browser build built into the binary, which `--netplay` and `--server` serve.
+const page: native.net.Page = .{ .index_html = web_page.index_html, .script_js = web_page.script_js, .module_wasm = web_page.module_wasm };
 
 /// Every log line as the binaries' (native/log.zig).
 pub const std_options: std.Options = .{ .logFn = native.log.logFn };
@@ -13,11 +17,11 @@ pub fn main(init: std.process.Init) !void {
     // `iterateAllocator` is the form that Windows needs; the arena keeps the arguments for the
     // whole run.
     const options = sdl.host.parseArgs(try init.minimal.args.iterateAllocator(init.arena.allocator())) catch |err| {
-        try showUsage(init.io, if (err == error.MissingAssets) "an asset path is required" else "invalid arguments");
+        try showUsage(init.io, if (err == error.MissingAssets) "a game directory is required" else "invalid arguments");
         std.process.exit(2);
     };
     if (options.help) return showUsage(init.io, null);
-    const status = try sdl.host.run(init.gpa, init.io, init.environ_map, options);
+    const status = try sdl.host.run(init.gpa, init.io, init.environ_map, options, page);
     if (status != 0) std.process.exit(status);
 }
 

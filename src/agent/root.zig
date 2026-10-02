@@ -4,6 +4,8 @@
 pub const AgentBackend = @import("backend.zig").AgentBackend;
 /// The pictures that `--shot` writes.
 pub const png = @import("png.zig");
+/// Network play in the agent host: a session over WebSockets, or two games in one process.
+pub const netplay_cmd = @import("netplay_cmd.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

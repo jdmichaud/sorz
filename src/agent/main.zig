@@ -7,15 +7,21 @@
 //!
 //! With a game directory, the game reads it; with `--saves`, it saves there (its settings record
 //! among them). Without them, it runs on in-memory providers, so the run touches no file and never
-//! the user's saves (DESIGN.md 5.1).
+//! the user's saves (DESIGN.md 5.1). `--netplay`, `--join` and `--pair` play a session of network
+//! play (netplay_cmd.zig).
 const std = @import("std");
 const sorz = @import("sorz");
 const agent = @import("agent");
 const native = @import("native");
+const web_page = @import("web_page");
 
 const usage =
     \\usage: sorz-agent [--frames N] [--key FRAME:NAME[:HOLD]]... [--shot FRAME:PATH]... [--wav PATH]
     \\                  [DIR] [--saves DIR]
+    \\       sorz-agent [DIR] (--netplay [ADDRESS:]PORT [--delay N] | --join ws://ADDRESS:PORT)
+    \\                  [--frames N] [--key FRAME:NAME[:HOLD]]...
+    \\       sorz-agent [DIR] --pair [--delay N] [--frames N] [--key ...]... [--guest-key ...]...
+    \\                  [--corrupt TICK]
     \\  --frames N       run N frames, a display tick each (default 120)
     \\  --key FRAME:NAME[:HOLD]  press the key NAME (a platform.Key, as `enter` or `left`) at
     \\                   frame FRAME, release it HOLD frames later (default 1); repeats
@@ -23,14 +29,28 @@ const usage =
     \\  --wav PATH       write the sound played as a WAV file
     \\  DIR              the game directory
     \\  --saves DIR      where saves are kept, the settings record (settings.json) among them
+    \\  --netplay, --join  network play over WebSockets, as the host (player 1) or the guest
+    \\                   (player 2); --frames counts the session's ticks, and --key presses a
+    \\                   pad 1 key by tick (it reaches the game --delay ticks later); prints the
+    \\                   game's hashes and the session's end
+    \\  --delay N        the host's input delay, 2 to 6 (default: from the round trip; 2 with
+    \\                   --pair)
+    \\  --pair           two games in one process over the in-memory network, the host's keys
+    \\                   from --key and the guest's from --guest-key, and a third game alone
+    \\                   with their merged pads; prints the three and whether they are the same;
+    \\                   --corrupt flips a bit of the guest's tick count before that tick (a
+    \\                   negative control: both games stop and name the field)
     \\
 ;
 
 /// A frame is a display tick: 896,040 periods of the console's 53,693,175 Hz clock, rounded up so
 /// that the clock never falls behind the ticks.
-const frame_ns: u64 = sorz.sound_out.tick_ps / 1000 + 1;
-const Press = struct { frame: u64, key: sorz.platform.Key, hold: u64 = 1 };
+const frame_ns: u64 = agent.netplay_cmd.frame_ns;
+const Press = agent.netplay_cmd.Press;
 const Shot = struct { frame: u64, path: []const u8 };
+
+/// The browser build built into the binary, which `--netplay` serves.
+const page: native.net.Page = .{ .index_html = web_page.index_html, .script_js = web_page.script_js, .module_wasm = web_page.module_wasm };
 
 /// Every log line as the binaries' (native/log.zig).
 pub const std_options: std.Options = .{ .logFn = native.log.logFn };
@@ -45,6 +65,10 @@ pub fn main(init: std.process.Init) !void {
     var shots: std.ArrayList(Shot) = .empty;
     defer shots.deinit(gpa);
     var wav_path: ?[]const u8 = null;
+    var guest_presses: std.ArrayList(Press) = .empty;
+    defer guest_presses.deinit(gpa);
+    var pair = false;
+    var corrupt: ?u64 = null;
     var options: native.cli.Options = .{};
     // `iterateAllocator` is the form that Windows needs; the arena keeps the arguments for the
     // whole run.
@@ -60,6 +84,12 @@ pub fn main(init: std.process.Init) !void {
             try shots.append(gpa, parseShot(args.next() orelse return fail(io)) orelse return fail(io));
         } else if (std.mem.eql(u8, arg, "--wav")) {
             wav_path = args.next() orelse return fail(io);
+        } else if (std.mem.eql(u8, arg, "--guest-key")) {
+            try guest_presses.append(gpa, parsePress(args.next() orelse return fail(io)) orelse return fail(io));
+        } else if (std.mem.eql(u8, arg, "--pair")) {
+            pair = true;
+        } else if (std.mem.eql(u8, arg, "--corrupt")) {
+            corrupt = std.fmt.parseInt(u64, args.next() orelse return fail(io), 10) catch return fail(io);
         } else {
             return fail(io);
         }
@@ -74,14 +104,45 @@ pub fn main(init: std.process.Init) !void {
     defer memory_storage.deinit();
     var assets: ?sorz.platform.AssetSource = memory_assets.assetSource();
     var storage = memory_storage.storage();
-    if (options.assets != null or options.saves != null) {
+    if (options.saves != null) {
         providers.open(gpa, io, init.environ_map, options) catch |err| {
-            std.log.err("cannot open the providers: {s}", .{@errorName(err)});
+            std.log.err("cannot open the providers: {s}", .{native.cli.openErrorText(err)});
             std.process.exit(2);
         };
         assets = providers.assetSource() orelse assets;
         storage = providers.storage();
+    } else if (options.assets) |path| {
+        // Without `--saves`, only the game's data is opened: the user's save directory is not even
+        // created.
+        providers.openAssets(gpa, io, path) catch |err| {
+            std.log.err("cannot open the game data {s}: {s}", .{ path, native.cli.openErrorText(err) });
+            std.process.exit(2);
+        };
+        assets = providers.assetSource() orelse assets;
     }
+
+    // Network play: a session over WebSockets, or two games in one process. (`--delay` goes with
+    // `--netplay`, or with `--pair`.)
+    const network = if (pair) .none else options.network() catch return fail(io);
+    if (network == .server) return fail(io);
+    const netplay = network == .netplay or (pair and (options.netplay != null or options.join != null));
+    if (netplay or pair) {
+        if (shots.items.len != 0 or wav_path != null or (pair and netplay) or (!pair and (guest_presses.items.len != 0 or corrupt != null))) return fail(io);
+        const identity = providers.dataIdentity() catch |err| {
+            std.log.err("cannot read the game data for its identity: {s}", .{@errorName(err)});
+            std.process.exit(2);
+        };
+        var obuf: [2048]u8 = undefined;
+        var ow = std.Io.File.stdout().writerStreaming(io, &obuf);
+        const ok = if (pair)
+            try agent.netplay_cmd.pair(gpa, assets, identity, options.delay orelse 2, frames, presses.items, guest_presses.items, corrupt, &ow.interface)
+        else
+            try agent.netplay_cmd.process(gpa, io, assets, storage, options.netplayOptions(identity), page, providers.assetSource(), frames, presses.items, &ow.interface);
+        try ow.interface.flush();
+        if (!ok) std.process.exit(1);
+        return;
+    }
+    if (guest_presses.items.len != 0 or corrupt != null) return fail(io);
 
     var backend = agent.AgentBackend.init(gpa, .{});
     defer backend.deinit();
