@@ -26,8 +26,8 @@ pub const Assets = struct {
     pub const directory = "tree/";
     /// The listing's path under `assets/`.
     pub const listing_name = "manifest.json";
-    /// The largest file read (a level's map is under 1 MiB).
-    pub const max_file_bytes = 64 << 20;
+    /// The largest file read, as the data's identity reads it.
+    pub const max_file_bytes = sorz.net.identity.max_file_bytes;
 
     pub const ReadError = platform.AssetError || error{OutOfMemory};
 

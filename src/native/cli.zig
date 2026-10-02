@@ -289,7 +289,7 @@ pub const Providers = struct {
     /// served; zeros without data.
     pub fn dataIdentity(self: *Providers) platform.AssetError!sorz.net.protocol.DataId {
         const source = self.assetSource() orelse return @splat(0);
-        return sorz.net.identity.ofTree(source, 256 * 1024 * 1024);
+        return sorz.net.identity.ofTree(source, sorz.net.identity.max_file_bytes);
     }
 };
 

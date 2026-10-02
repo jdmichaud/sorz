@@ -12,9 +12,13 @@ const protocol = @import("protocol.zig");
 
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
+/// The largest file of the game's data that the identity reads, on every platform: the largest a
+/// server gives its pages too.
+pub const max_file_bytes = 64 << 20;
+
 /// The identity of the asset tree that `source` holds (every file it lists). Each file is read
-/// whole with `max_file_bytes` at most.
-pub fn ofTree(source: platform.AssetSource, max_file_bytes: usize) platform.AssetError!protocol.DataId {
+/// whole with `max_bytes` at most (`max_file_bytes` on every platform).
+pub fn ofTree(source: platform.AssetSource, max_bytes: usize) platform.AssetError!protocol.DataId {
     var names = try source.list("");
     defer names.deinit();
     const sorted = source.allocator.dupe([]const u8, names.names) catch return error.OutOfMemory;
@@ -23,7 +27,7 @@ pub fn ofTree(source: platform.AssetSource, max_file_bytes: usize) platform.Asse
     var h = Sha256.init(.{});
     h.update("sorz content tree\n");
     for (sorted) |name| {
-        var bytes = try source.readAll(name, max_file_bytes);
+        var bytes = try source.readAll(name, max_bytes);
         defer bytes.deinit();
         h.update("file ");
         h.update(name);

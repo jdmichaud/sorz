@@ -636,9 +636,16 @@ pub const Session = struct {
         self.phase = .desynced;
         self.desync_at = t;
         self.note(.{ .desync = t });
-        // Our form of that tick, for the peer's diagnosis.
+        // Our form of that tick, for the peer's diagnosis. Without it (longer than the protocol
+        // carries, or a later check's in its place) there is nothing to compare: chunks that come
+        // are not taken, and the note says so.
         const s = (t / check_interval) % 2;
-        if (self.snapshots[s] != t) return;
+        if (self.snapshots[s] != t) {
+            self.early_tick = null;
+            self.peer_chunks = done_chunks;
+            self.note(.{ .diagnosed = null });
+            return;
+        }
         const form = self.snapshot_forms[s].slice();
         const length: u32 = @intCast(form.len);
         var offset: u32 = 0;
@@ -943,6 +950,27 @@ test "a state mismatch stops both and names the first differing field" {
     var buf: [protocol.max_len]u8 = undefined;
     try testing.expectEqual(Verdict.malformed, host.receive(encodeMsg(.{ .hash = .{ .tick = 31, .hash = 0 } }, &buf), 0));
     try testing.expectEqual(Verdict.stale, host.receive(encodeMsg(.{ .hash = .{ .tick = 30, .hash = 0 } }, &buf), 0));
+}
+
+test "a mismatch whose state was not kept is noted, and takes no chunk" {
+    var host = try testSession(.host, 2);
+    defer host.deinit();
+    var guest = try testSession(.guest, null);
+    defer guest.deinit();
+    try startPair(&host, &guest);
+    try runBoth(&host, &guest, check_interval);
+    // The host's form is longer than the protocol carries: only its hash is checked.
+    const long = try testing.allocator.alloc(u8, protocol.max_state_len + 1);
+    defer testing.allocator.free(long);
+    @memset(long, 0);
+    var b_buf: [canonical.size(TestState)]u8 = undefined;
+    host.check(1, long);
+    guest.check(2, formOf(.{}, &b_buf));
+    _ = pump(&guest, &host, 0);
+    try testing.expectEqual(Phase.desynced, host.phase);
+    try testing.expectEqual(@as(?canonical.Difference, null), host.notes.getLast().diagnosed);
+    var buf: [protocol.max_len]u8 = undefined;
+    try testing.expectEqual(Verdict.duplicate, host.receive(encodeMsg(.{ .state = .{ .tick = check_interval, .length = 1, .offset = 0, .bytes = &.{0} } }, &buf), 0));
 }
 
 test "a form of several chunks crosses whole, and a chunk of another tick is refused" {

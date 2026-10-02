@@ -212,7 +212,11 @@ export fn gp_free(ptr: [*]u8, len: u32) void {
 /// Adds one of the game's files. The module keeps the name and the bytes, which `gp_alloc` made,
 /// for as long as it runs. Returns 0, or -1 for an invalid name (the page frees both).
 export fn gp_add_asset(name: [*]u8, name_len: u32, bytes: [*]u8, len: u32) i32 {
-    if (!ready or game != null) return -1;
+    if (!ready) return -1;
+    if (game != null) {
+        setError("the game has started: it takes no more files", .{});
+        return -1;
+    }
     assets.add(name[0..name_len], bytes[0..len]) catch |err| {
         setError("{s}: {s}", .{ name[0..@min(name_len, 256)], @errorName(err) });
         return -1;
@@ -320,7 +324,7 @@ export fn gp_start_netplay(role: u32, url_len: u32) i32 {
         setError("network play starts before the first update", .{});
         return -1;
     }
-    const identity = sorz.net.identity.ofTree(assets.assetSource(), 64 << 20) catch |err| {
+    const identity = sorz.net.identity.ofTree(assets.assetSource(), sorz.net.identity.max_file_bytes) catch |err| {
         setError("the game files' identity: {s}", .{@errorName(err)});
         return -1;
     };
