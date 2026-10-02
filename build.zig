@@ -200,9 +200,18 @@ pub fn build(b: *std.Build) void {
         .imports = &.{.{ .name = "sorz", .module = shared }},
     });
 
+    // The extractor (src/extract): the one module that reads the user's ROM, into the content
+    // tree. Native hosts and tools import it; the browser build never does.
+    const extract = b.addModule("extract", .{
+        .root_source_file = b.path("src/extract/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "sorz", .module = shared }},
+    });
+
     // Unit tests of every module. The tests of the SDL module link SDL2 as the host does.
     const test_step = b.step("test", "Run the unit tests of every module");
-    const unit_modules = [_]*std.Build.Module{ shared, agent, native, sdl, web_parts };
+    const unit_modules = [_]*std.Build.Module{ shared, agent, native, sdl, web_parts, extract };
     for (unit_modules) |m| {
         const t = b.addTest(.{ .root_module = m });
         test_step.dependOn(&b.addRunArtifact(t).step);
