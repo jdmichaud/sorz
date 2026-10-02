@@ -1,236 +1,243 @@
-//! The game's scenes (DESIGN.md 10.4): a stack whose top scene takes the pads at each tick, advances
-//! and draws. An overlay (S3: the settings, network play's messages, the pause) is a scene pushed
-//! over another. Each scene owns its state, which is part of the game's canonical state, so a
-//! place of the stack that holds no scene is `empty`, never left as it was.
+//! The game's scenes (DESIGN.md 10.4): a stack whose top scene takes the pads at each display tick,
+//! advances, and draws its state. A scene ends with an exit, and the flow graph (flow.zig) says
+//! which scene follows, after a load if the original waited there. An overlay (S3: the settings,
+//! network play's messages, the pause) will be a scene pushed over another.
 //!
-//! Until the game's scenes and their flow graph come (PLAN item 08), the stack holds one scene, the
-//! test pattern, on which the hosts, network play and the checks run.
+//! Each scene is a struct with:
+//! - its state, plain values, part of the game's canonical state (no pointer, no slice);
+//! - `start(setup)`, its state when it begins;
+//! - `Assets`, the content it draws and plays, found by name when the game starts (library.zig);
+//! - `tick(turn, assets)`, one display tick: the pads, the sounds it asks for, its exit if it ends;
+//! - `layout`, the boards its picture needs, and `draw(prev, view, assets)`, which draws its state
+//!   on the view: whole when `prev` is null (a new picture), else what changed since `prev`, the
+//!   state it last drew. Sprites and colours are given again at every draw.
 const std = @import("std");
 const input = @import("input.zig");
-const picture = @import("picture.zig");
+const flow = @import("flow.zig");
+const library = @import("library.zig");
+const json = @import("formats/json.zig");
+const View = @import("view.zig").View;
+const Setup = @import("setup.zig").Setup;
 
-pub const Scene = union(enum) {
-    /// A place of the stack without a scene.
-    empty,
+pub const Kind = flow.Kind;
+pub const Exit = flow.Exit;
+pub const TestPattern = @import("screens/test_pattern.zig").TestPattern;
+pub const Load = @import("screens/load.zig").Load;
+pub const StandIn = @import("screens/stand_in.zig").StandIn;
+
+/// The scenes' state, by kind.
+pub const Scene = union(Kind) {
     test_pattern: TestPattern,
+    load: Load,
+    sega_logo: StandIn,
+    intro: StandIn,
+    title: StandIn,
+    menu: StandIn,
+    options: StandIn,
+    select: StandIn,
+    demo: StandIn,
+    high_scores: StandIn,
+    round: StandIn,
 
-    /// One tick of the scene, with the pads of that tick.
-    pub fn tick(self: *Scene, pads: input.Pads) void {
-        switch (self.*) {
-            .empty => {},
-            .test_pattern => |*s| s.tick(pads),
-        }
+    /// The scene of kind `k` as it begins (a load is begun by the flow, with its length).
+    pub fn start(k: Kind, setup: *const Setup) Scene {
+        return switch (k) {
+            .test_pattern => .{ .test_pattern = .{} },
+            .load => unreachable,
+            inline else => |tag| blk: {
+                const T = @FieldType(Scene, @tagName(tag));
+                break :blk @unionInit(Scene, @tagName(tag), if (T == StandIn) StandIn.of(tag) else T.start(setup));
+            },
+        };
     }
 };
 
+/// The sounds a tick asks for, in order (the sequencer takes three a tick at most, and drops the
+/// rest as the original's driver does).
+pub const Requests = struct {
+    items: [4]library.Sound = undefined,
+    len: u8 = 0,
+
+    pub fn slice(self: *const Requests) []const library.Sound {
+        return self.items[0..self.len];
+    }
+};
+
+/// What a scene's tick has: the pads and the setup the screens share; and what it gives: the sounds
+/// it asks for.
+pub const Turn = struct {
+    /// The buttons held at this tick, and those newly held (held now, not at the last tick).
+    pads: input.Pads = .{},
+    pressed: input.Pads = .{},
+    /// Whether a second pad is there (the game menu dims 2 PLAYERS without it).
+    second_pad: bool = true,
+    setup: *Setup,
+    requests: Requests = .{},
+    /// Whether the sound's driver runs at this tick: a load holds it, as the original's do.
+    sound_driver: bool = true,
+
+    pub fn play(self: *Turn, s: library.Sound) void {
+        if (self.requests.len == self.requests.items.len) return;
+        self.requests.items[self.requests.len] = s;
+        self.requests.len += 1;
+    }
+};
+
+/// Every scene's content, found by name when the game starts.
+pub const Assets = struct {
+    load: Load.Assets,
+    stand_in: StandIn.Assets,
+
+    pub fn find(c: *const library.Content, diag: *json.Diagnostic) library.LoadError!Assets {
+        var a: Assets = undefined;
+        const info = @typeInfo(Assets).@"struct";
+        inline for (info.field_names, info.field_types) |name, T| @field(a, name) = try library.find(T, c, diag);
+        return a;
+    }
+};
+
+/// The stack of scenes. Each scene started has a number (`serial`), so that a new scene of the same
+/// kind still begins a new picture.
 pub const Stack = struct {
     pub const capacity = 4;
 
-    items: [capacity]Scene = .{ .{ .test_pattern = .{} }, .empty, .empty, .empty },
+    items: [capacity]Scene = .{ .{ .test_pattern = .{} }, .{ .load = .{} }, .{ .load = .{} }, .{ .load = .{} } },
+    serials: [capacity]u32 = @splat(0),
     len: u8 = 1,
+    /// The scenes started since power-on.
+    started: u32 = 1,
 
     pub fn top(self: *Stack) *Scene {
         return &self.items[self.len - 1];
     }
 
-    pub fn push(self: *Stack, scene: Scene) error{Full}!void {
-        if (self.len == capacity) return error.Full;
-        self.items[self.len] = scene;
-        self.len += 1;
+    pub fn topSerial(self: *const Stack) u32 {
+        return self.serials[self.len - 1];
     }
 
-    /// Takes the top scene off; the one below goes on. The bottom scene stays.
+    /// The top scene replaced by `s`, a new scene with its own picture.
+    pub fn replace(self: *Stack, s: Scene) void {
+        self.items[self.len - 1] = s;
+        self.serials[self.len - 1] = self.started;
+        self.started +%= 1;
+    }
+
+    pub fn push(self: *Stack, s: Scene) error{Full}!void {
+        if (self.len == capacity) return error.Full;
+        self.len += 1;
+        self.replace(s);
+    }
+
+    /// Takes the top scene off; the one below goes on. The bottom scene stays. A place that holds
+    /// no scene is reset, never left as it was (the canonical state covers it).
     pub fn pop(self: *Stack) void {
         if (self.len == 1) return;
         self.len -= 1;
-        self.items[self.len] = .empty;
-    }
-
-    /// One tick of the top scene. The scheduler of DESIGN.md 10.2 (which ticks run the logic, at
-    /// 30 a second in play) goes here with the scenes that need it.
-    pub fn tick(self: *Stack, pads: input.Pads) void {
-        self.top().tick(pads);
+        self.items[self.len] = .{ .load = .{} };
+        self.serials[self.len] = 0;
     }
 };
 
-/// The test pattern: eight colour bars; a marker for each player, which the pad's directions move
-/// a pixel a tick, white or black, or in the colours of the face buttons held (A red, B green, C
-/// blue); and along the bottom the tick's count in 32 bits, so that each tick has its own picture.
-pub const TestPattern = struct {
-    markers: [2]Marker = .{ .{ .x = 96, .y = 100 }, .{ .x = 216, .y = 100 } },
-
-    pub const Marker = struct {
-        x: u16,
-        y: u16,
-        /// The pad at the last tick: its face buttons give the colour, and Start's presses count.
-        pad: input.Pad = .{},
-        starts: u16 = 0,
+/// One display tick of the top scene, and the flow that follows its exit. Every scene but the test
+/// pattern needs the content's `assets`.
+pub fn tick(stack: *Stack, graph: *const flow.Graph, turn: *Turn, assets: ?*const Assets) void {
+    const s = stack.top();
+    const exit = switch (s.*) {
+        .test_pattern => |*t| {
+            t.tick(turn.pads);
+            return;
+        },
+        inline else => |*payload, tag| payload.tick(turn, assetsOf(assets.?, tag)),
+    } orelse return;
+    // A load ends into the scene it was for.
+    if (s.* == .load) return stack.replace(.start(s.load.next, turn.setup));
+    const edge = graph.next(std.meta.activeTag(s.*), exit) orelse {
+        std.log.warn("the scene {s} ended by {s}, which the flow does not follow", .{ @tagName(s.*), @tagName(exit) });
+        return;
     };
+    if (edge.load != 0) {
+        stack.replace(.{ .load = .{ .next = edge.to, .left = edge.load, .sound_held = edge.sound_held } });
+    } else stack.replace(.start(edge.to, turn.setup));
+}
 
-    pub const marker_size = 8;
-    /// The bars cover the picture down to the strip of the tick's bits.
-    pub const strip_top = picture.height - 8;
-    const strip_cell = picture.width / 32;
-    const bar_width = picture.width / bar_colours.len;
-    const bar_colours = [8]picture.Rgb{
-        .{ 192, 192, 192 }, .{ 192, 192, 0 }, .{ 0, 192, 192 }, .{ 0, 192, 0 },
-        .{ 192, 0, 192 },   .{ 192, 0, 0 },   .{ 0, 0, 192 },   .{ 16, 16, 16 },
-    };
-    const bit_on: picture.Rgb = .{ 255, 255, 255 };
-    const bit_off: picture.Rgb = .{ 48, 48, 48 };
+/// The state of the scene before `stack`'s top scene at power-on: the flow's first scene after its
+/// power-on load.
+pub fn powerOn(graph: *const flow.Graph) Stack {
+    var s: Stack = .{};
+    s.replace(.{ .load = .{ .next = graph.first, .left = graph.power_on } });
+    return s;
+}
 
-    pub fn tick(self: *TestPattern, pads: input.Pads) void {
-        for (&self.markers, [2]input.Pad{ pads.pad1, pads.pad2 }) |*m, pad| {
-            if (pad.left and m.x > 0) m.x -= 1;
-            if (pad.right and m.x < picture.width - marker_size) m.x += 1;
-            if (pad.up and m.y > 0) m.y -= 1;
-            if (pad.down and m.y < strip_top - marker_size) m.y += 1;
-            if (pad.start and !m.pad.start) m.starts +%= 1;
-            m.pad = pad;
-        }
+/// Draws the top scene on `v`: whole when the view shows another scene (or none), else what
+/// changed since `prev`, the state last drawn, which it then holds.
+pub fn draw(stack: *Stack, prev: *Scene, v: *View, assets: *const Assets) !void {
+    const s = stack.top();
+    const fresh = v.shows != stack.topSerial() or std.meta.activeTag(prev.*) != std.meta.activeTag(s.*);
+    if (fresh) {
+        const layout = switch (s.*) {
+            .test_pattern => unreachable,
+            inline else => |_, tag| @FieldType(Scene, @tagName(tag)).layout,
+        };
+        try v.begin(stack.topSerial(), layout);
     }
-
-    /// What the picture shows already, so that a tick draws only what changed. It is the
-    /// presentation's, not the game's state.
-    pub const Drawn = struct {
-        /// Nothing of the pattern is on the picture: the next draw draws it whole.
-        whole: bool = false,
-        tick: u32 = 0,
-        markers: [2]picture.Rect = undefined,
-        colours: [2]picture.Rgb = undefined,
-    };
-
-    /// Draws the pattern at tick `tick_count` on `pic`, which shows `drawn`.
-    pub fn draw(self: *const TestPattern, tick_count: u32, pic: *picture.Picture, drawn: *Drawn) void {
-        if (!drawn.whole) {
-            bars(pic, .{ .x = 0, .y = 0, .w = picture.width, .h = strip_top });
-            for (0..32) |i| bit(pic, tick_count, @intCast(i));
-        } else {
-            // The bits that changed, and the bars under the markers that moved or changed colour.
-            const changed = tick_count ^ drawn.tick;
-            for (0..32) |i| if (changed & bitMask(@intCast(i)) != 0) bit(pic, tick_count, @intCast(i));
-            for (self.markers, 0..) |m, i| {
-                if (!std.meta.eql(rect(m), drawn.markers[i]) or !std.meta.eql(colour(i, m.pad), drawn.colours[i])) {
-                    bars(pic, drawn.markers[i]);
-                }
-            }
-        }
-        // Both markers again, over the bars that may have covered one.
-        for (self.markers, 0..) |m, i| {
-            drawn.markers[i] = rect(m);
-            drawn.colours[i] = colour(i, m.pad);
-            pic.fill(drawn.markers[i], drawn.colours[i]);
-        }
-        drawn.whole = true;
-        drawn.tick = tick_count;
+    v.sprites.clearRetainingCapacity();
+    switch (s.*) {
+        .test_pattern => unreachable,
+        inline else => |*payload, tag| {
+            const a = assetsOf(assets, tag);
+            try payload.draw(if (fresh) null else &@field(prev.*, @tagName(tag)), v, a);
+        },
     }
+    prev.* = s.*;
+}
 
-    fn rect(m: Marker) picture.Rect {
-        return .{ .x = m.x, .y = m.y, .w = marker_size, .h = marker_size };
+fn assetsOf(assets: *const Assets, comptime k: Kind) *const @FieldType(Scene, @tagName(k)).Assets {
+    const T = @FieldType(Scene, @tagName(k));
+    const info = @typeInfo(Assets).@"struct";
+    inline for (info.field_names, info.field_types) |name, F| {
+        if (F == T.Assets) return &@field(assets, name);
     }
-
-    fn colour(player: usize, pad: input.Pad) picture.Rgb {
-        if (!(pad.a or pad.b or pad.c)) return if (player == 0) .{ 255, 255, 255 } else .{ 0, 0, 0 };
-        return .{ if (pad.a) 255 else 0, if (pad.b) 255 else 0, if (pad.c) 255 else 0 };
-    }
-
-    /// The bars within `r`.
-    fn bars(pic: *picture.Picture, r: picture.Rect) void {
-        for (bar_colours, 0..) |c, i| {
-            const left: u32 = @intCast(i * bar_width);
-            const x0 = @max(r.x, left);
-            const x1 = @min(r.x + r.w, left + bar_width);
-            if (x0 < x1) pic.fill(.{ .x = x0, .y = r.y, .w = x1 - x0, .h = r.h }, c);
-        }
-    }
-
-    /// The mask of the bit that the strip's cell `i` shows: the most significant first.
-    fn bitMask(i: u5) u32 {
-        return @as(u32, 1) << (31 - i);
-    }
-
-    fn bit(pic: *picture.Picture, tick_count: u32, i: u5) void {
-        const on = tick_count & bitMask(i) != 0;
-        pic.fill(.{ .x = @as(u32, i) * strip_cell, .y = strip_top, .w = strip_cell, .h = 8 }, if (on) bit_on else bit_off);
-    }
-};
+    @compileError("no assets for " ++ @typeName(T));
+}
 
 const testing = std.testing;
 
-test "the markers follow their pads within the picture, and Start's presses count" {
-    var t: TestPattern = .{};
-    const right: input.Pad = .{ .right = true, .start = true };
-    for (0..300) |_| t.tick(.{ .pad1 = right, .pad2 = .{ .up = true } });
-    try testing.expectEqual(@as(u16, picture.width - TestPattern.marker_size), t.markers[0].x);
-    try testing.expectEqual(@as(u16, 0), t.markers[1].y);
-    try testing.expectEqual(@as(u16, 1), t.markers[0].starts);
-    t.tick(.{});
-    t.tick(.{ .pad1 = .{ .start = true } });
-    try testing.expectEqual(@as(u16, 2), t.markers[0].starts);
-    try testing.expectEqual(@as(u16, 0), t.markers[1].starts);
-}
-
-test "drawing only what changed gives the picture that a whole drawing gives" {
-    var pic = try picture.Picture.init(testing.allocator);
-    defer pic.deinit(testing.allocator);
-    var whole = try picture.Picture.init(testing.allocator);
-    defer whole.deinit(testing.allocator);
-    var t: TestPattern = .{};
-    var drawn: TestPattern.Drawn = .{};
-    var count: u32 = 0;
-    t.draw(count, &pic, &drawn);
-    // The markers cross bars, change colour, and the count carries.
-    const pads = [_]input.Pads{
-        .{ .pad1 = .{ .right = true, .down = true }, .pad2 = .{ .left = true, .b = true } },
-        .{ .pad1 = .{ .right = true, .a = true, .c = true }, .pad2 = .{ .left = true } },
-        .{ .pad2 = .{ .up = true, .left = true } },
-    };
-    for (pads) |p| for (0..70) |_| {
-        t.tick(p);
-        count +%= 1;
-        t.draw(count, &pic, &drawn);
-        var fresh: TestPattern.Drawn = .{};
-        t.draw(count, &whole, &fresh);
-        try testing.expectEqualSlices(u8, whole.pixels, pic.pixels);
-    };
-    count = 255;
-    t.draw(count, &pic, &drawn);
-    count = 256;
-    t.draw(count, &pic, &drawn);
-    var fresh: TestPattern.Drawn = .{};
-    t.draw(count, &whole, &fresh);
-    try testing.expectEqualSlices(u8, whole.pixels, pic.pixels);
-
-    // On one row, player 1's marker goes through player 2's.
-    t = .{};
-    drawn = .{};
-    t.draw(count, &pic, &drawn);
-    var overlapped = false;
-    for (0..140) |_| {
-        t.tick(.{ .pad1 = .{ .right = true, .a = true } });
-        count +%= 1;
-        t.draw(count, &pic, &drawn);
-        var again: TestPattern.Drawn = .{};
-        t.draw(count, &whole, &again);
-        try testing.expectEqualSlices(u8, whole.pixels, pic.pixels);
-        const m = t.markers;
-        overlapped = overlapped or @max(m[0].x, m[1].x) - @min(m[0].x, m[1].x) < TestPattern.marker_size;
-    }
-    try testing.expect(overlapped);
-}
-
-test "the stack: its top ticks; a scene pushed over it and taken off" {
-    var s: Stack = .{};
-    s.tick(.{ .pad1 = .{ .left = true } });
-    try testing.expectEqual(@as(u16, 95), s.top().test_pattern.markers[0].x);
+test "the stack: a scene pushed over another and taken off; every scene its own number" {
+    var s = powerOn(&flow.original);
+    try testing.expect(s.top().* == .load and s.top().load.next == .sega_logo);
+    const first = s.topSerial();
     try s.push(.{ .test_pattern = .{} });
-    s.tick(.{ .pad1 = .{ .right = true } });
-    try testing.expectEqual(@as(u16, 97), s.top().test_pattern.markers[0].x);
+    try testing.expect(s.topSerial() != first);
     s.pop();
-    try testing.expectEqual(@as(u16, 95), s.top().test_pattern.markers[0].x);
-    try testing.expectEqual(Scene.empty, s.items[1]);
+    try testing.expectEqual(first, s.topSerial());
+    try testing.expect(s.items[1] == .load);
     s.pop();
     try testing.expectEqual(@as(u8, 1), s.len);
-    for (1..Stack.capacity) |_| try s.push(.empty);
-    try testing.expectError(error.Full, s.push(.empty));
+    for (1..Stack.capacity) |_| try s.push(.{ .test_pattern = .{} });
+    try testing.expectError(error.Full, s.push(.{ .test_pattern = .{} }));
+}
+
+test "the flow: a load, then the scene it was for; an exit, its edge, and its load" {
+    var setup: Setup = .{};
+    var turn: Turn = .{ .setup = &setup };
+    const assets: Assets = undefined;
+    var s = powerOn(&flow.original);
+    for (0..flow.original.power_on) |_| {
+        try testing.expect(s.top().* == .load);
+        tick(&s, &flow.original, &turn, &assets);
+    }
+    try testing.expect(s.top().* == .sega_logo);
+    const graph: flow.Graph = .{ .first = .sega_logo, .power_on = 1, .edges = &.{
+        .{ .from = .sega_logo, .exit = .done, .to = .intro, .load = 2 },
+    } };
+    var ticks: usize = 0;
+    while (s.top().* == .sega_logo) : (ticks += 1) {
+        try testing.expect(ticks < 10_000);
+        tick(&s, &graph, &turn, &assets);
+    }
+    try testing.expect(s.top().* == .load and s.top().load.next == .intro);
+    tick(&s, &graph, &turn, &assets);
+    try testing.expect(s.top().* == .load);
+    tick(&s, &graph, &turn, &assets);
+    try testing.expect(s.top().* == .intro);
 }

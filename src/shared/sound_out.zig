@@ -4,9 +4,11 @@
 //! the sound keeps the device's time and never drifts. Network play's balancing stretches the
 //! frames of a tick by up to 0.5 % (DESIGN.md 9), which slows the peer that is ahead.
 //!
-//! The frames are silence for now. TODO(PLAN item 09): the sequencer and the chip models
-//! (src/shared/audio) make each tick's frames here, from the sounds the game asks for.
+//! With the content's sound, the sequencer and the chip models (src/shared/audio) make each tick's
+//! frames from the sounds the game asks for; without it (the repository's checks), the frames are
+//! silence, counted the same way.
 const std = @import("std");
+const audio = @import("audio/root.zig");
 
 /// The display tick's rate, in ticks a second: the console's frame (NTSC), its master clock
 /// (53,693,175 Hz) over the clock's periods in a frame (896,040). 59.92 ticks a second.
@@ -30,18 +32,56 @@ pub const SoundOut = struct {
     rest: u64 = 0,
     /// Room for the frames of a tick at the largest stretch.
     frames: []i16,
+    /// The game's sound, when the content has one: the sounds asked for, the sequencer, the chips.
+    sound: ?audio.Sound = null,
+    /// The stretch the sound's output plays at.
+    stretch_ppm: u32 = 0,
 
     const unit: u64 = tick_rate_numerator * 1_000_000;
 
-    pub fn init(allocator: std.mem.Allocator, device_rate: u32) error{OutOfMemory}!SoundOut {
+    /// `sounds`, when given, outlives the output.
+    pub fn init(allocator: std.mem.Allocator, device_rate: u32, sounds: ?*const audio.content.Content) !SoundOut {
         var self: SoundOut = .{ .rate = device_rate, .frames = &.{} };
         self.frames = try allocator.alloc(i16, channels * self.maxFrames());
+        errdefer allocator.free(self.frames);
+        if (sounds) |c| self.sound = try audio.Sound.init(allocator, c, device_rate);
         return self;
     }
 
     pub fn deinit(self: *SoundOut, allocator: std.mem.Allocator) void {
+        if (self.sound) |*s| s.deinit(allocator);
         allocator.free(self.frames);
         self.* = undefined;
+    }
+
+    /// The sound from power-on: nothing playing, nothing asked for.
+    pub fn reset(self: *SoundOut, allocator: std.mem.Allocator) !void {
+        self.rest = 0;
+        if (self.sound) |*s| {
+            const c = s.sounds;
+            s.deinit(allocator);
+            self.sound = null;
+            self.sound = try audio.Sound.init(allocator, c, self.rate);
+            self.stretch_ppm = 0;
+        }
+    }
+
+    /// One display tick of the game's sound: the sequencer's update (when `driver`: a load holds
+    /// it, as the original's loads hold its driver) with the sounds asked for before, then the
+    /// tick's frames, `stretch_ppm` millionths longer (network play's balancing); `requests`, the
+    /// sounds the tick asked for, play from the next update on, as the original's driver takes
+    /// the requests of a frame's logic at the next frame. The frames stay valid until the next
+    /// call. Without the content's sound, silence.
+    pub fn play(self: *SoundOut, stretch_ppm: u32, requests: []const audio.sound.Id, driver: bool) []const i16 {
+        const s = if (self.sound) |*s| s else return self.tick(stretch_ppm);
+        const ppm = @min(stretch_ppm, max_stretch_ppm);
+        if (ppm != self.stretch_ppm) {
+            s.output.stretch(ppm);
+            self.stretch_ppm = ppm;
+        }
+        const frames = if (driver) s.tick() else s.output.tick(&.{});
+        for (requests) |r| s.play(r);
+        return frames;
     }
 
     /// The most frames that a tick has, at the largest stretch.
@@ -64,7 +104,7 @@ pub const SoundOut = struct {
 };
 
 test "a tick's frames add up to the device's rate, exactly, and the stretch lengthens them" {
-    var out = try SoundOut.init(std.testing.allocator, 48000);
+    var out = try SoundOut.init(std.testing.allocator, 48000, null);
     defer out.deinit(std.testing.allocator);
     // 53,693,175 ticks last 896,040 seconds: 896,040 x 48,000 frames.
     var frames: u64 = 0;

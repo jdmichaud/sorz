@@ -1,7 +1,9 @@
-//! The game as the hosts run it (DESIGN.md 3.1): its state from power-on (`State`, the scenes of
-//! scene.zig), the players' controls (input.zig), the picture it presents and the sound it queues,
-//! and the settings record read at the start. The hosts own the platform and the providers; the
-//! game owns what happens next.
+//! The game as the hosts run it (DESIGN.md 3.1): its content, read from the asset source at the
+//! start (library.zig); its state from power-on (`State`: the scenes of scene.zig and their flow,
+//! flow.zig); the players' controls (input.zig); the picture it presents (view.zig, through the
+//! renderer) and the sound it queues (sound_out.zig, through the sequencer); and the settings
+//! record read at the start. The hosts own the platform and the providers; the game owns what
+//! happens next.
 //!
 //! Time: the game advances by display ticks, the console's frame, 59.92 a second (DESIGN.md
 //! 10.2). While the platform plays sound, the game runs the ticks that keep the device's queue a
@@ -9,9 +11,8 @@
 //! ticks that the platform's clock makes due. The agent host runs one tick per update
 //! (`Pacing.per_update`), so that its frames are the ticks.
 //!
-//! For now the game is a test pattern and silence: what the hosts, network play and the checks run
-//! on until the content (PLAN item 06), the renderer (07), the scenes (08) and the sound (09)
-//! take their places. TODO(PLAN item 06): the content loads from `assets` at the start.
+//! Without a content tree (the repository's checks give the game none, DESIGN.md 1), the game shows
+//! a test pattern and plays silence, on which the hosts, network play and the checks run.
 //!
 //! Network play (DESIGN.md 9, `startNetplay`): each tick's pads come from the session with the
 //! other player instead of the local controls, which give this player's pad only (pad 1's keys and
@@ -30,9 +31,14 @@ const input = @import("input.zig");
 const settings_mod = @import("settings/root.zig");
 const canonical = @import("canonical.zig");
 const scene = @import("scene.zig");
+const flow = @import("flow.zig");
+const library = @import("library.zig");
+const json = @import("formats/json.zig");
 const picture = @import("picture.zig");
 const sound_out = @import("sound_out.zig");
 const net = @import("net/root.zig");
+const View = @import("view.zig").View;
+const Setup = @import("setup.zig").Setup;
 
 pub const page_width = picture.width;
 pub const page_height = picture.height;
@@ -60,12 +66,35 @@ pub const Notice = enum {
 pub const State = struct {
     /// Display ticks since power-on.
     tick: u32 = 0,
+    /// The scenes; the test pattern alone without content.
     scenes: scene.Stack = .{},
+    /// What the screens decide for play.
+    setup: Setup = .{},
+    /// The pads at the last tick: a button held now and not then is pressed.
+    held: input.Pads = .{},
 
-    /// One display tick, with the pads of that tick.
-    pub fn step(self: *State, pads: input.Pads) void {
-        self.scenes.tick(pads);
+    /// The state at power-on of a game with its content: the flow's first scene after its load.
+    pub fn powerOn(graph: *const flow.Graph) State {
+        return .{ .scenes = scene.powerOn(graph) };
+    }
+
+    /// One display tick, with the pads of that tick and whether a second pad is there. Returns
+    /// what the tick asks of the sound. Every scene but the test pattern needs `assets`.
+    pub fn step(self: *State, pads: input.Pads, second_pad: bool, assets: ?*const scene.Assets) scene.Turn {
+        var turn: scene.Turn = .{
+            .pads = pads,
+            .pressed = .{ .pad1 = newly(pads.pad1, self.held.pad1), .pad2 = newly(pads.pad2, self.held.pad2) },
+            .second_pad = second_pad,
+            .setup = &self.setup,
+        };
+        self.held = pads;
+        scene.tick(&self.scenes, &flow.original, &turn, assets);
         self.tick +%= 1;
+        return turn;
+    }
+
+    fn newly(now: input.Pad, before: input.Pad) input.Pad {
+        return @bitCast(@as(u8, @bitCast(now)) & ~@as(u8, @bitCast(before)));
     }
 
     pub fn hash(self: *const State) u64 {
@@ -80,9 +109,12 @@ const max_ticks_per_update = 4;
 
 pub const Game = struct {
     allocator: std.mem.Allocator,
-    /// The game's files, which the content will load from (PLAN item 06), and the saves.
+    /// The game's files, which the content is read from, and the saves.
     assets: ?platform.AssetSource,
     storage: ?platform.Storage,
+    /// The content tree, and the scenes' assets in it; null without a tree (the test pattern).
+    content: ?*library.Content = null,
+    scene_assets: ?scene.Assets = null,
     state: State = .{},
     controls: input.Controls = .{},
     settings: settings_mod.Settings = .{},
@@ -106,11 +138,13 @@ pub const Game = struct {
     host_volume: bool = false,
     /// Room for a tick's frames at the settings' volume.
     volume_buffer: []i16 = &.{},
+    /// The scenes' picture, with the content.
+    view: ?View = null,
+    /// The top scene's state as it was last drawn: the next drawing draws what changed since.
+    drawn: scene.Scene = .{ .load = .{} },
+    /// The test pattern's picture, without content, and what it shows.
     pic: picture.Picture,
-    drawn: scene.TestPattern.Drawn = .{},
-    /// The scene `drawn` describes (the stack's depth and its top's kind): another scene on top
-    /// draws whole.
-    drawn_scene: ?struct { len: u8, kind: std.meta.Tag(scene.Scene) } = null,
+    pattern_drawn: scene.TestPattern.Drawn = .{},
     /// Whether the picture may have changed since it was last drawn (a tick ran).
     redraw: bool = true,
 
@@ -120,9 +154,15 @@ pub const Game = struct {
     saves_written: u64 = 0,
     loads_done: u64 = 0,
 
-    /// The settings are read from `storage` (the defaults without one).
-    pub fn init(allocator: std.mem.Allocator, assets: ?platform.AssetSource, storage: ?platform.Storage) error{OutOfMemory}!Game {
+    pub const InitError = error{ OutOfMemory, BadContent };
+
+    /// The content is read from `assets` when they hold a content tree (a refusal is logged with
+    /// the file and the field, and is `BadContent`); without one, the game shows its test
+    /// pattern. The settings are read from `storage` (the defaults without one).
+    pub fn init(allocator: std.mem.Allocator, assets: ?platform.AssetSource, storage: ?platform.Storage) InitError!Game {
         var game: Game = .{ .allocator = allocator, .assets = assets, .storage = storage, .pic = try .init(allocator) };
+        errdefer game.deinit();
+        if (assets) |a| if (library.hasTree(allocator, a)) try game.loadContent(a);
         if (storage) |s| game.loadSettings(s);
         return game;
     }
@@ -134,8 +174,34 @@ pub const Game = struct {
         }
         if (self.sound) |*s| s.deinit(self.allocator);
         self.allocator.free(self.volume_buffer);
+        if (self.view) |*v| v.deinit();
+        if (self.content) |c| {
+            c.destroy();
+            self.allocator.destroy(c);
+        }
         self.pic.deinit(self.allocator);
         self.* = undefined;
+    }
+
+    /// The content tree, every file checked, the scenes' assets found in it, and the game at
+    /// power-on with it.
+    fn loadContent(self: *Game, assets: platform.AssetSource) InitError!void {
+        var diag: json.Diagnostic = .{};
+        const c = library.load(self.allocator, assets, &diag) catch |e| return self.refuse(e, &diag);
+        self.content = c;
+        self.scene_assets = scene.Assets.find(c, &diag) catch |e| return self.refuse(e, &diag);
+        self.view = try View.init(self.allocator);
+        self.state = .powerOn(&flow.original);
+    }
+
+    fn refuse(_: *Game, e: library.LoadError, diag: *const json.Diagnostic) InitError {
+        if (e == error.BadContent) std.log.err("the game's content is refused: {f}", .{diag});
+        return e;
+    }
+
+    /// The state from power-on: with the content, the flow's first scene; without, the pattern.
+    fn startState(self: *const Game) State {
+        return if (self.content != null) .powerOn(&flow.original) else .{};
     }
 
     /// The settings from the storage: a damaged record is told (settings/record.zig).
@@ -315,15 +381,24 @@ pub const Game = struct {
         return np.stretchPpm();
     }
 
+    /// Whether this machine has a second pad for the game: two players on it, or the other player of
+    /// network play. A browser alone has one (the game menu dims 2 PLAYERS).
+    fn secondPad(self: *const Game) bool {
+        return !self.controls.one_player or self.netplay != null;
+    }
+
     /// One tick, and its sound. In network play the pads are the session's; false when it holds
-    /// for the other player's, and nothing ran. TODO(PLAN item 09): a hold fades the sound out,
-    /// and the next tick fades it in (DESIGN.md 9); silence has nothing to fade.
+    /// for the other player's, and nothing ran. TODO(PLAN item 18): a hold fades the sound out,
+    /// and the next tick fades it in (DESIGN.md 9).
     fn runTick(self: *Game, p: *platform.Platform) bool {
         var pads = self.controls.pads();
         if (self.netplay) |np| pads = np.pads(p, pads.pad1) orelse return false;
-        self.state.step(pads);
+        const turn = self.state.step(pads, self.secondPad(), if (self.scene_assets) |*a| a else null);
         self.redraw = true;
-        if (self.sound) |*s| _ = p.audioQueue(self.atVolume(s.tick(self.stretchPpm()))) catch {};
+        if (self.sound) |*s| {
+            const frames = s.play(self.stretchPpm(), turn.requests.slice(), turn.sound_driver);
+            _ = p.audioQueue(self.atVolume(frames)) catch {};
+        }
         if (self.netplay) |np| {
             np.ran();
             if (np.checkDue()) {
@@ -338,13 +413,18 @@ pub const Game = struct {
 
     /// A session from power-on (network play): the state, the picture and the sound start over.
     fn powerOn(self: *Game, p: *platform.Platform) void {
-        self.state = .{};
+        self.state = self.startState();
         self.redraw = true;
-        self.drawn = .{};
+        self.pattern_drawn = .{};
+        if (self.view) |*v| v.shows = null;
         self.clock_base_ns = p.nowNs();
         self.clock_ticks = 0;
         if (self.sound) |*s| {
-            s.rest = 0;
+            s.reset(self.allocator) catch |err| {
+                std.log.warn("no sound: {s}", .{@errorName(err)});
+                s.deinit(self.allocator);
+                self.sound = null;
+            };
             p.audioClear();
         }
     }
@@ -360,7 +440,8 @@ pub const Game = struct {
             p.audioClose();
             return;
         }
-        self.sound = sound_out.SoundOut.init(self.allocator, fmt.sample_rate) catch |err| {
+        const sounds = if (self.content) |c| &c.sounds else null;
+        self.sound = sound_out.SoundOut.init(self.allocator, fmt.sample_rate, sounds) catch |err| {
             std.log.warn("no sound: {s}", .{@errorName(err)});
             p.audioClose();
             return;
@@ -393,22 +474,29 @@ pub const Game = struct {
         if (self.redraw) {
             self.redraw = false;
             const top = self.state.scenes.top();
-            const now: @TypeOf(self.drawn_scene.?) = .{ .len = self.state.scenes.len, .kind = std.meta.activeTag(top.*) };
-            if (!std.meta.eql(self.drawn_scene, now)) self.drawn = .{};
-            self.drawn_scene = now;
             switch (top.*) {
-                .empty => {},
-                .test_pattern => |*t| t.draw(self.state.tick, &self.pic, &self.drawn),
+                .test_pattern => |*t| t.draw(self.state.tick, &self.pic, &self.pattern_drawn),
+                else => {
+                    const v = &self.view.?;
+                    try scene.draw(&self.state.scenes, &self.drawn, v, &self.scene_assets.?);
+                    _ = try v.compose();
+                },
             }
         }
-        try p.present(self.pic.frame());
+        try p.present(self.frame());
         self.frames_presented += 1;
+    }
+
+    /// The last frame drawn: the scenes', or the test pattern's.
+    pub fn frame(self: *const Game) platform.RgbaFrame {
+        if (self.view) |*v| if (v.shows != null) return v.frame();
+        return self.pic.frame();
     }
 
     /// The hash of the last frame presented (0 before the first). It is worked out when asked.
     pub fn lastFrameHash(self: *const Game) u64 {
         if (self.frames_presented == 0) return 0;
-        return self.pic.hash();
+        return std.hash.Fnv1a_64.hash(self.frame().pixels);
     }
 
     /// The hash of the state's canonical form.
@@ -425,13 +513,13 @@ test "the same pads from power-on give the same state, and other pads another" {
     var b: State = .{};
     for (0..200) |i| {
         const pads: input.Pads = .{ .pad1 = .{ .right = i % 3 == 0 }, .pad2 = .{ .down = i > 100 } };
-        a.step(pads);
-        b.step(pads);
+        _ = a.step(pads, true, null);
+        _ = b.step(pads, true, null);
     }
     try testing.expectEqual(a.hash(), b.hash());
     try testing.expectEqual(@as(u32, 200), a.tick);
-    b.step(.{ .pad2 = .{ .start = true } });
-    a.step(.{});
+    _ = b.step(.{ .pad2 = .{ .start = true } }, true, null);
+    _ = a.step(.{}, true, null);
     try testing.expect(a.hash() != b.hash());
 }
 

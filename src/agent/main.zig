@@ -214,7 +214,9 @@ fn parseShot(text: []const u8) ?Shot {
 
 /// The frame just presented, as a PNG file.
 fn writeShot(gpa: std.mem.Allocator, io: std.Io, game: *const sorz.Game, path: []const u8) !void {
-    const bytes = try agent.png.encode(gpa, sorz.picture.width, sorz.picture.height, game.pic.pixels);
+    const f = game.frame();
+    std.debug.assert(f.stride == f.width * 4);
+    const bytes = try agent.png.encode(gpa, f.width, f.height, f.pixels[0 .. f.stride * f.height]);
     defer gpa.free(bytes);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = bytes });
 }
