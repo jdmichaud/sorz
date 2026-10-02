@@ -130,7 +130,9 @@ pub fn diffFn(comptime T: type) DiffFn {
 
 /// The first field of `T` whose bytes differ between `ours` and `theirs`, two canonical forms of
 /// `T`, by its path (`scenes.items[0].test_pattern.markers[1].x`); null when they are the same.
-/// Forms of different lengths differ at the shorter one's end, named `(the length)`.
+/// Forms of different lengths differ at the shorter one's end, named `(the length)`; bytes that no
+/// field names (a union's padding, a tag of no field: a form that is not `T`'s) by their place,
+/// `(byte N)`.
 pub fn firstDifference(comptime T: type, ours: []const u8, theirs: []const u8) ?Difference {
     if (ours.len != size(T) or theirs.len != size(T)) {
         if (ours.len == theirs.len and std.mem.eql(u8, ours, theirs)) return null;
@@ -142,8 +144,12 @@ pub fn firstDifference(comptime T: type, ours: []const u8, theirs: []const u8) ?
     }
     if (std.mem.eql(u8, ours, theirs)) return null;
     var walk: Walk = .{ .ours = ours, .theirs = theirs };
-    _ = walk.visit(T, 0);
-    return walk.found;
+    if (walk.visit(T, 0)) return walk.found;
+    const at = std.mem.findDiff(u8, ours, theirs).?;
+    var d: Difference = .{ .offset = @intCast(at), .width = 1, .ours = ours[at], .theirs = theirs[at] };
+    const text = std.fmt.bufPrint(&d.name_buf, "(byte {d})", .{at}) catch unreachable;
+    d.name_len = @intCast(text.len);
+    return d;
 }
 
 const Walk = struct {
@@ -216,12 +222,15 @@ const Walk = struct {
                 // The tag is the union's own name; the payload follows it, named by the tag, which
                 // is the same in both forms once the tag did not differ.
                 const Tag = u.tag_type.?;
+                const TagInt = @typeInfo(Tag).@"enum".tag_type;
                 const tag_size = size(Tag);
                 if (w.leaf(at, tag_size)) return true;
+                // The tag's bits as `put` wrote them, a signed tag's included.
                 const tag = number(w.ours[at..][0..tag_size]);
                 inline for (u.field_names, u.field_types) |name, F| {
-                    if (tag == @backingInt(@field(Tag, name))) {
-                        const before = w.push("." ++ name);
+                    const bits: @Int(.unsigned, @bitSizeOf(TagInt)) = @bitCast(@as(TagInt, @backingInt(@field(Tag, name))));
+                    if (tag == bits) {
+                        const before = w.push(if (w.len == 0) name else "." ++ name);
                         if (w.visit(F, at + tag_size)) return true;
                         w.len = before;
                     }
@@ -310,4 +319,19 @@ test "the first differing field is named by its path" {
     try testing.expectEqual(@as(u64, 3), d.theirs);
     // Forms of another length: another build's state.
     try testing.expectEqualStrings("(the length)", firstDifference(Sample, ours, ours[0..10]).?.name());
+    // Bytes no field names: a union's padding, which a form of `Sample` never has.
+    var odd = a_buf;
+    odd[27] = 1; // items[1]'s payload, which `.empty` pads with zeros
+    d = firstDifference(Sample, ours, &odd).?;
+    try testing.expectEqualStrings("(byte 27)", d.name());
+    try testing.expectEqual(@as(u64, 1), d.theirs);
+}
+
+test "a union with a signed tag names its payload" {
+    const Tag = enum(i8) { low = -2, high = 3 };
+    const U = union(Tag) { low: u8, high: u16 };
+    var a_buf: [size(U)]u8 = undefined;
+    var b_buf: [size(U)]u8 = undefined;
+    const ours = write(U, &U{ .low = 1 }, &a_buf);
+    try testing.expectEqualStrings("low", firstDifference(U, ours, write(U, &U{ .low = 2 }, &b_buf)).?.name());
 }
