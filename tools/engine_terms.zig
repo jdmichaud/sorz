@@ -117,8 +117,10 @@ fn words(gpa: std.mem.Allocator, source: []const u8, start: usize, end: usize, o
             continue;
         }
         var j = i;
-        while (j < end and std.ascii.isAlphanumeric(source[j])) j += 1;
-        if (wordClass(source[i..j])) |class| try out.append(gpa, .{ .offset = i, .class = class, .text = source[i..j] });
+        while (j < end and (std.ascii.isAlphanumeric(source[j]) or source[j] == '_')) j += 1;
+        // A word is read as an identifier's parts are (`vramAddr`, `MC68000`); VBlank and the
+        // registers' names may be said in a text.
+        if (partsClass(source[i..j])) |class| try out.append(gpa, .{ .offset = i, .class = class, .text = source[i..j] });
         i = j;
     }
 }
@@ -135,21 +137,39 @@ fn hexDigits(literal: []const u8) usize {
     return n;
 }
 
-/// The class of a word of a text, or of a part of an identifier.
+/// The class of a part of a name: a word of the console's video chip.
 fn wordClass(word: []const u8) ?Class {
     const terms = [_]struct { []const u8, Class }{
-        .{ "vdp", .vdp },   .{ "vram", .vram }, .{ "cram", .cram }, .{ "vsram", .vsram },
-        .{ "68000", .cpu }, .{ "68k", .cpu },   .{ "m68k", .cpu },
+        .{ "vdp", .vdp }, .{ "vram", .vram }, .{ "cram", .cram }, .{ "vsram", .vsram },
     };
     for (terms) |t| if (std.ascii.eqlIgnoreCase(word, t[0])) return t[1];
     return null;
 }
 
-/// The class of an identifier: a register's name, VBlank in it, or one of its parts a word of the
-/// console (`vramAddress`, `cram_colour`, `VDPStatus`; not `scramble`).
+/// Whether a name says the console's processor: 68000 or 68K, not inside a longer number
+/// (`MC68000`, `cpu_68k`, `is68k`; not `268000` or `1680`).
+fn saysCpu(name: []const u8) bool {
+    var i: usize = 0;
+    while (std.mem.findPos(u8, name, i, "68")) |at| : (i = at + 1) {
+        if (at > 0 and std.ascii.isDigit(name[at - 1])) continue;
+        const rest = name[at + 2 ..];
+        if (std.mem.startsWith(u8, rest, "000") and (rest.len == 3 or !std.ascii.isDigit(rest[3]))) return true;
+        if (rest.len != 0 and (rest[0] == 'k' or rest[0] == 'K') and (rest.len == 1 or !(std.ascii.isLower(rest[1]) or std.ascii.isDigit(rest[1])))) return true;
+    }
+    return false;
+}
+
+/// The class of an identifier: a register's name, VBlank in it, or what its parts say.
 fn identifierClass(name: []const u8) ?Class {
     if (name.len == 2 and std.mem.findScalar(u8, "dDaA", name[0]) != null and name[1] >= '0' and name[1] <= '7') return .register;
     if (std.ascii.findIgnoreCase(name, "vblank") != null) return .vblank;
+    return partsClass(name);
+}
+
+/// The class of a name by its parts: the processor, or a part that is a word of the console's
+/// video chip (`vramAddress`, `cram_colour`, `VDPStatus`; not `scramble`).
+fn partsClass(name: []const u8) ?Class {
+    if (saysCpu(name)) return .cpu;
     // Its parts: split at underscores, between a lower-case letter or a digit and a capital,
     // between letters and digits, and before the last capital of a run of capitals that a
     // lower-case letter follows.
@@ -163,8 +183,6 @@ fn identifierClass(name: []const u8) ?Class {
         if (!boundary) continue;
         const part = std.mem.trim(u8, name[start..i], "_");
         if (wordClass(part)) |class| return class;
-        // "m68k" spans a letter and digits.
-        if (i < name.len and std.ascii.startsWithIgnoreCase(name[start..], "m68k")) return .cpu;
         start = i;
     }
     return null;
@@ -344,13 +362,17 @@ test "the console's words and identifiers are found; the game's are not" {
         \\const tick_count = 7;
         \\/// Each display tick, as the original's VBlank.
         \\const m68k = 8;
+        \\const cpu_68k = 9;
+        \\const is68k = 10;
+        \\// Its vramAddr, as the MC68000 has it; 268000 and 1680 are numbers.
     );
     defer testing.allocator.free(found);
     const want = [_]struct { []const u8, Class }{
         .{ "VDP", .vdp },           .{ "68000", .cpu },        .{ "vblank_count", .vblank },
         .{ "onVBlank", .vblank },   .{ "vramAddress", .vram }, .{ "cram_colour", .cram },
         .{ "VSRAMScroll", .vsram }, .{ "d0", .register },      .{ "a7", .register },
-        .{ "m68k", .cpu },
+        .{ "m68k", .cpu },          .{ "cpu_68k", .cpu },      .{ "is68k", .cpu },
+        .{ "vramAddr", .vram },     .{ "MC68000", .cpu },
     };
     try testing.expectEqual(want.len, found.len);
     for (want, found) |w, f| {
