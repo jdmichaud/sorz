@@ -218,7 +218,7 @@ pub fn build(b: *std.Build) void {
     // `web-check`: the script's helpers against compiler-rt. A probe of the operations is built
     // with compiler-rt and without it, and Node runs both over the same inputs, the second with
     // the helpers of `sorz.js`.
-    const web_check_step = b.step("web-check", "Check the browser build's helper functions against compiler-rt (needs Node.js)");
+    const web_check_step = b.step("web-check", "Check the browser build's helper functions against compiler-rt, and the page script's parts that need no browser (needs Node.js)");
     const helpers_check = b.addSystemCommand(&.{"node"});
     helpers_check.addFileArg(b.path("src/web/helpers_check.cjs"));
     helpers_check.addFileArg(b.path("src/web/sorz.js"));
@@ -241,6 +241,15 @@ pub fn build(b: *std.Build) void {
         helpers_check.addFileArg(probe.getEmittedBin());
     }
     web_check_step.dependOn(&helpers_check.step);
+    // And the parts of the page's script and of the module that need no browser and no game data:
+    // the listing of the game's files its server sends, the transport of network play over a
+    // stand-in WebSocket, the ownership of the data given to the module, its memory's growth, its
+    // refusals, its screens without their files, and a game started on a file.
+    const page_check = b.addSystemCommand(&.{"node"});
+    page_check.addFileArg(b.path("src/web/page_check.cjs"));
+    page_check.addFileArg(b.path("src/web/sorz.js"));
+    page_check.addFileArg(web_module.getEmittedBin());
+    web_check_step.dependOn(&page_check.step);
 
     // The parts of the browser build that run without a browser, for the unit tests.
     const web_parts = b.createModule(.{

@@ -92,7 +92,8 @@ pub const WebBackend = struct {
         const self = cast(ctx);
         if (!self.started) {
             self.started = true;
-            self.capabilities = .{ .video = true, .audio = true, .controllers = false };
+            // The page polls the Gamepad API and reports each pad's changes.
+            self.capabilities = .{ .video = true, .audio = true, .controllers = true };
         }
         return self.capabilities;
     }
@@ -228,6 +229,23 @@ pub const WebBackend = struct {
 
     pub fn resizedEvent(self: *WebBackend, width: u32, height: u32) void {
         self.push(.{ .drawable_resized = .{ .width = width, .height = height } });
+    }
+
+    pub fn controllerAdded(self: *WebBackend, id: platform.ControllerId) void {
+        self.push(.{ .controller_added = id });
+    }
+
+    pub fn controllerRemoved(self: *WebBackend, id: platform.ControllerId) void {
+        self.push(.{ .controller_removed = id });
+    }
+
+    pub fn controllerButton(self: *WebBackend, id: platform.ControllerId, button: platform.ControllerButton, down: bool) void {
+        const event: platform.Event.ControllerButtonEvent = .{ .controller = id, .button = button };
+        self.push(if (down) .{ .controller_button_down = event } else .{ .controller_button_up = event });
+    }
+
+    pub fn controllerAxis(self: *WebBackend, id: platform.ControllerId, axis: platform.ControllerAxis, value: i16) void {
+        self.push(.{ .controller_axis = .{ .controller = id, .axis = axis, .value = value } });
     }
 
     pub fn quitEvent(self: *WebBackend) void {
@@ -555,6 +573,32 @@ test "audio counts accepted, played and discarded frames as the native host does
     try testing.expectEqual(@as(u64, 70), status.played_frames);
     p.audioClose();
     try testing.expect(!p.audioStatus().running);
+}
+
+test "gamepads come as controller events, in order, and the game's pads follow them" {
+    FakePage.reset();
+    var backend = WebBackend.init(testing.allocator, &FakePage.host);
+    defer backend.deinit();
+    var p = backend.asPlatform();
+    try testing.expect((try p.start()).controllers);
+    const id: platform.ControllerId = @fromBackingInt(1);
+    backend.controllerAdded(id);
+    backend.controllerButton(id, .start, true);
+    backend.controllerAxis(id, .left_x, 32767);
+    backend.controllerButton(id, .start, false);
+    backend.controllerRemoved(id);
+    var events: [8]platform.Event = undefined;
+    const n = p.pollEvents(&events);
+    try testing.expectEqual(@as(usize, 5), n);
+    var controls: sorz.input.Controls = .{};
+    _ = controls.handle(events[0]);
+    _ = controls.handle(events[1]);
+    _ = controls.handle(events[2]);
+    try testing.expect(controls.pads().pad1.start and controls.pads().pad1.right);
+    _ = controls.handle(events[3]);
+    try testing.expect(!controls.pads().pad1.start);
+    _ = controls.handle(events[4]);
+    try testing.expectEqual(@as(u8, 0), @as(u8, @bitCast(controls.pads().pad1)));
 }
 
 test "the transport: the page's connections, their messages until the next poll, their ends" {

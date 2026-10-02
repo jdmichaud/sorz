@@ -1,16 +1,29 @@
-//! The browser build: the shared game in a WebAssembly module (DESIGN.md). The page's script,
-//! `sorz.js`, gives the game's files to the module, starts the game and calls `gp_frame` once
-//! for each animation frame. The module draws, plays sound and reads input through `WebBackend`,
-//! which calls the functions that the script imports. Every file is in memory before the game
-//! starts, so no read waits and the module needs no suspension of its stack (no Asyncify).
+//! The browser build: the shared game in a WebAssembly module (DESIGN.md 5.3). The page's script,
+//! `sorz.js`, gives the module the game's files that the page's server sends (the native game's own
+//! copy: the player never gives any), starts the game and calls `gp_frame` once for each animation
+//! frame. The module draws, plays sound and reads input through `WebBackend`, which calls the
+//! functions that the script imports. Every file is in memory before the game starts, so no read
+//! waits and the module needs no suspension of its stack (no Asyncify). The module links no libc,
+//! and the script gives it its memory.
 //!
-//! The module links no libc, and the script gives it its memory.
+//! The page's own screens (the loading screen, the menu that starts the game, the messages of
+//! network play and of errors) are the module's to draw in the game's style, from the first files
+//! the page fetches (`gp_screen_*`). TODO(PLAN item 08): the module draws them once the content
+//! (item 06), the renderer (07) and the menu's scene (08) exist; until then `gp_screen_open`
+//! refuses and the page's own text stands in, in the menu's colours.
+//!
+//! The game's settings record is the page's only settings (`settings.zig`): the module tells the
+//! page the record's sound and window when the game starts and whenever they change
+//! (`js_settings`), and the page applies them as a browser does.
 const std = @import("std");
 const sorz = @import("sorz");
 const Host = @import("host.zig").Host;
 const WebBackend = @import("backend.zig").WebBackend;
 const PageStorage = @import("storage.zig").PageStorage;
 const keys = @import("keys.zig");
+const gamepad = @import("gamepad.zig");
+const page_settings = @import("settings.zig");
+const record = sorz.settings.record;
 
 // --- the functions of the page ---------------------------------------------------------------
 
@@ -28,6 +41,12 @@ const page = struct {
     extern "env" fn js_log(level: u32, text: [*]const u8, len: u32) void;
     extern "env" fn js_storage_save(name: [*]const u8, name_len: u32, bytes: [*]const u8, len: u32) u32;
     extern "env" fn js_storage_delete(name: [*]const u8, name_len: u32) u32;
+    extern "env" fn js_net_connect(url: [*]const u8, url_len: u32) u32;
+    extern "env" fn js_net_send(id: u32, bytes: [*]const u8, len: u32) u32;
+    extern "env" fn js_net_close(id: u32) void;
+    /// The settings' sound and window, as the page applies them (`settings.View`): the output's
+    /// gain, the picture's scale and full screen (0 or 1).
+    extern "env" fn js_settings(gain: f64, scale: u32, fullscreen: u32) void;
 };
 
 /// The imported functions use the C calling convention. The backend's table holds Zig functions,
@@ -72,6 +91,15 @@ const imports = struct {
     fn storageDelete(name: [*]const u8, name_len: u32) u32 {
         return page.js_storage_delete(name, name_len);
     }
+    fn netConnect(url: [*]const u8, url_len: u32) u32 {
+        return page.js_net_connect(url, url_len);
+    }
+    fn netSend(id: u32, bytes: [*]const u8, len: u32) u32 {
+        return page.js_net_send(id, bytes, len);
+    }
+    fn netClose(id: u32) void {
+        page.js_net_close(id);
+    }
 };
 
 const host = Host{
@@ -88,6 +116,9 @@ const host = Host{
     .log = imports.log,
     .storage_save = imports.storageSave,
     .storage_delete = imports.storageDelete,
+    .net_connect = imports.netConnect,
+    .net_send = imports.netSend,
+    .net_close = imports.netClose,
 };
 
 // --- logs and panics go to the browser's console -----------------------------------------------
@@ -119,17 +150,28 @@ fn panicToConsole(message: []const u8, _: ?usize) noreturn {
 
 const gpa = std.heap.wasm_allocator;
 
+/// The game's files the page's server sent, file by file.
 var assets: sorz.memory.MemoryAssetSource = undefined;
+var file_count: u32 = 0;
 /// The game's records, kept by the page in the browser's storage.
 var storage: PageStorage = undefined;
 var backend: WebBackend = undefined;
 var ready = false;
 var game: ?*sorz.Game = null;
-var last_error: ?anyerror = null;
+/// The view of the settings the page was last told (`js_settings`).
+var told: ?page_settings.View = null;
+/// Why the last call failed, for `gp_error`.
+var error_text: [512]u8 = undefined;
+var error_len: usize = 0;
 
 /// The bytes that the script writes before a call that takes text (a key code, typed text), and
 /// where calls that answer with text write it.
 var scratch: [4096]u8 = undefined;
+
+fn setError(comptime format: []const u8, args: anytype) void {
+    // A text too long for the buffer is cut at its end.
+    error_len = if (std.fmt.bufPrint(&error_text, format, args)) |text| text.len else |_| error_text.len;
+}
 
 // --- exports -----------------------------------------------------------------------------------
 
@@ -154,8 +196,8 @@ export fn gp_scratch_len() u32 {
 /// The address that `gp_alloc` gives for an empty buffer. It is never written or freed.
 var empty_buffer: [1]u8 = .{0};
 
-/// Memory for the script to fill: a game file and its name, or a kept record. Null when the
-/// memory cannot grow.
+/// Memory for the script to fill: a game file and its name, or a kept record. Null when the memory
+/// cannot grow.
 export fn gp_alloc(len: u32) ?[*]u8 {
     if (len == 0) return &empty_buffer;
     const bytes = gpa.alloc(u8, len) catch return null;
@@ -167,11 +209,15 @@ export fn gp_free(ptr: [*]u8, len: u32) void {
     gpa.free(ptr[0..len]);
 }
 
-/// Adds one game file. The module keeps the name and the bytes, which `gp_alloc` made, for as long
-/// as it runs. Returns 0, or -1 for an invalid name.
+/// Adds one of the game's files. The module keeps the name and the bytes, which `gp_alloc` made,
+/// for as long as it runs. Returns 0, or -1 for an invalid name (the page frees both).
 export fn gp_add_asset(name: [*]u8, name_len: u32, bytes: [*]u8, len: u32) i32 {
-    if (!ready) return -1;
-    assets.add(name[0..name_len], bytes[0..len]) catch return -1;
+    if (!ready or game != null) return -1;
+    assets.add(name[0..name_len], bytes[0..len]) catch |err| {
+        setError("{s}: {s}", .{ name[0..@min(name_len, 256)], @errorName(err) });
+        return -1;
+    };
+    file_count += 1;
     return 0;
 }
 
@@ -185,22 +231,194 @@ export fn gp_add_record(name: [*]u8, name_len: u32, bytes: [*]u8, len: u32) i32 
     return 0;
 }
 
-/// Starts the game. Returns 0, or -1 with the reason in `gp_error`.
+/// Starts the game on the files the page gave. Returns 0, or -1 with the reason in `gp_error`.
 export fn gp_start() i32 {
     if (!ready) return -1;
     if (game != null) return 0;
-    const g = gpa.create(sorz.Game) catch |err| {
-        last_error = err;
+    error_len = 0;
+    startGame() catch |err| {
+        if (error_len == 0) setError("{s}", .{@errorName(err)});
         return -1;
     };
-    g.* = sorz.Game.init(gpa, assets.assetSource(), storage.storage()) catch |err| {
-        gpa.destroy(g);
-        last_error = err;
-        return -1;
-    };
-    game = g;
     return 0;
 }
+
+fn startGame() !void {
+    // The page runs no game without its files (DESIGN.md 5.3).
+    if (file_count == 0) {
+        setError("no game data: the page gave no file of the game", .{});
+        return error.NoData;
+    }
+    const g = try gpa.create(sorz.Game);
+    errdefer gpa.destroy(g);
+    g.* = try sorz.Game.init(gpa, assets.assetSource(), storage.storage());
+    // The page's gain is the volume: the game's sound stays at its own level. A page has one
+    // player, alone or in network play.
+    g.host_volume = true;
+    g.setOnePlayer();
+    game = g;
+    tellSettings(g);
+}
+
+/// Tells the page the settings' sound and window when they differ from what it was last told.
+fn tellSettings(g: *const sorz.Game) void {
+    const view = page_settings.View.of(&g.settings);
+    if (told) |t| if (std.meta.eql(t, view)) return;
+    told = view;
+    page.js_settings(view.gain, view.scale, @intFromBool(view.fullscreen));
+}
+
+/// Whether a key (its `KeyboardEvent.code`, `code_len` bytes in the scratch buffer) is the game's
+/// settings key, from the record once the game has read it. The browser never gets it (F1 opens
+/// no help).
+export fn gp_settings_key(code_len: u32) u32 {
+    const key = keys.fromCode(scratch[0..@min(code_len, scratch.len)]);
+    const settings_key = if (game) |g| g.settings.settings_key else (sorz.settings.Settings{}).settings_key;
+    return @intFromBool(key != .unknown and key == settings_key);
+}
+
+/// Whether the game has its settings screen, which the menu's SETTINGS opens before the game
+/// starts: the page dims the line without it. TODO(PLAN item 19): the settings screen, a scene.
+export fn gp_settings_available() u32 {
+    return 0;
+}
+
+/// The menu's SETTINGS: the game's settings screen, before the game starts. The page then calls
+/// `gp_settings_frame` at each animation frame until it closes. Returns 0, or -1 without a game,
+/// once the game has started, or without the screen (`gp_settings_available`).
+export fn gp_settings_open() i32 {
+    return -1;
+}
+
+/// One update of the settings screen that the menu opened: 1 while it is open, 0 once the player
+/// has left it (the page shows its menu again), -2 when the update failed.
+export fn gp_settings_frame() i32 {
+    return 0;
+}
+
+/// The page left its full screen without the game asking (the player pressed Escape, which is the
+/// browser's): the setting goes off, as the player chose, and the record keeps it
+/// (`Game.fullscreenLeft`).
+export fn gp_fullscreen_left() void {
+    const g = game orelse return;
+    g.fullscreenLeft();
+    tellSettings(g);
+}
+
+/// Network play (DESIGN.md 9): the game joins a session instead of playing alone. The page calls
+/// it after `gp_start` and before the first `gp_frame`, with the role (0 the guest, player 2; 1
+/// the host, player 1) and the address (`url_len` bytes in the scratch buffer): a native host's
+/// `ws://ADDRESS:PORT/`, or nothing when the page brings the connection itself (a relay's: the
+/// first connection the page reports is the peer). The session's identity is this build's and the
+/// data's: the digest of the game's files. Returns 0, or -1 with the reason in `gp_error`.
+export fn gp_start_netplay(role: u32, url_len: u32) i32 {
+    const g = game orelse {
+        setError("the game has not started", .{});
+        return -1;
+    };
+    if (g.started or g.netplay != null) {
+        setError("network play starts before the first update", .{});
+        return -1;
+    }
+    const identity = sorz.net.identity.ofTree(assets.assetSource(), 64 << 20) catch |err| {
+        setError("the game files' identity: {s}", .{@errorName(err)});
+        return -1;
+    };
+    g.startNetplay(.{
+        .role = if (role == 1) .host else .guest,
+        .address = scratch[0..@min(url_len, scratch.len)],
+        .build = sorz.net.protocol.buildId(sorz.version.build),
+        .data = identity,
+    }) catch |err| {
+        setError("{s}", .{@errorName(err)});
+        return -1;
+    };
+    return 0;
+}
+
+/// A connection of network play opened: one the game asked for (`incoming` 0), or a relay's guest
+/// on the host's page (1).
+export fn gp_net_connected(id: u32, incoming: u32) void {
+    backend.netConnected(id, incoming != 0);
+}
+
+/// A whole message on a connection, in memory from `gp_alloc` that the module takes (an empty
+/// one's shared address is never freed: freeing nothing is a no-op).
+export fn gp_net_received(id: u32, bytes: [*]u8, len: u32) void {
+    backend.netReceived(id, bytes[0..len]);
+}
+
+/// A connection ended: `reason` as `platform.DisconnectReason` numbers them (0 closed, 1 lost,
+/// 2 refused, 3 protocol, 4 too large).
+export fn gp_net_disconnected(id: u32, reason: u32) void {
+    backend.netDisconnected(id, reason);
+}
+
+// --- the page's screens, in the game's style ---------------------------------------------------
+
+// TODO(PLAN item 08): the module draws the page's screens (DESIGN.md 5.3) from the files it needs
+// first (the play font's codes and tiles, and the menu's palette), which `gp_screen_files` names
+// for the page to fetch before the others: the loading screen and its count, the menu (1 PLAYER,
+// 2 PLAYERS, SETTINGS, a line it cannot offer dimmed, the arrow on the chosen one), and messages
+// over the game's picture. Until then it names no file and draws nothing, and the page's own text
+// stands in.
+
+/// The files the screens are drawn from, which the page fetches before the others: their names,
+/// one a line, in the scratch buffer. Returns the length (none yet).
+export fn gp_screen_files() u32 {
+    return 0;
+}
+
+/// Makes the screens from the files the page gave so far. Returns 0, or -1 with the reason in
+/// `gp_error` while the module cannot draw them: the page's own text then stands in.
+export fn gp_screen_open() i32 {
+    setError("the module draws no screen of the page yet (PLAN item 08)", .{});
+    return -1;
+}
+
+/// The loading screen: `done` of `total` files.
+export fn gp_screen_loading(done: u32, total: u32) void {
+    _ = done;
+    _ = total;
+}
+
+/// The menu that starts the game, the arrow on `choice`, a line whose bit of `available` is clear
+/// dimmed, and a note (`note_len` bytes in the scratch buffer) below.
+export fn gp_screen_menu(choice: u32, available: u32, note_len: u32) void {
+    _ = choice;
+    _ = available;
+    _ = note_len;
+}
+
+/// The menu's line at (x, y) of the canvas, or -1.
+export fn gp_screen_pick(x: i32, y: i32) i32 {
+    _ = x;
+    _ = y;
+    return -1;
+}
+
+/// A message (`len` bytes in the scratch buffer, lines split at '\n'): on black, or, with `over`,
+/// over the game's last picture once it has one. Returns 0, or -1 when the module cannot draw it.
+export fn gp_screen_message(len: u32, over: u32) i32 {
+    _ = len;
+    _ = over;
+    return -1;
+}
+
+/// A sound of the game's menu for the page's menu (`which`: 0 the arrow's move, 1 a choice), at
+/// 48 kHz: its frame count, the stereo frames then at `gp_menu_sound_ptr`; 0 when there is none.
+/// TODO(PLAN item 09): the menu's sounds, once the game plays sounds.
+export fn gp_menu_sound(which: u32) u32 {
+    _ = which;
+    return 0;
+}
+
+/// Where the frames of the last `gp_menu_sound` are.
+export fn gp_menu_sound_ptr() u32 {
+    return 0;
+}
+
+// --- the game ------------------------------------------------------------------------------------
 
 /// One update of the game. Returns 0 while the game runs, 1 when it has finished, -1 before
 /// `gp_start` and -2 when the update failed (the reason is in `gp_error`).
@@ -208,27 +426,43 @@ export fn gp_frame() i32 {
     const g = game orelse return -1;
     var p = backend.asPlatform();
     const result = g.update(&p) catch |err| {
-        last_error = err;
+        setError("{s}", .{@errorName(err)});
         return -2;
     };
+    tellSettings(g);
     return if (result == .finished) 1 else 0;
 }
 
-/// Writes the name of the last error into the scratch buffer and returns its length.
+/// How the game's updates run ticks: 0 as the sound queue or the clock make them due (the game as
+/// the player runs it), 1 one tick per update (the agent host's pacing, for the page's checks
+/// against `sorz-agent`).
+export fn gp_set_pacing(per_update: u32) void {
+    const g = game orelse return;
+    g.pacing = if (per_update != 0) .per_update else .clock;
+}
+
+/// Writes the reason of the last failure into the scratch buffer and returns its length.
 export fn gp_error() u32 {
-    const name = if (last_error) |err| @errorName(err) else "";
-    const len = @min(name.len, scratch.len);
-    @memcpy(scratch[0..len], name[0..len]);
+    const len = @min(error_len, scratch.len);
+    @memcpy(scratch[0..len], error_text[0..len]);
     return @intCast(len);
 }
 
 /// A key: its `KeyboardEvent.code` (`code_len` bytes in the scratch buffer), down or up. Returns 1
-/// when the key is one of the game's keys, so the page can keep the browser from acting on it.
+/// when the game takes the key (the player's controls, pad 1's, or the settings key), so that the
+/// page keeps the browser from acting on it (the arrows do not scroll, F1 opens no help); the
+/// browser keeps its other keys. Escape is the browser's: it leaves the full screen, and the game
+/// quits on it natively.
 export fn gp_key(code_len: u32, down: u32, repeat: u32) u32 {
     const key = keys.fromCode(scratch[0..@min(code_len, scratch.len)]);
-    if (key == .unknown) return 0;
+    if (key == .unknown or key == .escape) return 0;
     backend.keyEvent(key, down != 0, repeat != 0);
-    return 1;
+    if (game) |g| return @intFromBool(g.usesKey(key));
+    if (key == (sorz.settings.Settings{}).settings_key) return 1;
+    for (sorz.input.default_keys) |binding| {
+        if (binding.key == key and binding.pad == 0) return 1;
+    }
+    return 0;
 }
 
 /// Text that a key typed: `len` UTF-8 bytes in the scratch buffer.
@@ -262,17 +496,80 @@ export fn gp_resized(width: u32, height: u32) void {
     backend.resizedEvent(width, height);
 }
 
-/// The state of the game as one JSON object in the scratch buffer, for the page's tests and for
-/// debugging. Returns its length, or 0 when it does not fit.
+/// A gamepad appeared at `index` of `navigator.getGamepads()`, or went away.
+export fn gp_pad(index: u32, connected: u32) void {
+    const id = gamepad.controller(index);
+    if (connected != 0) backend.controllerAdded(id) else backend.controllerRemoved(id);
+}
+
+/// A button of the standard mapping changed. The triggers (6 and 7) are axes, and `value` is
+/// their pressure times 32767. Returns 0 for a button the mapping does not have.
+export fn gp_pad_button(index: u32, button: u32, down: u32, value: i32) u32 {
+    const id = gamepad.controller(index);
+    if (gamepad.button(button)) |b| {
+        backend.controllerButton(id, b, down != 0);
+        return 1;
+    }
+    if (gamepad.trigger(button)) |a| {
+        backend.controllerAxis(id, a, gamepad.triggerValue(value));
+        return 1;
+    }
+    return 0;
+}
+
+/// An axis of the standard mapping moved: `value` is its position times 32767. Returns 0 for an
+/// axis the mapping does not have.
+export fn gp_pad_axis(index: u32, axis: u32, value: i32) u32 {
+    const a = gamepad.axis(axis) orelse return 0;
+    backend.controllerAxis(gamepad.controller(index), a, gamepad.stickValue(value));
+    return 1;
+}
+
+/// The settings in `gp_inspect`: the players a page has, and the record's values that the page
+/// applies or that the checks change.
+const SettingsState = struct {
+    players: u8,
+    /// The record's hash, as the agent host prints it.
+    hash: []const u8,
+    volume: u8,
+    mute: bool,
+    scale: u8,
+    fullscreen: bool,
+    settings_key: []const u8,
+    /// Pad 1's start key.
+    start_key: []const u8,
+};
+
+/// Network play's state in `gp_inspect`.
+const NetState = struct {
+    role: []const u8,
+    phase: []const u8,
+    tick: u32,
+    delay: u8,
+    epoch: u32,
+    /// The connection to the peer is up (a session in play without it holds).
+    connected: bool,
+    /// The states differed, and the peers named the first differing field (in the console).
+    difference: bool,
+    /// The other player is on the settings screen (both games hold).
+    peer_in_settings: bool,
+};
+
+/// The state of the game as one JSON object in the scratch buffer, for the page's checks and for
+/// debugging. The hashes are hexadecimal text, since a JavaScript number holds 53 bits. Returns
+/// its length, or 0 when it does not fit.
 export fn gp_inspect() u32 {
     const g = game orelse return 0;
     var p = backend.asPlatform();
     const audio = p.audioStatus();
-    var w: std.Io.Writer = .fixed(&scratch);
     var frame_hash: [16]u8 = undefined;
     var state_hash: [16]u8 = undefined;
+    var settings_hash: [16]u8 = undefined;
     _ = std.fmt.bufPrint(&frame_hash, "{x:0>16}", .{g.lastFrameHash()}) catch unreachable;
     _ = std.fmt.bufPrint(&state_hash, "{x:0>16}", .{g.stateHash()}) catch unreachable;
+    _ = std.fmt.bufPrint(&settings_hash, "{x:0>16}", .{record.hash(&g.settings)}) catch unreachable;
+    const s = &g.settings;
+    var w: std.Io.Writer = .fixed(&scratch);
     std.json.Stringify.value(.{
         .phase = if (g.finished) "finished" else "playing",
         .update_count = g.update_count,
@@ -281,10 +578,34 @@ export fn gp_inspect() u32 {
         .frame_hash = &frame_hash,
         .state_hash = &state_hash,
         .events_consumed = g.events_consumed,
+        .pacing = @tagName(g.pacing),
+        .sound = g.sound != null,
         .saves_written = g.saves_written,
         .loads_done = g.loads_done,
+        .notice = @tagName(g.notice),
         .audio_running = audio.running,
+        .audio_queued = audio.queued_frames,
         .audio_played = audio.played_frames,
+        .settings = SettingsState{
+            .players = if (g.controls.one_player) 1 else 2,
+            .hash = &settings_hash,
+            .volume = s.sound.volume,
+            .mute = s.sound.mute,
+            .scale = s.window.scale,
+            .fullscreen = s.window.fullscreen,
+            .settings_key = @tagName(s.settings_key),
+            .start_key = @tagName(s.key(.{ .pad = .{ .pad = 0, .button = .start } })),
+        },
+        .net = if (g.netplay) |np| NetState{
+            .role = @tagName(np.role),
+            .phase = @tagName(np.phase()),
+            .tick = np.tick(),
+            .delay = np.session.delay,
+            .epoch = np.epoch,
+            .connected = np.session.connected,
+            .difference = np.difference != null,
+            .peer_in_settings = np.peerInSettings(),
+        } else null,
     }, .{}, &w) catch return 0;
     return @intCast(w.end);
 }

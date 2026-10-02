@@ -3,26 +3,42 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>sorz</title>
+<title>Streets of Rage (sorz)</title>
 <link rel="icon" href="data:,">
 <style>
-  /* The page stands in until the module draws its first screen, and for an error: in the game's
-     colours and the closest font (DESIGN.md section 5.3). A port replaces these placeholders. */
+  /* The page stands in until the module draws its first screen, and for an error the module cannot
+     draw: in the game's colours (its menu's white on black) and the closest font to its own, bold
+     and slanted capitals (DESIGN.md 5.3). The module's screens then take the canvas (not yet: PLAN
+     item 08). The settings are the game's own screen (the menu's SETTINGS, or F1), drawn by the
+     module (PLAN item 19). */
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-  body { display: flex; align-items: center; justify-content: center; }
-  canvas { display: block; outline: none; image-rendering: pixelated; image-rendering: crisp-edges; }
-  #overlay {
-    position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; background: #000; color: #e0e0e0; font: bold 16px monospace;
-    user-select: none;
+  body {
+    display: flex; align-items: center; justify-content: center; color: #fff;
+    font: italic bold 16px/1.6 "Courier New", monospace; letter-spacing: 0.08em;
   }
-  #overlay.ready { cursor: pointer; }
-  #overlay.hidden { display: none; }
+  canvas { display: block; outline: none; image-rendering: pixelated; image-rendering: crisp-edges; }
+  .hidden { display: none !important; }
+  #overlay {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: #000; user-select: none;
+  }
+  /* The module draws the screen: the overlay only takes the click. */
+  #overlay.screen { background: transparent; }
+  #overlay.screen > * { visibility: hidden; }
+  #overlay[data-state="ready"] { cursor: pointer; }
+  #panel { max-width: 40em; padding: 1.5em; text-align: center; }
+  #message { margin: 0; text-transform: uppercase; white-space: pre-line; }
+  #detail { margin: 1.2em 0 0; font-size: 14px; white-space: pre-line; }
 </style>
 </head>
 <body>
-<canvas id="screen" width="320" height="200" tabindex="0"></canvas>
-<div id="overlay"><div id="message">Loading…</div></div>
+<canvas id="screen" width="320" height="224" tabindex="0"></canvas>
+<div id="overlay" data-state="loading">
+  <div id="panel">
+    <p id="message">Loading</p>
+    <p id="detail" class="hidden"></p>
+  </div>
+</div>
 <script src="sorz.js"></script>
 </body>
 </html>

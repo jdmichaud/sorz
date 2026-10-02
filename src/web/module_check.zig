@@ -22,6 +22,10 @@ const expected_imports = [_][]const u8{
     "js_log",
     "js_storage_save",
     "js_storage_delete",
+    "js_net_connect",
+    "js_net_send",
+    "js_net_close",
+    "js_settings",
     "__multi3",
 };
 
