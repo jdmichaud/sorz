@@ -1,0 +1,201 @@
+//! The world's numbers (DESIGN.md P3, section 6): integer fixed-point at the original's
+//! precision, never floating point. A place and a speed are 16.16: whole pixels and 1/65536 of a
+//! pixel, in 32 bits, as the original keeps them; a speed is per logic tick. The arithmetic wraps
+//! at 32 bits as the original's does, so that no value of the game stops the program.
+//!
+//! The axes of the world (`Vec3`):
+//! - `x` across the round, growing to the right;
+//! - `depth` on the ground, growing toward the player (lower on the screen);
+//! - `height`, measured downward as the screen's lines are: a jump makes it smaller.
+//!
+//! An entity's place on the screen is `x` - the camera's x across, and `depth` / 2 + `height` -
+//! the camera's y down, in whole pixels (`Vec3.screenY`).
+const std = @import("std");
+
+/// A 16.16 fixed-point number: `raw` / 65536.
+pub const Fixed = packed struct(i32) {
+    raw: i32,
+
+    pub const frac_bits = 16;
+    /// The units in a pixel.
+    pub const unit: i32 = 1 << frac_bits;
+
+    pub const zero: Fixed = .{ .raw = 0 };
+    pub const one: Fixed = .{ .raw = unit };
+
+    /// `n` whole pixels.
+    pub fn pixels(n: i32) Fixed {
+        return .{ .raw = n *% unit };
+    }
+
+    /// `units` / 65536 pixel: a value as the content and the traces write it.
+    pub fn of(units: i32) Fixed {
+        return .{ .raw = units };
+    }
+
+    /// `whole_pixels` pixels and `fraction` / 65536 more.
+    pub fn parts(whole_pixels: i16, fraction: u16) Fixed {
+        return .{ .raw = @as(i32, whole_pixels) * unit + fraction };
+    }
+
+    /// The whole pixels, rounded toward minus infinity: the original's whole word.
+    pub fn whole(a: Fixed) i32 {
+        return a.raw >> frac_bits;
+    }
+
+    /// The fraction of a pixel, in 1/65536.
+    pub fn frac(a: Fixed) u16 {
+        return @truncate(@as(u32, @bitCast(a.raw)));
+    }
+
+    pub fn add(a: Fixed, b: Fixed) Fixed {
+        return .{ .raw = a.raw +% b.raw };
+    }
+
+    pub fn sub(a: Fixed, b: Fixed) Fixed {
+        return .{ .raw = a.raw -% b.raw };
+    }
+
+    pub fn neg(a: Fixed) Fixed {
+        return .{ .raw = 0 -% a.raw };
+    }
+
+    /// `a` times a whole number.
+    pub fn times(a: Fixed, n: i32) Fixed {
+        return .{ .raw = a.raw *% n };
+    }
+
+    /// `a` shifted right by `n` bits: halves, quarters, rounded toward minus infinity as the
+    /// original's arithmetic shifts are.
+    pub fn shr(a: Fixed, n: u5) Fixed {
+        return .{ .raw = a.raw >> n };
+    }
+
+    /// `a` times `b`, the product's fraction cut toward minus infinity (64 bits inside, so that
+    /// no part of the product is lost before the cut).
+    pub fn mul(a: Fixed, b: Fixed) Fixed {
+        const p = @as(i64, a.raw) * b.raw;
+        return .{ .raw = @truncate(p >> frac_bits) };
+    }
+
+    pub fn abs(a: Fixed) Fixed {
+        return if (a.raw < 0) a.neg() else a;
+    }
+
+    pub fn order(a: Fixed, b: Fixed) std.math.Order {
+        return std.math.order(a.raw, b.raw);
+    }
+
+    pub fn lessThan(a: Fixed, b: Fixed) bool {
+        return a.raw < b.raw;
+    }
+
+    pub fn eql(a: Fixed, b: Fixed) bool {
+        return a.raw == b.raw;
+    }
+
+    pub fn min(a: Fixed, b: Fixed) Fixed {
+        return if (b.raw < a.raw) b else a;
+    }
+
+    pub fn max(a: Fixed, b: Fixed) Fixed {
+        return if (b.raw > a.raw) b else a;
+    }
+
+    /// `a` within `lo` to `hi`, both included.
+    pub fn clamp(a: Fixed, lo: Fixed, hi: Fixed) Fixed {
+        return a.max(lo).min(hi);
+    }
+
+    /// The sign of `a`: -1, 0 or 1.
+    pub fn sign(a: Fixed) i32 {
+        return std.math.sign(a.raw);
+    }
+
+    /// Writes the value in pixels with its fraction in 1/65536 (`-3+32768/65536`), exactly.
+    pub fn format(a: Fixed, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        try w.print("{d}", .{a.whole()});
+        if (a.frac() != 0) try w.print("+{d}/65536", .{a.frac()});
+    }
+};
+
+/// A place or a speed in the world: across, on the ground's depth, and in height.
+pub const Vec3 = struct {
+    x: Fixed = .zero,
+    depth: Fixed = .zero,
+    height: Fixed = .zero,
+
+    pub const zero: Vec3 = .{};
+
+    /// Whole pixels.
+    pub fn pixels(x: i32, depth: i32, height: i32) Vec3 {
+        return .{ .x = .pixels(x), .depth = .pixels(depth), .height = .pixels(height) };
+    }
+
+    pub fn add(a: Vec3, b: Vec3) Vec3 {
+        return .{ .x = a.x.add(b.x), .depth = a.depth.add(b.depth), .height = a.height.add(b.height) };
+    }
+
+    pub fn sub(a: Vec3, b: Vec3) Vec3 {
+        return .{ .x = a.x.sub(b.x), .depth = a.depth.sub(b.depth), .height = a.height.sub(b.height) };
+    }
+
+    pub fn eql(a: Vec3, b: Vec3) bool {
+        return a.x.eql(b.x) and a.depth.eql(b.depth) and a.height.eql(b.height);
+    }
+
+    /// The line of the round's picture the place is drawn on, before the camera: half the depth
+    /// plus the height, in whole pixels (the halving rounds toward minus infinity).
+    pub fn screenY(a: Vec3) i32 {
+        return (a.depth.whole() >> 1) + a.height.whole();
+    }
+};
+
+const testing = std.testing;
+
+test "whole pixels and fractions" {
+    const a = Fixed.parts(3, 0x8000);
+    try testing.expectEqual(@as(i32, 3), a.whole());
+    try testing.expectEqual(@as(u16, 0x8000), a.frac());
+    try testing.expectEqual(@as(i32, 3 * 65536 + 32768), a.raw);
+    // Negative values: the whole part rounds down, the fraction counts up from it.
+    const b = Fixed.of(-1);
+    try testing.expectEqual(@as(i32, -1), b.whole());
+    try testing.expectEqual(@as(u16, 0xFFFF), b.frac());
+    try testing.expectEqual(@as(i32, -2), Fixed.parts(-2, 0x4000).whole());
+    try testing.expectEqual(Fixed.pixels(-5), Fixed.pixels(5).neg());
+}
+
+test "the arithmetic: sums, products and shifts, wrapping at 32 bits" {
+    const speed = Fixed.of(0x18000); // 1.5 pixels a tick
+    var x = Fixed.pixels(100);
+    for (0..4) |_| x = x.add(speed);
+    try testing.expectEqual(Fixed.pixels(106), x);
+    try testing.expectEqual(Fixed.pixels(100), x.sub(speed.times(4)));
+    try testing.expectEqual(Fixed.of(0xC000), speed.shr(1));
+    // A shift rounds toward minus infinity, as an arithmetic shift does.
+    try testing.expectEqual(@as(i32, -1), Fixed.of(-1).shr(4).raw);
+    try testing.expectEqual(Fixed.of(0x24000), speed.mul(speed)); // 2.25
+    try testing.expectEqual(Fixed.of(-0x24000), speed.mul(speed.neg()));
+    try testing.expectEqual(Fixed.of(0x8000), Fixed.of(0x10000).mul(Fixed.of(0x8000)));
+    // The original's 32 bits wrap; nothing traps.
+    const top = Fixed.of(std.math.maxInt(i32));
+    try testing.expectEqual(@as(i32, std.math.minInt(i32)), top.add(Fixed.of(1)).raw);
+    try testing.expectEqual(Fixed.pixels(7), Fixed.pixels(9).clamp(.zero, .pixels(7)));
+    try testing.expectEqual(Fixed.zero, Fixed.pixels(-9).clamp(.zero, .pixels(7)));
+    try testing.expect(Fixed.pixels(-1).lessThan(.zero) and Fixed.pixels(3).abs().eql(Fixed.pixels(-3).abs()));
+    try testing.expectEqual(@as(i32, -1), Fixed.of(-5).sign());
+}
+
+test "a place on the screen: half the depth plus the height" {
+    const p: Vec3 = .{ .x = .pixels(40), .depth = .parts(81, 0xFFFF), .height = .pixels(-30) };
+    try testing.expectEqual(@as(i32, 40 - 30), p.screenY());
+    try testing.expectEqual(@as(i32, -1 + 10), (Vec3{ .depth = .pixels(-1), .height = .pixels(10) }).screenY());
+    try testing.expect(p.add(Vec3.pixels(1, 0, 0)).sub(Vec3.pixels(1, 0, 0)).eql(p));
+}
+
+test "the format: whole pixels and the fraction, exactly" {
+    var buf: [32]u8 = undefined;
+    try testing.expectEqualStrings("-3+32768/65536", try std.fmt.bufPrint(&buf, "{f}", .{Fixed.parts(-3, 0x8000)}));
+    try testing.expectEqualStrings("12", try std.fmt.bufPrint(&buf, "{f}", .{Fixed.pixels(12)}));
+}
