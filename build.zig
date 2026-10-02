@@ -209,6 +209,45 @@ pub fn build(b: *std.Build) void {
         .imports = &.{.{ .name = "sorz", .module = shared }},
     });
 
+    // The extractor as a tool (not installed): `extract` writes the content tree of the user's
+    // ROM, `extract-check` extracts it twice and checks the two are byte-identical and load.
+    // Both need `-Drom=PATH`; no build or test reads a ROM without it.
+    const extract_exe = b.addExecutable(.{
+        .name = "sorz-extract",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/extract/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "sorz", .module = shared },
+                .{ .name = "extract", .module = extract },
+            },
+        }),
+    });
+    const rom_path = b.option([]const u8, "rom", "The user's ROM, for the extract and extract-check steps");
+    const content_dir = b.option([]const u8, "content", "Where the extract step writes the content tree (default: <prefix>/content)");
+    const extract_step = b.step("extract", "Write the content tree of the ROM -Drom=PATH into -Dcontent=DIR");
+    const extract_check_step = b.step("extract-check", "Extract the ROM -Drom=PATH twice: the trees must be byte-identical and load");
+    if (rom_path) |rom| {
+        const write_tree = b.addRunArtifact(extract_exe);
+        write_tree.addArg(rom);
+        if (content_dir) |dir| {
+            write_tree.addArg(dir);
+        } else {
+            write_tree.addDirectoryArg2(.{ .relative = .{ .base = .install_prefix, .sub_path = "content" } }, .{ .make_absolute = true });
+        }
+        write_tree.has_side_effects = true;
+        extract_step.dependOn(&write_tree.step);
+        const check_tree = b.addRunArtifact(extract_exe);
+        check_tree.addArgs(&.{ "--check", rom });
+        check_tree.has_side_effects = true;
+        extract_check_step.dependOn(&check_tree.step);
+    } else {
+        const missing = b.addFail("the extract steps need the user's ROM: -Drom=PATH");
+        extract_step.dependOn(&missing.step);
+        extract_check_step.dependOn(&missing.step);
+    }
+
     // Unit tests of every module. The tests of the SDL module link SDL2 as the host does.
     const test_step = b.step("test", "Run the unit tests of every module");
     const unit_modules = [_]*std.Build.Module{ shared, agent, native, sdl, web_parts, extract };
