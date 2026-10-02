@@ -44,6 +44,20 @@ pub const scenarios = [_]Scenario{
         .frames = 330,
         .pictures = &.{.{ .from = 0, .to = 329 }},
     },
+    .{
+        .name = "logo_start",
+        .what = "START during the Sega logo's sweep (and at its first tick and in its hold, where it is not read): its fade, the intro's load",
+        .frames = 240,
+        .keys = &.{ .{ .frame = 77, .key = .enter }, .{ .frame = 100, .key = .enter }, .{ .frame = 180, .key = .enter } },
+        .pictures = &.{.{ .from = 70, .to = 239 }},
+    },
+    .{
+        .name = "logo_start_pad2",
+        .what = "pad 2's START during the Sega logo's sweep",
+        .frames = 200,
+        .keys = &.{.{ .frame = 120, .key = .tab }},
+        .pictures = &.{.{ .from = 110, .to = 199 }},
+    },
 };
 
 pub fn main(init: std.process.Init) !void {

@@ -17,6 +17,7 @@ pub const view = @import("view.zig");
 pub const setup = @import("setup.zig");
 pub const screens = struct {
     pub const colours = @import("screens/colours.zig");
+    pub const sega_logo = @import("screens/sega_logo.zig");
 };
 pub const picture = @import("picture.zig");
 pub const sound_out = @import("sound_out.zig");

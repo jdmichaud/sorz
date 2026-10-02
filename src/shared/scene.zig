@@ -33,12 +33,13 @@ pub const Exit = flow.Exit;
 pub const TestPattern = @import("screens/test_pattern.zig").TestPattern;
 pub const Load = @import("screens/load.zig").Load;
 pub const StandIn = @import("screens/stand_in.zig").StandIn;
+pub const SegaLogo = @import("screens/sega_logo.zig").SegaLogo;
 
 /// The scenes' state, by kind.
 pub const Scene = union(Kind) {
     test_pattern: TestPattern,
     load: Load,
-    sega_logo: StandIn,
+    sega_logo: SegaLogo,
     intro: StandIn,
     title: StandIn,
     menu: StandIn,
@@ -103,6 +104,7 @@ pub const Turn = struct {
 pub const Assets = struct {
     load: Load.Assets,
     stand_in: StandIn.Assets,
+    sega_logo: SegaLogo.Assets,
 
     pub fn find(c: *const library.Content, diag: *json.Diagnostic) library.LoadError!Assets {
         var a: Assets = undefined;
