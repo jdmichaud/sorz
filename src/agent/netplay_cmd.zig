@@ -49,7 +49,7 @@ const Script = struct {
                 try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .key_down = .{ .key = press.key } } });
                 d.* = 1;
             }
-            if (d.* == 1 and t >= press.frame + press.hold) {
+            if (d.* == 1 and t >= press.frame +| press.hold) {
                 try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .key_up = .{ .key = press.key } } });
                 d.* = 2;
             }
@@ -124,8 +124,9 @@ pub fn process(
     }
     const np = game.netplay.?;
     const ok = !finished and np.tick() >= frames and np.phase() == .playing;
-    // The peer may still need this game's last pads: the transport's close sends them first.
-    game.netplay.?.quit(&p);
+    // The peer may still need this game's last pads: the transport's close sends them first. (A
+    // game that finished has quit already.)
+    if (!finished) game.netplay.?.quit(&p);
     try out.writeAll("{");
     try writeGame(out, if (options.role == .host) "host" else "guest", &game);
     try out.print(",\"verdict\":\"{s}\"}}\n", .{if (ok) "ok" else "incomplete"});
@@ -163,11 +164,13 @@ pub fn pair(
     };
     for (&sides, 0..) |*s, i| {
         const host = i == 0;
-        s.* = .{
-            .backend = AgentBackend.init(gpa, .{}),
-            .game = try sorz.Game.init(gpa, assets, null),
-            .script = try Script.init(gpa, if (host) host_presses else guest_presses),
+        // Each part made, then the side counted: the defer above releases whole sides only.
+        var script = try Script.init(gpa, if (host) host_presses else guest_presses);
+        const game = sorz.Game.init(gpa, assets, null) catch |err| {
+            script.deinit(gpa);
+            return err;
         };
+        s.* = .{ .backend = AgentBackend.init(gpa, .{}), .game = game, .script = script };
         made += 1;
         s.backend.transport = (try network.endpoint()).transport();
         s.game.pacing = .per_update;

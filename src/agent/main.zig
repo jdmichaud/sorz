@@ -163,14 +163,24 @@ pub fn main(init: std.process.Init) !void {
     game.pacing = .per_update;
     var p = backend.asPlatform();
     var frame: u64 = 0;
+    var shots_written: usize = 0;
     while (frame < frames) : (frame += 1) {
         for (presses.items) |press| {
             if (press.frame == frame) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .key_down = .{ .key = press.key } } });
-            if (press.frame + press.hold == frame) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .key_up = .{ .key = press.key } } });
+            if (press.frame +| press.hold == frame) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .key_up = .{ .key = press.key } } });
         }
         if (try game.update(&p) == .finished) break;
-        for (shots.items) |shot| if (shot.frame == frame) try writeShot(gpa, io, &game, shot.path);
+        for (shots.items) |shot| if (shot.frame == frame) {
+            try writeShot(gpa, io, &game, shot.path);
+            shots_written += 1;
+        };
         backend.advance(frame_ns);
+    }
+    // A picture asked for and not written (its frame past the run's end, or the game finished
+    // before it) fails the run: a check must not compare a picture that is not there.
+    if (shots_written != shots.items.len) {
+        for (shots.items) |shot| if (shot.frame >= frame) std.log.err("no picture for --shot {d}:{s}: the run ended at frame {d}", .{ shot.frame, shot.path, frame });
+        std.process.exit(1);
     }
     if (wav_path) |path| try writeWav(gpa, io, path, backend.audio.pcm.items, backend.audio.format);
 

@@ -10,6 +10,8 @@ const max_block = 65535;
 
 /// The PNG of `rgba` (`width` x `height` pixels, four bytes each, rows from the top).
 pub fn encode(gpa: std.mem.Allocator, width: u32, height: u32, rgba: []const u8) error{OutOfMemory}![]u8 {
+    // PNG has no empty picture, and the rows' loop below needs a row's bytes.
+    std.debug.assert(width > 0 and height > 0);
     std.debug.assert(rgba.len == @as(usize, width) * height * 4);
     const row = @as(usize, width) * 4;
     const raw_len = (row + 1) * height;
