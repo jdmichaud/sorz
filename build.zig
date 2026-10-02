@@ -8,7 +8,8 @@
 //! installs the browser build and checks its module's imports; `web-check` checks the page's
 //! helper functions against compiler-rt (it needs Node.js); `test` runs the unit tests of every
 //! module and the engine's rule against the console's terms (tools/engine_terms.zig); `smoke`
-//! runs the agent host for a few frames; `verify` checks that the agent binary has no SDL
+//! runs the agent host for a few frames and checks the settings record across starts
+//! (tools/check_settings.sh); `verify` checks that the agent binary has no SDL
 //! dependency; `all` installs every binary of the target and of Windows (under
 //! <prefix>/windows) and the browser build.
 const std = @import("std");
@@ -284,12 +285,19 @@ pub fn build(b: *std.Build) void {
     const terms_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("tools/engine_terms.zig"), .target = target, .optimize = optimize }) });
     test_step.dependOn(&b.addRunArtifact(terms_tests).step);
 
-    // The agent host for a few frames, its keys moving a marker of the test pattern. It needs no
-    // game files and no display.
+    // The agent host for a few frames, its keys moving a marker of the test pattern; then the
+    // settings record read at the start, and damaged records (tools/check_settings.sh). It needs
+    // no game files and no display.
+    const smoke_step = b.step("smoke", "Run the agent host for a few frames, and the settings record across starts");
     const smoke = b.addRunArtifact(agent_exe);
     smoke.addArgs(&.{ "--frames", "60", "--key", "10:right:20", "--key", "20:x:5" });
     smoke.expectExitCode(0);
-    b.step("smoke", "Run the agent host for a few frames").dependOn(&smoke.step);
+    smoke_step.dependOn(&smoke.step);
+    const settings_check = b.addSystemCommand(&.{ "sh", "tools/check_settings.sh" });
+    settings_check.addArtifactArg(agent_exe);
+    settings_check.expectExitCode(0);
+    settings_check.has_side_effects = true;
+    smoke_step.dependOn(&settings_check.step);
 
     // The agent binary must have no SDL dependency.
     const no_sdl = b.addSystemCommand(&.{ "sh", "tools/check_no_sdl.sh" });
