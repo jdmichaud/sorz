@@ -6,6 +6,7 @@ pub const memory = @import("memory.zig");
 pub const version = @import("version.zig");
 pub const formats = @import("formats/root.zig");
 pub const content = @import("content/root.zig");
+pub const render = @import("render/root.zig");
 pub const game = @import("game.zig");
 pub const Game = game.Game;
 pub const canonical = @import("canonical.zig");
