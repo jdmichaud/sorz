@@ -415,13 +415,10 @@ fn titleColours(rom: []const u8) ![art.palette_count][art.palette_size]art.Colou
     return c;
 }
 
-pub const Stats = struct { frames: usize = 0, empty: usize = 0, unparsed: usize = 0, missing: usize = 0 };
-
-/// Every set's frames into the builder.
-pub fn extract(b: *Builder) !Stats {
+/// Every set's frames into the builder (the frames left out counted in its notes).
+pub fn extract(b: *Builder) !void {
     const arena = b.arena;
     const rom = b.rom;
-    var stats: Stats = .{};
     const play = try playColours(rom);
     const title_c = try titleColours(rom);
     var layouts: [std.enums.values(Layout).len]?[]?art.Tile = @splat(null);
@@ -430,14 +427,11 @@ pub fn extract(b: *Builder) !Stats {
         const addresses = try frameAddresses(arena, rom, set.source);
         for (addresses, 0..) |fa, index| {
             const parsed = try parseFrame(arena, rom, fa, set.player) orelse {
-                stats.unparsed += 1;
-                std.log.info("{s}: the frame at ROM 0x{X:0>5} does not read as one: left out", .{ set.dir, fa });
+                b.notes.frames_unread += 1;
                 continue;
             };
-            if (parsed.pieces.len == 0) {
-                stats.empty += 1;
-                continue;
-            }
+            // A frame without pieces draws nothing: no picture (the ROM's sets have none).
+            if (parsed.pieces.len == 0) continue;
             var player_tiles: PlayerTiles = .{};
             var sheet_tiles: SheetTiles = undefined;
             var vram_tiles: VramTiles = undefined;
@@ -477,8 +471,7 @@ pub fn extract(b: *Builder) !Stats {
                 },
             };
             const img = try compose(arena, parsed.pieces, tiles) orelse {
-                stats.missing += 1;
-                std.log.info("{s}: the frame at ROM 0x{X:0>5} names a tile its art does not give: left out", .{ set.dir, fa });
+                b.notes.frames_lacking += 1;
                 continue;
             };
             const first = parsed.pieces[0].name;
@@ -509,10 +502,9 @@ pub fn extract(b: *Builder) !Stats {
                     .title => title_c[palette],
                 },
             });
-            stats.frames += 1;
+            b.notes.frames += 1;
         }
     }
-    return stats;
 }
 
 test "a frame composes with its origin, its pieces' flips and order" {

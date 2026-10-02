@@ -94,7 +94,8 @@ pub fn main(init: std.process.Init) !void {
     }
     var bytes: usize = 0;
     for (tree.files) |f| bytes += f.bytes.len;
-    try out.interface.print("{{\"files\":{d},\"bytes\":{d},\"identical\":true,\"loaded_sets\":{d},\"rewritten_identical\":true}}\n", .{ tree.files.len, bytes, loaded.art.sets.len });
+    const n = tree.notes;
+    try out.interface.print("{{\"files\":{d},\"bytes\":{d},\"identical\":true,\"loaded_sets\":{d},\"rewritten_identical\":true,\"frames\":{d},\"frames_unread\":{d},\"frames_lacking_art\":{d},\"cells_on_blank_slots\":{d}}}\n", .{ tree.files.len, bytes, loaded.art.sets.len, n.frames, n.frames_unread, n.frames_lacking, n.blank_cells });
     try out.interface.flush();
 }
 

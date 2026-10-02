@@ -29,6 +29,8 @@ pub const File = content.File;
 pub const Tree = struct {
     arena: std.heap.ArenaAllocator,
     files: []const File,
+    /// What the extraction met that the content does not show.
+    notes: builder.Builder.Notes = .{},
 
     pub fn deinit(self: *Tree) void {
         self.arena.deinit();
@@ -70,6 +72,7 @@ pub fn extractUnchecked(gpa: std.mem.Allocator, rom_bytes: []const u8) Error!Tre
         .art = a,
     };
     tree.files = try content.write(arena, &c);
+    tree.notes = b.notes;
     return tree;
 }
 
@@ -80,8 +83,7 @@ pub fn build(arena: std.mem.Allocator, rom_bytes: []const u8) Error!builder.Buil
     for (screens.screens) |s| try screens.extract(&b, s);
     for (0..rounds.count) |n| try rounds.extract(&b, @intCast(n));
     try palettes.extract(&b);
-    const frames = try sprites.extract(&b);
-    std.log.info("sprite frames: {d} pictures, {d} frames without pieces, {d} that do not read as frames, {d} whose art lacks a tile", .{ frames.frames, frames.empty, frames.unparsed, frames.missing });
+    try sprites.extract(&b);
     return b;
 }
 

@@ -642,7 +642,7 @@ pub const Run = struct {
                 gop.value_ptr[c.palette] += 1;
             } else if (std.mem.allEqual(u8, &self.v.bytes[slot], 0) and (self.v.cleared or self.v.written.isSet(slot))) {
                 c.* = .empty; // a blank slot draws nothing
-                if (!self.v.written.isSet(slot)) std.log.debug("{s}: {s}: cell ({d}, {d}) names slot ${X:0>3}, blank since the display was cleared", .{ self.screen.name, name, k % width, k / width, slot });
+                if (!self.v.written.isSet(slot)) self.b.notes.blank_cells += 1;
             } else {
                 std.log.warn("{s}: {s}: cell {d} ({d}, {d}) names tile slot ${X:0>3}, which holds no whole tile of a known block", .{ self.screen.name, name, k, k % width, k / width, slot });
                 return error.UnresolvedTile;

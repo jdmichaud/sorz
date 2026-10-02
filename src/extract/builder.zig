@@ -64,6 +64,19 @@ pub const Builder = struct {
     /// Where each map, frame and palette came from in the ROM, by full name: what the
     /// comparison with sor-remaster's tree reads (src/extract/compare.zig).
     origins: std.StringArrayHashMapUnmanaged(Origin) = .empty,
+    /// What the extraction met that the content does not show; the tool reports it.
+    notes: Notes = .{},
+
+    pub const Notes = struct {
+        /// Sprite frames composed into pictures.
+        frames: usize = 0,
+        /// Frames an animation names whose bytes do not read as a frame, left out.
+        frames_unread: usize = 0,
+        /// Frames whose art lacks a tile they name, left out.
+        frames_lacking: usize = 0,
+        /// Map cells naming a tile slot a set-up leaves blank (the display cleared), made empty.
+        blank_cells: usize = 0,
+    };
 
     pub fn init(arena: std.mem.Allocator, rom: []const u8) Builder {
         return .{ .arena = arena, .rom = rom, .lib = .{ .arena = arena, .rom = rom } };
