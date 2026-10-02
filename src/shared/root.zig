@@ -9,6 +9,8 @@ pub const content = @import("content/root.zig");
 pub const game = @import("game.zig");
 pub const Game = game.Game;
 pub const net = @import("net/root.zig");
+pub const input = @import("input.zig");
+pub const settings = @import("settings/root.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
