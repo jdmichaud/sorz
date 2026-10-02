@@ -10,6 +10,7 @@ const png = @import("../formats/png.zig");
 const platform = @import("../platform.zig");
 const art = @import("art.zig");
 const tiled = @import("tiled.zig");
+const entity = @import("entity.zig");
 
 /// The tree's format and version (`manifest.json`). A tree of another version is refused, not
 /// converted.
@@ -29,11 +30,15 @@ pub const Manifest = struct {
     rom_size: u32,
     /// The art sets' directories, in order.
     art: []const []const u8,
+    /// The kinds of entity the tree defines (`entities/NAME.json`), in order.
+    entities: []const []const u8 = &.{},
 };
 
 pub const Content = struct {
     manifest: Manifest,
     art: art.Art,
+    /// The kinds of entity, in the manifest's order.
+    entities: []const entity.Definition = &.{},
 };
 
 // --- Writing ---------------------------------------------------------------------------------
@@ -50,6 +55,11 @@ pub fn write(arena: std.mem.Allocator, content: *const Content) WriteError![]Fil
         any_map = any_map or s.maps.len != 0;
     }
     if (any_map) try files.append(arena, .{ .path = tiled.attributes_file, .bytes = try attributesPicture(arena) });
+    if (content.entities.len != content.manifest.entities.len) return error.BadContent;
+    for (content.entities, content.manifest.entities) |*d, name| {
+        if (!std.mem.eql(u8, d.name, name)) return error.BadContent;
+        try files.append(arena, .{ .path = try entity.path(arena, d.name), .bytes = try writeJson(arena, try entity.value(arena, d)) });
+    }
     std.mem.sort(File, files.items, {}, fileLess);
     for (files.items[1..], 0..) |f, i| {
         if (std.mem.eql(u8, f.path, files.items[i].path)) return error.BadContent;
@@ -71,7 +81,8 @@ fn writeJson(arena: std.mem.Allocator, v: json.Value) WriteError![]u8 {
 fn manifestValue(arena: std.mem.Allocator, m: *const Manifest) !json.Value {
     const sets = try arena.alloc(json.Value, m.art.len);
     for (sets, m.art) |*v, s| v.* = .{ .str = s };
-    return obj(arena, &.{
+    var fields: std.ArrayList(json.Field) = .empty;
+    try fields.appendSlice(arena, &.{
         .{ .key = "format", .value = .{ .str = format_name } },
         .{ .key = "version", .value = json.Value.num(version) },
         .{ .key = "extractor", .value = .{ .str = m.extractor } },
@@ -81,6 +92,13 @@ fn manifestValue(arena: std.mem.Allocator, m: *const Manifest) !json.Value {
         }) },
         .{ .key = "art", .value = .{ .array = sets } },
     });
+    // A tree without definitions keeps the manifest it had before them.
+    if (m.entities.len != 0) {
+        const kinds = try arena.alloc(json.Value, m.entities.len);
+        for (kinds, m.entities) |*v, s| v.* = .{ .str = s };
+        try fields.append(arena, .{ .key = "entities", .value = .{ .array = kinds } });
+    }
+    return .{ .object = fields.items };
 }
 
 fn obj(arena: std.mem.Allocator, fields: []const json.Field) !json.Value {
@@ -298,7 +316,18 @@ pub const max_file = 16 << 20;
 /// a refusal names the file and the field (or place) in `diag`.
 pub fn load(arena: std.mem.Allocator, source: platform.AssetSource, diag: *Diagnostic) Error!Content {
     const m = try loadManifest(arena, source, diag);
-    return .{ .manifest = m, .art = try loadArt(arena, source, m.art, diag) };
+    const a = try loadArt(arena, source, m.art, diag);
+    return .{ .manifest = m, .art = a, .entities = try loadEntities(arena, source, m.entities, &a, diag) };
+}
+
+/// Reads the definitions `names` (`entities/NAME.json`), whose frames are `a`'s.
+pub fn loadEntities(arena: std.mem.Allocator, source: platform.AssetSource, names: []const []const u8, a: *const art.Art, diag: *Diagnostic) Error![]const entity.Definition {
+    const out = try arena.alloc(entity.Definition, names.len);
+    for (out, names) |*d, name| {
+        const root = try parseFile(arena, source, try entity.path(arena, name), diag);
+        d.* = try entity.read(arena, name, root, a);
+    }
+    return out;
 }
 
 fn readFile(arena: std.mem.Allocator, source: platform.AssetSource, path: []const u8, diag: *Diagnostic) Error![]const u8 {
@@ -323,7 +352,7 @@ fn parseFile(arena: std.mem.Allocator, source: platform.AssetSource, path: []con
 
 pub fn loadManifest(arena: std.mem.Allocator, source: platform.AssetSource, diag: *Diagnostic) Error!Manifest {
     const root = try parseFile(arena, source, manifest_file, diag);
-    try root.only(&.{ "format", "version", "extractor", "rom", "art" });
+    try root.only(&.{ "format", "version", "extractor", "rom", "art", "entities" });
     const f = try root.get("format");
     if (!std.mem.eql(u8, try f.string(), format_name)) return f.fail("not \"" ++ format_name ++ "\"");
     const v = try root.get("version");
@@ -338,11 +367,23 @@ pub fn loadManifest(arena: std.mem.Allocator, source: platform.AssetSource, diag
         if (!art.validSetName(s.*)) return n.fail("not a set's name (a-z, 0-9, _; / between directories)");
         for (sets[0..i]) |other| if (std.mem.eql(u8, other, s.*)) return n.fail("named twice");
     }
+    var kinds: []const []const u8 = &.{};
+    if (try root.opt("entities")) |kinds_node| {
+        const out = try arena.alloc([]const u8, try kinds_node.len());
+        for (out, 0..) |*s, i| {
+            const n = try kinds_node.at(i);
+            s.* = try n.string();
+            if (!art.validName(s.*)) return n.fail("not a kind's name (a-z, 0-9, _)");
+            for (out[0..i]) |other| if (std.mem.eql(u8, other, s.*)) return n.fail("named twice");
+        }
+        kinds = out;
+    }
     return .{
         .extractor = try (try root.get("extractor")).string(),
         .rom_sha256 = try (try rom.get("sha256")).string(),
         .rom_size = try (try rom.get("size")).int(u32),
         .art = sets,
+        .entities = kinds,
     };
 }
 
@@ -679,9 +720,14 @@ test "a tree writes, loads back the same, and writes the same bytes again" {
         .{ .name = "fonts", .sheets = &font_sheets, .fonts = &fonts },
         .{ .name = "title", .provenance = "synthetic", .uses = &.{"fonts"}, .palettes = &.{pal}, .cycles = &cycles, .sheets = &sheets, .maps = &maps, .frames = &frames },
     };
+    const boxes = [_]entity.Box{.{ .name = "body", .x = .{ .from = -4, .to = 4 }, .depth = .{ .from = -1, .to = 1 }, .height = .{ .from = -20, .to = 0 } }};
+    const steps = [_]entity.Frame{.{ .frame = "title/000", .ticks = 5, .body = 0 }};
+    const animations = [_]entity.Animation{.{ .name = "stand", .loop = true, .frames = &steps }};
+    const kinds = [_]entity.Definition{.{ .name = "dummy", .family = .scenery, .team = .neutral, .behaviour = "still", .boxes = &boxes, .animations = &animations }};
     const content: Content = .{
-        .manifest = .{ .extractor = "test", .rom_sha256 = "00", .rom_size = 1, .art = &.{ "fonts", "title" } },
+        .manifest = .{ .extractor = "test", .rom_sha256 = "00", .rom_size = 1, .art = &.{ "fonts", "title" }, .entities = &.{"dummy"} },
         .art = .{ .sets = &sets },
+        .entities = &kinds,
     };
     const files = try write(arena, &content);
 
@@ -708,6 +754,9 @@ test "a tree writes, loads back the same, and writes the same bytes again" {
     try std.testing.expectEqual(@as(i16, 2), f.origin_y);
     try std.testing.expectEqual(@as(u2, 3), f.palette);
     try std.testing.expectEqual(@as(u16, 1), back.art.font("fonts/main").?.glyphAt("A").?.tile);
+    try std.testing.expectEqual(@as(usize, 1), back.entities.len);
+    try std.testing.expectEqualStrings("title/000", back.entities[0].animations[0].frames[0].frame);
+    try std.testing.expectEqual(@as(?u8, 0), back.entities[0].animations[0].frames[0].body);
 
     const again = try write(arena, &back);
     try std.testing.expectEqual(files.len, again.len);

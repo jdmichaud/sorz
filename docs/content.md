@@ -31,11 +31,12 @@ This document is the schema, format 1. The sound's part of the tree is described
 ## Layout
 
 ```
-manifest.json          the format, its version, the extractor, the ROM, the art sets
+manifest.json          the format, its version, the extractor, the ROM, the art sets, the kinds
 attributes.png         the attribute tiles the maps' second layer uses (palette, priority)
 SET/art.json           an art set: its palettes, tile sheets, maps, frames, fonts
 SET/NAME.png           a tile sheet or a sprite frame
 SET/NAME.tmj           a tile map (Tiled)
+entities/NAME.json     a kind of entity's definition: a character, an enemy, an item...
 sound/...              the sound (docs/content-sound.md)
 ```
 
@@ -50,12 +51,14 @@ an enemy's (`axel`, `galsia`), or art several screens share (`fonts`, `play`).
   "version": 1,
   "extractor": "sorz-extract 1",
   "rom": {"sha256": "…", "size": 524288},
-  "art": ["fonts", "segalogo", "title", "round1", "axel"]
+  "art": ["fonts", "segalogo", "title", "round1", "axel"],
+  "entities": ["axel", "galsia"]
 }
 ```
 
-`art` lists the art sets the loader reads, in order. `rom` names the ROM the tree was extracted
-from; it identifies the data (network play compares it).
+`art` lists the art sets the loader reads, in order; `entities`, which a tree without
+definitions leaves out, the kinds of entity (`entities/NAME.json`). `rom` names the ROM the tree
+was extracted from; it identifies the data (network play compares it).
 
 ## SET/art.json
 
@@ -126,6 +129,78 @@ frame's pieces mirrored equals mirroring the composed picture about the origin (
 map 5, checked on all 635 frames). So a frame is one indexed picture with its origin: one blit,
 mirrored or not, and an editor sees the frame as it appears. The pieces stay in the record, as
 rectangles, for the day the original's per-line sprite limits matter.
+
+## entities/NAME.json
+
+A kind of entity: a character, an enemy, a boss, a weapon, an item, a piece of scenery, an
+effect. NAME is the kind's name, which the semantic traces use (`galsia`, `galsia_knife`). The
+definition holds what the world needs to make one, and the numbers its behaviour reads: the
+behaviour's states are code (`src/shared/world/behaviours/`), their speeds, ranges, durations and
+damage are here (DESIGN.md W3). A new kind of enemy is a definition, and a behaviour module when
+none of the existing ones fits.
+
+```json
+{
+  "provenance": "…",
+  "family": "enemy",
+  "team": "enemy",
+  "behaviour": "galsia",
+  "health": 32,
+  "palette": 1,
+  "gravity": 24576,
+  "shadow": true,
+  "numbers": {"walk_speed": 65536, "reach": 28},
+  "sounds": {"hurt": "enemy hit"},
+  "boxes": {
+    "body": {"x": [-8, 8], "depth": [-3, 3], "height": [-56, 0]},
+    "fist": {"x": [10, 30], "x_left": [-31, -11], "depth": [-3, 3], "height": [-48, -40]}
+  },
+  "animations": {
+    "stand": {"loop": true, "frames": [{"frame": "galsia/000", "ticks": 8, "body": "body"}]},
+    "punch": {"frames": [
+      {"frame": "galsia/010", "ticks": 3, "body": "body"},
+      {"frame": "galsia/011", "ticks": 4, "body": "body", "attack": "fist"}
+    ]}
+  },
+  "moves": {
+    "punch": {"animation": "punch", "damage": 4, "reaction": "reel", "push": {"x": 65536},
+              "sound": "punch swing", "hit_sound": "punch hits"}
+  }
+}
+```
+
+The units are the world's: pixels for the boxes; 1/65536 pixel for the speeds, per logic tick (30
+a second in play). The axes are `x` across, `depth` on the ground (toward the player) and
+`height`, which grows downward as the screen's lines do (a jump makes it smaller).
+
+- `family`: `player`, `enemy`, `boss`, `projectile`, `weapon`, `item`, `scenery`, `effect` or
+  `screen`: what the semantic traces say of it. `team`: `player`, `enemy` or `neutral`: whose
+  blows land on it.
+- `behaviour`: the behaviour module that drives it, by name. The world refuses a kind whose
+  behaviour does not exist, or that lacks a number, a sound, an animation or a move the behaviour
+  reads, naming the file and what is missing.
+- `health`; `palette` (0 to 3), added to its frames' palettes; `gravity`, added to its height's
+  speed every logic tick in the air; `shadow`, whether a shadow follows it on the ground. Each is
+  optional: 0, or false.
+- `numbers`: the behaviour's numbers by name, integers in the units the behaviour gives them.
+  `sounds`: the sounds the behaviour asks for, by their role, each a name of the sound content
+  (`docs/content-sound.md`).
+- `boxes`: named boxes, each a span `[from, to]` (both included) on each axis from the entity's
+  place, for the entity facing right. Facing left, the span across is `x_left` if given, else `x`
+  mirrored (`[-to, -from]`). Two boxes meet when their spans overlap or touch on all three axes.
+- `animations`: each a list of `frames`, at least one: `frame`, a sprite frame by its full name;
+  `ticks`, how many logic ticks it shows (1 to 255); `flip`, drawn mirrored besides the entity's
+  facing; `body`, the box blows strike it in, and `attack`, the box its blow strikes with, while
+  the frame shows (a frame without them has none). With `loop` the first frame follows the last;
+  without, the last stays.
+- `moves`: a blow or an action: its `animation` (by name); the `damage` its blow does; the
+  `reaction` of the one it strikes, `reel` or `knock_down`; the speed it gives that one, `push`
+  (`x` away from the striker, `height` negative upward); the `sound` asked for when it starts and
+  the `hit_sound` when its blow lands.
+
+The optional fields are written only when they are not their defaults, so a file read and
+written again keeps its bytes. The extractor writes the original's characters and enemies (PLAN
+item 11 and on); until then a tree has no `entities`.
 
 ## Tile maps (`.tmj`)
 
