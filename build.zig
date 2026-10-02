@@ -13,7 +13,8 @@
 //! (tools/check_settings.sh); `verify` checks that the agent and server binaries have no SDL
 //! dependency and that each executable, alone in a directory, serves its page
 //! (tools/check_alone.sh); `all` installs every binary of the target and of Windows (under
-//! <prefix>/windows) and the browser build.
+//! <prefix>/windows) and the browser build. `browser-check` runs the browser build in Chromium
+//! against the agent host, and two pages through the relay (it needs Node.js and a Chromium).
 const std = @import("std");
 
 /// The SDL2 release that the Linux host is built and tested against.
@@ -355,6 +356,36 @@ pub fn build(b: *std.Build) void {
     settings_check.expectExitCode(0);
     settings_check.has_side_effects = true;
     smoke_step.dependOn(&settings_check.step);
+
+    // The browser build in Chromium against the agent host (src/web/browser_check.mjs), the pages
+    // served by native programs with the game's files of a game directory that the check makes:
+    // the page without files, its text from the loading to the menu, the game's frames and sound
+    // compared tick by tick with the agent host's, a settings record applied, the game as the
+    // player runs it, a hidden page, the keyboard, a gamepad, network play with the agent host as
+    // the host, and two pages through the relay (`sorz-server DIR --server`) and its rules. It
+    // needs Node.js and a Chromium, so it is not part of `test`; build it optimised
+    // (-Doptimize=ReleaseFast) for its real-time parts.
+    const chromium = b.option([]const u8, "chromium", "The Chromium that browser-check drives (default: $CHROME, else chromium or chrome on the PATH)");
+    const browser_check_step = b.step("browser-check", "Run the browser build in Chromium against the agent host, and two pages through the relay (needs Node.js and a Chromium)");
+    {
+        // The page's three files, as `web` installs them.
+        const page = b.addWriteFiles();
+        _ = page.addCopyFile(web_module.getEmittedBin(), "sorz.wasm");
+        _ = page.addCopyFile(b.path("src/web/index.html"), "index.html");
+        _ = page.addCopyFile(b.path("src/web/sorz.js"), "sorz.js");
+        const run = b.addSystemCommand(&.{"node"});
+        run.addFileArg(b.path("src/web/browser_check.mjs"));
+        run.addArg("--web");
+        run.addDirectoryArg(page.getDirectory());
+        run.addArg("--agent");
+        run.addArtifactArg(agent_exe);
+        run.addArg("--server");
+        run.addArtifactArg(server_exe);
+        if (chromium) |path| run.addArgs(&.{ "--chromium", path });
+        run.step.dependOn(web_step);
+        run.has_side_effects = true;
+        browser_check_step.dependOn(&run.step);
+    }
 
     // The agent and server binaries must have no SDL dependency.
     const verify_step = b.step("verify", "Check that the agent host and the relay server link no SDL library, and that each executable alone serves its page");
