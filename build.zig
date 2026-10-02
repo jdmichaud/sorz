@@ -14,7 +14,9 @@
 //! dependency and that each executable, alone in a directory, serves its page
 //! (tools/check_alone.sh); `all` installs every binary of the target and of Windows (under
 //! <prefix>/windows) and the browser build. `browser-check` runs the browser build in Chromium
-//! against the agent host, and two pages through the relay (it needs Node.js and a Chromium).
+//! against the agent host, and two pages through the relay (it needs Node.js and a Chromium);
+//! `sound-check` compares the sound with sor-remaster's, from the user's ROM (`-Drom=ROM
+//! -Dremaster=DIR`).
 const std = @import("std");
 
 /// The SDL2 release that the Linux host is built and tested against.
@@ -319,6 +321,22 @@ pub fn build(b: *std.Build) void {
         extract_check_step.dependOn(&missing.step);
     }
 
+    // `sound-check`: the sound against sor-remaster's driver (PLAN 09), from the user's ROM and a
+    // sor-remaster checkout, which is built as a library and never written to. Optimised, as it
+    // plays every song for minutes.
+    const sound_check_step = b.step("sound-check", "Compare the sound with sor-remaster's (needs -Drom=ROM -Dremaster=DIR)");
+    const remaster = b.option([]const u8, "remaster", "A sor-remaster checkout, the reference of sound-check");
+    const sound_only = b.option([]const u8, "sound-only", "One group of sound-check's scenarios: songs, round6, effects, pairs, changes, fades, pauses, stops, voices, quirks, pcm, random");
+    const sound_tree = b.option([]const u8, "sound-tree", "Where sound-check writes the sound content's files, for reading");
+    if (rom_path != null and remaster != null) {
+        const run = soundCheck(b, target, versions, rom_path.?, remaster.?);
+        if (sound_only) |o| run.addArgs(&.{ "--only", o });
+        if (sound_tree) |t| run.addArgs(&.{ "--tree", t });
+        sound_check_step.dependOn(&run.step);
+    } else {
+        sound_check_step.dependOn(&b.addFail("sound-check needs -Drom=ROM and -Dremaster=DIR").step);
+    }
+
     // Unit tests of every module. The tests of the SDL module link SDL2 as the host does.
     const test_step = b.step("test", "Run the unit tests of every module");
     const unit_modules = [_]*std.Build.Module{ shared, agent, native, sdl, web_parts, extract };
@@ -450,6 +468,47 @@ fn buildIdentity(b: *std.Build) []const u8 {
     const out = b.runAllowFail(&.{ "git", "describe", "--always", "--abbrev=12", "--exclude=*" }, &code, .ignore) catch return "unknown";
     const text = std.mem.trim(u8, out, " \t\r\n");
     return if (text.len == 0 or text.len > 32) "unknown" else text;
+}
+
+/// The run of the sound check (tests/sound/check.zig): its own optimised copies of `sorz` and the
+/// extractor, and sor-remaster's shared module as `remaster`.
+fn soundCheck(b: *std.Build, target: std.Build.ResolvedTarget, versions: *std.Build.Step.Options, rom: []const u8, remaster: []const u8) *std.Build.Step.Run {
+    const fast: std.builtin.OptimizeMode = .ReleaseFast;
+    const shared = b.createModule(.{ .root_source_file = b.path("src/shared/root.zig"), .target = target, .optimize = fast });
+    shared.addOptions("build_versions", versions);
+    const extract = b.createModule(.{
+        .root_source_file = b.path("src/extract/root.zig"),
+        .target = target,
+        .optimize = fast,
+        .imports = &.{.{ .name = "sorz", .module = shared }},
+    });
+    const reference_versions = b.addOptions();
+    reference_versions.addOption([]const u8, "build", "reference");
+    reference_versions.addOption([]const u8, "sdl", "none");
+    const reference = b.createModule(.{
+        .root_source_file = .{ .cwd_relative = b.pathJoin(&.{ remaster, "src/shared/root.zig" }) },
+        .target = target,
+        .optimize = fast,
+    });
+    reference.addOptions("build_versions", reference_versions);
+    reference.addImport("vector_files", b.createModule(.{ .root_source_file = .{ .cwd_relative = b.pathJoin(&.{ remaster, "tests/vectors/files.zig" }) } }));
+    const exe = b.addExecutable(.{
+        .name = "sound-check",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/sound/check.zig"),
+            .target = target,
+            .optimize = fast,
+            .imports = &.{
+                .{ .name = "sorz", .module = shared },
+                .{ .name = "extract", .module = extract },
+                .{ .name = "remaster", .module = reference },
+            },
+        }),
+    });
+    const run = b.addRunArtifact(exe);
+    run.addArg(rom);
+    run.has_side_effects = true;
+    return run;
 }
 
 /// Links SDL2 into `m`, and records the SDL2 version that pkg-config reports as the `sdl` build
