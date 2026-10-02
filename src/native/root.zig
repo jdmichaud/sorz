@@ -14,6 +14,8 @@ pub const net = @import("net.zig");
 pub const WebSocketTransport = net.WebSocketTransport;
 /// The game's files that a server gives its pages.
 pub const served = @import("served.zig");
+/// Server mode: the relay between two browsers (`sorz-server`).
+pub const relay = @import("relay.zig");
 
 pub const DirectoryAssetSource = directory.DirectoryAssetSource;
 pub const DirectoryStorage = storage.DirectoryStorage;

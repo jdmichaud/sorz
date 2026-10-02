@@ -22,6 +22,7 @@ const usage =
     \\                  [--frames N] [--key FRAME:NAME[:HOLD]]...
     \\       sorz-agent [DIR] --pair [--delay N] [--frames N] [--key ...]... [--guest-key ...]...
     \\                  [--corrupt TICK]
+    \\       sorz-agent DIR --server [ADDRESS:]PORT
     \\  --frames N       run N frames, a display tick each (default 120)
     \\  --key FRAME:NAME[:HOLD]  press the key NAME (a platform.Key, as `enter` or `left`) at
     \\                   frame FRAME, release it HOLD frames later (default 1); repeats
@@ -40,6 +41,8 @@ const usage =
     \\                   with their merged pads; prints the three and whether they are the same;
     \\                   --corrupt flips a bit of the guest's tick count before that tick (a
     \\                   negative control: both games stop and name the field)
+    \\  --server         server mode, as sorz-server: serve the page and the game's files of
+    \\                   DIR, and relay network play between two browsers, with no game
     \\
 ;
 
@@ -49,7 +52,7 @@ const frame_ns: u64 = agent.netplay_cmd.frame_ns;
 const Press = agent.netplay_cmd.Press;
 const Shot = struct { frame: u64, path: []const u8 };
 
-/// The browser build built into the binary, which `--netplay` serves.
+/// The browser build built into the binary, which `--netplay` and `--server` serve.
 const page: native.net.Page = .{ .index_html = web_page.index_html, .script_js = web_page.script_js, .module_wasm = web_page.module_wasm };
 
 /// Every log line as the binaries' (native/log.zig).
@@ -95,6 +98,15 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
+    // Server mode: the relay and the game's files, as sorz-server runs it.
+    if (options.server) |address| {
+        _ = options.network() catch return fail(io);
+        if (pair or presses.items.len != 0 or guest_presses.items.len != 0 or corrupt != null or shots.items.len != 0 or wav_path != null) return fail(io);
+        const status = try native.relay.serve(gpa, io, options.assets.?, address, page);
+        if (status != 0) std.process.exit(status);
+        return;
+    }
+
     // Real providers when the options name them, else in-memory ones. They outlive the game.
     var providers: native.cli.Providers = .empty;
     defer providers.deinit();
@@ -124,7 +136,6 @@ pub fn main(init: std.process.Init) !void {
     // Network play: a session over WebSockets, or two games in one process. (`--delay` goes with
     // `--netplay`, or with `--pair`.)
     const network = if (pair) .none else options.network() catch return fail(io);
-    if (network == .server) return fail(io);
     const netplay = network == .netplay or (pair and (options.netplay != null or options.join != null));
     if (netplay or pair) {
         if (shots.items.len != 0 or wav_path != null or (pair and netplay) or (!pair and (guest_presses.items.len != 0 or corrupt != null))) return fail(io);

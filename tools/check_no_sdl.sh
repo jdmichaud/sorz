@@ -1,6 +1,6 @@
 #!/bin/sh
 # Fails when the given binary depends on an SDL shared library: the agent host must not
-# depend on SDL. A fully static binary passes.
+# depend on SDL, nor may the relay server. A fully static binary passes.
 set -eu
 bin="${1:?usage: check_no_sdl.sh <binary>}"
 [ -f "$bin" ] || { echo "check_no_sdl: no such file: $bin" >&2; exit 2; }

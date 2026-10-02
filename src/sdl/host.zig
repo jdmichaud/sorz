@@ -22,6 +22,7 @@ pub const assets_required = false;
 
 pub const usage =
     \\usage: sorz-sdl [OPTIONS] [DIR]
+    \\       sorz-sdl DIR --server [ADDRESS:]PORT
     \\  DIR                  the game directory
     \\  --help, -h           show this help
     \\  --scale N            window scale, 1 to 64, for this run (default: the settings',
@@ -40,6 +41,9 @@ pub const usage =
     \\  --join ws://ADDRESS:PORT  join the host at that address, as player 2
     \\  --delay N            the host's input delay in display ticks, 2 to 6 (default: from
     \\                       the round trip)
+    \\  --server [ADDRESS:]PORT  server mode, with no window and no game: serve the page and
+    \\                       the game's files of DIR at PORT, and relay network play between
+    \\                       two browsers (sorz-server does the same without SDL's libraries)
     \\
 ;
 
@@ -68,9 +72,12 @@ pub const Options = struct {
     }
 };
 
-/// `page` is the browser build built into the executable, which `--netplay` serves with the
-/// game's files.
+/// `page` is the browser build built into the executable, which `--netplay` and `--server` serve
+/// with the game's files.
 pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Environ.Map, options: Options, page: native.net.Page) !u8 {
+    // Server mode: the relay and the game's files, before SDL and without a game.
+    if (options.providers.server) |address| return native.relay.serve(gpa, io, options.providers.assets.?, address, page);
+
     var ver_buf: [32]u8 = undefined;
     const check = version.checkVersion(&ver_buf);
     std.log.info("SDL2 {s} linked (pinned {s})", .{ check.linked, check.pinned });

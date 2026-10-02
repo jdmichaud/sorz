@@ -3,14 +3,16 @@
 //! Targets:
 //!   sorz-agent  headless debugging host (shared game + AgentBackend), never links SDL
 //!   sorz-sdl    SDL interactive host (Linux, Windows)
+//!   sorz-server the relay of network play between two browsers (server mode), links nothing
 //!   web/            the browser build: sorz.wasm, index.html, sorz.js
-//! Steps: `zig build` installs the two binaries; `agent` and `sdl` install one of them; `web`
+//! Steps: `zig build` installs the three binaries; `agent`, `sdl` and `server` install one; `web`
 //! installs the browser build and checks its module's imports; `web-check` checks the page's
 //! helper functions against compiler-rt (it needs Node.js); `test` runs the unit tests of every
 //! module and the engine's rule against the console's terms (tools/engine_terms.zig); `smoke`
 //! runs the agent host for a few frames and checks the settings record across starts
-//! (tools/check_settings.sh); `verify` checks that the agent binary has no SDL
-//! dependency; `all` installs every binary of the target and of Windows (under
+//! (tools/check_settings.sh); `verify` checks that the agent and server binaries have no SDL
+//! dependency and that each executable, alone in a directory, serves its page
+//! (tools/check_alone.sh); `all` installs every binary of the target and of Windows (under
 //! <prefix>/windows) and the browser build.
 const std = @import("std");
 
@@ -108,11 +110,28 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // Server mode (DESIGN.md 9): the relay between two browsers, with no game and no library, so
+    // that it runs on a machine without a display or sound (src/server/main.zig).
+    const server_exe = b.addExecutable(.{
+        .name = "sorz-server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/server/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "sorz", .module = shared },
+                .{ .name = "native", .module = native },
+            },
+        }),
+    });
+
     b.installArtifact(agent_exe);
     b.installArtifact(sdl_exe);
+    b.installArtifact(server_exe);
 
     b.step("agent", "Build and install only the headless agent host").dependOn(&b.addInstallArtifact(agent_exe, .{}).step);
     b.step("sdl", "Build and install only the SDL host").dependOn(&b.addInstallArtifact(sdl_exe, .{}).step);
+    b.step("server", "Build and install only the relay server (server mode)").dependOn(&b.addInstallArtifact(server_exe, .{}).step);
     // The browser build (src/web): the shared game as a WebAssembly module for a page, with the
     // page and its script. The module links no libc, and the script gives it its memory. Every
     // game file is in memory before the game starts, so the module needs no Asyncify pass. The
@@ -186,7 +205,7 @@ pub fn build(b: *std.Build) void {
             \\
         ),
     });
-    for ([_]*std.Build.Step.Compile{ agent_exe, sdl_exe }) |exe| exe.root_module.addImport("web_page", web_page);
+    for ([_]*std.Build.Step.Compile{ agent_exe, sdl_exe, server_exe }) |exe| exe.root_module.addImport("web_page", web_page);
 
     const module_check = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/web/module_check.zig"),
@@ -328,11 +347,26 @@ pub fn build(b: *std.Build) void {
     settings_check.has_side_effects = true;
     smoke_step.dependOn(&settings_check.step);
 
-    // The agent binary must have no SDL dependency.
-    const no_sdl = b.addSystemCommand(&.{ "sh", "tools/check_no_sdl.sh" });
-    no_sdl.addArtifactArg(agent_exe);
-    no_sdl.expectExitCode(0);
-    b.step("verify", "Check the agent host binary links no SDL library").dependOn(&no_sdl.step);
+    // The agent and server binaries must have no SDL dependency.
+    const verify_step = b.step("verify", "Check that the agent host and the relay server link no SDL library, and that each executable alone serves its page");
+    for ([_]*std.Build.Step.Compile{ agent_exe, server_exe }) |exe| {
+        const no_sdl = b.addSystemCommand(&.{ "sh", "tools/check_no_sdl.sh" });
+        no_sdl.addArtifactArg(exe);
+        no_sdl.expectExitCode(0);
+        verify_step.dependOn(&no_sdl.step);
+    }
+    // Each executable, copied alone into an empty directory, serves the browser build built into
+    // it with `--server` (DESIGN.md 1, PLAN S1). A Windows build is not run here.
+    if (target.result.os.tag != .windows) {
+        for ([_]*std.Build.Step.Compile{ agent_exe, sdl_exe, server_exe }) |exe| {
+            const alone = b.addSystemCommand(&.{ "sh", "tools/check_alone.sh" });
+            alone.addDirectoryArg(page_files.getDirectory());
+            alone.addArtifactArg(exe);
+            alone.expectExitCode(0);
+            alone.has_side_effects = true;
+            verify_step.dependOn(&alone.step);
+        }
+    }
 
     // `all`: every binary of the target and of Windows, and the browser build. The Windows binaries come from a second build for the
     // Windows target, run by this step alone, into <prefix>/windows: a build of any other step
