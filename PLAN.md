@@ -49,7 +49,7 @@
     fonts, tile maps and sprite frames (with their pieces), by name.
   - Gate: two extractions are byte-identical; every file loads; the art equals sor-remaster's
     decoded art.
-- [ ] **07 — Renderer** — Depends: 06.
+- [x] **07 — Renderer** — Depends: 06.
   - Layers with per-line and per-column scroll, a fixed layer, sprites with priority and palette,
     four palettes, fades and cycles; drawn by cell and run; composed only when changed.
   - Gate: synthetic frames exact; a debug build draws a frame in under 1 ms.
