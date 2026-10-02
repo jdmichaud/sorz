@@ -78,5 +78,6 @@ The placeholder name of the project is `sorz`.
   storage, their shared contract tests, and the command line.
 - `src/sdl`: `sorz-sdl`, the interactive host on SDL2, for Linux and Windows.
 - `src/web`: the browser build: the WebAssembly module, its backend, the page and its script.
-- `tools`: build helpers only: the check that the agent binary links no SDL. Tools that study the
+- `tools`: build helpers only: the check that the agent binary links no SDL, and the engine's rule
+  against the console's terms (`engine_terms.zig`, with its allow-list). Tools that study the
   original do not belong here.

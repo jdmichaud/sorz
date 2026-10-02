@@ -7,8 +7,9 @@
 //! Steps: `zig build` installs the two binaries; `agent` and `sdl` install one of them; `web`
 //! installs the browser build and checks its module's imports; `web-check` checks the page's
 //! helper functions against compiler-rt (it needs Node.js); `test` runs the unit tests of every
-//! module; `smoke` runs the agent host for a few frames; `verify` checks that the agent binary has
-//! no SDL dependency; `all` installs every binary of the target and of Windows (under
+//! module and the engine's rule against the console's terms (tools/engine_terms.zig); `smoke`
+//! runs the agent host for a few frames; `verify` checks that the agent binary has no SDL
+//! dependency; `all` installs every binary of the target and of Windows (under
 //! <prefix>/windows) and the browser build.
 const std = @import("std");
 
@@ -266,6 +267,22 @@ pub fn build(b: *std.Build) void {
         const t = b.addTest(.{ .root_module = m });
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
+
+    // The engine's rule against the console's terms (DESIGN.md P1, PLAN item 03): the engine's
+    // sources (src/shared) name no address and no term of the console, but those that the
+    // allow-list gives (tools/engine_terms.zig). It reads the sources each time, so it always runs.
+    const terms_tool = b.addExecutable(.{
+        .name = "engine-terms",
+        .root_module = b.createModule(.{ .root_source_file = b.path("tools/engine_terms.zig"), .target = b.graph.host, .optimize = .Debug }),
+    });
+    const terms = b.addRunArtifact(terms_tool);
+    terms.setCwd(b.path("."));
+    terms.addArgs(&.{ "src/shared", "tools/engine_terms.allow" });
+    terms.expectExitCode(0);
+    terms.has_side_effects = true;
+    test_step.dependOn(&terms.step);
+    const terms_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("tools/engine_terms.zig"), .target = target, .optimize = optimize }) });
+    test_step.dependOn(&b.addRunArtifact(terms_tests).step);
 
     // The agent host for a few frames, its keys moving a marker of the test pattern. It needs no
     // game files and no display.
