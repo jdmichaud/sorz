@@ -16,14 +16,15 @@ const SdlBackend = @import("backend.zig").SdlBackend;
 /// The rate of the fallback pacer, when the display does not pace the presentation.
 pub const fallback_hz: u32 = 60;
 
-/// Whether the executable refuses to start without a game path. The test pattern needs no data;
-/// TODO(PLAN item 06): true once the game reads its content.
+/// Whether the executable refuses to start without a game path. Without one the game shows its
+/// test pattern (game.zig), which the checks run on.
 pub const assets_required = false;
 
 pub const usage =
-    \\usage: sorz-sdl [OPTIONS] [DIR]
-    \\       sorz-sdl DIR --server [ADDRESS:]PORT
-    \\  DIR                  the game directory
+    \\usage: sorz-sdl [OPTIONS] [DIR|ROM]
+    \\       sorz-sdl DIR|ROM --server [ADDRESS:]PORT
+    \\  DIR|ROM              the game directory (its content tree), or the user's ROM, whose
+    \\                       content is extracted in memory; without either, a test pattern
     \\  --help, -h           show this help
     \\  --scale N            window scale, 1 to 64, for this run (default: the settings',
     \\                       3 at first)
@@ -42,7 +43,7 @@ pub const usage =
     \\  --delay N            the host's input delay in display ticks, 2 to 6 (default: from
     \\                       the round trip)
     \\  --server [ADDRESS:]PORT  server mode, with no window and no game: serve the page and
-    \\                       the game's files of DIR at PORT, and relay network play between
+    \\                       the game's files of DIR|ROM at PORT, and relay network play between
     \\                       two browsers (sorz-server does the same without SDL's libraries)
     \\
 ;

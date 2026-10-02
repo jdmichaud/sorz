@@ -46,13 +46,26 @@ pub fn build(b: *std.Build) void {
     });
     shared.addOptions("build_versions", versions);
 
-    // Native I/O: the directory asset source and the directory storage over std.Io, and the
-    // WebSocket transport of network play. The executables import it; `sorz` never does.
+    // The extractor (src/extract): the one module that reads the user's ROM, into the content
+    // tree. Native hosts and tools import it; the browser build never does.
+    const extract = b.addModule("extract", .{
+        .root_source_file = b.path("src/extract/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "sorz", .module = shared }},
+    });
+
+    // Native I/O: the directory asset source and the directory storage over std.Io, a ROM's
+    // content extracted in memory, and the WebSocket transport of network play. The executables
+    // import it; `sorz` never does.
     const native = b.addModule("native", .{
         .root_source_file = b.path("src/native/root.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "sorz", .module = shared }},
+        .imports = &.{
+            .{ .name = "sorz", .module = shared },
+            .{ .name = "extract", .module = extract },
+        },
     });
 
     // Agent platform: injected events, controlled time, captured output. Its network play runs
@@ -257,15 +270,6 @@ pub fn build(b: *std.Build) void {
     // The parts of the browser build that run without a browser, for the unit tests.
     const web_parts = b.createModule(.{
         .root_source_file = b.path("src/web/root.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{.{ .name = "sorz", .module = shared }},
-    });
-
-    // The extractor (src/extract): the one module that reads the user's ROM, into the content
-    // tree. Native hosts and tools import it; the browser build never does.
-    const extract = b.addModule("extract", .{
-        .root_source_file = b.path("src/extract/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{.{ .name = "sorz", .module = shared }},

@@ -226,7 +226,7 @@ pub const Server = struct {
 };
 
 /// Server mode as a program runs it: reads the game's files from `data` (a game directory, or a
-/// ROM through its content in memory once its extractor exists) to serve them, listens at
+/// ROM through its content extracted in memory) to serve them, listens at
 /// `address`, says so on `err`
 /// under the program's `name`, and relays until it is stopped. Returns the exit status: 2 when the
 /// data cannot be read, 1 when it cannot listen.
@@ -263,7 +263,7 @@ pub fn serve(gpa: std.mem.Allocator, io: Io, data: []const u8, address: []const 
 pub const usage =
     \\usage: sorz-server DIR|ROM --server [ADDRESS:]PORT
     \\  DIR|ROM              the game's data, whose files the pages load: the game directory, or
-    \\                       the ROM (not read yet); no game runs here
+    \\                       the user's ROM, its content extracted in memory; no game runs here
     \\  --server [ADDRESS:]PORT  serve the browser build's page and the game's files at PORT
     \\                       (all interfaces without ADDRESS), where a page plays alone (1
     \\                       PLAYER) or joins the relay of network play (2 PLAYERS): the first

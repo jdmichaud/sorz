@@ -13,6 +13,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const sorz = @import("sorz");
+const extract = @import("extract");
 const platform = sorz.platform;
 const DirectoryAssetSource = @import("directory.zig").DirectoryAssetSource;
 const DirectoryStorage = @import("storage.zig").DirectoryStorage;
@@ -21,7 +22,8 @@ const served = @import("served.zig");
 const WebSocketTransport = net.WebSocketTransport;
 
 pub const usage =
-    \\  DIR|ROM              the game directory (its content tree), or the ROM (not read yet)
+    \\  DIR|ROM              the game directory (its content tree), or the user's ROM, whose
+    \\                       content is extracted in memory
     \\  --saves DIR          where saves are kept (default: the per-user application data
     \\                       directory)
     \\  --netplay [ADDRESS:]PORT  play with a second player over the network, as the host
@@ -164,8 +166,10 @@ pub const OpenError = error{
     NotADirectory,
     AccessDenied,
     NoApplicationDirectory,
-    /// The game path is a file: the ROM, which the game cannot read until its extractor exists.
-    RomNotSupported,
+    /// The game path is a file, but not the ROM that sorz follows (its size or digest differ).
+    WrongRom,
+    /// The ROM is the one, but its content could not be extracted.
+    BadRom,
     Io,
     Canceled,
     OutOfMemory,
@@ -178,7 +182,8 @@ pub fn openErrorText(err: OpenError) []const u8 {
         error.NotADirectory => "it is not a directory",
         error.AccessDenied => "access is denied",
         error.NoApplicationDirectory => "there is no per-user application data directory: give --saves DIR",
-        error.RomNotSupported => "it is a file, and sorz does not read a ROM yet (its extractor comes with PLAN item 06): give it a game directory",
+        error.WrongRom => "it is a file, but not the ROM sorz follows (Streets of Rage, the cartridge's version of 1991: its size or SHA-256 differs)",
+        error.BadRom => "its content could not be extracted",
         error.Io => "it could not be read",
         error.Canceled => "it was canceled",
         error.OutOfMemory => "there is not enough memory",
@@ -192,7 +197,8 @@ pub const Providers = struct {
     /// The save directory in use (owned).
     saves_path: []u8 = &.{},
     assets_directory: ?DirectoryAssetSource = null,
-    /// The content extracted from a ROM, in memory.
+    /// The content extracted from a ROM, in memory: the tree's files, and the source over them.
+    rom_tree: ?extract.Tree = null,
     assets_memory: ?sorz.memory.MemoryAssetSource = null,
     saves: ?DirectoryStorage = null,
 
@@ -243,14 +249,29 @@ pub const Providers = struct {
     }
 
     /// The ROM at `path`, its content extracted into memory: the one place where the extraction
-    /// plugs in. TODO(PLAN item 06): read the file, check that it is the ROM the game follows,
-    /// extract its content tree in memory (src/extract) into `assets_memory`, and set `kind` to
-    /// `.rom`. Until then a ROM is refused, and the hosts say why (`openErrorText`).
+    /// plugs in. The file is checked to be the ROM the game follows (its size and digest) before
+    /// anything of it is read; the tree's files stay in `rom_tree`, which `assets_memory` lists.
     fn openRom(self: *Providers, io: std.Io, path: []const u8) OpenError!void {
-        _ = self;
-        _ = io;
-        _ = path;
-        return error.RomNotSupported;
+        const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, self.allocator, .limited(extract.rom.size + 1)) catch |err| return switch (err) {
+            error.FileNotFound => error.NotFound,
+            error.AccessDenied, error.PermissionDenied => error.AccessDenied,
+            error.StreamTooLong => error.WrongRom,
+            error.OutOfMemory => error.OutOfMemory,
+            error.Canceled => error.Canceled,
+            else => error.Io,
+        };
+        defer self.allocator.free(bytes);
+        self.rom_tree = extract.extract(self.allocator, bytes) catch |err| return switch (err) {
+            error.WrongRom => error.WrongRom,
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.BadRom,
+        };
+        self.assets_memory = sorz.memory.MemoryAssetSource.init(self.allocator);
+        self.rom_tree.?.addTo(&self.assets_memory.?) catch |err| return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.BadRom,
+        };
+        self.kind = .rom;
     }
 
     fn mapOpen(result: anytype) OpenError!@typeInfo(@TypeOf(result)).error_union.payload {
@@ -266,6 +287,7 @@ pub const Providers = struct {
     pub fn deinit(self: *Providers) void {
         if (self.assets_directory) |*d| d.deinit();
         if (self.assets_memory) |*m| m.deinit();
+        if (self.rom_tree) |*t| t.deinit();
         if (self.saves) |*s| s.deinit();
         self.allocator.free(self.saves_path);
         self.* = .empty;
@@ -418,7 +440,7 @@ test "the options of network play" {
     try std.testing.expectError(error.MissingValue, TestArgs.all(&.{ "--server", "7000" }));
 }
 
-test "the options open a game directory, or none; a ROM is refused for now" {
+test "the options open a game directory, or none; a file that is not the ROM is refused" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{ .iterate = true });
@@ -478,7 +500,8 @@ test "the options open a game directory, or none; a ROM is refused for now" {
         try std.testing.expectEqualSlices(u8, &(try sorz.net.identity.ofTree(providers.assetSource().?, 1 << 20)), &id);
     }
 
-    // A path that is missing; a file is a ROM, which is refused until the extractor exists.
+    // A path that is missing; a file is a ROM, refused when it is not the one sorz follows, of
+    // another size or of the same size and another digest (the tests have no ROM of the game).
     {
         var providers: Providers = .empty;
         const missing = try std.fmt.allocPrint(allocator, "{s}/absent", .{base});
@@ -486,7 +509,15 @@ test "the options open a game directory, or none; a ROM is refused for now" {
         try std.testing.expectError(error.NotFound, providers.open(allocator, io, &env, .{ .assets = missing, .saves = paths[1] }));
         const a_file = try std.fmt.allocPrint(allocator, "{s}/game/game.cfg", .{base});
         defer allocator.free(a_file);
-        try std.testing.expectError(error.RomNotSupported, providers.open(allocator, io, &env, .{ .assets = a_file, .saves = paths[1] }));
-        try std.testing.expect(std.mem.find(u8, openErrorText(error.RomNotSupported), "PLAN item 06") != null);
+        try std.testing.expectError(error.WrongRom, providers.open(allocator, io, &env, .{ .assets = a_file, .saves = paths[1] }));
+        const zeros = try allocator.alloc(u8, extract.rom.size);
+        defer allocator.free(zeros);
+        @memset(zeros, 0);
+        try tmp.dir.writeFile(io, .{ .sub_path = "zeros.md", .data = zeros });
+        const rom_sized = try std.fmt.allocPrint(allocator, "{s}/zeros.md", .{base});
+        defer allocator.free(rom_sized);
+        try std.testing.expectError(error.WrongRom, providers.openAssets(allocator, io, rom_sized));
+        try std.testing.expectEqual(AssetKind.none, providers.kind);
+        try std.testing.expect(std.mem.find(u8, openErrorText(error.WrongRom), "not the ROM") != null);
     }
 }

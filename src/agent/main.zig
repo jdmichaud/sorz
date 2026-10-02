@@ -5,10 +5,10 @@
 //! files and the sound as a WAV file. Two runs with the same arguments print the same line on every
 //! machine; the checks and the debugging build on this.
 //!
-//! With a game directory, the game reads it; with `--saves`, it saves there (its settings record
-//! among them). Without them, it runs on in-memory providers, so the run touches no file and never
-//! the user's saves (DESIGN.md 5.1). `--netplay`, `--join` and `--pair` play a session of network
-//! play (netplay_cmd.zig).
+//! With a game directory or the ROM (its content extracted in memory), the game reads it; with
+//! `--saves`, it saves there (its settings record among them). Without them, it runs on in-memory
+//! providers, so the run touches no file and never the user's saves (DESIGN.md 5.1). `--netplay`,
+//! `--join` and `--pair` play a session of network play (netplay_cmd.zig).
 const std = @import("std");
 const sorz = @import("sorz");
 const agent = @import("agent");
@@ -17,18 +17,19 @@ const web_page = @import("web_page");
 
 const usage =
     \\usage: sorz-agent [--frames N] [--key FRAME:NAME[:HOLD]]... [--shot FRAME:PATH]... [--wav PATH]
-    \\                  [DIR] [--saves DIR]
-    \\       sorz-agent [DIR] (--netplay [ADDRESS:]PORT [--delay N] | --join ws://ADDRESS:PORT)
+    \\                  [DIR|ROM] [--saves DIR]
+    \\       sorz-agent [DIR|ROM] (--netplay [ADDRESS:]PORT [--delay N] | --join ws://ADDRESS:PORT)
     \\                  [--frames N] [--key FRAME:NAME[:HOLD]]...
-    \\       sorz-agent [DIR] --pair [--delay N] [--frames N] [--key ...]... [--guest-key ...]...
+    \\       sorz-agent [DIR|ROM] --pair [--delay N] [--frames N] [--key ...]... [--guest-key ...]...
     \\                  [--corrupt TICK]
-    \\       sorz-agent DIR --server [ADDRESS:]PORT
+    \\       sorz-agent DIR|ROM --server [ADDRESS:]PORT
     \\  --frames N       run N frames, a display tick each (default 120)
     \\  --key FRAME:NAME[:HOLD]  press the key NAME (a platform.Key, as `enter` or `left`) at
     \\                   frame FRAME, release it HOLD frames later (default 1); repeats
     \\  --shot FRAME:PATH  write the picture presented at frame FRAME as a PNG file; repeats
     \\  --wav PATH       write the sound played as a WAV file
-    \\  DIR              the game directory
+    \\  DIR|ROM          the game directory (its content tree), or the user's ROM, whose content
+    \\                   is extracted in memory; without either, a test pattern
     \\  --saves DIR      where saves are kept, the settings record (settings.json) among them
     \\  --netplay, --join  network play over WebSockets, as the host (player 1) or the guest
     \\                   (player 2); --frames counts the session's ticks, and --key presses a
@@ -42,7 +43,7 @@ const usage =
     \\                   --corrupt flips a bit of the guest's tick count before that tick (a
     \\                   negative control: both games stop and name the field)
     \\  --server         server mode, as sorz-server: serve the page and the game's files of
-    \\                   DIR, and relay network play between two browsers, with no game
+    \\                   DIR|ROM, and relay network play between two browsers, with no game
     \\
 ;
 
