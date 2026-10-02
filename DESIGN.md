@@ -292,17 +292,17 @@ the game starts.
 **Where the game's files come from.** The server that sends the page serves them: the page reads
 `assets/manifest.json` (`{"files": [{"name", "size"}]}`) and fetches each `assets/NAME` it lists,
 and that server is the native game (`--netplay`, or the relay of `--server`), reading the user's
-copy through its `AssetSource` (section 9): the asset tree on disk, or the one exported from the
-ROM in memory. The tree has a `manifest.json` of its own at its root (`docs/assets.md`), so it is
-served under `assets/tree/`: the listing names `tree/manifest.json`, `tree/art/art.json`, and so
-on, and the page gives each file to the module under its name in the tree. The page never asks
-the player to pick or upload the original's files. A page without a manifest says so and stops;
-it does not run a game without its files.
+copy through its `AssetSource` (section 9): the content tree on disk, or the one extracted from
+the ROM in memory. The tree has a `manifest.json` of its own at its root (`docs/content.md`), so
+it is served under `assets/tree/`: the listing names `tree/manifest.json`, `tree/title/art.json`,
+and so on, and the page gives each file to the module under its name in the tree. The page never
+asks the player to pick or upload the original's files. A page without a manifest says so and
+stops; it does not run a game without its files.
 
 **The page looks like the game.** The player sees the game's style from the first frame. The page
-fetches first the three files the module needs to draw a screen (the play font's codes and tiles,
-and the menu's palette), and from then on the module draws the loading screen and its count of
-files itself, with the look of the game's menu after the title: black, the play font, the menu's
+fetches first the few files the module needs to draw a screen (the content's `fonts/` and `menu/`
+sets: the fonts, the menu's art and palette, about 20 KB), and from then on the module draws the
+loading screen and its count of files itself, with the look of the game's menu after the title: black, the play font, the menu's
 colours. The choice that starts the game is that menu, 1 PLAYER, 2 PLAYERS and SETTINGS (a line
 the page cannot offer dimmed, as the menu dims 2 PLAYERS without a second pad), and the messages
 of network play and of errors are drawn the same way, over the game's picture once it has one.
@@ -409,35 +409,34 @@ game pauses both games, and the other player is told why.
 
 **Delay-based input lockstep.** Both peers run the same deterministic simulation from power-on;
 the only thing that crosses the network in play is each player's pad. The host is player 1, the
-guest player 2. Every VBlank, a peer samples its pad and sends it for VBlank N + D, where the input
-delay D is chosen at the session's start from the measured round trip (2 to 6 VBlanks); VBlank N
-runs when both pads for N are in. The loads' waits (sim/load_times.zig) are VBlanks like any
-other, so the peers stay in step through them. Rollback (predicting the other pad and re-running
-the VBlanks it changes) is not planned: a co-operative beat-'em-up tolerates a few VBlanks of
-delay, and re-running VBlanks would replay the sound. It is the upgrade if the delay is felt.
+guest player 2. Every display tick, a peer samples its pad and sends it for tick N + D, where the
+input delay D is chosen at the session's start from the measured round trip (2 to 6 ticks); tick
+N runs when both pads for N are in. The loads' waits are ticks like any other (section 10.2), so
+the peers stay in step through them. Rollback (predicting the other pad and re-running the ticks
+it changes) is not planned: a co-operative beat-'em-up tolerates a few ticks of delay, and
+re-running ticks would replay the sound. It is the upgrade if the delay is felt.
 
-- **Canonical state.** The simulation's state is one value, and the lockstep's RAM projection
-  (`State.project`) is its canonical serialisation. Its hash is exchanged every 30 VBlanks; a
-  mismatch pauses the game, and the peers then compare their projections field by field, as the
-  lockstep does, to name the first differing field.
-- **Time.** Each peer runs its VBlanks at its own sound device's rate (section 3.4), and the two
+- **Canonical state.** The game's state is one value, with a canonical serialisation (section 6).
+  Its hash is exchanged every 30 ticks; a mismatch pauses the game, and the peers then compare
+  their serialisations field by field to name the first differing field.
+- **Time.** Each peer runs its ticks at its own sound device's rate (section 3.4), and the two
   devices' clocks differ slightly. The peer that gets ahead of the other stretches its sound by up
   to 0.5 % (the synthesiser's output rate) until they are level again, so neither waits with an
-  empty sound queue. A peer whose partner's input is late holds: no VBlank runs, the picture stays,
+  empty sound queue. A peer whose partner's input is late holds: no tick runs, the picture stays,
   and the sound fades rather than breaks.
 - **Game data.** A browser guest loads the game's files of the native game that serves its page
   (section 5.3): the host's copy, or the relay's. A native guest uses its own. The handshake
-  compares the data's identity, its asset tree's digest (a ROM's is the digest of the tree
-  exported from it, so a ROM, an unedited export of it and a page's copy of either are the same
-  data), and refuses a session between different data. In a session, only the pads cross the
+  compares the data's identity, its content tree's digest (a ROM's is the digest of the tree
+  extracted from it, so a ROM, an unedited extraction of it and a page's copy of either are the
+  same data; an edited tree, a mod, is other data), and refuses a session between different data. In a session, only the pads cross the
   network.
 
 The layers:
 
-- The game (game.zig) takes the merged pads of each VBlank from the session instead of the local
-  controls, and never runs a VBlank ahead of them.
+- The game (game.zig) takes the merged pads of each tick from the session instead of the local
+  controls, and never runs a tick ahead of them.
 - The session protocol, in shared code, encodes and decodes messages and keeps the handshake
-  (protocol and build versions, data identity, roles, input delay), the inputs by VBlank, pings,
+  (protocol and build versions, data identity, roles, input delay), the inputs by tick, pings,
   state hashes, the hold, and reconnection. It is outside the simulation.
 - The platform transport moves whole messages, reliably and in order, while a connection lives:
   `connect`, `listen`, `send` (accepted into a bounded queue) and `close`, and the events
