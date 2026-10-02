@@ -4,7 +4,8 @@
 #
 #   PATH TERM -- WHY
 #
-# PATH is a file under src/shared, or a directory ending in `/`. TERM is the text as the source
+# PATH is a file's path from the repository's root (`src/shared/audio/clock.zig`), or a directory's
+# ending in `/` (`src/shared/audio/chips/`). TERM is the text as the source
 # writes it (`0xFFFF`, `vblank_count`), or a class of terms: hex, vblank, register, vdp, vram, cram,
 # vsram, cpu. WHY says why the term is not the console's place or name. An entry that allows
 # nothing is an error.
