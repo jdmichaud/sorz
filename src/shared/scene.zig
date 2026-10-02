@@ -179,7 +179,7 @@ test "drawing only what changed gives the picture that a whole drawing gives" {
     var drawn: TestPattern.Drawn = .{};
     var count: u32 = 0;
     t.draw(count, &pic, &drawn);
-    // The markers cross bars and each other, change colour, and the count carries.
+    // The markers cross bars, change colour, and the count carries.
     const pads = [_]input.Pads{
         .{ .pad1 = .{ .right = true, .down = true }, .pad2 = .{ .left = true, .b = true } },
         .{ .pad1 = .{ .right = true, .a = true, .c = true }, .pad2 = .{ .left = true } },
@@ -200,6 +200,23 @@ test "drawing only what changed gives the picture that a whole drawing gives" {
     var fresh: TestPattern.Drawn = .{};
     t.draw(count, &whole, &fresh);
     try testing.expectEqualSlices(u8, whole.pixels, pic.pixels);
+
+    // On one row, player 1's marker goes through player 2's.
+    t = .{};
+    drawn = .{};
+    t.draw(count, &pic, &drawn);
+    var overlapped = false;
+    for (0..140) |_| {
+        t.tick(.{ .pad1 = .{ .right = true, .a = true } });
+        count +%= 1;
+        t.draw(count, &pic, &drawn);
+        var again: TestPattern.Drawn = .{};
+        t.draw(count, &whole, &again);
+        try testing.expectEqualSlices(u8, whole.pixels, pic.pixels);
+        const m = t.markers;
+        overlapped = overlapped or @max(m[0].x, m[1].x) - @min(m[0].x, m[1].x) < TestPattern.marker_size;
+    }
+    try testing.expect(overlapped);
 }
 
 test "the stack: its top ticks; a scene pushed over it and taken off" {

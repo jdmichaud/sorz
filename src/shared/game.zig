@@ -108,6 +108,9 @@ pub const Game = struct {
     volume_buffer: []i16 = &.{},
     pic: picture.Picture,
     drawn: scene.TestPattern.Drawn = .{},
+    /// The scene `drawn` describes (the stack's depth and its top's kind): another scene on top
+    /// draws whole.
+    drawn_scene: ?struct { len: u8, kind: std.meta.Tag(scene.Scene) } = null,
     /// Whether the picture may have changed since it was last drawn (a tick ran).
     redraw: bool = true,
 
@@ -389,7 +392,11 @@ pub const Game = struct {
     fn present(self: *Game, p: *platform.Platform) !void {
         if (self.redraw) {
             self.redraw = false;
-            switch (self.state.scenes.top().*) {
+            const top = self.state.scenes.top();
+            const now: @TypeOf(self.drawn_scene.?) = .{ .len = self.state.scenes.len, .kind = std.meta.activeTag(top.*) };
+            if (!std.meta.eql(self.drawn_scene, now)) self.drawn = .{};
+            self.drawn_scene = now;
+            switch (top.*) {
                 .empty => {},
                 .test_pattern => |*t| t.draw(self.state.tick, &self.pic, &self.drawn),
             }
