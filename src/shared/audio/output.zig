@@ -16,6 +16,7 @@ const chips = @import("chips/root.zig");
 const content = @import("content.zig");
 const sequencer = @import("sequencer.zig");
 const clock = @import("clock.zig");
+const registers = @import("chips/registers.zig");
 
 /// Master cycles from one of an update's writes to the next.
 pub const write_cycles: u64 = 3834;
@@ -107,7 +108,7 @@ pub const Output = struct {
     fn startsWrite(w: sequencer.Write) bool {
         return switch (w.port) {
             .part1_address, .part2_address => true,
-            .psg => w.value & 0x80 != 0,
+            .psg => registers.latches(w.value),
             else => false,
         };
     }
@@ -131,13 +132,21 @@ test "an update gives its frames, and a note makes sound" {
     defer o.deinit(gpa);
     var t: sequencer.Tick = .{};
     try std.testing.expect(o.tick(&t).len >= 2 * 800);
-    // Channel 1: algorithm 7, operator 4 at full level with a fast attack, a note on.
-    const writes = [_][2]u8{ .{ 0xB0, 0x07 }, .{ 0xB4, 0xC0 }, .{ 0x4C, 0x00 }, .{ 0x5C, 0x1F }, .{ 0x3C, 0x01 }, .{ 0xA4, 0x22 }, .{ 0xA0, 0x69 }, .{ 0x28, 0x80 } };
-    for (writes) |w| {
-        t.writes[t.len] = .{ .port = .part1_address, .value = w[0] };
-        t.writes[t.len + 1] = .{ .port = .part1_data, .value = w[1] };
-        t.len += 2;
-    }
+    // FM1: algorithm 7, op4 at full level with a fast attack, the others silent; a note on.
+    const Recorder = struct {
+        tick: *sequencer.Tick,
+        pub fn takeBus(_: @This()) void {}
+        pub fn port(r: @This(), p: registers.Port, v: u8) void {
+            r.tick.writes[r.tick.len] = .{ .port = p, .value = v };
+            r.tick.len += 1;
+        }
+    };
+    const r: Recorder = .{ .tick = &t };
+    var i: content.Instrument = .{ .number = 0, .algorithm = 7, .feedback = 0, .operators = @splat(.{ .level = 127 }) };
+    i.operators[3] = .{ .multiple = 1, .attack = 31 };
+    registers.instrument(r, .fm1, &i, registers.output_reset);
+    registers.pitch(r, .fm1, 4 << 11 | 617);
+    registers.keyOn(r, .fm1);
     _ = o.tick(&t);
     t.len = 0;
     var peak: i32 = 0;

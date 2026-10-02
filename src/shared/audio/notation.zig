@@ -4,7 +4,7 @@
 //!
 //! ```
 //! song round_1
-//! provenance "request $81, ..."
+//! provenance "..."
 //! instrument 0 algorithm 4 feedback 7
 //!   op1 detune 3 multiple 1 level 33 key_scale 0 attack 31 am 0 decay 0 sustain_rate 0 ...
 //! track fm1 volume_offset 4
@@ -585,7 +585,7 @@ test "a song written then read gives the same song" {
         .{ .detune = .{ .value = -10, .add = true } },            .{ .vibrato = .{ .set = .{ .delay = 20, .period = 1, .step = -12, .count = 6 } } },
         .{ .vibrato = .off },                                     .{ .fm3 = .{ 100, 0, 250, 0 } },
         .{ .pan = .left },                                        .{ .lfo = .{ .rate = 3, .fms = 4, .ams = 0 } },
-        .{ .tweak = .{ .timer_b = 198 } },                        .{ .tweak = .{ .operator = .{ .operator = .op4, .parameter = .am_decay, .value = 0x84 } } },
+        .{ .tweak = .{ .timer_b = 198 } },                        .{ .tweak = .{ .operator = .{ .operator = .op4, .parameter = .am_decay, .value = 132 } } },
         .pause,                                                   .{ .jump = 5 },
     };
     const drums = [_]Event{ .{ .drum = 1 }, .{ .volume = 54 }, .{ .note = .{ .duration = 20 } }, .{ .rest = 256 }, .end };

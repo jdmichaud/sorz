@@ -249,6 +249,11 @@ pub fn withLfo(output_byte: u8, fms: u8, ams: u8) u8 {
 
 // --- the PSG (no bus to take: it is not on the Z80's bus) ----------------------------------
 
+/// Whether a PSG byte latches a register (its first byte of a write); a data byte follows it.
+pub fn latches(value: u8) bool {
+    return value & 0x80 != 0;
+}
+
 /// A tone channel's divider: the latch byte with its low 4 bits, then its high bits.
 pub fn tone(out: anytype, c: Channel, divider: u16) void {
     out.port(.psg, @backingInt(c) | @as(u8, @truncate(divider & 15)));
@@ -279,4 +284,71 @@ pub fn quietAll(out: anytype) void {
 /// The noise channel set to white noise at tone 2's rate, tone 2 silent and at period 0.
 pub fn noiseMode(out: anytype) void {
     for ([_]u8{ 0xDF, 0xE7, 0xC0, 0x00 }) |v| out.port(.psg, v);
+}
+
+// --- tests: the registers each operation writes (the YM2612's and the PSG's documentation) --
+
+const std = @import("std");
+const testing = std.testing;
+
+const Recorder = struct {
+    ports: [256]Port = undefined,
+    values: [256]u8 = undefined,
+    len: usize = 0,
+    buses: u32 = 0,
+
+    pub fn takeBus(r: *Recorder) void {
+        r.buses += 1;
+    }
+
+    pub fn port(r: *Recorder, p: Port, v: u8) void {
+        r.ports[r.len] = p;
+        r.values[r.len] = v;
+        r.len += 1;
+    }
+};
+
+test "channels reach their part and registers; keys, pitches and levels" {
+    var r: Recorder = .{};
+    keyOn(&r, .fm5);
+    pitch(&r, .fm3, 0x2269);
+    level(&r, .fm6, .op2, 0x30);
+    parameter(&r, .fm2, .op3, .sustain_rate, 4);
+    timerB(&r, .fm4, 0xC6);
+    output(&r, .fm1, withSpeakers(withLfo(output_reset, 3, 2), .left));
+    try testing.expectEqualSlices(u8, &.{ 0x28, 0xF5, 0xA6, 0x22, 0xA2, 0x69, 0x4A, 0x30, 0x75, 0x04, 0x26, 0xC6, 0xB4, 0xA3 }, r.values[0..r.len]);
+    try testing.expectEqualSlices(Port, &.{ .part1_address, .part1_data, .part1_address, .part1_data, .part1_address, .part1_data, .part2_address, .part2_data, .part1_address, .part1_data, .part2_address, .part2_data, .part1_address, .part1_data }, r.ports[0..r.len]);
+    try testing.expectEqual(@as(u32, 6), r.buses);
+}
+
+test "an instrument's registers in the chip's order, then the algorithm and the output" {
+    var r: Recorder = .{};
+    var i: content.Instrument = .{ .number = 0, .algorithm = 5, .feedback = 6, .operators = undefined, .ignored = 0x40 };
+    for (&i.operators, 0..) |*o, k| o.* = .{ .detune = 1, .multiple = @intCast(k + 1), .level = @intCast(k), .key_scale = 2, .attack = 31, .am = true, .decay = 9, .sustain_rate = 3, .sustain_level = 7, .release = 15 };
+    instrument(&r, .fm2, &i, 0xC0);
+    try testing.expectEqual(@as(usize, 2 * 26), r.len);
+    // $31: op1, $35: op3, $39: op2, $3D: op4 (multiples 1, 3, 2, 4).
+    try testing.expectEqualSlices(u8, &.{ 0x31, 0x11, 0x35, 0x13, 0x39, 0x12, 0x3D, 0x14 }, r.values[0..8]);
+    try testing.expectEqualSlices(u8, &.{ 0x61, 0x89, 0x81, 0x7F }, &.{ r.values[2 * 12], r.values[2 * 12 + 1], r.values[2 * 20], r.values[2 * 20 + 1] });
+    try testing.expectEqualSlices(u8, &.{ 0xB1, 0x75, 0xB5, 0xC0 }, r.values[2 * 24 ..][0..4]);
+}
+
+test "silences and the PSG" {
+    var r: Recorder = .{};
+    silence(&r, .fm6);
+    try testing.expectEqual(@as(usize, 2 * 9), r.len);
+    try testing.expectEqualSlices(u8, &.{ 0x28, 0x06, 0x42, 0x7F }, r.values[0..4]);
+    try testing.expectEqual(Port.part2_address, r.ports[2]);
+    r = .{};
+    tone(&r, .tone1, 0x2F1);
+    attenuation(&r, .tone1, 3);
+    quiet(&r, .tone2, true);
+    noiseAttenuation(&r, 5);
+    try testing.expectEqualSlices(u8, &.{ 0xA1, 0x2F, 0xB3, 0xDF, 0xFF, 0xF5 }, r.values[0..r.len]);
+    try testing.expect(latches(0xA1) and !latches(0x2F));
+    r = .{};
+    silenceAll(&r);
+    // Six key offs, then the 12 attenuations and the 12 releases of each part.
+    try testing.expectEqual(@as(usize, 2 * (6 + 2 * 24)), r.len);
+    try testing.expectEqual(@as(u32, 1), r.buses);
 }

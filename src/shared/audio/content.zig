@@ -30,7 +30,7 @@ pub const Content = struct {
 pub const Sound = struct {
     name: []const u8,
     /// An effect asked for while another plays takes the effect channel only with a priority at
-    /// least the playing one's; a song's ($80 and above) never holds it (sound port map 3.1).
+    /// least the playing one's; a song's (128 and above) never holds it (sound port map 3.1).
     priority: u8,
     plays: Plays,
     provenance: []const u8 = "",
@@ -269,7 +269,7 @@ pub const Read = struct {
 pub const Sample = struct {
     number: u8,
     name: []const u8 = "",
-    /// The DAC's values, one per write (unsigned, 0x80 the middle).
+    /// The DAC's values, one per write (unsigned, 128 the middle).
     values: []const u8 = &.{},
     /// How the player paces each value (see `Pace`), one per value.
     pace: []const Pace = &.{},

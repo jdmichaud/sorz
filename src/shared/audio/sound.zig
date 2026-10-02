@@ -61,7 +61,7 @@ test "a sound by name: a tone, then silence when it ends" {
     const resting = [_]content.Event{ .{ .rest = 1 }, .end };
     const tone = [_]content.Event{ .{ .instrument = 0 }, .{ .volume = 0 }, .{ .note = .{ .duration = 30, .octave = 4, .key = 9 } }, .end };
     var driver: content.Driver = .{};
-    for (&driver.fm_keys, 0..) |*k, i| k.* = 0x284 + 0x2A * @as(u16, @intCast(i));
+    for (&driver.fm_keys, 0..) |*k, i| k.* = 644 + 42 * @as(u16, @intCast(i));
     driver.carriers[7] = .{ true, true, true, true };
     const instrument: content.Instrument = .{ .number = 0, .algorithm = 7, .feedback = 0, .operators = @splat(.{ .multiple = 1, .attack = 31, .release = 15 }) };
     const c: content.Content = .{

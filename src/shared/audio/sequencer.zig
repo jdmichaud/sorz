@@ -15,10 +15,10 @@
 //!   song every update until the jingle comes again; effects go on.
 //!
 //! The original's quirks that the sound depends on are kept as named rules, each where it acts:
-//! `PassQuirk` (an effect that gives its channel back mid-update makes the effects after it act
-//! as the song), `clearedTrackChannel` (a cleared track names FM1), the stray loop end of round
-//! 6's music (`loopCounter`), the envelope read on past its end by rests (`envelopeStep`), the
-//! drum hold (`clock.zig`), the drum track's end that ends the update (`update`), and the stop
+//! the PassQuirk (`Pass`: an effect that gives its channel back mid-update makes the effects after
+//! it act as the song), `clearedTrackChannel` (a cleared track names FM1), the stray loop end of
+//! round 6's music (`loopCounter`), the envelope read on past its end by rests (`envelopeStep`),
+//! the drum hold (`clock.zig`), the drum track's end that ends the update (`step`), and the stop
 //! that stops again at the next update (`Current.stop`).
 const std = @import("std");
 const content = @import("content.zig");
@@ -1060,9 +1060,9 @@ const testing = std.testing;
 
 fn testDriver() content.Driver {
     var d: content.Driver = .{};
-    for (&d.fm_keys, 0..) |*k, i| k.* = 0x200 + 0x10 * @as(u16, @intCast(i));
-    for (&d.psg_steps, 0..) |*s, i| s.* = 0x300 - @as(u16, @intCast(i));
-    for (&d.volume_levels, 0..) |*v, i| v.* = 0x40 -% 2 *% @as(u8, @truncate(i));
+    for (&d.fm_keys, 0..) |*k, i| k.* = 512 + 16 * @as(u16, @intCast(i));
+    for (&d.psg_steps, 0..) |*s, i| s.* = 768 - @as(u16, @intCast(i));
+    for (&d.volume_levels, 0..) |*v, i| v.* = 64 -% 2 *% @as(u8, @truncate(i));
     for (&d.carriers, 0..) |*c, alg| c.* = switch (alg) {
         0...3 => .{ false, false, false, true },
         4 => .{ false, true, false, true },
@@ -1080,7 +1080,7 @@ const test_instrument: content.Instrument = .{
     .number = 0,
     .algorithm = 1,
     .feedback = 2,
-    .operators = .{ .{ .level = 0x10, .attack = 31 }, .{ .level = 0x20, .attack = 31 }, .{ .level = 0x30, .attack = 31 }, .{ .level = 0x40, .attack = 31 } },
+    .operators = .{ .{ .level = 16, .attack = 31 }, .{ .level = 32, .attack = 31 }, .{ .level = 48, .attack = 31 }, .{ .level = 64, .attack = 31 } },
 };
 
 const resting = [_]Event{ .{ .rest = 256 }, .{ .jump = 0 } };
@@ -1095,17 +1095,28 @@ fn testSong(fm1: []const Event, fm3: []const Event, drums: []const Event, psg: [
     };
 }
 
-/// Where the register writes `pairs` (register, value) of `part` follow each other in `writes`.
-fn find(writes: []const Write, part: u2, pairs: []const [2]u8) ?usize {
-    const address: chips.Port = if (part == 1) .part1_address else .part2_address;
-    const data: chips.Port = if (part == 1) .part1_data else .part2_data;
+/// The writes of chip operations (chips/registers.zig), to look for in a tick's.
+const Expected = struct {
+    writes: [512]Write = undefined,
+    len: usize = 0,
+
+    pub fn takeBus(_: *Expected) void {}
+
+    pub fn port(e: *Expected, p: chips.Port, value: u8) void {
+        e.writes[e.len] = .{ .port = p, .value = value };
+        e.len += 1;
+    }
+
+    fn items(e: *const Expected) []const Write {
+        return e.writes[0..e.len];
+    }
+};
+
+/// Where `needle` is in `writes`, or null.
+fn find(writes: []const Write, needle: []const Write) ?usize {
     var i: usize = 0;
-    outer: while (i + 2 * pairs.len <= writes.len) : (i += 1) {
-        for (pairs, 0..) |p, k| {
-            const a = writes[i + 2 * k];
-            const d = writes[i + 2 * k + 1];
-            if (a.port != address or a.value != p[0] or d.port != data or d.value != p[1]) continue :outer;
-        }
+    outer: while (i + needle.len <= writes.len) : (i += 1) {
+        for (needle, writes[i..][0..needle.len]) |a, b| if (a.port != b.port or a.value != b.value) continue :outer;
         return i;
     }
     return null;
@@ -1114,23 +1125,33 @@ fn find(writes: []const Write, part: u2, pairs: []const [2]u8) ?usize {
 test "a song's first update: everything stops, then the instrument, the volume, the note" {
     const fm1 = [_]Event{ .{ .instrument = 0 }, .{ .note = .{ .duration = 2, .octave = 2, .key = 5 } }, .end };
     const songs = [_]content.Song{testSong(&fm1, &resting, &resting, &.{})};
-    const sounds = [_]content.Sound{.{ .name = "song", .priority = 0x80, .plays = .{ .song = 0 } }};
+    const sounds = [_]content.Sound{.{ .name = "song", .priority = 128, .plays = .{ .song = 0 } }};
     const c: content.Content = .{ .driver = testDriver(), .songs = &songs, .sounds = &sounds };
     var s: Sequencer = .init(&c);
     s.request(0);
     const w = s.update().items();
     // The stop: DAC on, FM3 normal, both speakers everywhere.
-    try testing.expectEqual(@as(?usize, 0), find(w, 1, &.{ .{ 0x2B, 0x80 }, .{ 0x27, 0x00 }, .{ 0xB4, 0xC0 } }));
-    // The instrument on FM1: the levels in register order (op1, op3, op2, op4), the algorithm and
-    // the output, the carrier's level (volume 0, no offset), the key off, the pitch ($250 with
-    // octave 2), the key on.
-    const at = find(w, 1, &.{ .{ 0x40, 0x10 }, .{ 0x44, 0x30 }, .{ 0x48, 0x20 }, .{ 0x4C, 0x40 } }).?;
-    try testing.expect(find(w[at..], 1, &.{ .{ 0xB0, 0x11 }, .{ 0xB4, 0xC0 }, .{ 0x4C, 0x00 }, .{ 0x28, 0x00 }, .{ 0xA4, 0x12 }, .{ 0xA0, 0x50 }, .{ 0x28, 0xF0 } }) != null);
+    var e: Expected = .{};
+    chips.dacOn(&e);
+    chips.fm3Special(&e, false);
+    chips.resetOutputs(&e);
+    try testing.expectEqual(@as(?usize, 0), find(w, e.items()));
+    // FM1's instrument, its carrier's level (volume 0, no offset), the key off, the pitch (key 5
+    // in octave 2), the key on.
+    e = .{};
+    chips.instrument(&e, .fm1, &test_instrument, chips.output_reset);
+    chips.level(&e, .fm1, .op4, 0);
+    chips.keyOff(&e, .fm1);
+    chips.pitch(&e, .fm1, c.driver.fm_keys[5] | 2 << 11);
+    chips.keyOn(&e, .fm1);
+    try testing.expect(find(w, e.items()) != null);
     try testing.expectEqual(@as(?Fault, null), s.fault);
     // The note lasts two updates; the end keys off and silences FM1.
     _ = s.update();
-    const end = s.update().items();
-    try testing.expect(find(end, 1, &.{ .{ 0x28, 0x00 }, .{ 0x28, 0x00 }, .{ 0x40, 0x7F } }) != null);
+    e = .{};
+    chips.keyOff(&e, .fm1);
+    chips.silence(&e, .fm1);
+    try testing.expect(find(s.update().items(), e.items()) != null);
     try testing.expect(!s.tracks[0].flags.playing);
 }
 
@@ -1140,8 +1161,8 @@ test "an effect holds FM3, then gives it back with the song's instrument" {
     const effect_events = [_]Event{ .{ .instrument = 0 }, .{ .note = .{ .duration = 1, .octave = 4, .key = 0 } }, .end };
     const effects = [_]content.Effect{.{ .name = "effect", .channel = .fm3, .volume_offset = 8, .instruments = &.{test_instrument}, .events = &effect_events }};
     const sounds = [_]content.Sound{
-        .{ .name = "song", .priority = 0x80, .plays = .{ .song = 0 } },
-        .{ .name = "effect", .priority = 0x40, .plays = .{ .effect = 0 } },
+        .{ .name = "song", .priority = 128, .plays = .{ .song = 0 } },
+        .{ .name = "effect", .priority = 64, .plays = .{ .effect = 0 } },
     };
     const c: content.Content = .{ .driver = testDriver(), .songs = &songs, .effects = &effects, .sounds = &sounds };
     var s: Sequencer = .init(&c);
@@ -1150,17 +1171,24 @@ test "an effect holds FM3, then gives it back with the song's instrument" {
     s.request(1);
     const start = s.update().items();
     // FM3 normal, the song's FM3 silenced (key off, every level 127).
-    try testing.expectEqual(@as(?usize, 0), find(start, 1, &.{ .{ 0x27, 0x00 }, .{ 0x28, 0x02 }, .{ 0x42, 0x7F } }));
+    var e: Expected = .{};
+    chips.fm3Special(&e, false);
+    chips.silence(&e, .fm3);
+    try testing.expectEqual(@as(?usize, 0), find(start, e.items()));
     try testing.expect(s.tracks[2].flags.held);
-    try testing.expectEqual(@as(u8, 0x40), s.priority);
-    // The effect's note ends it at the next update; the update after gives FM3 back.
+    try testing.expectEqual(@as(u8, 64), s.priority);
+    // The effect's note ends it at the next update; the update after gives FM3 back: the song's
+    // instrument and its level, then FM3's mode.
     _ = s.update();
     try testing.expect(s.tracks[effect_fm3].flags.ended);
     const back = s.update().items();
     try testing.expect(!s.tracks[2].flags.held and s.tracks[2].flags.rest);
     try testing.expectEqual(@as(u8, 0), s.priority);
-    try testing.expect(find(back, 1, &.{ .{ 0x32, 0x00 }, .{ 0x36, 0x00 } }) != null);
-    try testing.expect(find(back, 1, &.{.{ 0x27, 0x00 }}) != null);
+    e = .{};
+    chips.instrument(&e, .fm3, &test_instrument, chips.output_reset);
+    chips.level(&e, .fm3, .op4, 0);
+    chips.fm3Special(&e, false);
+    try testing.expect(find(back, e.items()) != null);
 }
 
 test "the drums wait while a voice plays" {
@@ -1168,14 +1196,14 @@ test "the drums wait while a voice plays" {
     const drums = [_]Event{ .{ .drum = 1 }, .{ .note = .{ .duration = 2 } }, .{ .jump = 1 } };
     const songs = [_]content.Song{testSong(&resting, &resting, &drums, &.{})};
     const long: [2000]content.Pace = @splat(.first);
-    const values: [2000]u8 = @splat(0x80);
+    const values: [2000]u8 = @splat(128);
     const samples = [_]content.Sample{
         .{ .number = 1, .values = values[0..10], .pace = long[0..10], .delay = 1 },
         .{ .number = 7, .values = &values, .pace = &long, .delay = 30, .voice = true },
     };
     const sounds = [_]content.Sound{
-        .{ .name = "song", .priority = 0x80, .plays = .{ .song = 0 } },
-        .{ .name = "voice", .priority = 0x70, .plays = .{ .sample = 7 } },
+        .{ .name = "song", .priority = 128, .plays = .{ .song = 0 } },
+        .{ .name = "voice", .priority = 112, .plays = .{ .sample = 7 } },
     };
     const c: content.Content = .{ .driver = testDriver(), .songs = &songs, .samples = &samples, .sounds = &sounds };
     var s: Sequencer = .init(&c);
@@ -1200,7 +1228,7 @@ test "the drums wait while a voice plays" {
 test "the fade: fifteen steps every fifth update, then everything stops" {
     const songs = [_]content.Song{testSong(&resting, &resting, &resting, &.{})};
     const sounds = [_]content.Sound{
-        .{ .name = "song", .priority = 0x80, .plays = .{ .song = 0 } },
+        .{ .name = "song", .priority = 128, .plays = .{ .song = 0 } },
         .{ .name = "fade", .priority = 0, .plays = .fade_out },
     };
     const c: content.Content = .{ .driver = testDriver(), .songs = &songs, .sounds = &sounds };
@@ -1223,25 +1251,27 @@ test "a PSG note: its divider, then its envelope until it holds" {
     const psg_events = [_]Event{ .{ .note = .{ .duration = 8, .step = 15 } }, .end };
     const psg = [_]content.Track{.{ .envelope = 1, .events = &psg_events }};
     const songs = [_]content.Song{testSong(&resting, &resting, &resting, &psg)};
-    const sounds = [_]content.Sound{.{ .name = "song", .priority = 0x80, .plays = .{ .song = 0 } }};
+    const sounds = [_]content.Sound{.{ .name = "song", .priority = 128, .plays = .{ .song = 0 } }};
     const c: content.Content = .{ .driver = testDriver(), .songs = &songs, .sounds = &sounds };
     var s: Sequencer = .init(&c);
     s.request(0);
     const first = s.update().items();
-    // Tone 2: divider $300 - 15 = $2F1 (latch $C1, data $2F), then the envelope's first value.
-    const tail = first[first.len - 3 ..];
-    try testing.expectEqual(Write{ .port = .psg, .value = 0xC1 }, tail[0]);
-    try testing.expectEqual(Write{ .port = .psg, .value = 0x2F }, tail[1]);
-    try testing.expectEqual(Write{ .port = .psg, .value = 0xD0 }, tail[2]);
-    const lastPsg = struct {
-        fn of(w: []const Write) ?u8 {
-            return if (w.len != 0 and w[w.len - 1].port == .psg) w[w.len - 1].value else null;
+    // Tone 2: the divider of step 15, then the envelope's first value (attenuation 0).
+    var e: Expected = .{};
+    chips.tone(&e, .tone2, 768 - 15);
+    chips.attenuation(&e, .tone2, 0);
+    try testing.expectEqual(first.len - e.len, find(first, e.items()));
+    // Then one value an update, 1 and 2, then the hold: no more writes for the PSG.
+    for ([_]?u8{ 1, 2, null }) |value| {
+        const w = s.update().items();
+        const wrote = w.len != 0 and w[w.len - 1].port == .psg;
+        try testing.expectEqual(value != null, wrote);
+        if (value) |v| {
+            e = .{};
+            chips.attenuation(&e, .tone2, v);
+            try testing.expectEqual(e.writes[0], w[w.len - 1]);
         }
-    }.of;
-    try testing.expectEqual(@as(?u8, 0xD1), lastPsg(s.update().items()));
-    try testing.expectEqual(@as(?u8, 0xD2), lastPsg(s.update().items()));
-    // The hold: no more writes for the PSG.
-    try testing.expectEqual(@as(?u8, null), lastPsg(s.update().items()));
+    }
 }
 
 test "requests: the last slot at the playing priority or above wins" {
@@ -1251,8 +1281,8 @@ test "requests: the last slot at the playing priority or above wins" {
         .{ .name = "low", .channel = .fm3, .volume_offset = 0, .instruments = &.{}, .events = &effect_events },
     };
     const sounds = [_]content.Sound{
-        .{ .name = "high", .priority = 0x40, .plays = .{ .effect = 0 } },
-        .{ .name = "low", .priority = 0x30, .plays = .{ .effect = 1 } },
+        .{ .name = "high", .priority = 64, .plays = .{ .effect = 0 } },
+        .{ .name = "low", .priority = 48, .plays = .{ .effect = 1 } },
     };
     const c: content.Content = .{ .driver = testDriver(), .effects = &effects, .sounds = &sounds };
     var s: Sequencer = .init(&c);
@@ -1262,7 +1292,7 @@ test "requests: the last slot at the playing priority or above wins" {
     s.request(0); // already waiting: not asked again
     try testing.expectEqual(@as(?u16, null), s.slots[2]);
     _ = s.update();
-    try testing.expectEqual(@as(u8, 0x40), s.priority);
+    try testing.expectEqual(@as(u8, 64), s.priority);
     try testing.expectEqual(@as(?u16, 0), s.effect);
     // A lower priority waits in vain while the effect plays.
     s.request(1);
@@ -1276,15 +1306,15 @@ test "a loop end with no loop start counts in the next track's flags" {
     const long = [_]Event{ .{ .note = .{ .duration = 100, .step = 40 } }, .end };
     const psg = [_]content.Track{ .{ .events = &stray }, .{ .events = &long } };
     const songs = [_]content.Song{testSong(&resting, &resting, &resting, &psg)};
-    const sounds = [_]content.Sound{.{ .name = "song", .priority = 0x80, .plays = .{ .song = 0 } }};
+    const sounds = [_]content.Sound{.{ .name = "song", .priority = 128, .plays = .{ .song = 0 } }};
     const c: content.Content = .{ .driver = testDriver(), .songs = &songs, .sounds = &sounds };
     var s: Sequencer = .init(&c);
     s.request(0);
     _ = s.update();
-    try testing.expectEqual(@as(u8, 0x80), @as(u8, @bitCast(s.tracks[song_psg + 1].flags)));
+    try testing.expectEqual(Flags{ .playing = true }, s.tracks[song_psg + 1].flags);
     // At the next update the stray loop end takes one from track 2's flags: it stops playing,
     // and its other flags are all set.
     _ = s.update();
-    try testing.expectEqual(@as(u8, 0x7F), @as(u8, @bitCast(s.tracks[song_psg + 1].flags)));
-    try testing.expect(!s.tracks[song_psg + 1].flags.playing);
+    const all_but_playing: Flags = .{ .held = true, .rest = true, .special = true, .vibrato = true, .silent = true, .tie = true, .ended = true };
+    try testing.expectEqual(all_but_playing, s.tracks[song_psg + 1].flags);
 }

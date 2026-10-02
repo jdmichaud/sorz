@@ -55,7 +55,7 @@ pub fn read(bytes: []const u8) Error!struct { values: []const u8, rate: u32 } {
 }
 
 test "a sample's values written and read back" {
-    const values = [_]u8{ 0x80, 0x81, 0x7F };
+    const values = [_]u8{ 128, 129, 127 };
     const file = try write(std.testing.allocator, &values, 8000);
     defer std.testing.allocator.free(file);
     const back = try read(file);

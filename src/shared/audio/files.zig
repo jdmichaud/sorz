@@ -348,7 +348,7 @@ test "the content written to its files and loaded gives the same files" {
     const resting = [_]content.Event{ .{ .rest = 9 }, .end };
     const instrument: content.Instrument = .{ .number = 0, .algorithm = 7, .feedback = 1, .operators = @splat(.{ .attack = 31 }) };
     var driver: content.Driver = .{ .provenance = "made up", .songless_instruments = &.{instrument} };
-    driver.fm_keys[3] = 0x284;
+    driver.fm_keys[3] = 644;
     driver.carriers[7] = .{ true, true, true, true };
     driver.envelopes[1].reads[0] = .{ .kind = .step, .value = 3 };
     const c: content.Content = .{
@@ -356,7 +356,7 @@ test "the content written to its files and loaded gives the same files" {
         .songs = &.{.{ .name = "tune", .instruments = &.{instrument}, .fm = @splat(.{ .events = &resting }), .drums = .{ .events = &resting }, .psg = &.{} }},
         .effects = &.{.{ .name = "beep", .channel = .fm3, .volume_offset = 1, .instruments = &.{instrument}, .events = &events }},
         .samples = &.{
-            .{ .number = 1, .name = "drum", .values = &.{ 0x81, 0x83 }, .pace = &.{ .first, .second }, .delay = 2 },
+            .{ .number = 1, .name = "drum", .values = &.{ 129, 131 }, .pace = &.{ .first, .second }, .delay = 2 },
             .{ .number = 4, .name = "empty" },
         },
         .sounds = &.{
@@ -374,8 +374,8 @@ test "the content written to its files and loaded gives the same files" {
     };
     try testing.expectEqual(@as(usize, 4), back.sounds.len);
     try testing.expectEqual(content.Plays.fade_out, back.sounds[3].plays);
-    try testing.expectEqual(@as(u16, 0x284), back.driver.fm_keys[3]);
-    try testing.expectEqualSlices(u8, &.{ 0x81, 0x83 }, back.samples[0].values);
+    try testing.expectEqual(@as(u16, 644), back.driver.fm_keys[3]);
+    try testing.expectEqualSlices(u8, &.{ 129, 131 }, back.samples[0].values);
     const again = try write(arena, &back);
     try testing.expectEqual(files.len, again.len);
     for (files, again) |a, b| {
