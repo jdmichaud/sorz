@@ -13,6 +13,7 @@
 //! Integer arithmetic throughout: the PCM is the same on every platform.
 pub const chip = @import("chip.zig");
 pub const ym2612 = @import("ym2612.zig");
+pub const registers = @import("registers.zig");
 pub const psg = @import("psg.zig");
 pub const dac = @import("dac.zig");
 pub const model1 = @import("model1.zig");

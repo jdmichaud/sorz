@@ -19,6 +19,7 @@ pub const fonts = @import("fonts.zig");
 pub const sprites = @import("sprites.zig");
 pub const compare = @import("compare.zig");
 pub const palettes = @import("palettes.zig");
+pub const sound = @import("sound.zig");
 
 /// The extractor's name and version, in the tree's manifest.
 pub const name = "sorz-extract 1";
