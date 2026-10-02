@@ -2,8 +2,9 @@
 //! and read back into it. The same content always gives the same bytes, so two extractions of one
 //! ROM are identical, and the tree in memory is the tree on disk.
 //!
-//! Layout: `manifest.json`; `attributes.png` (the attribute tiles of the maps); and a directory per
-//! art set with its `art.json` and its pictures and maps.
+//! Layout: `manifest.json`; `attributes.png` (the attribute tiles of the maps); a directory per
+//! art set with its `art.json` and its pictures and maps; the kinds of entity in `entities/`; the
+//! screens' records in `screens/`.
 const std = @import("std");
 const json = @import("../formats/json.zig");
 const png = @import("../formats/png.zig");
@@ -11,6 +12,7 @@ const platform = @import("../platform.zig");
 const art = @import("art.zig");
 const tiled = @import("tiled.zig");
 const entity = @import("entity.zig");
+const screens = @import("screens.zig");
 
 /// The tree's format and version (`manifest.json`). A tree of another version is refused, not
 /// converted.
@@ -32,6 +34,8 @@ pub const Manifest = struct {
     art: []const []const u8,
     /// The kinds of entity the tree defines (`entities/NAME.json`), in order.
     entities: []const []const u8 = &.{},
+    /// The screens' records the tree has (`screens/NAME.json`), in name order.
+    screens: []const []const u8 = &.{},
 };
 
 pub const Content = struct {
@@ -39,6 +43,8 @@ pub const Content = struct {
     art: art.Art,
     /// The kinds of entity, in the manifest's order.
     entities: []const entity.Definition = &.{},
+    /// The screens' records, those the manifest names.
+    screens: screens.Screens = .{},
 };
 
 // --- Writing ---------------------------------------------------------------------------------
@@ -59,6 +65,13 @@ pub fn write(arena: std.mem.Allocator, content: *const Content) WriteError![]Fil
     for (content.entities, content.manifest.entities) |*d, name| {
         if (!std.mem.eql(u8, d.name, name)) return error.BadContent;
         try files.append(arena, .{ .path = try entity.path(arena, d.name), .bytes = try writeJson(arena, try entity.value(arena, d)) });
+    }
+    var names_buf: [screens.record_names.len][]const u8 = undefined;
+    const records = content.screens.names(&names_buf);
+    if (records.len != content.manifest.screens.len) return error.BadContent;
+    for (records, content.manifest.screens) |name, listed| {
+        if (!std.mem.eql(u8, name, listed)) return error.BadContent;
+        try files.append(arena, .{ .path = try screens.path(arena, name), .bytes = try writeJson(arena, try screens.value(arena, &content.screens, name)) });
     }
     std.mem.sort(File, files.items, {}, fileLess);
     for (files.items[1..], 0..) |f, i| {
@@ -97,6 +110,11 @@ fn manifestValue(arena: std.mem.Allocator, m: *const Manifest) !json.Value {
         const kinds = try arena.alloc(json.Value, m.entities.len);
         for (kinds, m.entities) |*v, s| v.* = .{ .str = s };
         try fields.append(arena, .{ .key = "entities", .value = .{ .array = kinds } });
+    }
+    if (m.screens.len != 0) {
+        const records = try arena.alloc(json.Value, m.screens.len);
+        for (records, m.screens) |*v, s| v.* = .{ .str = s };
+        try fields.append(arena, .{ .key = "screens", .value = .{ .array = records } });
     }
     return .{ .object = fields.items };
 }
@@ -327,7 +345,22 @@ pub const max_file = 16 << 20;
 pub fn load(arena: std.mem.Allocator, source: platform.AssetSource, diag: *Diagnostic) Error!Content {
     const m = try loadManifest(arena, source, diag);
     const a = try loadArt(arena, source, m.art, diag);
-    return .{ .manifest = m, .art = a, .entities = try loadEntities(arena, source, m.entities, &a, diag) };
+    return .{
+        .manifest = m,
+        .art = a,
+        .entities = try loadEntities(arena, source, m.entities, &a, diag),
+        .screens = try loadScreens(arena, source, m.screens, &a, diag),
+    };
+}
+
+/// Reads the screens' records `names` (`screens/NAME.json`), whose frames are `a`'s.
+pub fn loadScreens(arena: std.mem.Allocator, source: platform.AssetSource, names: []const []const u8, a: *const art.Art, diag: *Diagnostic) Error!screens.Screens {
+    var out: screens.Screens = .{};
+    for (names) |name| {
+        const root = try parseFile(arena, source, try screens.path(arena, name), diag);
+        try screens.read(arena, name, root, a, &out);
+    }
+    return out;
 }
 
 /// Reads the definitions `names` (`entities/NAME.json`), whose frames are `a`'s.
@@ -362,7 +395,7 @@ fn parseFile(arena: std.mem.Allocator, source: platform.AssetSource, path: []con
 
 pub fn loadManifest(arena: std.mem.Allocator, source: platform.AssetSource, diag: *Diagnostic) Error!Manifest {
     const root = try parseFile(arena, source, manifest_file, diag);
-    try root.only(&.{ "format", "version", "extractor", "rom", "art", "entities" });
+    try root.only(&.{ "format", "version", "extractor", "rom", "art", "entities", "screens" });
     const f = try root.get("format");
     if (!std.mem.eql(u8, try f.string(), format_name)) return f.fail("not \"" ++ format_name ++ "\"");
     const v = try root.get("version");
@@ -388,12 +421,26 @@ pub fn loadManifest(arena: std.mem.Allocator, source: platform.AssetSource, diag
         }
         kinds = out;
     }
+    var records: []const []const u8 = &.{};
+    if (try root.opt("screens")) |node| {
+        const out = try arena.alloc([]const u8, try node.len());
+        for (out, 0..) |*s, i| {
+            const n = try node.at(i);
+            s.* = try n.string();
+            for (screens.record_names) |known| {
+                if (std.mem.eql(u8, known, s.*)) break;
+            } else return n.fail("not a screen's record (high_scores, options, select)");
+            if (i != 0 and !std.mem.lessThan(u8, out[i - 1], s.*)) return n.fail("not in name order, or named twice");
+        }
+        records = out;
+    }
     return .{
         .extractor = try (try root.get("extractor")).string(),
         .rom_sha256 = try (try rom.get("sha256")).string(),
         .rom_size = try (try rom.get("size")).int(u32),
         .art = sets,
         .entities = kinds,
+        .screens = records,
     };
 }
 

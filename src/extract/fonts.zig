@@ -23,7 +23,7 @@ fn digits(comptime first: u16) [10]Glyph {
     return g;
 }
 
-const main_glyphs = [_]Glyph{.{ .text = " ", .tile = 0 }} ++ letters ++ digits(27) ++ [_]Glyph{
+pub const main_glyphs = [_]Glyph{.{ .text = " ", .tile = 0 }} ++ letters ++ digits(27) ++ [_]Glyph{
     .{ .text = "x", .tile = 37 },   .{ .text = "-", .tile = 38 },  .{ .text = "->", .tile = 39 },
     .{ .text = "(c)", .tile = 40 }, .{ .text = ".", .tile = 41 },  .{ .text = ",", .tile = 42 },
     .{ .text = "'", .tile = 43 },   .{ .text = "\"", .tile = 44 }, .{ .text = "?", .tile = 45 },

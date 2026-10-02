@@ -5,6 +5,7 @@
 pub const art = @import("art.zig");
 pub const tiled = @import("tiled.zig");
 pub const entity = @import("entity.zig");
+pub const screens = @import("screens.zig");
 pub const tree = @import("tree.zig");
 
 pub const Art = art.Art;

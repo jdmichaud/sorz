@@ -37,6 +37,7 @@ SET/art.json           an art set: its palettes, tile sheets, maps, frames, font
 SET/NAME.png           a tile sheet or a sprite frame
 SET/NAME.tmj           a tile map (Tiled)
 entities/NAME.json     a kind of entity's definition: a character, an enemy, an item...
+screens/NAME.json      a screen's record: its texts and tables (the options, the high scores...)
 sound/...              the sound (docs/content-sound.md)
 ```
 
@@ -52,13 +53,15 @@ an enemy's (`axel`, `galsia`), or art several screens share (`fonts`, `play`).
   "extractor": "sorz-extract 1",
   "rom": {"sha256": "…", "size": 524288},
   "art": ["fonts", "segalogo", "title", "round1", "axel"],
-  "entities": ["axel", "galsia"]
+  "entities": ["axel", "galsia"],
+  "screens": ["high_scores", "options", "select"]
 }
 ```
 
 `art` lists the art sets the loader reads, in order; `entities`, which a tree without
-definitions leaves out, the kinds of entity (`entities/NAME.json`). `rom` names the ROM the tree
-was extracted from; it identifies the data (network play compares it).
+definitions leaves out, the kinds of entity (`entities/NAME.json`); `screens`, in name order and
+left out by a tree without any, the screens' records (`screens/NAME.json`). `rom` names the ROM
+the tree was extracted from; it identifies the data (network play compares it).
 
 ## SET/art.json
 
@@ -208,6 +211,28 @@ The optional fields are written only when they are not their defaults, so a file
 written again keeps its bytes. The extractor writes the original's characters and enemies (PLAN
 item 11 and on); until then a tree has no `entities`.
 
+## screens/NAME.json
+
+What a front-end screen shows and plays beyond its art, as the original's tables give it: texts
+in the game's font (`fonts/main`'s glyphs: capitals, digits and signs), sounds by their names in
+the sound content, frames by their full names. A list carries its `provenance`. The records:
+
+- `options`: `sound_test.entries`, the sound test's entries, each the `name` it shows and the
+  `sound` it plays; `levels.names`, the levels' names, the easiest first (the high scores show
+  them too); `controls.choices`, for each control choice the lines that say what the buttons do.
+- `high_scores`: `first.entries`, the table at power-on, the best first: each a `score` (0 to
+  999999), the `round` reached, a `name` of three letters and a `level` (a number of the
+  options' `levels`).
+- `select`: `characters.adam`, `axel` and `blaze`, each character's poses on the character
+  select, each an animation: `stand`, `idle`, `pose_a`, `pose_b`, `pose_c` and Blaze's `landing`.
+  An animation is a list of steps, each a `frame`, the `ticks` it shows (1 or more) and, when it
+  is drawn mirrored, `mirrored`. (They are the players' animations in the original's sets; the
+  characters' own definitions will hold them with their moves, PLAN 11.)
+
+```json
+{"first": {"provenance": "…", "entries": [{"score": 100000, "round": 1, "name": "AAA", "level": 1}]}}
+```
+
 ## Tile maps (`.tmj`)
 
 A map is a Tiled map in JSON, orthogonal, 8x8 tiles, not infinite, with two tile layers of the
@@ -253,12 +278,14 @@ name the frames by move, come with the moves (PLAN 11). Where the original gives
 tell assets apart, the name numbers them (`ending/colours_03`), and the provenance says where
 each comes from; the scenes' items may rename them when they give them a role.
 
-Not in the tree yet, each with the item that needs it: the texts (the menus' option values, the
-story, the profiles, the endings: PLAN 08); the screens' palette effects that are routines over
-small tables but for the Sega logo's sweep and the title's colour steps (`segalogo/sweep`,
-`title/steps`: PLAN 08); the
-fixed sprite lists of the round's banner, the pause and the game over, drawn from tiles play
-builds itself (PLAN 13); the rounds' cameras, bands and floors (PLAN 13); the moves (PLAN 11).
+The screens' records (PLAN 08): `options`, `high_scores`, `select` (above).
+
+Not in the tree yet, each with the item that needs it: the texts of the story, the profiles and
+the endings (PLAN 08 and 16); the screens' palette effects that are routines over small tables
+but for the Sega logo's sweep and the title's colour steps (`segalogo/sweep`, `title/steps`:
+PLAN 08); the fixed sprite lists of the round's banner, the pause and the game over, drawn from
+tiles play builds itself (PLAN 13); the rounds' cameras, bands and floors (PLAN 13); the moves
+(PLAN 11).
 
 ## Extracting and checking
 

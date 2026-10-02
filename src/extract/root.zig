@@ -20,6 +20,7 @@ pub const sprites = @import("sprites.zig");
 pub const compare = @import("compare.zig");
 pub const palettes = @import("palettes.zig");
 pub const palette_steps = @import("palette_steps.zig");
+pub const screen_data = @import("screen_data.zig");
 pub const sound = @import("sound.zig");
 
 /// The extractor's name and version, in the tree's manifest.
@@ -64,14 +65,22 @@ pub fn extractUnchecked(gpa: std.mem.Allocator, rom_bytes: []const u8) Error!Tre
 
     const sets = try arena.alloc([]const u8, a.sets.len);
     for (sets, a.sets) |*n, s| n.* = s.name;
+    // The screens' records (docs/content.md), their frames named by the art's origins.
+    const records = screen_data.extract(arena, rom_bytes, &b) catch |e| return switch (e) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.BadData,
+    };
+    var names_buf: [content.screens.record_names.len][]const u8 = undefined;
     const c: content.Content = .{
         .manifest = .{
             .extractor = name,
             .rom_sha256 = try arena.dupe(u8, &rom.digest(rom_bytes)),
             .rom_size = @intCast(rom_bytes.len),
             .art = sets,
+            .screens = try arena.dupe([]const u8, records.names(&names_buf)),
         },
         .art = a,
+        .screens = records,
     };
     const art_files = try content.write(arena, &c);
     // The sound's files (docs/content-sound.md), with the art's, sorted by path.
