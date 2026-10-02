@@ -7,4 +7,6 @@ pub const png = @import("png.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
+    // Network play between agent hosts.
+    _ = @import("netplay_test.zig");
 }

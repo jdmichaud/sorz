@@ -13,6 +13,13 @@
 //! on until the content (PLAN item 06), the renderer (07), the scenes (08) and the sound (09)
 //! take their places. TODO(PLAN item 06): the content loads from `assets` at the start.
 //!
+//! Network play (DESIGN.md 9, `startNetplay`): each tick's pads come from the session with the
+//! other player instead of the local controls, which give this player's pad only (pad 1's keys and
+//! every controller, on both machines). A tick runs once both pads for it are in; until then the
+//! game holds: no tick, the same picture. The peer that gets ahead stretches its sound (or its
+//! clock) by up to 0.5 %. A new session starts the game from power-on; a state mismatch stops it.
+//! Without a session, nothing of this runs.
+//!
 //! Settings (DESIGN.md 7): the record, read from the storage at the start, gives the controls'
 //! layout, the sound's volume and the SDL host's window. A damaged record is repaired and kept
 //! aside (settings/record.zig), and `notice` says so for the host and, once the game draws text,
@@ -25,6 +32,7 @@ const canonical = @import("canonical.zig");
 const scene = @import("scene.zig");
 const picture = @import("picture.zig");
 const sound_out = @import("sound_out.zig");
+const net = @import("net/root.zig");
 
 pub const page_width = picture.width;
 pub const page_height = picture.height;
@@ -84,9 +92,15 @@ pub const Game = struct {
     finished: bool = false,
     /// The sound, while the platform has an audio device.
     sound: ?sound_out.SoundOut = null,
-    /// The clock's origin and the ticks run since, while the clock paces the game.
+    /// The clock's origin and the ticks run since, while the clock paces the game, and the
+    /// stretch of its ticks (network play's balancing).
     clock_base_ns: u64 = 0,
     clock_ticks: u64 = 0,
+    clock_ppm: u32 = 0,
+    /// Network play: the session each tick's pads come from (null: the local controls), and the
+    /// sessions from power-on that the game started for.
+    netplay: ?*net.Netplay = null,
+    net_epoch: u32 = 0,
     /// The host applies the settings' volume itself (the browser's page, with its gain): the game
     /// then queues its sound at full volume.
     host_volume: bool = false,
@@ -111,6 +125,10 @@ pub const Game = struct {
     }
 
     pub fn deinit(self: *Game) void {
+        if (self.netplay) |np| {
+            np.deinit();
+            self.allocator.destroy(np);
+        }
         if (self.sound) |*s| s.deinit(self.allocator);
         self.allocator.free(self.volume_buffer);
         self.pic.deinit(self.allocator);
@@ -162,6 +180,24 @@ pub const Game = struct {
         self.controls.one_player = true;
     }
 
+    /// Plays with another player over the network (DESIGN.md 9): the host (player 1) listens at
+    /// `options.address`, the guest (player 2) connects to it. Call before the first update; the
+    /// game then starts from power-on once the session does.
+    pub fn startNetplay(self: *Game, options: net.netplay.Options) error{OutOfMemory}!void {
+        std.debug.assert(self.netplay == null and !self.started);
+        const np = try self.allocator.create(net.Netplay);
+        errdefer self.allocator.destroy(np);
+        np.* = try net.Netplay.init(self.allocator, options, canonical.diffFn(State));
+        self.netplay = np;
+        self.setOnePlayer();
+    }
+
+    /// Whether the other player of network play is on the settings screen.
+    pub fn peerInSettings(self: *const Game) bool {
+        const np = self.netplay orelse return false;
+        return np.peerInSettings();
+    }
+
     /// Whether the game takes `key` now: a pad's key or the settings key (the browser's page keeps
     /// the other keys for itself).
     pub fn usesKey(self: *const Game, key: platform.Key) bool {
@@ -177,6 +213,10 @@ pub const Game = struct {
             self.started = true;
             self.openSound(p);
             self.clock_base_ns = p.nowNs();
+            if (self.netplay) |np| np.start(p) catch |err| {
+                std.log.err("network play cannot start at {s}: {s}", .{ np.address, @errorName(err) });
+                return err;
+            };
         }
         self.update_count += 1;
         var buf: [32]platform.Event = undefined;
@@ -185,6 +225,7 @@ pub const Game = struct {
             if (n == 0) break;
             for (buf[0..n]) |e| {
                 self.events_consumed += 1;
+                if (self.netplay) |np| if (np.handle(p, e)) continue;
                 switch (e.payload) {
                     .quit => self.finished = true,
                     .key_down => |k| if (k.key == .escape) {
@@ -196,7 +237,17 @@ pub const Game = struct {
                 }
             }
         }
-        if (self.finished) return .finished;
+        if (self.finished) {
+            if (self.netplay) |np| np.quit(p);
+            return .finished;
+        }
+        if (self.netplay) |np| {
+            np.update(p);
+            if (np.epoch != self.net_epoch) {
+                self.net_epoch = np.epoch;
+                self.powerOn(p);
+            }
+        }
         switch (self.pacing) {
             .per_update => _ = self.runTick(p),
             .clock => self.runDue(p),
@@ -223,8 +274,17 @@ pub const Game = struct {
             }
         }
         // In picoseconds, 64-bit (the browser's module has no 128-bit division): it lasts 213
-        // days from the clock's origin.
-        const due: u64 = (now -| self.clock_base_ns) * 1000 / sound_out.tick_ps;
+        // days from the clock's origin. Network play's balancing stretches the tick; a change keeps
+        // the time already in the tick under way.
+        const ppm = self.stretchPpm();
+        if (ppm != self.clock_ppm) {
+            const period = stretched(self.clock_ppm);
+            const into = ((now -| self.clock_base_ns) * 1000) -| self.clock_ticks * period;
+            self.clock_base_ns = now -| into / 1000;
+            self.clock_ticks = 0;
+            self.clock_ppm = ppm;
+        }
+        const due: u64 = (now -| self.clock_base_ns) * 1000 / stretched(ppm);
         while (n < max_ticks_per_update and self.clock_ticks < due) : (n += 1) {
             if (!self.runTick(p)) {
                 // A hold: the clock does not run ahead of it.
@@ -241,12 +301,49 @@ pub const Game = struct {
         }
     }
 
-    /// One tick with the local pads, and its sound. False when the game holds and nothing ran.
+    /// A tick's time in picoseconds, stretched by `ppm` millionths.
+    fn stretched(ppm: u32) u64 {
+        return sound_out.tick_ps + sound_out.tick_ps * ppm / 1_000_000;
+    }
+
+    /// The stretch of the ticks that network play's balancing asks for (0 without a session).
+    fn stretchPpm(self: *const Game) u32 {
+        const np = self.netplay orelse return 0;
+        return np.stretchPpm();
+    }
+
+    /// One tick, and its sound. In network play the pads are the session's; false when it holds
+    /// for the other player's, and nothing ran. TODO(PLAN item 09): a hold fades the sound out,
+    /// and the next tick fades it in (DESIGN.md 9); silence has nothing to fade.
     fn runTick(self: *Game, p: *platform.Platform) bool {
-        self.state.step(self.controls.pads());
+        var pads = self.controls.pads();
+        if (self.netplay) |np| pads = np.pads(p, pads.pad1) orelse return false;
+        self.state.step(pads);
         self.redraw = true;
-        if (self.sound) |*s| _ = p.audioQueue(self.atVolume(s.tick(0))) catch {};
+        if (self.sound) |*s| _ = p.audioQueue(self.atVolume(s.tick(self.stretchPpm()))) catch {};
+        if (self.netplay) |np| {
+            np.ran();
+            if (np.checkDue()) {
+                // The state before the session's next tick: its hash and its form.
+                var buf: [canonical.size(State)]u8 = undefined;
+                const form = canonical.write(State, &self.state, &buf);
+                np.check(p, std.hash.Fnv1a_64.hash(form), form);
+            }
+        }
         return true;
+    }
+
+    /// A session from power-on (network play): the state, the picture and the sound start over.
+    fn powerOn(self: *Game, p: *platform.Platform) void {
+        self.state = .{};
+        self.redraw = true;
+        self.drawn = .{};
+        self.clock_base_ns = p.nowNs();
+        self.clock_ticks = 0;
+        if (self.sound) |*s| {
+            s.rest = 0;
+            p.audioClear();
+        }
     }
 
     /// The sound device, stereo at 48 kHz (or the rate the platform gives).

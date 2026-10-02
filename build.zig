@@ -29,6 +29,9 @@ pub fn build(b: *std.Build) void {
     const sdl_linkage = b.option(SdlLinkage, "sdl-linkage", "Link the system SDL2 as a static archive or as a shared library (default: static). A Windows build always links its SDL2 statically") orelse .static;
 
     const versions = b.addOptions();
+    // The build's identity, which network play's handshake compares (DESIGN.md 9): the source's
+    // commit, as the native and the browser builds of one tree share it.
+    versions.addOption([]const u8, "build", buildIdentity(b));
 
     // Shared code: the platform contract, in-memory providers, the game. No host library, no libc.
     const shared = b.addModule("sorz", .{
@@ -325,6 +328,28 @@ pub fn build(b: *std.Build) void {
         windows.has_side_effects = true;
         all_step.dependOn(&windows.step);
     }
+}
+
+/// The source's commit (`git describe`), or "unknown" out of a git checkout. Two builds of one
+/// commit give the same text, whatever they build.
+fn buildIdentity(b: *std.Build) []const u8 {
+    // The configure phase is cached: it runs again when the checkout's HEAD moves, which its
+    // reflog records (a commit, a checkout, a rebase). Local changes are not in the identity:
+    // they would need every source file here, and the session's state checks catch a build
+    // that plays differently.
+    var code: u8 = 0;
+    // The checkout's git directory: `.git`, or another for a worktree, whose `.git` is a file.
+    if (b.runAllowFail(&.{ "git", "rev-parse", "--absolute-git-dir" }, &code, .ignore)) |dir| {
+        const reflog = b.fmt("{s}/logs/HEAD", .{std.mem.trim(u8, dir, " \t\r\n")});
+        if (std.Io.Dir.cwd().access(b.graph.io, reflog, .{})) |_| {
+            // By contents: this Zig does not check a dependency by metadata yet.
+            b.dependOnFileContents(.{ .cwd_relative = reflog });
+        } else |_| {}
+    } else |_| {}
+    // The build runs in the source tree, so git finds its checkout.
+    const out = b.runAllowFail(&.{ "git", "describe", "--always", "--abbrev=12", "--exclude=*" }, &code, .ignore) catch return "unknown";
+    const text = std.mem.trim(u8, out, " \t\r\n");
+    return if (text.len == 0 or text.len > 32) "unknown" else text;
 }
 
 /// Links SDL2 into `m`, and records the SDL2 version that pkg-config reports as the `sdl` build
