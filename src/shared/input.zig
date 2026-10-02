@@ -114,12 +114,16 @@ pub const Controls = struct {
     one_player: bool = false,
     /// The buttons held through the keyboard, per pad.
     keys: [2]u8 = .{ 0, 0 },
-    /// The buttons held through controllers, per pad: the d-pad and buttons, and the stick.
-    pad_buttons: [2]u8 = .{ 0, 0 },
-    stick: [2]u8 = .{ 0, 0 },
+    /// The buttons held through each controller, by its place in `controllers`: the d-pad and
+    /// buttons, and the stick. Each controller keeps its own, so that one's release or removal
+    /// does not let go of what another holds on the same pad.
+    pad_buttons: [max_controllers]u8 = @splat(0),
+    stick: [max_controllers]u8 = @splat(0),
     /// The controllers in the order they came: the first two are the two pads' (`padOf`); with
     /// one player, all play pad 1.
-    controllers: [4]?platform.ControllerId = @splat(null),
+    controllers: [max_controllers]?platform.ControllerId = @splat(null),
+
+    pub const max_controllers = 4;
 
     /// Takes one platform event; returns whether it concerned the controls.
     pub fn handle(self: *Controls, e: platform.Event) bool {
@@ -134,17 +138,11 @@ pub const Controls = struct {
                 return false;
             },
             .controller_removed => |id| {
-                const pad = self.padOf(id);
-                var known = false;
-                for (&self.controllers) |*c| if (c.* == id) {
-                    c.* = null;
-                    known = true;
-                };
-                if (pad) |n| {
-                    self.pad_buttons[n] = 0;
-                    self.stick[n] = 0;
-                }
-                return known;
+                const slot = self.slotOf(id) orelse return false;
+                self.controllers[slot] = null;
+                self.pad_buttons[slot] = 0;
+                self.stick[slot] = 0;
+                return true;
             },
             .controller_button_down => |b| return self.controllerButton(b, true),
             .controller_button_up => |b| return self.controllerButton(b, false),
@@ -160,16 +158,18 @@ pub const Controls = struct {
     /// Releases every held control, as a lost focus does.
     pub fn release(self: *Controls) void {
         self.keys = .{ 0, 0 };
-        self.pad_buttons = .{ 0, 0 };
-        self.stick = .{ 0, 0 };
+        self.pad_buttons = @splat(0);
+        self.stick = @splat(0);
     }
 
-    /// The pads as the game reads them at this display tick.
+    /// The pads as the game reads them at this display tick: the keys, and each controller's
+    /// buttons on the pad it plays.
     pub fn pads(self: *const Controls) Pads {
-        return .{
-            .pad1 = @bitCast(self.keys[0] | self.pad_buttons[0] | self.stick[0]),
-            .pad2 = @bitCast(self.keys[1] | self.pad_buttons[1] | self.stick[1]),
-        };
+        var bits = self.keys;
+        for (0..max_controllers) |slot| {
+            if (self.padOfSlot(slot)) |pad| bits[pad] |= self.pad_buttons[slot] | self.stick[slot];
+        }
+        return .{ .pad1 = @bitCast(bits[0]), .pad2 = @bitCast(bits[1]) };
     }
 
     /// Whether `key` presses a pad's button here (with one player, pad 1's only).
@@ -185,33 +185,44 @@ pub const Controls = struct {
         return true;
     }
 
-    /// The pad a controller plays: the first added plays `layout.first_pad`, the second the other,
-    /// and the others none; with one player, every controller plays pad 1.
-    fn padOf(self: *const Controls, id: platform.ControllerId) ?usize {
-        for (self.controllers, 0..) |c, i| if (c == id) {
-            if (self.one_player) return 0;
-            return if (i < 2) i ^ self.layout.first_pad else null;
-        };
+    /// The place of a controller in `controllers`.
+    fn slotOf(self: *const Controls, id: platform.ControllerId) ?usize {
+        for (self.controllers, 0..) |c, i| if (c == id) return i;
         return null;
     }
 
+    /// The pad the controller at `slot` plays: the first added plays `layout.first_pad`, the
+    /// second the other, and the others none; with one player, every controller plays pad 1.
+    fn padOfSlot(self: *const Controls, slot: usize) ?usize {
+        if (self.controllers[slot] == null) return null;
+        if (self.one_player) return 0;
+        return if (slot < 2) slot ^ self.layout.first_pad else null;
+    }
+
+    /// The place of a controller that plays a pad.
+    fn playingSlot(self: *const Controls, id: platform.ControllerId) ?usize {
+        const slot = self.slotOf(id) orelse return null;
+        _ = self.padOfSlot(slot) orelse return null;
+        return slot;
+    }
+
     fn controllerButton(self: *Controls, e: platform.Event.ControllerButtonEvent, down: bool) bool {
-        const pad = self.padOf(e.controller) orelse return false;
+        const slot = self.playingSlot(e.controller) orelse return false;
         const button = self.layout.buttonOf(e.button) orelse return false;
-        set(&self.pad_buttons[pad], button, down);
+        set(&self.pad_buttons[slot], button, down);
         return true;
     }
 
     fn axis(self: *Controls, e: platform.Event.ControllerAxisEvent) bool {
-        const pad = self.padOf(e.controller) orelse return false;
+        const slot = self.playingSlot(e.controller) orelse return false;
         switch (e.axis) {
             .left_x => {
-                set(&self.stick[pad], .left, e.value < -stick_threshold);
-                set(&self.stick[pad], .right, e.value > stick_threshold);
+                set(&self.stick[slot], .left, e.value < -stick_threshold);
+                set(&self.stick[slot], .right, e.value > stick_threshold);
             },
             .left_y => {
-                set(&self.stick[pad], .up, e.value < -stick_threshold);
-                set(&self.stick[pad], .down, e.value > stick_threshold);
+                set(&self.stick[slot], .up, e.value < -stick_threshold);
+                set(&self.stick[slot], .down, e.value > stick_threshold);
             },
             else => return false,
         }
@@ -268,6 +279,24 @@ test "a layout of other keys, other buttons and the controllers swapped" {
     try std.testing.expect(c.pads().pad1.a);
     c.release();
     try std.testing.expectEqual(@as(u8, 0), @as(u8, @bitCast(c.pads().pad1)) | @as(u8, @bitCast(c.pads().pad2)));
+}
+
+test "two controllers on one pad: one's release or removal keeps what the other holds" {
+    var c: Controls = .{ .one_player = true };
+    const first: platform.ControllerId = @fromBackingInt(@intCast(3));
+    const second: platform.ControllerId = @fromBackingInt(@intCast(4));
+    for ([_]platform.ControllerId{ first, second }) |id| _ = c.handle(.{ .time_ns = 0, .payload = .{ .controller_added = id } });
+    _ = c.handle(.{ .time_ns = 0, .payload = .{ .controller_button_down = .{ .controller = first, .button = .a } } });
+    _ = c.handle(.{ .time_ns = 0, .payload = .{ .controller_axis = .{ .controller = first, .axis = .left_x, .value = 30000 } } });
+    // The second controller presses and lets go of the same button, and its stick rests.
+    _ = c.handle(.{ .time_ns = 0, .payload = .{ .controller_button_down = .{ .controller = second, .button = .a } } });
+    _ = c.handle(.{ .time_ns = 0, .payload = .{ .controller_button_up = .{ .controller = second, .button = .a } } });
+    _ = c.handle(.{ .time_ns = 0, .payload = .{ .controller_axis = .{ .controller = second, .axis = .left_x, .value = 0 } } });
+    try std.testing.expect(c.pads().pad1.b and c.pads().pad1.right);
+    _ = c.handle(.{ .time_ns = 0, .payload = .{ .controller_removed = second } });
+    try std.testing.expect(c.pads().pad1.b and c.pads().pad1.right);
+    _ = c.handle(.{ .time_ns = 0, .payload = .{ .controller_removed = first } });
+    try std.testing.expectEqual(@as(u8, 0), @as(u8, @bitCast(c.pads().pad1)));
 }
 
 test "one player: every controller and pad 1's keys play pad 1, whatever the first controller's pad" {
