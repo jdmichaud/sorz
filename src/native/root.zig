@@ -8,6 +8,12 @@ pub const cli = @import("cli.zig");
 pub const contract = @import("contract.zig");
 /// The binaries' log lines on standard error.
 pub const log = @import("log.zig");
+/// The transport of network play: WebSocket (RFC 6455) on `std.Io.net`, and the page's files.
+pub const websocket = @import("websocket.zig");
+pub const net = @import("net.zig");
+pub const WebSocketTransport = net.WebSocketTransport;
+/// The game's files that a server gives its pages.
+pub const served = @import("served.zig");
 
 pub const DirectoryAssetSource = directory.DirectoryAssetSource;
 pub const DirectoryStorage = storage.DirectoryStorage;
