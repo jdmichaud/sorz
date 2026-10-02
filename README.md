@@ -69,15 +69,24 @@ The placeholder name of the project is `sorz`.
 - `docs/port-map-template.md`: the outline of a subsystem's port map.
 - `docs/lessons.md`: the lessons and traps of previous ports that apply to any port.
 - `src/shared`: the `sorz` module, the game and everything the targets share. It links
-  nothing. `platform.zig` holds the platform contract, `memory.zig` the in-memory providers, and
-  `game.zig` the placeholder game.
-- `src/agent`: `sorz-agent`, the headless host: the agent backend under a virtual 60 Hz clock
-  and a frame runner that injects keys and prints one JSON line of counters and digests. It never
-  links SDL. A port grows it into the driver its checks need.
+  nothing. `platform.zig` holds the platform contract (with network play's transport),
+  `memory.zig` the in-memory providers, `game.zig` the game as the hosts run it (for now a test
+  pattern on the scene stack of `scene.zig`, and silence), `canonical.zig` the canonical form of
+  its state, `input.zig` and `settings/` the controls and the settings record, and `net/` network
+  play's protocol, session and driver.
+- `src/agent`: `sorz-agent`, the headless host: the agent backend under a virtual clock of display
+  ticks, keys at chosen ticks, frames as PNG files and the sound as a WAV file, one JSON line of
+  counters and digests, and network play (`--netplay`, `--join`, `--pair`). It never links SDL.
 - `src/native`: host I/O for the native targets: the directory asset source, the directory
-  storage, their shared contract tests, and the command line.
+  storage, their shared contract tests, the command line (where a ROM's content will be extracted,
+  PLAN item 06), the WebSocket transport, the game's files a server gives its pages, the relay of
+  server mode, and the binaries' log lines.
 - `src/sdl`: `sorz-sdl`, the interactive host on SDL2, for Linux and Windows.
-- `src/web`: the browser build: the WebAssembly module, its backend, the page and its script.
-- `tools`: build helpers only: the check that the agent binary links no SDL, and the engine's rule
-  against the console's terms (`engine_terms.zig`, with its allow-list). Tools that study the
-  original do not belong here.
+- `src/server`: `sorz-server`, the relay of network play between two browsers (server mode), with
+  no game and no library.
+- `src/web`: the browser build: the WebAssembly module, its backend, the page and its script, and
+  their checks (`page_check.cjs` under Node, `browser_check.mjs` in Chromium).
+- `tools`: build helpers only: the checks that the agent and server binaries link no SDL and that
+  each executable alone serves its page, the settings across starts, and the engine's rule against
+  the console's terms (`engine_terms.zig`, with its allow-list). Tools that study the original do
+  not belong here.

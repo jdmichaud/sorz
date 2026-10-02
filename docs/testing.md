@@ -6,14 +6,17 @@ depends on the game, and the port builds it as its checks need (below).
 
 ## Before every commit
 
-- `zig build test`: the unit tests of every module. **No test is skipped**: the summary says
-  "N pass (N total)".
+- `zig build test`: the unit tests of every module, and the engine's rule against the console's
+  terms (tools/engine_terms.zig). **No test is skipped**: the summary says "N pass (N total)".
 - The port's own suites, once it has them.
-- `zig build smoke` (the agent host for a few frames, with a save and a load) and `zig build
-  verify` (the agent binary links no SDL).
-- `zig build web`: the browser build, with the check of its module's imports. When a helper of
-  the page changes, `zig build web-check` (it needs Node.js).
-- `zig fmt --check src build.zig`.
+- `zig build smoke` (the agent host for a few frames, and the settings record across starts) and
+  `zig build verify` (the agent and server binaries link no SDL, and each executable alone serves
+  its page).
+- `zig build web`: the browser build, with the check of its module's imports. When the page or
+  network play changes, `zig build web-check` (it needs Node.js) and `zig build browser-check
+  -Doptimize=ReleaseFast` (Node.js and a Chromium; its real-time parts are sensitive to the
+  machine's load, which its report gives).
+- `zig fmt --check src tools build.zig`.
 
 The steps are listed at the top of `build.zig`; agents build into a prefix and a cache under
 `/tmp/<project>`, never into `zig-out`.
