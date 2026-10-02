@@ -9,6 +9,7 @@ const content = @import("content.zig");
 const notation = @import("notation.zig");
 const wav = @import("wav.zig");
 const json = @import("../formats/json.zig");
+const platform = @import("../platform.zig");
 const Value = json.Value;
 
 pub const File = struct { path: []const u8, bytes: []const u8 };
@@ -195,6 +196,23 @@ pub fn load(arena: std.mem.Allocator, source: anytype, diag: *json.Diagnostic) E
 }
 
 const Command = enum { fade_out, stop, stop_effects };
+
+/// The sound content from the game's asset source (the content tree).
+pub fn loadAssets(arena: std.mem.Allocator, assets: platform.AssetSource, diag: *json.Diagnostic) Error!content.Content {
+    return load(arena, AssetReader{ .arena = arena, .assets = assets }, diag);
+}
+
+/// The files of an asset source, copied into the arena.
+const AssetReader = struct {
+    arena: std.mem.Allocator,
+    assets: platform.AssetSource,
+
+    pub fn read(r: AssetReader, path: []const u8) ![]const u8 {
+        var owned = try r.assets.readAll(path, 16 << 20);
+        defer owned.deinit();
+        return r.arena.dupe(u8, owned.bytes);
+    }
+};
 
 fn commandOf(k: Command) content.Plays {
     return switch (k) {

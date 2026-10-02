@@ -172,6 +172,9 @@ named rule of the sequencer:
 
 ## Checks
 
-`zig build sound-check -Drom=ROM -Dremaster=DIR` extracts the content twice (byte for byte the
-same), loads it back from its files, and plays it against sor-remaster's driver (the reference):
-every song and effect, alone and together, call by call, then their PCM byte by byte.
+- `zig build extract-check -Drom=ROM`: two extractions of the whole tree are byte-identical, and
+  the sound's files load and write the same files again.
+- `zig build sound-check -Drom=ROM -Dremaster=DIR` extracts the sound twice, loads it back from
+  its files, and plays it against sor-remaster's driver (the reference): every song and effect,
+  alone and together, call by call, then their PCM byte by byte (`-Dsound-only=GROUP` runs one
+  group, `-Dsound-tree=DIR` writes the files there).

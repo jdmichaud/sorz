@@ -72,7 +72,26 @@ pub fn extractUnchecked(gpa: std.mem.Allocator, rom_bytes: []const u8) Error!Tre
         },
         .art = a,
     };
-    tree.files = try content.write(arena, &c);
+    const art_files = try content.write(arena, &c);
+    // The sound's files (docs/content-sound.md), with the art's, sorted by path.
+    var why: sound.Refusal = .{};
+    const s = sound.extract(arena, rom_bytes, &why) catch |e| return switch (e) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.BadData,
+    };
+    const sound_files = sound.files(arena, &s.content) catch |e| return switch (e) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.BadContent,
+    };
+    const files = try arena.alloc(File, art_files.len + sound_files.len);
+    @memcpy(files[0..art_files.len], art_files);
+    for (files[art_files.len..], sound_files) |*f, sf| f.* = .{ .path = sf.path, .bytes = sf.bytes };
+    std.mem.sort(File, files, {}, struct {
+        fn less(_: void, x: File, y: File) bool {
+            return std.mem.lessThan(u8, x.path, y.path);
+        }
+    }.less);
+    tree.files = files;
     tree.notes = b.notes;
     return tree;
 }

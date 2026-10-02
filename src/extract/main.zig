@@ -92,6 +92,28 @@ pub fn main(init: std.process.Init) !void {
             return fail(io, try std.fmt.allocPrint(init.arena.allocator(), "the loaded tree writes {s} differently\n", .{f.path}));
         }
     }
+    // The sound's files load, and write the same files again.
+    const sound = sorz.audio.files.loadAssets(arena.allocator(), source.assetSource(), &diag) catch |e| switch (e) {
+        error.BadAsset => return fail(io, try std.fmt.allocPrint(init.arena.allocator(), "the sound does not load: {f}\n", .{&diag})),
+        else => return e,
+    };
+    const sound_files = try arena.allocator().dupe(sorz.audio.files.File, try sorz.audio.files.write(arena.allocator(), &sound));
+    std.mem.sort(sorz.audio.files.File, sound_files, {}, struct {
+        fn less(_: void, a: sorz.audio.files.File, b: sorz.audio.files.File) bool {
+            return std.mem.lessThan(u8, a.path, b.path);
+        }
+    }.less);
+    var s: usize = 0;
+    for (tree.files) |f| {
+        if (!std.mem.startsWith(u8, f.path, "sound/")) continue;
+        if (s >= sound_files.len) return fail(io, "the loaded sound writes fewer files\n");
+        const r = sound_files[s];
+        s += 1;
+        if (!std.mem.eql(u8, f.path, r.path) or !std.mem.eql(u8, f.bytes, r.bytes)) {
+            return fail(io, try std.fmt.allocPrint(init.arena.allocator(), "the loaded sound writes {s} differently\n", .{f.path}));
+        }
+    }
+    if (s != sound_files.len) return fail(io, "the loaded sound writes more files\n");
     var bytes: usize = 0;
     for (tree.files) |f| bytes += f.bytes.len;
     const n = tree.notes;
