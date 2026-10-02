@@ -10,6 +10,8 @@ pub const clock = @import("clock.zig");
 pub const sequencer = @import("sequencer.zig");
 pub const Sequencer = sequencer.Sequencer;
 pub const output = @import("output.zig");
+pub const sound = @import("sound.zig");
+pub const Sound = sound.Sound;
 
 test {
     @import("std").testing.refAllDecls(@This());

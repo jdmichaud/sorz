@@ -326,10 +326,11 @@ pub fn build(b: *std.Build) void {
     // plays every song for minutes.
     const sound_check_step = b.step("sound-check", "Compare the sound with sor-remaster's (needs -Drom=ROM -Dremaster=DIR)");
     const remaster = b.option([]const u8, "remaster", "A sor-remaster checkout, the reference of sound-check");
-    const sound_only = b.option([]const u8, "sound-only", "One group of sound-check's scenarios: songs, round6, effects, pairs, changes, fades, pauses, stops, voices, quirks, pcm, random");
+    const sound_only = b.option([]const u8, "sound-only", "One group of sound-check's scenarios: songs, round6, effects, pairs, changes, fades, pauses, stops, voices, quirks, pcm, random; or bench, the sequencer's cost");
     const sound_tree = b.option([]const u8, "sound-tree", "Where sound-check writes the sound content's files, for reading");
+    const sound_optimize = b.option(std.builtin.OptimizeMode, "sound-check-optimize", "The build mode of sound-check (default: fast; debug to measure the bench in a debug build)") orelse .fast;
     if (rom_path != null and remaster != null) {
-        const run = soundCheck(b, target, versions, rom_path.?, remaster.?);
+        const run = soundCheck(b, target, sound_optimize, versions, rom_path.?, remaster.?);
         if (sound_only) |o| run.addArgs(&.{ "--only", o });
         if (sound_tree) |t| run.addArgs(&.{ "--tree", t });
         sound_check_step.dependOn(&run.step);
@@ -472,8 +473,7 @@ fn buildIdentity(b: *std.Build) []const u8 {
 
 /// The run of the sound check (tests/sound/check.zig): its own optimised copies of `sorz` and the
 /// extractor, and sor-remaster's shared module as `remaster`.
-fn soundCheck(b: *std.Build, target: std.Build.ResolvedTarget, versions: *std.Build.Step.Options, rom: []const u8, remaster: []const u8) *std.Build.Step.Run {
-    const fast: std.builtin.OptimizeMode = .ReleaseFast;
+fn soundCheck(b: *std.Build, target: std.Build.ResolvedTarget, fast: std.builtin.OptimizeMode, versions: *std.Build.Step.Options, rom: []const u8, remaster: []const u8) *std.Build.Step.Run {
     const shared = b.createModule(.{ .root_source_file = b.path("src/shared/root.zig"), .target = target, .optimize = fast });
     shared.addOptions("build_versions", versions);
     const extract = b.createModule(.{

@@ -453,6 +453,40 @@ pub fn main(init: std.process.Init) !void {
         }
         suite.report("PCM: random requests, 10 runs");
     }
+    if (only != null and std.mem.eql(u8, only.?, "bench")) {
+        // The sequencer's cost, alone and with the chips: a minute of each song, an effect every
+        // 97 updates, as a share of a display tick (16.7 ms). Run it in the build mode to measure
+        // (-Dsound-check-optimize=Debug).
+        var updates: u64 = 0;
+        var sequencer_ns: i96 = 0;
+        var sound_ns: i96 = 0;
+        for (songs.items) |s| {
+            var seq: audio.Sequencer = .init(c);
+            var sound = try audio.Sound.init(gpa, c, 48000);
+            defer sound.deinit(gpa);
+            seq.request(s);
+            sound.play(s);
+            for (0..3600) |u| {
+                if (u % 97 == 50) {
+                    const e = effects.items[(u / 97) % effects.items.len];
+                    seq.request(e);
+                    sound.play(e);
+                }
+                const t0 = std.Io.Clock.cpu_thread.now(io);
+                _ = seq.update();
+                const t1 = std.Io.Clock.cpu_thread.now(io);
+                _ = sound.tick();
+                const t2 = std.Io.Clock.cpu_thread.now(io);
+                sequencer_ns += t0.durationTo(t1).nanoseconds;
+                sound_ns += t1.durationTo(t2).nanoseconds;
+                updates += 1;
+            }
+        }
+        const tick_ns: f64 = 1e9 / 59.92;
+        const per_seq = @as(f64, @floatFromInt(sequencer_ns)) / @as(f64, @floatFromInt(updates));
+        const per_sound = @as(f64, @floatFromInt(sound_ns)) / @as(f64, @floatFromInt(updates));
+        std.debug.print("bench ({s}): {d} updates; the sequencer {d:.1} us an update ({d:.2} % of a display tick), with the chips and the output {d:.1} us ({d:.1} %)\n", .{ @tagName(@import("builtin").mode), updates, per_seq / 1000, 100 * per_seq / tick_ns, per_sound / 1000, 100 * per_sound / tick_ns });
+    }
     if (want(only, "random")) {
         var prng = std.Random.DefaultPrng.init(0x5EED_50E7);
         const r = prng.random();
