@@ -74,6 +74,15 @@ pub const Cycle = struct {
     steps: []const [palette_count][palette_size]?Colour,
 };
 
+/// Palettes a screen shows one after another, at the times its scene decides (the Sega logo's
+/// colour sweep, the title's colour steps): each step a palette's colours, for each palette 16
+/// colours or null.
+pub const PaletteSteps = struct {
+    name: []const u8,
+    provenance: []const u8 = "",
+    steps: []const [palette_count][palette_size]?Colour,
+};
+
 /// An 8x8 tile: 64 colour indices 0-15, row by row; index 0 is transparent.
 pub const Tile = [64]u8;
 
@@ -202,6 +211,7 @@ pub const ArtSet = struct {
     uses: []const []const u8 = &.{},
     palettes: []const Palette = &.{},
     cycles: []const Cycle = &.{},
+    steps: []const PaletteSteps = &.{},
     sheets: []const TileSheet = &.{},
     maps: []const TileMap = &.{},
     frames: []const Frame = &.{},
@@ -232,6 +242,9 @@ pub const Art = struct {
     }
     pub fn cycle(self: *const Art, name: []const u8) ?*const Cycle {
         return find(Cycle, "cycles", self.sets, name);
+    }
+    pub fn steps(self: *const Art, name: []const u8) ?*const PaletteSteps {
+        return find(PaletteSteps, "steps", self.sets, name);
     }
     pub fn sheet(self: *const Art, name: []const u8) ?*const TileSheet {
         return find(TileSheet, "sheets", self.sets, name);

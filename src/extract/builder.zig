@@ -14,6 +14,7 @@ const SetBuilder = struct {
     uses: std.StringArrayHashMapUnmanaged(void) = .empty,
     palettes: std.ArrayList(art.Palette) = .empty,
     cycles: std.ArrayList(art.Cycle) = .empty,
+    steps: std.ArrayList(art.PaletteSteps) = .empty,
     sheets: std.ArrayList(art.TileSheet) = .empty,
     maps: std.ArrayList(art.TileMap) = .empty,
     frames: std.ArrayList(art.Frame) = .empty,
@@ -150,6 +151,15 @@ pub const Builder = struct {
         try s.cycles.append(self.arena, copy);
     }
 
+    pub fn paletteSteps(self: *Builder, name: []const u8, c: art.PaletteSteps) Error!void {
+        const n = split(name);
+        const s = try self.set(n.set);
+        for (s.steps.items) |q| if (std.mem.eql(u8, q.name, n.own)) return error.Conflict;
+        var copy = c;
+        copy.name = n.own;
+        try s.steps.append(self.arena, copy);
+    }
+
     pub fn frame(self: *Builder, name: []const u8, f: art.Frame) Error!void {
         const n = split(name);
         const s = try self.set(n.set);
@@ -218,6 +228,7 @@ pub const Builder = struct {
             const s = self.sets.getPtr(name).?;
             std.mem.sort(art.Palette, s.palettes.items, {}, byName(art.Palette));
             std.mem.sort(art.Cycle, s.cycles.items, {}, byName(art.Cycle));
+            std.mem.sort(art.PaletteSteps, s.steps.items, {}, byName(art.PaletteSteps));
             std.mem.sort(art.TileSheet, s.sheets.items, {}, byName(art.TileSheet));
             std.mem.sort(art.TileMap, s.maps.items, {}, byName(art.TileMap));
             std.mem.sort(art.Frame, s.frames.items, {}, byName(art.Frame));
@@ -234,6 +245,7 @@ pub const Builder = struct {
                 .uses = uses,
                 .palettes = s.palettes.items,
                 .cycles = s.cycles.items,
+                .steps = s.steps.items,
                 .sheets = s.sheets.items,
                 .maps = s.maps.items,
                 .frames = s.frames.items,

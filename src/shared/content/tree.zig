@@ -190,6 +190,16 @@ fn writeSet(arena: std.mem.Allocator, a: *const art.Art, s: *const art.ArtSet, f
         try top.append(arena, .{ .key = "cycles", .value = .{ .object = entries } });
     }
 
+    if (s.steps.len != 0) {
+        const entries = try arena.alloc(json.Field, s.steps.len);
+        for (entries, s.steps) |*e, *c| {
+            const steps = try arena.alloc(json.Value, c.steps.len);
+            for (steps, c.steps) |*v, *st| v.* = try coloursValue(arena, st);
+            e.* = .{ .key = c.name, .value = try assetFields(arena, c.provenance, &.{.{ .key = "steps", .value = .{ .array = steps } }}) };
+        }
+        try top.append(arena, .{ .key = "steps", .value = .{ .object = entries } });
+    }
+
     if (s.sheets.len != 0) {
         const entries = try arena.alloc(json.Field, s.sheets.len);
         for (entries, s.sheets) |*e, *sh| {
@@ -446,7 +456,7 @@ fn readProvenance(n: json.Node) Error![]const u8 {
 
 fn loadSet(arena: std.mem.Allocator, source: platform.AssetSource, name: []const u8, root: json.Node, diag: *Diagnostic) Error!art.ArtSet {
     const p: Pass = .{ .arena = arena, .source = source, .set = name, .diag = diag };
-    try root.only(&.{ "provenance", "uses", "palettes", "cycles", "tiles", "maps", "frames", "fonts" });
+    try root.only(&.{ "provenance", "uses", "palettes", "cycles", "steps", "tiles", "maps", "frames", "fonts" });
     var s: art.ArtSet = .{ .name = name, .provenance = try readProvenance(root) };
     if (try root.opt("uses")) |u| {
         const uses = try arena.alloc([]const u8, try u.len());
@@ -455,6 +465,7 @@ fn loadSet(arena: std.mem.Allocator, source: platform.AssetSource, name: []const
     }
     if (try root.opt("palettes")) |n| s.palettes = try loadPalettes(p, n);
     if (try root.opt("cycles")) |n| s.cycles = try loadCycles(p, n);
+    if (try root.opt("steps")) |n| s.steps = try loadSteps(p, n);
     if (try root.opt("tiles")) |n| s.sheets = try loadSheets(p, n, root);
     if (try root.opt("frames")) |n| s.frames = try loadFrames(p, n, root);
     if (try root.opt("fonts")) |n| s.fonts = try loadFonts(p, n);
@@ -511,6 +522,22 @@ fn loadCycles(p: Pass, node: json.Node) Error![]const art.Cycle {
         if (steps.len == 0) return steps_node.fail("no step");
         for (steps, 0..) |*s, i| s.* = try readColours(try steps_node.at(i));
         c.* = .{ .name = e.key, .provenance = try readProvenance(e.value), .period = period, .steps = steps };
+    }
+    return out;
+}
+
+fn loadSteps(p: Pass, node: json.Node) Error![]const art.PaletteSteps {
+    var it = try node.fields();
+    const out = try p.arena.alloc(art.PaletteSteps, it.count());
+    for (out) |*c| {
+        const e = (try it.next()).?;
+        try checkName(e.value, e.key);
+        try e.value.only(&.{ "provenance", "steps" });
+        const steps_node = try e.value.get("steps");
+        const steps = try p.arena.alloc([art.palette_count][art.palette_size]?art.Colour, try steps_node.len());
+        if (steps.len == 0) return steps_node.fail("no step");
+        for (steps, 0..) |*s, i| s.* = try readColours(try steps_node.at(i));
+        c.* = .{ .name = e.key, .provenance = try readProvenance(e.value), .steps = steps };
     }
     return out;
 }
@@ -713,12 +740,13 @@ test "a tree writes, loads back the same, and writes the same bytes again" {
     var step_2 = step_1;
     step_2[2][10] = .{ .r = 0, .g = 0, .b = 7 };
     const cycles = [_]art.Cycle{.{ .name = "neon", .period = 4, .steps = &.{ step_1, step_2 } }};
+    const palette_steps = [_]art.PaletteSteps{.{ .name = "sweep", .provenance = "synthetic", .steps = &.{ step_2, step_1, step_2 } }};
     const pixels = [_]u8{ 0, 1, 2, 3, 4, 5 };
     const pieces = [_]art.Piece{.{ .x = -1, .y = -2, .width = 1, .height = 1 }};
     const frames = [_]art.Frame{.{ .name = "000", .file = "000.png", .width = 3, .height = 2, .origin_x = 1, .origin_y = 2, .pixels = &pixels, .palette = 3, .priority = true, .pieces = &pieces }};
     const sets = [_]art.ArtSet{
         .{ .name = "fonts", .sheets = &font_sheets, .fonts = &fonts },
-        .{ .name = "title", .provenance = "synthetic", .uses = &.{"fonts"}, .palettes = &.{pal}, .cycles = &cycles, .sheets = &sheets, .maps = &maps, .frames = &frames },
+        .{ .name = "title", .provenance = "synthetic", .uses = &.{"fonts"}, .palettes = &.{pal}, .cycles = &cycles, .steps = &palette_steps, .sheets = &sheets, .maps = &maps, .frames = &frames },
     };
     const boxes = [_]entity.Box{.{ .name = "body", .x = .{ .from = -4, .to = 4 }, .depth = .{ .from = -1, .to = 1 }, .height = .{ .from = -20, .to = 0 } }};
     const steps = [_]entity.Frame{.{ .frame = "title/000", .ticks = 5, .body = 0 }};
@@ -748,6 +776,9 @@ test "a tree writes, loads back the same, and writes the same bytes again" {
     const neon = back.art.cycle("title/neon").?;
     try std.testing.expectEqual(@as(u16, 4), neon.period);
     try std.testing.expect(neon.steps[1][2][10].?.eql(.{ .r = 0, .g = 0, .b = 7 }) and neon.steps[1][2][9] == null);
+    const sweep = back.art.steps("title/sweep").?;
+    try std.testing.expectEqual(@as(usize, 3), sweep.steps.len);
+    try std.testing.expect(sweep.steps[1][2][10].?.eql(.{ .r = 7, .g = 7, .b = 0 }) and sweep.steps[1][0][0] == null);
     try std.testing.expect(back.art.sheet("title/logo").?.view[1].eql(.{ .r = 7, .g = 0, .b = 0 }));
     const f = back.art.frame("title/000").?;
     try std.testing.expectEqualSlices(u8, &pixels, f.pixels);

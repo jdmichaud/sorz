@@ -74,6 +74,9 @@ Every field is optional. The kinds of asset are separate: a sheet and a map may 
   "cycles": {
     "cycle_1": {"provenance": "…", "period": 4, "steps": [{"2": […16]}, {"2": […16]}]}
   },
+  "steps": {
+    "sweep": {"provenance": "…", "steps": [{"0": […16]}, {"0": […16]}]}
+  },
   "tiles": {
     "city": {"provenance": "…", "file": "city.png", "count": 210}
   },
@@ -100,6 +103,9 @@ Every field is optional. The kinds of asset are separate: a sheet and a map may 
 - **Cycles.** Colours that change in turn (a round's neon signs, its water): every `period` logic
   ticks (30 a second in play) the next of the `steps` replaces the colours it gives, the last step
   followed by the first. A step is a palette's `colours`.
+- **Palette steps** (`steps`). Colours a screen shows one after another, at the times its scene
+  decides (the Sega logo's colour sweep, the title's colour steps): each of the `steps` is a
+  palette's `colours`, which replace those it gives when the scene shows it.
 - **Tile sheets** (`tiles`). `file` is an indexed PNG of 8x8 tiles, read left to right and top to
   bottom (16 a row when the extractor writes it); `count` is the number of tiles, the rest of the
   last row being unused. A pixel is a colour index 0 to 15, 0 transparent; an index above 15 is
@@ -249,7 +255,8 @@ each comes from; the scenes' items may rename them when they give them a role.
 
 Not in the tree yet, each with the item that needs it: the texts (the menus' option values, the
 story, the profiles, the endings: PLAN 08); the screens' palette effects that are routines over
-small tables (the Sega logo's sweep, the title's colour steps, the city's lights: PLAN 08); the
+small tables but for the Sega logo's sweep and the title's colour steps (`segalogo/sweep`,
+`title/steps`: PLAN 08); the
 fixed sprite lists of the round's banner, the pause and the game over, drawn from tiles play
 builds itself (PLAN 13); the rounds' cameras, bands and floors (PLAN 13); the moves (PLAN 11).
 

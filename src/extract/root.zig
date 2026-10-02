@@ -19,6 +19,7 @@ pub const fonts = @import("fonts.zig");
 pub const sprites = @import("sprites.zig");
 pub const compare = @import("compare.zig");
 pub const palettes = @import("palettes.zig");
+pub const palette_steps = @import("palette_steps.zig");
 pub const sound = @import("sound.zig");
 
 /// The extractor's name and version, in the tree's manifest.
@@ -103,6 +104,7 @@ pub fn build(arena: std.mem.Allocator, rom_bytes: []const u8) Error!builder.Buil
     for (screens.screens) |s| try screens.extract(&b, s);
     for (0..rounds.count) |n| try rounds.extract(&b, @intCast(n));
     try palettes.extract(&b);
+    try palette_steps.extract(&b);
     try sprites.extract(&b);
     return b;
 }
