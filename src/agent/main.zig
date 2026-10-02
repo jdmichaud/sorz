@@ -20,10 +20,14 @@ const usage =
     \\
 ;
 
+/// Every log line as the binaries' (native/log.zig).
+pub const std_options: std.Options = .{ .logFn = native.log.logFn };
+
 const frame_ns: u64 = std.time.ns_per_s / 60;
 const Press = struct { frame: u64, key: sorz.platform.Key };
 
 pub fn main(init: std.process.Init) !void {
+    native.log.program = "sorz-agent";
     const gpa = init.gpa;
     const io = init.io;
     var frames: u64 = 120;

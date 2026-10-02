@@ -6,6 +6,8 @@ pub const directory = @import("directory.zig");
 pub const storage = @import("storage.zig");
 pub const cli = @import("cli.zig");
 pub const contract = @import("contract.zig");
+/// The binaries' log lines on standard error.
+pub const log = @import("log.zig");
 
 pub const DirectoryAssetSource = directory.DirectoryAssetSource;
 pub const DirectoryStorage = storage.DirectoryStorage;

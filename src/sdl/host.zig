@@ -4,7 +4,8 @@
 //! update runs; the game decides what happens in an update. The display paces the presentation when
 //! the renderer presents in step with it; else a sleep at `fallback_hz` paces it.
 //!
-//! Information goes to standard error. Standard output carries only the `--event-log` lines.
+//! Information goes to standard error, as log lines (native/log.zig). Standard output carries only
+//! the `--event-log` lines.
 const std = @import("std");
 const sorz = @import("sorz");
 const native = @import("native");
@@ -18,8 +19,6 @@ pub const fallback_hz: u32 = 60;
 /// Whether the executable refuses to start without an asset path. The placeholder game
 /// runs without files; a port whose game needs the original's files sets this to true.
 pub const assets_required = false;
-
-const program_name = "sorz-sdl";
 
 pub const usage =
     \\usage: sorz-sdl [OPTIONS] [ASSET_PATH]
@@ -63,15 +62,9 @@ pub const Options = struct {
 };
 
 pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Environ.Map, options: Options) !u8 {
-    var err_buf: [1024]u8 = undefined;
-    var err_writer = std.Io.File.stderr().writerStreaming(io, &err_buf);
-    const err = &err_writer.interface;
-    const name = program_name;
-
     var ver_buf: [32]u8 = undefined;
     const check = version.checkVersion(&ver_buf);
-    try err.print("{s}: SDL2 {s} linked (pinned {s})\n", .{ name, check.linked, check.pinned });
-    try err.flush();
+    std.log.info("SDL2 {s} linked (pinned {s})", .{ check.linked, check.pinned });
 
     // The providers: the save directory, and the game directory of the positional argument. They
     // outlive the game and the backend, which only borrow their interfaces.
@@ -81,8 +74,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
         std.log.err("cannot open the providers: {s}", .{@errorName(e)});
         return 1;
     };
-    try err.print("{s}: assets: {s}, saves: {s}\n", .{ name, @tagName(providers.kind), providers.saves_path });
-    try err.flush();
+    std.log.info("assets: {s}, saves: {s}", .{ @tagName(providers.kind), providers.saves_path });
 
     // The backend is made before the game and released after it.
     defer c.SDL_Quit();
@@ -121,15 +113,13 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
         if (!announced_first_frame and game.frames_presented > 0) {
             announced_first_frame = true;
             const size = backend.window_size;
-            try err.print("{s}: first frame after {d}ms in a {d}x{d} window, renderer {s}{s}\n", .{
-                name,
+            std.log.info("first frame after {d}ms in a {d}x{d} window, renderer {s}{s}", .{
                 (p.nowNs() - start_ns) / std.time.ns_per_ms,
                 size.width,
                 size.height,
                 if (backend.rendererName().len != 0) backend.rendererName() else "unknown",
                 if (backend.vsync) ", display-paced" else "",
             });
-            try err.flush();
         }
         if (backend.event_log != null) try out.flush();
         if (result == .finished) break;
@@ -144,15 +134,13 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
     }
 
     const audio = p.audioStatus();
-    try err.print("{s}: {d} updates, {d} frames presented, {d} events consumed, paced by {s}\n", .{
-        name,
+    std.log.info("{d} updates, {d} frames presented, {d} events consumed, paced by {s}", .{
         game.update_count,
         game.frames_presented,
         game.events_consumed,
         if (backend.vsync) "the display" else "the fallback clock",
     });
-    try err.print("{s}: audio {s}, {d} frames played, {d} still queued\n", .{ name, if (audio.running) "open" else "closed", audio.played_frames, audio.queued_frames });
-    try err.flush();
+    std.log.info("audio {s}, {d} frames played, {d} still queued", .{ if (audio.running) "open" else "closed", audio.played_frames, audio.queued_frames });
     try out.flush();
     return 0;
 }

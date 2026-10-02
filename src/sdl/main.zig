@@ -3,8 +3,13 @@
 //! outer loop.
 const std = @import("std");
 const sdl = @import("sdl");
+const native = @import("native");
+
+/// Every log line as the binaries' (native/log.zig).
+pub const std_options: std.Options = .{ .logFn = native.log.logFn };
 
 pub fn main(init: std.process.Init) !void {
+    native.log.program = "sorz-sdl";
     // `iterateAllocator` is the form that Windows needs; the arena keeps the arguments for the
     // whole run.
     const options = sdl.host.parseArgs(try init.minimal.args.iterateAllocator(init.arena.allocator())) catch |err| {
