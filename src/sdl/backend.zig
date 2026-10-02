@@ -83,6 +83,9 @@ pub const SdlBackend = struct {
     controllers: std.ArrayList(*c.GameController) = .empty,
 
     audio: Audio = .{},
+    /// The transport of the `net_*` calls, which the host attaches (the native WebSocket
+    /// transport of network play); none by default.
+    transport: ?platform.Transport = null,
 
     pub const Audio = struct {
         device: c.AudioDeviceID = 0,
@@ -148,7 +151,13 @@ pub const SdlBackend = struct {
         .audio_clear = audioClear,
         .audio_close = audioClose,
         .set_relative_mouse = setRelativeMouse,
+        .net_listen = Net.listen,
+        .net_connect = Net.connect,
+        .net_send = Net.send,
+        .net_close = Net.close,
     };
+
+    const Net = platform.Transport.Delegate(SdlBackend);
 
     fn cast(ctx: *anyopaque) *SdlBackend {
         return @ptrCast(@alignCast(ctx));
@@ -507,6 +516,10 @@ pub const SdlBackend = struct {
                     self.pending.append(self.allocator, e) catch {};
                 }
             }
+        }
+        // The transport's events follow the devices' (the order between the two is free).
+        if (self.transport) |t| {
+            if (n < dst.len) n += t.poll(dst[n..], self.elapsedNs());
         }
         return n;
     }

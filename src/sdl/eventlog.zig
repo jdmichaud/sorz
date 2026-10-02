@@ -79,6 +79,25 @@ pub fn writeEvent(ev: platform.Event, w: *std.Io.Writer) std.Io.Writer.Error!voi
             try js.write(size.height);
         },
         .focus_gained, .focus_lost, .quit => {},
+        // The transport's events: the connection and the message's length, not its bytes.
+        .net_connected => |n| {
+            try js.objectField("connection");
+            try js.write(@backingInt(n.connection));
+            try js.objectField("incoming");
+            try js.write(n.incoming);
+        },
+        .net_disconnected => |d| {
+            try js.objectField("connection");
+            try js.write(@backingInt(d.connection));
+            try js.objectField("reason");
+            try writeEnum(&js, platform.DisconnectReason, d.reason);
+        },
+        .net_received => |m| {
+            try js.objectField("connection");
+            try js.write(@backingInt(m.connection));
+            try js.objectField("length");
+            try js.write(m.bytes.len);
+        },
     }
     try js.endObject();
     try w.writeByte('\n');
@@ -109,6 +128,9 @@ test "events are logged in the agent host's own vocabulary" {
     try writeEvent(.{ .time_ns = 19, .payload = .{ .text_input = text } }, &w);
     try writeEvent(.{ .time_ns = 20, .payload = .{ .controller_axis = .{ .controller = @fromBackingInt(3), .axis = .left_x, .value = -300 } } }, &w);
     try writeEvent(.{ .time_ns = 21, .payload = .{ .key_up = .{ .key = @fromBackingInt(9999) } } }, &w);
+    try writeEvent(.{ .time_ns = 22, .payload = .{ .net_connected = .{ .connection = @fromBackingInt(1), .incoming = true } } }, &w);
+    try writeEvent(.{ .time_ns = 23, .payload = .{ .net_received = .{ .connection = @fromBackingInt(1), .bytes = "abc" } } }, &w);
+    try writeEvent(.{ .time_ns = 24, .payload = .{ .net_disconnected = .{ .connection = @fromBackingInt(1), .reason = .lost } } }, &w);
 
     var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, w.buffered(), "\n"), '\n');
     try std.testing.expectEqualStrings("{\"kind\":\"key_down\",\"t\":12,\"key\":\"s\",\"repeat\":true}", lines.next().?);
@@ -121,5 +143,8 @@ test "events are logged in the agent host's own vocabulary" {
     try std.testing.expectEqualStrings("{\"kind\":\"text_input\",\"t\":19,\"text\":\"a\\\"\\\\b\"}", lines.next().?);
     try std.testing.expectEqualStrings("{\"kind\":\"controller_axis\",\"t\":20,\"controller\":3,\"axis\":\"left_x\",\"value\":-300}", lines.next().?);
     try std.testing.expectEqualStrings("{\"kind\":\"key_up\",\"t\":21,\"key\":9999,\"repeat\":false}", lines.next().?);
+    try std.testing.expectEqualStrings("{\"kind\":\"net_connected\",\"t\":22,\"connection\":1,\"incoming\":true}", lines.next().?);
+    try std.testing.expectEqualStrings("{\"kind\":\"net_received\",\"t\":23,\"connection\":1,\"length\":3}", lines.next().?);
+    try std.testing.expectEqualStrings("{\"kind\":\"net_disconnected\",\"t\":24,\"connection\":1,\"reason\":\"lost\"}", lines.next().?);
     try std.testing.expectEqual(@as(?[]const u8, null), lines.next());
 }

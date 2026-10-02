@@ -5,9 +5,10 @@
 //! exist in one process. Memory ownership follows the design. `present` borrows its frame only
 //! during the call. Each returned buffer is released through its own `deinit`.
 //!
-//! This is the core that every port needs. A port adds what its game asks for, as calls of the
-//! same shape: a network transport when the original plays over a link, I/O jobs that run beside
-//! the updates when a file must stream while the game plays (DESIGN.md).
+//! This is the core that every port needs, with the transport of network play (DESIGN.md 9): whole
+//! messages over connections, through `netListen`, `netConnect`, `netSend`, `netClose` and the
+//! `net_*` events. A port adds what else its game asks for, as calls of the same shape: I/O jobs
+//! that run beside the updates when a file must stream while the game plays (DESIGN.md).
 const std = @import("std");
 
 pub const Capabilities = struct {
@@ -176,6 +177,51 @@ pub const ControllerAxis = enum(u8) { left_x, left_y, right_x, right_y, trigger_
 
 pub const Size = struct { width: u32, height: u32 };
 
+/// A connection of the platform's transport (DESIGN.md 9), named by the backend. It is valid from
+/// the `netConnect` that returned it (or from its `net_connected` event, for a connection that
+/// `netListen` accepted) until its `net_disconnected` event or the game's `netClose`. A backend
+/// does not reuse an id while it lives.
+pub const ConnectionId = enum(u32) { _ };
+
+/// The longest message that `netSend` takes and that a transport delivers. A peer's longer message
+/// ends its connection (`DisconnectReason.too_large`).
+pub const max_message_len: usize = 64 * 1024;
+
+/// Why a connection ended.
+pub const DisconnectReason = enum(u8) {
+    /// The peer closed it, or the transport shut down.
+    closed,
+    /// It broke: a reset, a failed read or write, an end of stream without a close.
+    lost,
+    /// `netConnect` could not open it: no listener, no route, a refused handshake.
+    refused,
+    /// The peer broke the transport's protocol (a malformed frame or handshake).
+    protocol,
+    /// The peer sent a message longer than `max_message_len`.
+    too_large,
+    _,
+};
+
+pub const NetError = error{
+    /// The backend has no transport, or not this operation.
+    Unsupported,
+    NotStarted,
+    /// A malformed address (`[ADDRESS:]PORT`) or URL (`ws://ADDRESS:PORT[/PATH]`).
+    InvalidAddress,
+    /// `netListen`: the port is taken.
+    AddressInUse,
+    /// `netListen` while already listening, or no room for another connection.
+    Busy,
+    /// `netSend` to a connection that is not open (connecting, closed or unknown).
+    NotConnected,
+    /// `netSend`: the connection's bounded queue has no room for the message; nothing was queued.
+    QueueFull,
+    /// `netSend`: the message is longer than `max_message_len`.
+    MessageTooLarge,
+    OutOfMemory,
+    DeviceFailure,
+};
+
 /// One device event, in order, with a time stamp from the host's monotonic clock.
 pub const Event = struct {
     time_ns: u64,
@@ -195,6 +241,13 @@ pub const Event = struct {
     pub const MouseWheel = struct { dx: i32, dy: i32 };
     pub const ControllerButtonEvent = struct { controller: ControllerId, button: ControllerButton };
     pub const ControllerAxisEvent = struct { controller: ControllerId, axis: ControllerAxis, value: i16 };
+    /// A connection opened: one that `netConnect` asked for, or one that `netListen` accepted
+    /// (`incoming`).
+    pub const NetConnected = struct { connection: ConnectionId, incoming: bool };
+    pub const NetDisconnected = struct { connection: ConnectionId, reason: DisconnectReason };
+    /// A whole message from the peer. `bytes` belongs to the backend and stays valid until the
+    /// next `pollEvents` (DESIGN.md 3.7).
+    pub const NetMessage = struct { connection: ConnectionId, bytes: []const u8 };
 
     pub const Payload = union(enum) {
         key_down: KeyEvent,
@@ -215,6 +268,12 @@ pub const Event = struct {
         capture_changed: bool,
         drawable_resized: Size,
         quit,
+        /// The transport's events: per connection, `net_connected`, then its messages in the
+        /// order the peer sent them, then `net_disconnected` (none for a connection that the
+        /// game closed).
+        net_connected: NetConnected,
+        net_disconnected: NetDisconnected,
+        net_received: NetMessage,
     };
 
     pub const Kind = std.meta.Tag(Payload);
@@ -247,6 +306,10 @@ pub const Platform = struct {
         audio_clear: *const fn (*anyopaque) void,
         audio_close: *const fn (*anyopaque) void,
         set_relative_mouse: *const fn (*anyopaque, bool) PlatformError!void,
+        net_listen: *const fn (*anyopaque, []const u8) NetError!void,
+        net_connect: *const fn (*anyopaque, []const u8) NetError!ConnectionId,
+        net_send: *const fn (*anyopaque, ConnectionId, []const u8) NetError!void,
+        net_close: *const fn (*anyopaque, ConnectionId) void,
     };
 
     pub fn start(p: *Platform) PlatformError!Capabilities {
@@ -285,6 +348,122 @@ pub const Platform = struct {
     /// Requests relative mouse mode. The actual state arrives as a `capture_changed` event.
     pub fn setRelativeMouse(p: *Platform, enabled: bool) PlatformError!void {
         return p.vtable.set_relative_mouse(p.context, enabled);
+    }
+    /// Accepts connections at `[ADDRESS:]PORT` (all interfaces without an address). Each accepted
+    /// connection arrives as a `net_connected` event with `incoming` set.
+    pub fn netListen(p: *Platform, address: []const u8) NetError!void {
+        return p.vtable.net_listen(p.context, address);
+    }
+    /// Opens a connection to `url` (`ws://ADDRESS:PORT[/PATH]`) without waiting: a
+    /// `net_connected` event follows once it is open, or a `net_disconnected` one (`refused`).
+    pub fn netConnect(p: *Platform, url: []const u8) NetError!ConnectionId {
+        return p.vtable.net_connect(p.context, url);
+    }
+    /// Copies the whole message into the connection's bounded queue, or queues nothing and
+    /// fails. Messages arrive whole, reliably and in order while the connection lives.
+    pub fn netSend(p: *Platform, connection: ConnectionId, bytes: []const u8) NetError!void {
+        return p.vtable.net_send(p.context, connection, bytes);
+    }
+    /// Closes the connection once the messages already queued are sent. No `net_disconnected`
+    /// event follows, and its undelivered messages are dropped. An unknown id is ignored.
+    pub fn netClose(p: *Platform, connection: ConnectionId) void {
+        p.vtable.net_close(p.context, connection);
+    }
+};
+
+/// A transport as a backend holds one: the platform's `net_*` calls, and the events that the
+/// backend's `pollEvents` adds after its devices' (DESIGN.md 9). The in-memory pair
+/// (`net/memory.zig`) and the native WebSocket transport implement it, so that a backend can
+/// take either.
+pub const Transport = struct {
+    context: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        listen: *const fn (*anyopaque, []const u8) NetError!void,
+        connect: *const fn (*anyopaque, []const u8) NetError!ConnectionId,
+        send: *const fn (*anyopaque, ConnectionId, []const u8) NetError!void,
+        close: *const fn (*anyopaque, ConnectionId) void,
+        /// Writes the transport's events into `dst`, stamped `time_ns`, and returns their number.
+        /// The messages of the previous call are released first.
+        poll: *const fn (*anyopaque, []Event, u64) usize,
+    };
+
+    pub fn listen(t: Transport, address: []const u8) NetError!void {
+        return t.vtable.listen(t.context, address);
+    }
+    pub fn connect(t: Transport, url: []const u8) NetError!ConnectionId {
+        return t.vtable.connect(t.context, url);
+    }
+    pub fn send(t: Transport, connection: ConnectionId, bytes: []const u8) NetError!void {
+        if (bytes.len > max_message_len) return error.MessageTooLarge;
+        return t.vtable.send(t.context, connection, bytes);
+    }
+    pub fn close(t: Transport, connection: ConnectionId) void {
+        t.vtable.close(t.context, connection);
+    }
+    pub fn poll(t: Transport, dst: []Event, time_ns: u64) usize {
+        return t.vtable.poll(t.context, dst, time_ns);
+    }
+
+    /// The `net_*` calls of a backend that holds an optional transport: each goes to it, or
+    /// fails with `Unsupported` without one. `Backend` has a field `transport: ?Transport`.
+    pub fn Delegate(comptime Backend: type) type {
+        return struct {
+            fn cast(ctx: *anyopaque) *Backend {
+                return @ptrCast(@alignCast(ctx));
+            }
+            pub fn listen(ctx: *anyopaque, address: []const u8) NetError!void {
+                const t = cast(ctx).transport orelse return error.Unsupported;
+                return t.listen(address);
+            }
+            pub fn connect(ctx: *anyopaque, url: []const u8) NetError!ConnectionId {
+                const t = cast(ctx).transport orelse return error.Unsupported;
+                return t.connect(url);
+            }
+            pub fn send(ctx: *anyopaque, connection: ConnectionId, bytes: []const u8) NetError!void {
+                const t = cast(ctx).transport orelse return error.Unsupported;
+                return t.send(connection, bytes);
+            }
+            pub fn close(ctx: *anyopaque, connection: ConnectionId) void {
+                const t = cast(ctx).transport orelse return;
+                t.close(connection);
+            }
+        };
+    }
+};
+
+/// Splits `[ADDRESS:]PORT` (the form of `netListen`): the address (empty for all interfaces)
+/// and the port. An IPv6 address is written in brackets, `[::1]:7000`.
+pub fn parseListenAddress(text: []const u8) error{InvalidAddress}!struct { host: []const u8, port: u16 } {
+    if (text.len == 0) return error.InvalidAddress;
+    const colon = std.mem.lastIndexOfScalar(u8, text, ':');
+    const host_part = if (colon) |c| text[0..c] else "";
+    const port_text = if (colon) |c| text[c + 1 ..] else text;
+    const port = std.fmt.parseInt(u16, port_text, 10) catch return error.InvalidAddress;
+    var host = host_part;
+    if (host.len >= 2 and host[0] == '[' and host[host.len - 1] == ']') host = host[1 .. host.len - 1];
+    return .{ .host = host, .port = port };
+}
+
+/// The parts of a `ws://ADDRESS:PORT[/PATH]` URL (the form of `netConnect`). The port is
+/// required; the path defaults to `/`. An IPv6 address is written in brackets.
+pub const WsUrl = struct {
+    host: []const u8,
+    port: u16,
+    path: []const u8,
+
+    pub fn parse(url: []const u8) error{InvalidAddress}!WsUrl {
+        const scheme = "ws://";
+        if (!std.ascii.startsWithIgnoreCase(url, scheme)) return error.InvalidAddress;
+        const rest = url[scheme.len..];
+        const slash = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
+        const authority = rest[0..slash];
+        const path = if (slash < rest.len) rest[slash..] else "/";
+        const a = try parseListenAddress(authority);
+        if (a.host.len == 0 or a.port == 0) return error.InvalidAddress;
+        for (path) |ch| if (ch <= ' ' or ch >= 0x7F) return error.InvalidAddress;
+        return .{ .host = a.host, .port = a.port, .path = path };
     }
 };
 
@@ -508,6 +687,29 @@ test "asset names allow directory components and match case-insensitively" {
     try std.testing.expect(assetNameStartsWith("GAME0001.PT", "game"));
     var buf: [16]u8 = undefined;
     try std.testing.expectEqualStrings("DATA/1_1.MVE", canonicalAssetName("data/1_1.mve", &buf));
+}
+
+test "listen addresses and WebSocket URLs" {
+    const a = try parseListenAddress("7000");
+    try std.testing.expectEqualStrings("", a.host);
+    try std.testing.expectEqual(@as(u16, 7000), a.port);
+    const b = try parseListenAddress("127.0.0.1:80");
+    try std.testing.expectEqualStrings("127.0.0.1", b.host);
+    try std.testing.expectEqualStrings("::1", (try parseListenAddress("[::1]:9")).host);
+    try std.testing.expectError(error.InvalidAddress, parseListenAddress(""));
+    try std.testing.expectError(error.InvalidAddress, parseListenAddress("host:"));
+    try std.testing.expectError(error.InvalidAddress, parseListenAddress("host:70000"));
+
+    const u = try WsUrl.parse("ws://192.168.1.2:7000");
+    try std.testing.expectEqualStrings("192.168.1.2", u.host);
+    try std.testing.expectEqual(@as(u16, 7000), u.port);
+    try std.testing.expectEqualStrings("/", u.path);
+    const v = try WsUrl.parse("WS://[::1]:8/session");
+    try std.testing.expectEqualStrings("::1", v.host);
+    try std.testing.expectEqualStrings("/session", v.path);
+    for ([_][]const u8{ "http://h:1", "ws://h", "ws://:7000", "ws://h:0", "ws://h:1/a b" }) |bad| {
+        try std.testing.expectError(error.InvalidAddress, WsUrl.parse(bad));
+    }
 }
 
 test "name validation" {

@@ -8,6 +8,9 @@
 /// The audio state that the page reports.
 pub const AudioState = enum(u32) { closed = 0, running = 1, suspended = 2, _ };
 
+/// What the page did with a message the game sends (`net_send`).
+pub const SendResult = enum(u32) { sent = 0, queue_full = 1, not_connected = 2, too_large = 3, _ };
+
 pub const Host = struct {
     /// `performance.now()`: milliseconds from the start of the page, monotonic.
     now_ms: *const fn () f64,
@@ -38,4 +41,22 @@ pub const Host = struct {
     storage_save: *const fn (name: [*]const u8, name_len: u32, bytes: [*]const u8, len: u32) u32,
     /// Forgets a record. Returns 1, or 0 when the browser refused.
     storage_delete: *const fn (name: [*]const u8, name_len: u32) u32,
+    /// Opens a WebSocket to `url` (`ws://ADDRESS:PORT[/PATH]`) for network play and returns its
+    /// connection's id, never 0; 0 when the page has no transport. The page reports the opening
+    /// (or the refusal) later, through the module's `gp_net_*` exports.
+    net_connect: *const fn (url: [*]const u8, url_len: u32) u32 = noConnect,
+    /// Queues one whole binary message on a connection (a `SendResult`); the page copies it.
+    net_send: *const fn (id: u32, bytes: [*]const u8, len: u32) u32 = noSend,
+    /// Closes a connection once its queued messages are sent; the page reports nothing after.
+    net_close: *const fn (id: u32) void = noClose,
 };
+
+fn noConnect(_: [*]const u8, _: u32) u32 {
+    return 0;
+}
+
+fn noSend(_: u32, _: [*]const u8, _: u32) u32 {
+    return @backingInt(SendResult.not_connected);
+}
+
+fn noClose(_: u32) void {}

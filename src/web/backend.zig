@@ -21,6 +21,9 @@ pub const WebBackend = struct {
     events: std.ArrayList(platform.Event) = .empty,
     next_event: usize = 0,
     last_event_ns: u64 = 0,
+    /// The messages that the last poll gave the game, which it may read until the next poll
+    /// (DESIGN.md 3.7). The backend owns them, and the messages still in `events`.
+    delivered: std.ArrayList([]u8) = .empty,
 
     /// Whether the game asked for the relative mouse. While it did and the page has no pointer
     /// lock, motion is not given to the game: the desktop pointer is not the game's.
@@ -49,6 +52,12 @@ pub const WebBackend = struct {
 
     pub fn deinit(self: *WebBackend) void {
         if (self.audio.open) self.host.audio_close();
+        self.freeDelivered();
+        self.delivered.deinit(self.allocator);
+        for (self.events.items[self.next_event..]) |e| switch (e.payload) {
+            .net_received => |m| self.allocator.free(m.bytes),
+            else => {},
+        };
         self.events.deinit(self.allocator);
         self.* = undefined;
     }
@@ -69,6 +78,10 @@ pub const WebBackend = struct {
         .audio_clear = audioClear,
         .audio_close = audioClose,
         .set_relative_mouse = setRelativeMouse,
+        .net_listen = netListen,
+        .net_connect = netConnect,
+        .net_send = netSend,
+        .net_close = netClose,
     };
 
     fn cast(ctx: *anyopaque) *WebBackend {
@@ -133,9 +146,17 @@ pub const WebBackend = struct {
 
     fn pollEvents(ctx: *anyopaque, dst: []platform.Event) usize {
         const self = cast(ctx);
+        // The messages of the previous poll: the game is done with them.
+        self.freeDelivered();
         var n: usize = 0;
         while (n < dst.len and self.next_event < self.events.items.len) : (self.next_event += 1) {
-            dst[n] = self.events.items[self.next_event];
+            const e = self.events.items[self.next_event];
+            if (e.payload == .net_received) {
+                // Room first: a message that cannot be kept for the game waits for the next poll.
+                self.delivered.ensureUnusedCapacity(self.allocator, 1) catch break;
+                self.delivered.appendAssumeCapacity(@constCast(e.payload.net_received.bytes));
+            }
+            dst[n] = e;
             n += 1;
         }
         if (self.next_event == self.events.items.len and self.next_event != 0) {
@@ -147,6 +168,11 @@ pub const WebBackend = struct {
 
     fn push(self: *WebBackend, payload: platform.Event.Payload) void {
         self.events.append(self.allocator, .{ .time_ns = self.eventTime(), .payload = payload }) catch {};
+    }
+
+    fn freeDelivered(self: *WebBackend) void {
+        for (self.delivered.items) |bytes| self.allocator.free(bytes);
+        self.delivered.clearRetainingCapacity();
     }
 
     pub fn keyEvent(self: *WebBackend, key: platform.Key, down: bool, repeat: bool) void {
@@ -276,6 +302,65 @@ pub const WebBackend = struct {
         self.captured = self.host.set_relative_mouse(@intFromBool(enabled)) != 0;
         self.push(.{ .capture_changed = self.captured });
     }
+
+    // --- transport ---------------------------------------------------------------------------
+
+    // Network play's transport (DESIGN.md 9, PLAN A1) over the page's WebSockets: the page opens
+    // them, sends and closes, and reports each connection's opening, messages and end through
+    // the module's `gp_net_*` exports, which call the functions below.
+
+    /// A page cannot listen: a relay's guest arrives on the host's page as a connection that the
+    /// page reports (`netConnected` with `incoming`), for a session started without an address.
+    fn netListen(_: *anyopaque, _: []const u8) platform.NetError!void {
+        return error.Unsupported;
+    }
+
+    fn netConnect(ctx: *anyopaque, url: []const u8) platform.NetError!platform.ConnectionId {
+        const self = cast(ctx);
+        if (!self.started) return error.NotStarted;
+        _ = platform.WsUrl.parse(url) catch return error.InvalidAddress;
+        const id = self.host.net_connect(url.ptr, @intCast(url.len));
+        if (id == 0) return error.Unsupported;
+        return @fromBackingInt(id);
+    }
+
+    fn netSend(ctx: *anyopaque, connection: platform.ConnectionId, bytes: []const u8) platform.NetError!void {
+        const self = cast(ctx);
+        if (bytes.len > platform.max_message_len) return error.MessageTooLarge;
+        const result: host_mod.SendResult = @fromBackingInt(self.host.net_send(@backingInt(connection), bytes.ptr, @intCast(bytes.len)));
+        return switch (result) {
+            .sent => {},
+            .queue_full => error.QueueFull,
+            .too_large => error.MessageTooLarge,
+            else => error.NotConnected,
+        };
+    }
+
+    fn netClose(ctx: *anyopaque, connection: platform.ConnectionId) void {
+        const self = cast(ctx);
+        self.host.net_close(@backingInt(connection));
+    }
+
+    /// The page opened a connection: one the game asked for, or (`incoming`) a relay's guest.
+    pub fn netConnected(self: *WebBackend, id: u32, incoming: bool) void {
+        self.push(.{ .net_connected = .{ .connection = @fromBackingInt(id), .incoming = incoming } });
+    }
+
+    /// A connection ended, for a reason numbered as `platform.DisconnectReason` numbers them.
+    pub fn netDisconnected(self: *WebBackend, id: u32, reason: u32) void {
+        const r: platform.DisconnectReason = @fromBackingInt(@as(u8, @intCast(@min(reason, 255))));
+        self.push(.{ .net_disconnected = .{ .connection = @fromBackingInt(id), .reason = r } });
+    }
+
+    /// A whole message: `bytes` (from the backend's allocator) become the backend's, and the game
+    /// reads them from the poll that gives the event until the next one. A message that cannot be
+    /// kept is freed, and the connection's order is then broken: the session's checks see it.
+    pub fn netReceived(self: *WebBackend, id: u32, bytes: []u8) void {
+        self.events.append(self.allocator, .{
+            .time_ns = self.eventTime(),
+            .payload = .{ .net_received = .{ .connection = @fromBackingInt(id), .bytes = bytes } },
+        }) catch self.allocator.free(bytes);
+    }
 };
 
 // --- tests -------------------------------------------------------------------------------------
@@ -352,12 +437,32 @@ const FakePage = struct {
         .log = log,
         .storage_save = storageSave,
         .storage_delete = storageDelete,
+        .net_connect = netConnect,
+        .net_send = netSend,
+        .net_close = netClose,
     };
     fn storageSave(_: [*]const u8, _: u32, _: [*]const u8, _: u32) u32 {
         return 1;
     }
     fn storageDelete(_: [*]const u8, _: u32) u32 {
         return 1;
+    }
+
+    // A page's WebSockets: the connections it opened, what it sent, and what it closed.
+    var next_connection: u32 = 1;
+    var sent_bytes: usize = 0;
+    var send_result: host_mod.SendResult = .sent;
+    var closed: u32 = 0;
+    fn netConnect(_: [*]const u8, _: u32) u32 {
+        next_connection += 1;
+        return next_connection - 1;
+    }
+    fn netSend(_: u32, _: [*]const u8, len: u32) u32 {
+        if (send_result == .sent) sent_bytes += len;
+        return @backingInt(send_result);
+    }
+    fn netClose(id: u32) void {
+        closed = id;
     }
 };
 
@@ -450,4 +555,49 @@ test "audio counts accepted, played and discarded frames as the native host does
     try testing.expectEqual(@as(u64, 70), status.played_frames);
     p.audioClose();
     try testing.expect(!p.audioStatus().running);
+}
+
+test "the transport: the page's connections, their messages until the next poll, their ends" {
+    FakePage.reset();
+    var backend = WebBackend.init(testing.allocator, &FakePage.host);
+    defer backend.deinit();
+    var p = backend.asPlatform();
+    try testing.expectError(error.NotStarted, p.netConnect("ws://127.0.0.1:7000/"));
+    _ = try p.start();
+    try testing.expectError(error.Unsupported, p.netListen("7000"));
+    try testing.expectError(error.InvalidAddress, p.netConnect("http://127.0.0.1:7000/"));
+    try testing.expectError(error.InvalidAddress, p.netConnect("ws://127.0.0.1/"));
+    const id = try p.netConnect("ws://127.0.0.1:7000/");
+
+    // Sending: the page's answers, and the length checked before the page sees it.
+    FakePage.sent_bytes = 0;
+    FakePage.send_result = .sent;
+    try p.netSend(id, "abc");
+    try testing.expectEqual(@as(usize, 3), FakePage.sent_bytes);
+    const big = try testing.allocator.alloc(u8, platform.max_message_len + 1);
+    defer testing.allocator.free(big);
+    try testing.expectError(error.MessageTooLarge, p.netSend(id, big));
+    FakePage.send_result = .queue_full;
+    try testing.expectError(error.QueueFull, p.netSend(id, "abc"));
+    FakePage.send_result = .not_connected;
+    try testing.expectError(error.NotConnected, p.netSend(id, "abc"));
+    FakePage.send_result = .sent;
+
+    // The page's reports, in order; a message stays valid until the next poll, which frees it.
+    const raw = @backingInt(id);
+    backend.netConnected(raw, false);
+    const message = try testing.allocator.dupe(u8, "hello");
+    backend.netReceived(raw, message);
+    backend.netDisconnected(raw, @backingInt(platform.DisconnectReason.lost));
+    var events: [2]platform.Event = undefined;
+    try testing.expectEqual(@as(usize, 2), p.pollEvents(&events));
+    try testing.expect(!events[0].payload.net_connected.incoming);
+    try testing.expectEqualStrings("hello", events[1].payload.net_received.bytes);
+    try testing.expectEqual(@as(usize, 1), p.pollEvents(&events));
+    try testing.expectEqual(platform.DisconnectReason.lost, events[0].payload.net_disconnected.reason);
+    p.netClose(id);
+    try testing.expectEqual(raw, FakePage.closed);
+
+    // A message the game never polled is freed with the backend (the test's allocator checks).
+    backend.netReceived(raw, try testing.allocator.dupe(u8, "left behind"));
 }

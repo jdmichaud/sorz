@@ -1,6 +1,8 @@
 //! `AgentBackend`: the native debugging platform (DESIGN.md). It has scripted
 //! devices, a clock that advances only on command, frame capture and emulated audio playback,
 //! all through the standard platform contracts. It uses no SDL, no window and no physical device.
+//! Its transport is the one its host gives it: an endpoint of the in-memory network, so that two
+//! agent games in one process can play a session, or the native WebSocket transport.
 const std = @import("std");
 const sorz = @import("sorz");
 const platform = sorz.platform;
@@ -19,11 +21,12 @@ pub const AgentBackend = struct {
     capture: std.ArrayList(u8) = .empty,
     capture_size: platform.Size = .{ .width = 0, .height = 0 },
     frames_presented: u64 = 0,
-    last_frame_hash: u64 = 0,
     audio: Audio = .{},
     relative_mouse: bool = false,
     /// Counts of six platform calls (the fields of `Calls`), for replay reports.
     calls: Calls = .{},
+    /// The transport of the `net_*` calls, which the host attaches; none by default.
+    transport: ?platform.Transport = null,
 
     pub const Audio = struct {
         open: bool = false,
@@ -60,14 +63,17 @@ pub const AgentBackend = struct {
         self.* = undefined;
     }
 
-    /// Returns to the initial state and frees the captures and the scripted events.
+    /// Returns to the initial state and frees the captures and the scripted events. The attached
+    /// transport stays.
     pub fn reset(self: *AgentBackend) void {
         self.pending.clearAndFree(self.allocator);
         self.capture.clearAndFree(self.allocator);
         self.audio.pcm.clearAndFree(self.allocator);
         const allocator = self.allocator;
         const options = self.options;
+        const transport = self.transport;
         self.* = init(allocator, options);
+        self.transport = transport;
     }
 
     pub fn asPlatform(self: *AgentBackend) platform.Platform {
@@ -118,7 +124,13 @@ pub const AgentBackend = struct {
         .audio_clear = audioClear,
         .audio_close = audioClose,
         .set_relative_mouse = setRelativeMouse,
+        .net_listen = Net.listen,
+        .net_connect = Net.connect,
+        .net_send = Net.send,
+        .net_close = Net.close,
     };
+
+    const Net = platform.Transport.Delegate(AgentBackend);
 
     fn cast(ctx: *anyopaque) *AgentBackend {
         return @ptrCast(@alignCast(ctx));
@@ -157,7 +169,12 @@ pub const AgentBackend = struct {
             @memcpy(self.capture.items[@as(usize, y) * row_bytes ..][0..row_bytes], frame.row(y));
         }
         self.frames_presented += 1;
-        self.last_frame_hash = std.hash.Wyhash.hash(0, self.capture.items);
+    }
+
+    /// The hash of the last presented frame's RGBA, computed when asked: hashing every frame cost
+    /// the agent host a quarter of its time in a debug build.
+    pub fn capturedHash(self: *const AgentBackend) u64 {
+        return std.hash.Wyhash.hash(0, self.capture.items);
     }
 
     fn pollEvents(ctx: *anyopaque, dst: []platform.Event) usize {
@@ -174,6 +191,10 @@ pub const AgentBackend = struct {
         if (self.next_pending == self.pending.items.len and self.next_pending != 0) {
             self.pending.clearRetainingCapacity();
             self.next_pending = 0;
+        }
+        // The transport's events follow the devices' (the order between the two is free).
+        if (self.transport) |t| {
+            if (n < dst.len) n += t.poll(dst[n..], self.clock_ns);
         }
         return n;
     }
@@ -316,4 +337,37 @@ test "reset frees everything and isolates instances" {
     try std.testing.expectEqual(@as(u64, 0), a.clock_ns);
     try std.testing.expect(!a.started);
     try std.testing.expectEqual(@as(usize, 0), a.capture.items.len);
+}
+
+test "the transport's calls and events go through the platform" {
+    var backend = AgentBackend.init(std.testing.allocator, .{});
+    defer backend.deinit();
+    var p = backend.asPlatform();
+    _ = try p.start();
+    // Without a transport, network play is unsupported.
+    try std.testing.expectError(error.Unsupported, p.netListen("7000"));
+    try std.testing.expectError(error.Unsupported, p.netConnect("ws://h:7000"));
+
+    var network = sorz.net.memory.Network.init(std.testing.allocator);
+    defer network.deinit();
+    var other = AgentBackend.init(std.testing.allocator, .{});
+    defer other.deinit();
+    var q = other.asPlatform();
+    _ = try q.start();
+    backend.transport = (try network.endpoint()).transport();
+    other.transport = (try network.endpoint()).transport();
+    try p.netListen("7000");
+    const id = try q.netConnect("ws://localhost:7000");
+    var buf: [4]platform.Event = undefined;
+    try backend.inject(.{ .time_ns = 0, .payload = .{ .key_down = .{ .key = .x } } });
+    // The devices' events come first, then the transport's.
+    try std.testing.expectEqual(@as(usize, 2), p.pollEvents(&buf));
+    try std.testing.expectEqual(platform.Event.Kind.key_down, std.meta.activeTag(buf[0].payload));
+    const host_id = buf[1].payload.net_connected.connection;
+    try std.testing.expectEqual(@as(usize, 1), q.pollEvents(&buf));
+    try std.testing.expectEqual(id, buf[0].payload.net_connected.connection);
+    try q.netSend(id, "pads");
+    try std.testing.expectEqual(@as(usize, 1), p.pollEvents(&buf));
+    try std.testing.expectEqualStrings("pads", buf[0].payload.net_received.bytes);
+    try std.testing.expectEqual(host_id, buf[0].payload.net_received.connection);
 }
