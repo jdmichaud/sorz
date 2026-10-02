@@ -28,6 +28,7 @@ pub const Report = struct {
     maps: Count = .{},
     frames: Count = .{},
     palettes: Count = .{},
+    cycles: Count = .{},
     fonts: Count = .{},
     /// The reference's frames with a picture that the extraction has not.
     frames_missing: usize = 0,
@@ -118,6 +119,7 @@ pub fn compare(arena: std.mem.Allocator, io: std.Io, b: *builder_mod.Builder, a:
     try compareMaps(&ctx, b, a);
     try compareFrames(&ctx, b, a);
     try comparePalettes(&ctx, b, a);
+    try compareCycles(&ctx, b, a);
     try compareFonts(&ctx, a);
     return report;
 }
@@ -468,6 +470,45 @@ fn comparePalettes(ctx: *Ctx, b: *builder_mod.Builder, a: art.Art) !void {
         ctx.report.palettes.equal += 1;
     }
     _ = arena;
+}
+
+/// The rounds' palette cycles against the reference's rounds' `palette_cycles`.
+fn compareCycles(ctx: *Ctx, b: *builder_mod.Builder, a: art.Art) !void {
+    for (b.origins.keys(), b.origins.values()) |key, o| {
+        const c = switch (o) {
+            .cycle => |c| c,
+            else => continue,
+        };
+        const name = builder_mod.Builder.originName(key);
+        const mine = a.cycle(name).?;
+        ctx.report.cycles.compared += 1;
+        var found = false;
+        for (1..9) |r| {
+            const cycles = try (try ctx.readJson(try std.fmt.allocPrint(ctx.arena, "levels/round{d}/level.json", .{r}))).get("palette_cycles");
+            for (0..try cycles.len()) |i| {
+                const rc = try cycles.at(i);
+                if (try (try rc.get("source")).int(u32) != c) continue;
+                found = true;
+                const per_step = try (try rc.get("per_step")).int(usize);
+                const entries = try rc.get("entries");
+                var same = try (try rc.get("period")).int(u16) == mine.period and try (try rc.get("steps")).int(usize) == mine.steps.len and try entries.len() == per_step * mine.steps.len;
+                if (same) for (mine.steps, 0..) |step, s| {
+                    var theirs: [4][16]?art.Colour = @splat(@splat(null));
+                    for (0..per_step) |k| {
+                        const e = try entries.at(s * per_step + k);
+                        const slot = try (try e.at(0)).int(u8);
+                        theirs[slot / 16][slot % 16] = builder_mod.colourOf(try (try e.at(1)).int(u16));
+                    }
+                    if (!std.meta.eql(theirs, step)) same = false;
+                };
+                if (same) ctx.report.cycles.equal += 1 else try ctx.differ("cycle {s}: differs from the reference's cycle at 0x{X:0>5}", .{ name, c });
+            }
+        }
+        if (!found) {
+            ctx.report.cycles.unmatched += 1;
+            try ctx.unmatched("cycle {s}: the reference has no cycle at 0x{X:0>5}", .{ name, c });
+        }
+    }
 }
 
 fn compareFonts(ctx: *Ctx, a: art.Art) !void {

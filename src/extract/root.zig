@@ -18,6 +18,7 @@ pub const rounds = @import("rounds.zig");
 pub const fonts = @import("fonts.zig");
 pub const sprites = @import("sprites.zig");
 pub const compare = @import("compare.zig");
+pub const palettes = @import("palettes.zig");
 
 /// The extractor's name and version, in the tree's manifest.
 pub const name = "sorz-extract 1";
@@ -78,6 +79,7 @@ pub fn build(arena: std.mem.Allocator, rom_bytes: []const u8) Error!builder.Buil
     try fonts.extract(&b);
     for (screens.screens) |s| try screens.extract(&b, s);
     for (0..rounds.count) |n| try rounds.extract(&b, @intCast(n));
+    try palettes.extract(&b);
     const frames = try sprites.extract(&b);
     std.log.info("sprite frames: {d} pictures, {d} frames without pieces, {d} that do not read as frames, {d} whose art lacks a tile", .{ frames.frames, frames.empty, frames.unparsed, frames.missing });
     return b;

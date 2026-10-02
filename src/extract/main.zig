@@ -118,8 +118,8 @@ fn compareWith(init: std.process.Init, rom: []const u8, remaster: []const u8) !v
     const w = &out.interface;
     for (r.unmatched.items) |u| try w.print("alone: {s}\n", .{u});
     for (r.differences.items) |d| try w.print("differs: {s}\n", .{d});
-    try w.print("{{\"sheets\":{f},\"maps\":{f},\"frames\":{f},\"palettes\":{f},\"fonts\":{f},\"reference_frames_not_extracted\":{d},\"differences\":{d}}}\n", .{
-        fmtCount(r.sheets), fmtCount(r.maps), fmtCount(r.frames), fmtCount(r.palettes), fmtCount(r.fonts), r.frames_missing, r.differing,
+    try w.print("{{\"sheets\":{f},\"maps\":{f},\"frames\":{f},\"palettes\":{f},\"cycles\":{f},\"fonts\":{f},\"reference_frames_not_extracted\":{d},\"differences\":{d}}}\n", .{
+        fmtCount(r.sheets), fmtCount(r.maps), fmtCount(r.frames), fmtCount(r.palettes), fmtCount(r.cycles), fmtCount(r.fonts), r.frames_missing, r.differing,
     });
     try w.flush();
     if (r.differing != 0) std.process.exit(1);

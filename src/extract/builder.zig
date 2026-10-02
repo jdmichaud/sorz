@@ -13,6 +13,7 @@ const SetBuilder = struct {
     provenance: []const u8 = "",
     uses: std.StringArrayHashMapUnmanaged(void) = .empty,
     palettes: std.ArrayList(art.Palette) = .empty,
+    cycles: std.ArrayList(art.Cycle) = .empty,
     sheets: std.ArrayList(art.TileSheet) = .empty,
     maps: std.ArrayList(art.TileMap) = .empty,
     frames: std.ArrayList(art.Frame) = .empty,
@@ -28,6 +29,8 @@ pub const Origin = union(enum) {
     frame: struct { set: u32, address: u32 },
     /// A palette list's address; none for colours a routine sets itself.
     palette: ?u32,
+    /// A palette cycle's record (its period, steps, colours a step, then its list).
+    cycle: u32,
 };
 
 pub const MapFrom = union(enum) {
@@ -125,6 +128,15 @@ pub const Builder = struct {
         try s.maps.append(self.arena, copy);
     }
 
+    pub fn cycle(self: *Builder, name: []const u8, c: art.Cycle) Error!void {
+        const n = split(name);
+        const s = try self.set(n.set);
+        for (s.cycles.items) |q| if (std.mem.eql(u8, q.name, n.own)) return error.Conflict;
+        var copy = c;
+        copy.name = n.own;
+        try s.cycles.append(self.arena, copy);
+    }
+
     pub fn frame(self: *Builder, name: []const u8, f: art.Frame) Error!void {
         const n = split(name);
         const s = try self.set(n.set);
@@ -192,6 +204,7 @@ pub const Builder = struct {
         for (out, names) |*o, name| {
             const s = self.sets.getPtr(name).?;
             std.mem.sort(art.Palette, s.palettes.items, {}, byName(art.Palette));
+            std.mem.sort(art.Cycle, s.cycles.items, {}, byName(art.Cycle));
             std.mem.sort(art.TileSheet, s.sheets.items, {}, byName(art.TileSheet));
             std.mem.sort(art.TileMap, s.maps.items, {}, byName(art.TileMap));
             std.mem.sort(art.Frame, s.frames.items, {}, byName(art.Frame));
@@ -207,6 +220,7 @@ pub const Builder = struct {
                 .provenance = s.provenance,
                 .uses = uses,
                 .palettes = s.palettes.items,
+                .cycles = s.cycles.items,
                 .sheets = s.sheets.items,
                 .maps = s.maps.items,
                 .frames = s.frames.items,

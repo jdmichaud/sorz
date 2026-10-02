@@ -29,6 +29,7 @@ pub const layout_table = 0x5F788;
 pub const wave_maps = 0x65976;
 pub const wave_steps = 0x11398;
 pub const wave_palettes = 0x1139E;
+pub const palette_cycles = 0x1C400;
 
 pub fn header(rom: []const u8, n: u32) u32 {
     return header_table + @as(u32, u16be(rom, header_table + 2 * n));
@@ -146,6 +147,42 @@ pub fn extract(b: *Builder, n: u32) !void {
             @as(u8, if (p == 0) 'A' else 'B'), layout_table + @as(u32, u16be(rom, layout_table + 4 * n + 2 * @as(u32, @intCast(p)))), blocks_source,
         });
         try run.mapAt(name, words, @intCast(cols), @intCast(rows), null, why, .{ .round_plane = .{ .round = @intCast(n), .plane = @intCast(p) } });
+    }
+
+    // The palette cycles (`PaletteCycleTable` 0x1C400, set up by 0x1119E and run every tick by
+    // 0x11210): per round, word offsets to cycles until a negative word; a cycle is its period
+    // in ticks, its count of steps and of colours a step, then one palette list of every step's
+    // colours.
+    const t = palette_cycles + @as(u32, u16be(rom, palette_cycles + 2 * n));
+    var i: u32 = 0;
+    while (s16be(rom, t + 2 * i) >= 0) : (i += 1) {
+        const c = t + @as(u32, u16be(rom, t + 2 * i));
+        const period = u16be(rom, c);
+        const steps = u16be(rom, c + 2);
+        const per_step = u16be(rom, c + 4);
+        const out = try arena.alloc([art.palette_count][art.palette_size]?art.Colour, steps);
+        var at = c + 6;
+        for (out, 0..) |*s, k| {
+            s.* = @splat(@splat(null));
+            for (0..per_step) |_| {
+                const w = u16be(rom, at);
+                at += 2;
+                const place: usize = (w & 0x10) | ((w >> 12) & 0xF) | ((w & 0x100) >> 3);
+                s[place / 16][place % 16] = builder_mod.colourOf(w);
+                // The list's last word ends it.
+                if (w & 1 != 0 and !(k + 1 == steps)) return error.BadData;
+            }
+        }
+        if (u16be(rom, at - 2) & 1 == 0) return error.BadData;
+        const name = try roundName(arena, n, "cycle_{d}", .{i + 1});
+        const note: []const u8 = if (n == 7) "; round 8 waits at some steps for the camera to pass a place (0x112B8)" else "";
+        try b.cycle(name, .{
+            .name = "",
+            .provenance = try std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: a palette cycle of round {d} (0x1C400): {d} steps of {d} colours, a step every {d} ticks{s}", .{ c, n + 1, steps, per_step, period, note }),
+            .period = period,
+            .steps = out,
+        });
+        try b.origin(name, .{ .cycle = c });
     }
 
     if (n == 2) {

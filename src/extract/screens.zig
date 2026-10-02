@@ -62,6 +62,8 @@ pub const Step = union(enum) {
     screen_palette: struct { index: u8, name: []const u8, why: []const u8 = "" },
     /// The palette list a long of the ROM points at, as the palette `name`.
     palette_long: struct { at: u32, name: []const u8, why: []const u8 },
+    /// The palette list of entry `index` of a table of word offsets from the table, as `name`.
+    palette_offset: struct { table: u32, index: u8, name: []const u8, why: []const u8 },
     /// Colours a routine sets itself, as the palette `name`.
     colours: struct { places: []const u8, words: []const u16, name: []const u8, why: []const u8 },
 };
@@ -382,7 +384,7 @@ const boss_ending = Screen{
     .name = "boss_ending",
     .what = "the ending where the players take the boss's place (0x87C6, mode $1C)",
     .uses = &.{"fonts"},
-    .steps = &.{
+    .steps = &([_]Step{
         .clear,
         .{ .pattern = 0x26 },
         .{ .pattern = 0x27 },
@@ -395,7 +397,21 @@ const boss_ending = Screen{
         .{ .palette_long = .{ .at = 0x8888, .name = "boss_ending/adam", .why = "Adam's colours in the chair (0x87C6)" } },
         .{ .palette_long = .{ .at = 0x888C, .name = "boss_ending/blaze", .why = "Blaze's colours in the chair (0x87C6)" } },
         .{ .palette = .{ .list = 0x1F98C, .name = "boss_ending/credits", .why = "the credits' colours (0x8A4C)" } },
-    },
+    } ++ boss_ending_steps),
+};
+
+/// The boss ending's colour steps (0x8D82): every 4 ticks, the room's next of five, then the
+/// character's (the word offsets at 0x1F716: the room's five, then Axel's, Adam's and Blaze's).
+const boss_ending_steps = blk: {
+    var s: [20]Step = undefined;
+    const who = [_][]const u8{ "room", "axel", "adam", "blaze" };
+    for (&s, 0..) |*x, i| x.* = .{ .palette_offset = .{
+        .table = 0x1F716,
+        .index = i,
+        .name = std.fmt.comptimePrint("boss_ending/{s}_step_{d}", .{ who[i / 5], i % 5 + 1 }),
+        .why = std.fmt.comptimePrint("the {s}'s colours at step {d} of 5 (0x8D82)", .{ if (i < 5) "room" else who[i / 5], i % 5 + 1 }),
+    } };
+    break :blk s;
 };
 
 /// The round's end (0x181EA): the big letters (pattern-load entry $20) and its colours.
@@ -471,7 +487,7 @@ pub const Run = struct {
                 const words = try self.b.arena.alloc(u16, @as(usize, width) * height);
                 for (words, 0..) |*x, k| x.* = read.word(v, r, ram, at + 8 + 2 * @as(u32, @intCast(k)));
                 const why = if (ram)
-                    try std.fmt.allocPrint(self.b.arena, "word rectangle {d} (0xA5F4) from RAM ${X:0>6}", .{ w.entry, at })
+                    try std.fmt.allocPrint(self.b.arena, "ROM 0x{X:0>5}: the map unpacked at RAM ${X:0>6}, drawn by word rectangle {d} (0xA5F4)", .{ v.ram_block[at & 0xFFFF], at, w.entry })
                 else
                     try std.fmt.allocPrint(self.b.arena, "ROM 0x{X:0>5}: word rectangle {d} (0xA5F4)", .{ at, w.entry });
                 try self.map(w.map, words, width, height, vram_mod.commandAddress(cmd), 128, why, if (ram) .{ .ram_block = v.ram_block[at & 0xFFFF] } else .{ .rom_words = at });
@@ -522,6 +538,11 @@ pub const Run = struct {
             .palette_long => |p| {
                 const list = u32be(r, p.at);
                 try self.palette(p.name, list, try std.fmt.allocPrint(self.b.arena, "ROM 0x{X:0>5}: a palette list (the long at 0x{X:0>5}), {s}", .{ list, p.at, p.why }));
+            },
+            .palette_offset => |p| {
+                const off: i16 = @bitCast(u16be(r, p.table + 2 * @as(u32, p.index)));
+                const list: u32 = @intCast(@as(i32, @intCast(p.table)) + off);
+                try self.palette(p.name, list, try std.fmt.allocPrint(self.b.arena, "ROM 0x{X:0>5}: a palette list (entry {d} of the offsets at 0x{X:0>5}), {s}", .{ list, p.index, p.table, p.why }));
             },
             .colours => |c| {
                 var p: art.Palette = .{ .name = "", .provenance = c.why };
@@ -682,7 +703,7 @@ pub fn replay(b: *Builder, steps: []const Step) Error!*Vram {
     const scratch: Screen = .{ .name = "", .what = "", .steps = steps };
     var run: Run = .{ .b = b, .v = v, .screen = &scratch };
     for (steps) |s| switch (s) {
-        .palette, .screen_palette, .palette_long, .colours, .word_rect, .byte_rect, .screen_rect, .menu_lines, .cells => {},
+        .palette, .screen_palette, .palette_long, .palette_offset, .colours, .word_rect, .byte_rect, .screen_rect, .menu_lines, .cells => {},
         else => try run.step(s),
     };
     return v;
