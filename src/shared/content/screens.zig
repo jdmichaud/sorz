@@ -55,11 +55,30 @@ pub const Select = struct {
     blaze: Poses,
 };
 
+/// A character's profile in the intro, typed a character a tick: its text in `fonts/intro`'s
+/// glyphs, with `_` a blank cell, `/` a new line and `|` a pause (the cursor blinks), and where
+/// its first character goes (a cell of plane A or B).
+pub const Profile = struct { text: []const u8, plane: art.Layer, x: u16, y: u16 };
+
+/// An entry of the intro's script: the part it starts (by its name in the intro's code), the
+/// ticks until the next entry, and the part's life (its ticks, for the parts that have one).
+pub const ScriptEntry = struct { part: []const u8, wait: u16, life: u16 };
+
+pub const Intro = struct {
+    /// The story's lines, in `fonts/italic`'s glyphs, each the width it takes on the screen.
+    story: []const []const u8,
+    /// The profiles, in the order they are typed: Adam, Blaze, Axel.
+    profiles: []const Profile,
+    script: []const ScriptEntry,
+    provenance: struct { story: []const u8 = "", profiles: []const u8 = "", script: []const u8 = "" } = .{},
+};
+
 /// The screens' records a tree has.
 pub const Screens = struct {
     options: ?Options = null,
     high_scores: ?HighScores = null,
     select: ?Select = null,
+    intro: ?Intro = null,
 
     /// The names of the records it has, in name order (the manifest's `screens`).
     pub fn names(self: *const Screens, out: *[record_names.len][]const u8) []const []const u8 {
@@ -75,7 +94,7 @@ pub const Screens = struct {
 };
 
 /// The records' names, in name order: their files are `screens/NAME.json`.
-pub const record_names = [_][]const u8{ "high_scores", "options", "select" };
+pub const record_names = [_][]const u8{ "high_scores", "intro", "options", "select" };
 
 pub fn path(arena: std.mem.Allocator, name: []const u8) error{OutOfMemory}![]const u8 {
     return std.fmt.allocPrint(arena, "screens/{s}.json", .{name});
@@ -135,6 +154,26 @@ pub fn value(arena: std.mem.Allocator, s: *const Screens, name: []const u8) erro
             .{ .key = "level", .value = json.Value.num(x.level) },
         });
         return obj(arena, &.{.{ .key = "first", .value = try listed(arena, h.provenance, "entries", .{ .array = entries }) }});
+    }
+    if (std.mem.eql(u8, name, "intro")) {
+        const it = s.intro.?;
+        const profiles = try arena.alloc(json.Value, it.profiles.len);
+        for (profiles, it.profiles) |*o, p| o.* = try obj(arena, &.{
+            .{ .key = "text", .value = .{ .str = p.text } },
+            .{ .key = "plane", .value = .{ .str = @tagName(p.plane) } },
+            .{ .key = "at", .value = .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(p.x), json.Value.num(p.y) }) } },
+        });
+        const entries = try arena.alloc(json.Value, it.script.len);
+        for (entries, it.script) |*o, e| o.* = try obj(arena, &.{
+            .{ .key = "part", .value = .{ .str = e.part } },
+            .{ .key = "wait", .value = json.Value.num(e.wait) },
+            .{ .key = "life", .value = json.Value.num(e.life) },
+        });
+        return obj(arena, &.{
+            .{ .key = "story", .value = try listed(arena, it.provenance.story, "lines", try strings(arena, it.story)) },
+            .{ .key = "profiles", .value = try listed(arena, it.provenance.profiles, "entries", .{ .array = profiles }) },
+            .{ .key = "script", .value = try listed(arena, it.provenance.script, "entries", .{ .array = entries }) },
+        });
     }
     if (std.mem.eql(u8, name, "select")) {
         const sel = s.select.?;
@@ -231,6 +270,38 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         }
         h.first = out;
         into.high_scores = h;
+        return;
+    }
+    if (std.mem.eql(u8, name, "intro")) {
+        try root.only(&.{ "story", "profiles", "script" });
+        var it: Intro = .{ .story = &.{}, .profiles = &.{}, .script = &.{} };
+        it.story = try readStrings(arena, try readListed(try root.get("story"), "lines", &it.provenance.story));
+        const ps = try readListed(try root.get("profiles"), "entries", &it.provenance.profiles);
+        const profiles = try arena.alloc(Profile, try ps.len());
+        for (profiles, 0..) |*p, i| {
+            const n = try ps.at(i);
+            try n.only(&.{ "text", "plane", "at" });
+            const plane = try n.get("plane");
+            const at = try n.get("at");
+            if (try at.len() != 2) return at.fail("not [x, y]");
+            p.* = .{
+                .text = try (try n.get("text")).string(),
+                .plane = std.meta.stringToEnum(art.Layer, try plane.string()) orelse return plane.fail("not plane_a or plane_b"),
+                .x = try (try at.at(0)).int(u16),
+                .y = try (try at.at(1)).int(u16),
+            };
+            if (p.plane == .window) return plane.fail("not plane_a or plane_b");
+        }
+        it.profiles = profiles;
+        const es = try readListed(try root.get("script"), "entries", &it.provenance.script);
+        const script = try arena.alloc(ScriptEntry, try es.len());
+        for (script, 0..) |*e, i| {
+            const n = try es.at(i);
+            try n.only(&.{ "part", "wait", "life" });
+            e.* = .{ .part = try (try n.get("part")).string(), .wait = try (try n.get("wait")).int(u16), .life = try (try n.get("life")).int(u16) };
+        }
+        it.script = script;
+        into.intro = it;
         return;
     }
     if (std.mem.eql(u8, name, "select")) {

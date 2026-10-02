@@ -54,7 +54,7 @@ an enemy's (`axel`, `galsia`), or art several screens share (`fonts`, `play`).
   "rom": {"sha256": "…", "size": 524288},
   "art": ["fonts", "segalogo", "title", "round1", "axel"],
   "entities": ["axel", "galsia"],
-  "screens": ["high_scores", "options", "select"]
+  "screens": ["high_scores", "intro", "options", "select"]
 }
 ```
 
@@ -107,8 +107,9 @@ Every field is optional. The kinds of asset are separate: a sheet and a map may 
   ticks (30 a second in play) the next of the `steps` replaces the colours it gives, the last step
   followed by the first. A step is a palette's `colours`.
 - **Palette steps** (`steps`). Colours a screen shows one after another, at the times its scene
-  decides (the Sega logo's colour sweep, the title's colour steps): each of the `steps` is a
-  palette's `colours`, which replace those it gives when the scene shows it.
+  decides (the Sega logo's colour sweep, the title's colour steps, the city's lights in the
+  intro): each of the `steps` is a palette's `colours`, which replace those it gives when the
+  scene shows it.
 - **Tile sheets** (`tiles`). `file` is an indexed PNG of 8x8 tiles, read left to right and top to
   bottom (16 a row when the extractor writes it); `count` is the number of tiles, the rest of the
   last row being unused. A pixel is a colour index 0 to 15, 0 transparent; an index above 15 is
@@ -223,6 +224,12 @@ the sound content, frames by their full names. A list carries its `provenance`. 
 - `high_scores`: `first.entries`, the table at power-on, the best first: each a `score` (0 to
   999999), the `round` reached, a `name` of three letters and a `level` (a number of the
   options' `levels`).
+- `intro`: `story.lines`, the story's lines in `fonts/italic`, each as wide as it is on the
+  screen; `profiles.entries`, the characters' profiles in the order they are typed, each a
+  `text` in `fonts/intro` (`_` a blank cell, `/` a new line, `|` a pause, where the cursor
+  blinks), the `plane` (`plane_a`, `plane_b`) and the cell `at` its first character goes;
+  `script.entries`, the intro's script: each the `part` it starts (by its name in the intro's
+  code), the ticks to `wait` before the next entry, and the part's `life` in ticks.
 - `select`: `characters.adam`, `axel` and `blaze`, each character's poses on the character
   select, each an animation: `stand`, `idle`, `pose_a`, `pose_b`, `pose_c` and Blaze's `landing`.
   An animation is a list of steps, each a `frame`, the `ticks` it shows (1 or more) and, when it
@@ -278,12 +285,11 @@ name the frames by move, come with the moves (PLAN 11). Where the original gives
 tell assets apart, the name numbers them (`ending/colours_03`), and the provenance says where
 each comes from; the scenes' items may rename them when they give them a role.
 
-The screens' records (PLAN 08): `options`, `high_scores`, `select` (above).
+The screens' records (PLAN 08): `high_scores`, `intro`, `options`, `select` (above); the
+screens' palette steps: `segalogo/sweep`, `intro/lights`, `title/steps`.
 
-Not in the tree yet, each with the item that needs it: the texts of the story, the profiles and
-the endings (PLAN 08 and 16); the screens' palette effects that are routines over small tables
-but for the Sega logo's sweep and the title's colour steps (`segalogo/sweep`, `title/steps`:
-PLAN 08); the fixed sprite lists of the round's banner, the pause and the game over, drawn from
+Not in the tree yet, each with the item that needs it: the endings' texts (PLAN 16); the
+Japanese story and its kana (the game plays outside Japan, decision D5); the fixed sprite lists of the round's banner, the pause and the game over, drawn from
 tiles play builds itself (PLAN 13); the rounds' cameras, bands and floors (PLAN 13); the moves
 (PLAN 11).
 

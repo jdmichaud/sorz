@@ -9,7 +9,12 @@
 //! - select: the characters' poses, animations of their animation sets (Axel 0x49AE0, Adam
 //!   0x53EFE, Blaze 0x5E90A; a set is a table of word offsets to its animations, an animation its
 //!   count of frames, its durations' entry in the table 0x3A30, and a word per frame: the frame's
-//!   record's offset from the words, bit 15 mirrored).
+//!   record's offset from the words, bit 15 mirrored);
+//! - intro: the story outside Japan (0x3FB24: 28 lines of 22 codes of the italic font), the
+//!   profiles (0x3F9F2: three pointers to texts of the profiles' font's codes, with 0 a blank, $FF
+//!   a new line, $FD a pause and $FE the end; 0xCBE0: where each starts, a cell of a plane 128
+//!   cells wide), and the script (0x3F680: the count of its entries, then their list: per entry
+//!   a slot group, an object's type, the wait before the next entry and a life).
 const std = @import("std");
 const sorz = @import("sorz");
 const screens = sorz.content.screens;
@@ -40,6 +45,40 @@ pub const high_score_table = 0x12842;
 const high_scores = 10;
 const high_score_size = 12;
 pub const durations = 0x3A30;
+pub const story = 0x3FB24;
+const story_lines = 28;
+const story_width = 22;
+pub const profile_texts = 0x3F9F2;
+pub const profile_places = 0xCBE0;
+const profiles = 3;
+pub const script = 0x3F680;
+
+/// The intro's parts by the type of the object that the script's entry makes (sor-remaster's
+/// frontend/intro_objects.zig, the handlers through the table at 0xB236).
+const parts = [_]struct { kind: u8, part: []const u8 }{
+    .{ .kind = 0x60, .part = "city_drift" },
+    .{ .kind = 0x61, .part = "city_fade_in" },
+    .{ .kind = 0x62, .part = "story_fade_out" },
+    .{ .kind = 0x63, .part = "city_lights" },
+    .{ .kind = 0x64, .part = "story_text" },
+    .{ .kind = 0x65, .part = "story_rise" },
+    .{ .kind = 0x69, .part = "profiles" },
+    .{ .kind = 0x6B, .part = "pictures_out" },
+    .{ .kind = 0x6C, .part = "city_again" },
+    .{ .kind = 0x6D, .part = "city_rush" },
+    .{ .kind = 0x6E, .part = "adam_arrives" },
+    .{ .kind = 0x6F, .part = "blaze_arrives" },
+    .{ .kind = 0x70, .part = "hero" },
+    .{ .kind = 0x71, .part = "flash_adam" },
+    .{ .kind = 0x72, .part = "flash_blaze" },
+    .{ .kind = 0x73, .part = "flash_city" },
+    .{ .kind = 0x74, .part = "heroes_step" },
+    .{ .kind = 0x78, .part = "press_start" },
+    .{ .kind = 0x7A, .part = "credit_sega" },
+    .{ .kind = 0x7B, .part = "credit_music" },
+    .{ .kind = 0x7C, .part = "credit_composer" },
+    .{ .kind = 0x7E, .part = "title" },
+};
 
 /// A character's animation set and the numbers of its poses' animations in it.
 const Character = struct {
@@ -178,12 +217,86 @@ fn select(arena: std.mem.Allocator, rom: []const u8, b: *const Builder) !screens
     return out;
 }
 
+/// The text of the profiles' codes from `a` to their end ($FE): `_` a blank, `/` a new line, `|`
+/// a pause.
+fn profileText(arena: std.mem.Allocator, rom: []const u8, a: u32) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var at = a;
+    while (true) : (at += 1) {
+        if (at >= rom.len or out.items.len > 1024) return error.BadData;
+        const c = rom[at];
+        switch (c) {
+            0xFE => break,
+            0xFF => try out.append(arena, '/'),
+            0xFD => try out.append(arena, '|'),
+            0 => try out.append(arena, '_'),
+            else => {
+                const g = for (fonts.intro_glyphs) |g| {
+                    if (g.tile == c) break g;
+                } else return error.BadData;
+                try out.appendSlice(arena, g.text);
+            },
+        }
+    }
+    return out.items;
+}
+
+fn intro(arena: std.mem.Allocator, rom: []const u8) !screens.Intro {
+    const lines = try arena.alloc([]const u8, story_lines);
+    for (lines, 0..) |*l, k| {
+        var out: std.ArrayList(u8) = .empty;
+        for (rom[story + k * story_width ..][0..story_width]) |c| {
+            const g = for (fonts.main_glyphs) |g| {
+                if (g.tile == c) break g;
+            } else return error.BadData;
+            try out.appendSlice(arena, g.text);
+        }
+        l.* = out.items;
+    }
+    const ps = try arena.alloc(screens.Profile, profiles);
+    for (ps, 0..) |*p, i| {
+        const at = u16be(rom, profile_places + 2 * @as(u32, @intCast(i)));
+        // A plane of 128 cells a row: plane A's cells from $C000, plane B's from $E000.
+        const plane_b = at >= 0xE000;
+        const offset = at - @as(u16, if (plane_b) 0xE000 else 0xC000);
+        p.* = .{
+            .text = try profileText(arena, rom, u32be(rom, profile_texts + 4 * @as(u32, @intCast(i)))),
+            .plane = if (plane_b) .plane_b else .plane_a,
+            .x = (offset % 256) / 2,
+            .y = offset / 256,
+        };
+    }
+    // The entries before the last, which is the script's end (its count is the last's index).
+    const count: u32 = rom[script];
+    const list = u32be(rom, script + 4);
+    const entries = try arena.alloc(screens.ScriptEntry, count);
+    for (entries, 0..) |*e, i| {
+        const r = list + 8 * @as(u32, @intCast(i));
+        const kind = u16be(rom, r + 2);
+        const part = for (parts) |p| {
+            if (p.kind == kind) break p.part;
+        } else return error.BadData;
+        e.* = .{ .part = part, .wait = u16be(rom, r + 4), .life = u16be(rom, r + 6) };
+    }
+    return .{
+        .story = lines,
+        .profiles = ps,
+        .script = entries,
+        .provenance = .{
+            .story = std.fmt.comptimePrint("ROM 0x{X:0>5}: the story outside Japan, 28 lines of 22 codes of the italic font (0xCBE6)", .{story}),
+            .profiles = std.fmt.comptimePrint("ROM 0x{X:0>5}: the profiles' texts in the profiles' font's codes (0 a blank, $FF a new line, $FD a pause, $FE the end), Adam's, Blaze's, Axel's; ROM 0x{X:0>4}: where each starts (0xCD66)", .{ profile_texts, profile_places }),
+            .script = std.fmt.comptimePrint("ROM 0x{X:0>5}: the intro's script (0xB6DE): each entry an object's type, here its part, the wait before the next and a life; its last entry is its end", .{script}),
+        },
+    };
+}
+
 /// The screens' records of `rom`; the select's frames are named by `b`'s origins.
 pub fn extract(arena: std.mem.Allocator, rom: []const u8, b: *const Builder) !screens.Screens {
     return .{
         .options = try options(arena, rom),
         .high_scores = try highScores(arena, rom),
         .select = try select(arena, rom, b),
+        .intro = try intro(arena, rom),
     };
 }
 

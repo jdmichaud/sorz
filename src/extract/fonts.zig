@@ -30,7 +30,7 @@ pub const main_glyphs = [_]Glyph{.{ .text = " ", .tile = 0 }} ++ letters ++ digi
     .{ .text = "!", .tile = 46 },   .{ .text = ":", .tile = 47 },  .{ .text = ";", .tile = 48 },
 };
 
-const intro_glyphs = [_]Glyph{.{ .text = " ", .tile = 0 }} ++ letters ++ [_]Glyph{
+pub const intro_glyphs = [_]Glyph{.{ .text = " ", .tile = 0 }} ++ letters ++ [_]Glyph{
     .{ .text = "?", .tile = 29 }, .{ .text = "!", .tile = 30 }, .{ .text = "-", .tile = 31 },
     .{ .text = ".", .tile = 33 }, .{ .text = ",", .tile = 34 }, .{ .text = ":", .tile = 35 },
 } ++ digits(36);
