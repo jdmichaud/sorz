@@ -60,7 +60,7 @@
 
 ## F3 — Sound
 
-- [ ] **09 — Sound content and sequencer** — Depends: 06.
+- [x] **09 — Sound content and sequencer** — Depends: 06.
   - The music and effects as readable sequences (extractor); the sequencer with the driver's
     semantics and priorities; the chip models carried over (YM2612, PSG, DAC, model 1).
   - Gate: every song and effect gives sor-remaster's driver's register writes, then its PCM.
