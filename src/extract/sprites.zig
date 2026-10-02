@@ -310,11 +310,9 @@ fn compose(arena: std.mem.Allocator, pieces: []const Piece, tiles: Tiles) !?Comp
 fn layoutTiles(b: *Builder, layout: Layout) ![]?art.Tile {
     const v: *Vram = switch (layout) {
         // The intro's set-up and the title's copies (0xB558 and the VBlank's copy 2).
-        .title => try screens.replay(b, screens.title_steps),
+        .title => try screens.replay(b, &screens.title_layout),
         // The same with the name in Japan (Kosinski list entries 9 and 8 at $89A0).
-        .title_japan => try screens.replay(b, &(screens.intro_japan_steps ++ [_]screens.Step{
-            .{ .copy = .{ .ram = 0xFF2C00, .address = 0x0620, .tiles = 9 * 4 } },
-        })),
+        .title_japan => try screens.replay(b, &(screens.intro_japan_steps ++ screens.title_copies)),
         .demo => try demoVram(b),
         .twins => try twinsVram(b),
     };
@@ -491,7 +489,9 @@ pub fn extract(b: *Builder) !Stats {
                 try std.fmt.allocPrint(arena, "{d:0>3}", .{index})
             else
                 try std.fmt.allocPrint(arena, "{s}_{d:0>2}", .{ set.prefix, index });
-            try b.frame(try std.fmt.allocPrint(arena, "{s}/{s}", .{ set.dir, own }), .{
+            const fname = try std.fmt.allocPrint(arena, "{s}/{s}", .{ set.dir, own });
+            try b.origin(fname, .{ .frame = .{ .set = set.source, .address = fa } });
+            try b.frame(fname, .{
                 .name = "",
                 .provenance = try std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: frame {d} of the animation set at ROM 0x{X:0>5} ({s}), {d} pieces, drawn from {s}", .{ fa, index, set.source, set.what, parsed.pieces.len, try artText(arena, set.art, index) }),
                 .file = try std.fmt.allocPrint(arena, "{s}.png", .{own}),

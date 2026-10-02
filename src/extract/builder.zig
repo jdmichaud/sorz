@@ -19,6 +19,36 @@ const SetBuilder = struct {
     fonts: std.ArrayList(art.Font) = .empty,
 };
 
+/// The ROM's record an asset was made from.
+pub const Origin = union(enum) {
+    /// A map's words: the console's cells (a tile slot, a palette, the flips, the priority), and
+    /// where they were read.
+    map: struct { words: []const u16, from: MapFrom },
+    /// A frame: its animation set's address and its own.
+    frame: struct { set: u32, address: u32 },
+    /// A palette list's address; none for colours a routine sets itself.
+    palette: ?u32,
+};
+
+pub const MapFrom = union(enum) {
+    /// A word rectangle in the ROM (its header's address).
+    rom_words: u32,
+    /// Words in RAM, unpacked there by a block (an Enigma or a Kosinski block's address).
+    ram_block: u32,
+    /// A byte rectangle (its header's address).
+    bytes: u32,
+    /// A screen rectangle (its entry), its RAM words plus `add`.
+    screen_rect: struct { entry: u8, add: u16 },
+    /// A round's plane (0-based round, plane 0 for A).
+    round_plane: struct { round: u8, plane: u8 },
+    /// Round 3's waves (0-based frame).
+    waves: u8,
+    /// A line of the game menu's table (0-based).
+    menu_line: u8,
+    /// Cells a routine writes itself.
+    code,
+};
+
 pub const Builder = struct {
     arena: std.mem.Allocator,
     rom: []const u8,
@@ -28,6 +58,9 @@ pub const Builder = struct {
     sheets: std.StringArrayHashMapUnmanaged(blocks.Block) = .empty,
     /// Each sheet's palette line counts, for the colours its picture is shown with.
     views: std.StringArrayHashMapUnmanaged([16]art.Colour) = .empty,
+    /// Where each map, frame and palette came from in the ROM, by full name: what the
+    /// comparison with sor-remaster's tree reads (src/extract/compare.zig).
+    origins: std.StringArrayHashMapUnmanaged(Origin) = .empty,
 
     pub fn init(arena: std.mem.Allocator, rom: []const u8) Builder {
         return .{ .arena = arena, .rom = rom, .lib = .{ .arena = arena, .rom = rom } };
@@ -107,6 +140,17 @@ pub const Builder = struct {
         var copy = f;
         copy.name = n.own;
         try s.fonts.append(self.arena, copy);
+    }
+
+    /// Records asset `name`'s origin, under its kind ("map:title/hero"): a map and a palette
+    /// may share a name.
+    pub fn origin(self: *Builder, name: []const u8, o: Origin) !void {
+        try self.origins.put(self.arena, try std.fmt.allocPrint(self.arena, "{t}:{s}", .{ o, name }), o);
+    }
+
+    /// The asset's full name of an origin's key.
+    pub fn originName(key: []const u8) []const u8 {
+        return key[std.mem.indexOfScalar(u8, key, ':').? + 1 ..];
     }
 
     /// The colours `sheet`'s picture is shown with (the first given wins).

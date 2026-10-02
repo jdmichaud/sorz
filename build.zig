@@ -228,6 +228,17 @@ pub fn build(b: *std.Build) void {
     const content_dir = b.option([]const u8, "content", "Where the extract step writes the content tree (default: <prefix>/content)");
     const extract_step = b.step("extract", "Write the content tree of the ROM -Drom=PATH into -Dcontent=DIR");
     const extract_check_step = b.step("extract-check", "Extract the ROM -Drom=PATH twice: the trees must be byte-identical and load");
+    // The gate of PLAN 06: the art against sor-remaster's exported tree (its `--export-assets`).
+    const remaster_tree = b.option([]const u8, "remaster-tree", "sor-remaster's exported asset tree, for the extract-compare step");
+    const extract_compare_step = b.step("extract-compare", "Compare the art of -Drom=PATH with sor-remaster's exported tree -Dremaster-tree=DIR");
+    if (rom_path != null and remaster_tree != null) {
+        const compare_tree = b.addRunArtifact(extract_exe);
+        compare_tree.addArgs(&.{ "--compare", rom_path.?, remaster_tree.? });
+        compare_tree.has_side_effects = true;
+        extract_compare_step.dependOn(&compare_tree.step);
+    } else {
+        extract_compare_step.dependOn(&b.addFail("the extract-compare step needs -Drom=PATH and -Dremaster-tree=DIR").step);
+    }
     if (rom_path) |rom| {
         const write_tree = b.addRunArtifact(extract_exe);
         write_tree.addArg(rom);

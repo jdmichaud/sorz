@@ -132,18 +132,25 @@ const intro = Screen{
     }),
 };
 
-/// The title (0xB558, or the intro's end): over the intro's, the title's texts copied to $0620
-/// (from $FF2C00) and the title's picture to $7340 (the VBlank's copy 2, from $FF1600); its
-/// palettes (screen palettes 13, 12, 11, 10, 9, 15 and 7, the last first); the city, the picture
-/// (screen rectangle 8 with $C39A) and the name (10 and 9 with $044D).
+/// The title's video memory over the intro's (0xB558, or the intro's end): its texts copied to
+/// $0620 (from $FF2C00) and its picture to $7340 (the VBlank's copy 2, from $FF1600).
+pub const title_copies = [_]Step{
+    .{ .layout = .{ .width = 64, .height = 64, .window = null } },
+    .{ .copy = .{ .ram = 0xFF2C00, .address = 0x0620, .tiles = 9 * 4 } },
+    .{ .copy = .{ .ram = 0xFF1600, .address = 0x7340, .tiles = 0x1600 / 32 } },
+};
+
+/// The title's video memory outside Japan, the art its sprites are drawn with.
+pub const title_layout = intro_setup ++ title_copies;
+
+/// The title (0xB558, or the intro's end): its video memory, its palettes (screen palettes 13,
+/// 12, 11, 10, 9, 15 and 7, the last first); the city, the picture (screen rectangle 8 with
+/// $C39A) and the name (10 and 9 with $044D).
 const title = Screen{
     .name = "title",
     .what = "the title screen (set-up 0xB558, objects $70 to $7F)",
     .uses = &.{"intro"},
-    .steps = &(intro_setup ++ [_]Step{
-        .{ .layout = .{ .width = 64, .height = 64, .window = null } },
-        .{ .copy = .{ .ram = 0xFF2C00, .address = 0x0620, .tiles = 9 * 4 } },
-        .{ .copy = .{ .ram = 0xFF1600, .address = 0x7340, .tiles = 0x1600 / 32 } },
+    .steps = &(title_layout ++ [_]Step{
         .{ .screen_palette = .{ .index = 13, .name = "title/flash", .why = "the title's flash (type $7D, 0xD548)" } },
         .{ .screen_palette = .{ .index = 12, .name = "title/name", .why = "the title's name (types $77, $81)" } },
         .{ .screen_palette = .{ .index = 11, .name = "title/colours", .why = "the title's colours (type $77, 0xC394)" } },
@@ -448,7 +455,7 @@ pub const Run = struct {
                 var bytes = try self.b.arena.alloc(u8, 8 + 2 * words.len);
                 @memcpy(bytes[0..8], r[src..][0..8]);
                 for (words, 0..) |w, k| std.mem.writeInt(u16, bytes[8 + 2 * k ..][0..2], w, .big);
-                v.unpack(ram, 0, bytes);
+                v.unpack(ram, src, bytes);
             },
             .word_rect => |w| {
                 const at = u32be(r, word_rects + 4 * @as(u32, w.entry));
@@ -467,7 +474,7 @@ pub const Run = struct {
                     try std.fmt.allocPrint(self.b.arena, "word rectangle {d} (0xA5F4) from RAM ${X:0>6}", .{ w.entry, at })
                 else
                     try std.fmt.allocPrint(self.b.arena, "ROM 0x{X:0>5}: word rectangle {d} (0xA5F4)", .{ at, w.entry });
-                try self.map(w.map, words, width, height, vram_mod.commandAddress(cmd), 128, why);
+                try self.map(w.map, words, width, height, vram_mod.commandAddress(cmd), 128, why, if (ram) .{ .ram_block = v.ram_block[at & 0xFFFF] } else .{ .rom_words = at });
             },
             .byte_rect => |w| {
                 const at = u32be(r, byte_rects + 4 * @as(u32, w.entry));
@@ -478,7 +485,7 @@ pub const Run = struct {
                 const words = try self.b.arena.alloc(u16, @as(usize, width) * height);
                 for (words, 0..) |*x, k| x.* = base +% r[at + 10 + k];
                 const why = try std.fmt.allocPrint(self.b.arena, "ROM 0x{X:0>5}: byte rectangle {d} (0xA8B8), each byte added to ${X:0>4}", .{ at, w.entry, base });
-                try self.map(w.map, words, width, height, vram_mod.commandAddress(cmd), 128, why);
+                try self.map(w.map, words, width, height, vram_mod.commandAddress(cmd), 128, why, .{ .bytes = at });
             },
             .screen_rect => |sr| {
                 const e: u32 = screen_rects + 8 * @as(u32, sr.entry);
@@ -490,7 +497,7 @@ pub const Run = struct {
                 for (words, 0..) |*x, k| x.* = v.ramWord(from + 2 * @as(u32, @intCast(k))) +% sr.add;
                 const ram_block = v.ram_block[from & 0xFFFF];
                 const why = try std.fmt.allocPrint(self.b.arena, "screen rectangle {d} (0x3F5B6, drawn by 0xB9BA) from RAM ${X:0>6} (Kosinski block 0x{X:0>5}), each word plus ${X:0>4}", .{ sr.entry, from, ram_block, sr.add });
-                try self.map(sr.map, words, width, height, address, sr.row, why);
+                try self.map(sr.map, words, width, height, address, sr.row, why, .{ .screen_rect = .{ .entry = sr.entry, .add = sr.add } });
             },
             .menu_lines => |names| {
                 var at: u32 = menu_lines;
@@ -500,12 +507,12 @@ pub const Run = struct {
                     var words: [10]u16 = undefined;
                     for (&words, 0..) |*x, c| x.* = @as(u16, r[at + 4 + c]) +% add;
                     const why = try std.fmt.allocPrint(self.b.arena, "ROM 0x{X:0>5}: the game menu's line {d} (0xFE8), its codes plus ${X:0>4}", .{ at, k + 1, add });
-                    try self.map(name, try self.b.arena.dupe(u16, &words), 10, 1, vram_mod.commandAddress(cmd), 128, why);
+                    try self.map(name, try self.b.arena.dupe(u16, &words), 10, 1, vram_mod.commandAddress(cmd), 128, why, .{ .menu_line = @intCast(k) });
                     at += 14;
                     add = u16be(r, menu_line_adds + 2 * @as(u32, @intCast(k)));
                 }
             },
-            .cells => |c| try self.map(c.map, c.words, @intCast(c.words.len), 1, c.address, 128, c.why),
+            .cells => |c| try self.map(c.map, c.words, @intCast(c.words.len), 1, c.address, 128, c.why, .code),
             .palette => |p| try self.palette(p.name, p.list, try std.fmt.allocPrint(self.b.arena, "ROM 0x{X:0>5}: a palette list{s}{s}", .{ p.list, if (p.why.len != 0) ", " else "", p.why })),
             .screen_palette => |p| {
                 const off: i16 = @bitCast(u16be(r, screen_palettes + 2 * @as(u32, p.index)));
@@ -520,6 +527,7 @@ pub const Run = struct {
                 var p: art.Palette = .{ .name = "", .provenance = c.why };
                 for (c.places, c.words) |place, w| p.colours[place / 16][place % 16] = builder_mod.colourOf(w);
                 try self.b.palette(c.name, p);
+                try self.b.origin(c.name, .{ .palette = null });
                 p.apply(&self.colours);
                 try self.b.use(self.screen.name, Builder.split(c.name).set);
             },
@@ -540,13 +548,14 @@ pub const Run = struct {
         var p = try builder_mod.paletteList(self.rom(), list);
         p.provenance = why;
         try self.b.palette(name, p);
+        try self.b.origin(name, .{ .palette = list });
         p.apply(&self.colours);
         try self.b.use(self.screen.name, Builder.split(name).set);
     }
 
     /// The map `name` of `words` (cells as the console reads them: a tile slot, a palette, the
     /// flips and the priority), drawn at video address `address` with rows `row` bytes apart.
-    pub fn map(self: *Run, name: []const u8, words: []const u16, width: u16, height: u16, address: u16, row: u16, why: []const u8) Error!void {
+    pub fn map(self: *Run, name: []const u8, words: []const u16, width: u16, height: u16, address: u16, row: u16, why: []const u8, from: builder_mod.MapFrom) Error!void {
         var place: ?art.Place = null;
         if (self.v.place(address)) |p| {
             // A rectangle drawn with rows another distance apart than the plane's has no place.
@@ -561,11 +570,11 @@ pub const Run = struct {
             std.log.warn("{s}: {s}: drawn at ${X:0>4} with rows {d} bytes apart: no layer's cell", .{ self.screen.name, name, address, row });
             return error.NoPlace;
         }
-        return self.mapAt(name, words, width, height, place, why);
+        return self.mapAt(name, words, width, height, place, why, from);
     }
 
     /// The map `name` of `words` at `place` (none: a round's whole plane).
-    pub fn mapAt(self: *Run, name: []const u8, words: []const u16, width: u16, height: u16, place: ?art.Place, why: []const u8) Error!void {
+    pub fn mapAt(self: *Run, name: []const u8, words: []const u16, width: u16, height: u16, place: ?art.Place, why: []const u8, from: builder_mod.MapFrom) Error!void {
         const arena = self.b.arena;
         // The sheets the cells draw from, by name.
         var names: std.ArrayList([]const u8) = .empty;
@@ -627,6 +636,7 @@ pub const Run = struct {
             .cells = cells,
             .place = place,
         });
+        try self.b.origin(name, .{ .map = .{ .words = words, .from = from } });
         try self.b.use(self.screen.name, Builder.split(name).set);
         for (names.items) |n| try self.b.use(self.screen.name, Builder.split(n).set);
     }
@@ -688,7 +698,6 @@ pub const intro_japan_steps = blk: {
     s[12] = .{ .kosinski = 8 };
     break :blk s;
 };
-pub const title_steps: []const Step = title.steps;
 
 test "a map's cells resolve to their blocks' tiles, blank slots to empty cells" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -709,7 +718,7 @@ test "a map's cells resolve to their blocks' tiles, blank slots to empty cells" 
     var run: Run = .{ .b = &b, .v = v, .screen = &screen };
     // Slot 3 (tile 1 of the block), mirrored across, palette 2, high; slot 2 (tile 0); slot 9,
     // blank since the clear.
-    try run.map("test/map", &.{ 0x8000 | 0x4000 | 0x800 | 3, 2, 9 }, 3, 1, 0xC000 + 2 * 128 + 4, 128, "synthetic");
+    try run.map("test/map", &.{ 0x8000 | 0x4000 | 0x800 | 3, 2, 9 }, 3, 1, 0xC000 + 2 * 128 + 4, 128, "synthetic", .code);
     const a = try b.finish();
     const m = a.map("test/map").?;
     try std.testing.expectEqual(art.Place{ .layer = .plane_a, .x = 2, .y = 2 }, m.place.?);
@@ -721,5 +730,5 @@ test "a map's cells resolve to their blocks' tiles, blank slots to empty cells" 
     // A slot written with no block's whole tile is refused.
     v.bytes[9][0] = 0x10;
     v.written.set(9);
-    try std.testing.expectError(error.UnresolvedTile, run.map("test/map2", &.{9}, 1, 1, 0xC000, 128, "synthetic"));
+    try std.testing.expectError(error.UnresolvedTile, run.map("test/map2", &.{9}, 1, 1, 0xC000, 128, "synthetic", .code));
 }

@@ -17,6 +17,7 @@ pub const screens = @import("screens.zig");
 pub const rounds = @import("rounds.zig");
 pub const fonts = @import("fonts.zig");
 pub const sprites = @import("sprites.zig");
+pub const compare = @import("compare.zig");
 
 /// The extractor's name and version, in the tree's manifest.
 pub const name = "sorz-extract 1";
@@ -53,12 +54,7 @@ pub fn extractUnchecked(gpa: std.mem.Allocator, rom_bytes: []const u8) Error!Tre
     errdefer tree.arena.deinit();
     const arena = tree.arena.allocator();
 
-    var b = builder.Builder.init(arena, rom_bytes);
-    try fonts.extract(&b);
-    for (screens.screens) |s| try screens.extract(&b, s);
-    for (0..rounds.count) |n| try rounds.extract(&b, @intCast(n));
-    const frames = try sprites.extract(&b);
-    std.log.info("sprite frames: {d} pictures, {d} frames without pieces, {d} that do not read as frames, {d} whose art lacks a tile", .{ frames.frames, frames.empty, frames.unparsed, frames.missing });
+    var b = try build(arena, rom_bytes);
     const a = try b.finish();
 
     const sets = try arena.alloc([]const u8, a.sets.len);
@@ -74,6 +70,17 @@ pub fn extractUnchecked(gpa: std.mem.Allocator, rom_bytes: []const u8) Error!Tre
     };
     tree.files = try content.write(arena, &c);
     return tree;
+}
+
+/// The art of `rom_bytes` (not checked), with each asset's origin in the ROM.
+pub fn build(arena: std.mem.Allocator, rom_bytes: []const u8) Error!builder.Builder {
+    var b = builder.Builder.init(arena, rom_bytes);
+    try fonts.extract(&b);
+    for (screens.screens) |s| try screens.extract(&b, s);
+    for (0..rounds.count) |n| try rounds.extract(&b, @intCast(n));
+    const frames = try sprites.extract(&b);
+    std.log.info("sprite frames: {d} pictures, {d} frames without pieces, {d} that do not read as frames, {d} whose art lacks a tile", .{ frames.frames, frames.empty, frames.unparsed, frames.missing });
+    return b;
 }
 
 /// Writes `tree` into the directory `dir` (created if needed), each file replaced whole.

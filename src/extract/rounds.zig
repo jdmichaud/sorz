@@ -145,7 +145,7 @@ pub fn extract(b: *Builder, n: u32) !void {
         const why = try std.fmt.allocPrint(arena, "plane {c}'s whole map: the layout record at ROM 0x{X:0>5} (its bands of Kosinski chunks, built by 0x199C6), each block from the Enigma block table at ROM 0x{X:0>5}", .{
             @as(u8, if (p == 0) 'A' else 'B'), layout_table + @as(u32, u16be(rom, layout_table + 4 * n + 2 * @as(u32, @intCast(p)))), blocks_source,
         });
-        try mapWhole(&run, name, words, @intCast(cols), @intCast(rows), why);
+        try run.mapAt(name, words, @intCast(cols), @intCast(rows), null, why, .{ .round_plane = .{ .round = @intCast(n), .plane = @intCast(p) } });
     }
 
     if (n == 2) {
@@ -155,19 +155,16 @@ pub fn extract(b: *Builder, n: u32) !void {
         if (w.len < 4 * 6 * 32) return error.BadData;
         for (0..4) |f| {
             const why = try std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: an Enigma map, round 3's waves, frame {d} of 4 (written by 0x11346 on plane B's rows 23 to 28)", .{ wave_maps, f + 1 });
-            try run.map(try roundName(arena, n, "waves_{d}", .{f + 1}), w[f * 192 ..][0..192], 32, 6, 0xE000 + 23 * 128, 128, why);
+            try run.map(try roundName(arena, n, "waves_{d}", .{f + 1}), w[f * 192 ..][0..192], 32, 6, 0xE000 + 23 * 128, 128, why, .{ .waves = @intCast(f) });
         }
         for (0..5) |s| {
             const at: u32 = @intCast(wave_palettes + 8 * s);
             var pal = try builder_mod.paletteList(rom, at);
             pal.provenance = try std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: a palette list, round 3's waves at step {d} of 5 (0x11346), which shows frame {d}", .{ at, s + 1, rom[wave_steps + s] + 1 });
-            try b.palette(try roundName(arena, n, "waves_{d}", .{s + 1}), pal);
+            const pname = try roundName(arena, n, "waves_{d}", .{s + 1});
+            try b.palette(pname, pal);
+            try b.origin(pname, .{ .palette = at });
         }
     }
     try run.finish();
-}
-
-/// A whole plane's map: as `Run.map`, without a place (a round's plane scrolls).
-fn mapWhole(run: *screens.Run, name: []const u8, words: []const u16, width: u16, height: u16, why: []const u8) !void {
-    try run.mapAt(name, words, width, height, null, why);
 }
