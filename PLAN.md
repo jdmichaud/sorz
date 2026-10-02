@@ -17,7 +17,7 @@
 - [x] **01 — Build structure and toolchain** — Depends: none.
   - The template's skeleton (game-port-template 4a9a7c9), renamed sorz.
   - Gate: `zig build`, `test`, `smoke`, `verify` and `web` pass; the agent binary has no SDL.
-- [ ] **02 — Infrastructure carried over** — Depends: 01.
+- [x] **02 — Infrastructure carried over** — Depends: 01.
   - From sor-remaster, each piece reviewed against DESIGN.md before it lands: the platform
     contract's transport and the hosts' options; the SDL host's window and pacing; the agent
     host's commands (keys, shots, WAV, frames); the browser page (served files, its look, its
@@ -26,7 +26,7 @@
     `check_alone`, `web-check`, `browser-check`); the PNG and JSON readers.
   - Gate: a blank scene runs on Linux, Windows (cross build) and in Chromium; network play joins
     two agent hosts and a page through the relay; every check passes.
-- [ ] **03 — The engine's rule against the console's terms** — Depends: 01.
+- [x] **03 — The engine's rule against the console's terms** — Depends: 01.
   - A build check that fails on hexadecimal addresses and console terms in the engine's sources
     (DESIGN.md P1), with the extractor and its tests exempt.
   - Gate: the check fails on a planted address and passes on the tree.
