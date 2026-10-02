@@ -16,7 +16,8 @@
 //! <prefix>/windows) and the browser build. `browser-check` runs the browser build in Chromium
 //! against the agent host, and two pages through the relay (it needs Node.js and a Chromium);
 //! `sound-check` compares the sound with sor-remaster's, from the user's ROM (`-Drom=ROM
-//! -Dremaster=DIR`).
+//! -Dremaster=DIR`), and `screens-check` the screens' pictures and sound, tick by tick from
+//! power-on (the same options).
 const std = @import("std");
 
 /// The SDL2 release that the Linux host is built and tested against.
@@ -329,7 +330,7 @@ pub fn build(b: *std.Build) void {
     // sor-remaster checkout, which is built as a library and never written to. Optimised, as it
     // plays every song for minutes.
     const sound_check_step = b.step("sound-check", "Compare the sound with sor-remaster's (needs -Drom=ROM -Dremaster=DIR)");
-    const remaster = b.option([]const u8, "remaster", "A sor-remaster checkout, the reference of sound-check");
+    const remaster = b.option([]const u8, "remaster", "A sor-remaster checkout, the reference of sound-check and screens-check");
     const sound_only = b.option([]const u8, "sound-only", "One group of sound-check's scenarios: songs, round6, effects, pairs, changes, fades, pauses, stops, voices, quirks, pcm, random; or bench, the sequencer's cost");
     const sound_tree = b.option([]const u8, "sound-tree", "Where sound-check writes the sound content's files, for reading");
     const sound_optimize = b.option(std.builtin.OptimizeMode, "sound-check-optimize", "The build mode of sound-check (default: fast; debug to measure the bench in a debug build)") orelse .fast;
@@ -378,6 +379,51 @@ pub fn build(b: *std.Build) void {
         render_check_step.dependOn(&pictures.step);
     } else {
         render_check_step.dependOn(&b.addFail("the render-check step needs the user's ROM: -Drom=PATH").step);
+    }
+
+    // `screens-check`, the gate of the screens (PLAN 08, src/tools/screens_check.zig): sorz's
+    // pictures and sound against sor-remaster's at the same ticks from power-on with the same
+    // keys. sor-remaster's agent is built from its checkout (-Dremaster=DIR, never written to:
+    // its cache and its prefix are this build's), optimised.
+    const screens_out = b.option([]const u8, "screens-out", "Where screens-check writes the pictures it compares (default: <prefix>/screens)");
+    const screens_only = b.option([]const u8, "screens-only", "The scenarios screens-check runs, separated by commas (default: all)");
+    const screens_check_step = b.step("screens-check", "Compare the screens' pictures and sound with sor-remaster's (needs -Drom=ROM -Dremaster=DIR)");
+    if (rom_path != null and remaster != null) {
+        const screens_exe = b.addExecutable(.{
+            .name = "sorz-screens-check",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/tools/screens_check.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "sorz", .module = shared },
+                    .{ .name = "agent", .module = agent },
+                    .{ .name = "extract", .module = extract },
+                },
+            }),
+        });
+        const reference = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "agent", "-Doptimize=ReleaseFast", "--prefix" });
+        const reference_prefix = reference.addOutputDirectoryArg("remaster");
+        reference.addArg("--cache-dir");
+        reference.addDirectoryArg2(.{ .relative = .{ .base = .local_cache } }, .{ .make_absolute = true });
+        reference.setCwd(.{ .cwd_relative = remaster.? });
+        reference.has_side_effects = true;
+        const check = b.addRunArtifact(screens_exe);
+        check.addArg(rom_path.?);
+        check.addDirectoryArg(reference_prefix);
+        if (screens_out) |dir| {
+            check.addArg(dir);
+        } else {
+            check.addDirectoryArg2(.{ .relative = .{ .base = .install_prefix, .sub_path = "screens" } }, .{ .make_absolute = true });
+        }
+        if (screens_only) |names| {
+            var it = std.mem.tokenizeScalar(u8, names, ',');
+            while (it.next()) |n| check.addArg(n);
+        }
+        check.has_side_effects = true;
+        screens_check_step.dependOn(&check.step);
+    } else {
+        screens_check_step.dependOn(&b.addFail("screens-check needs -Drom=ROM and -Dremaster=DIR").step);
     }
 
     // Unit tests of every module. The tests of the SDL module link SDL2 as the host does.
