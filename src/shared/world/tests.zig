@@ -15,6 +15,7 @@ const output = @import("output.zig");
 const systems = @import("systems.zig");
 const tick_mod = @import("tick.zig");
 const draw_list = @import("draw_list.zig");
+const schedule = @import("schedule.zig");
 
 const Fixed = fixed.Fixed;
 const Vec3 = fixed.Vec3;
@@ -93,18 +94,18 @@ const definitions = [_]struct { name: []const u8, text: []const u8 }{
         \\}
     },
     .{ .name = "prop", .text =
-        \\{"family": "scenery", "team": "neutral", "behaviour": "none", "gravity": 32768,
-        \\ "boxes": {"body": {"x": [-4, 4], "depth": [-2, 2], "height": [-8, 0]}},
-        \\ "animations": {
-        \\   "lie": {"loop": true, "frames": [{"frame": "test/a", "ticks": 2, "body": "body"},
-        \\                                    {"frame": "test/b", "ticks": 3}]},
-        \\   "once": {"frames": [{"frame": "test/a", "ticks": 1}, {"frame": "test/b", "ticks": 2, "flip": true}]}
-        \\ }}
+    \\{"family": "scenery", "team": "neutral", "behaviour": "none", "gravity": 32768,
+    \\ "boxes": {"body": {"x": [-4, 4], "depth": [-2, 2], "height": [-8, 0]}},
+    \\ "animations": {
+    \\   "lie": {"loop": true, "frames": [{"frame": "test/a", "ticks": 2, "body": "body"},
+    \\                                    {"frame": "test/b", "ticks": 3}]},
+    \\   "once": {"frames": [{"frame": "test/a", "ticks": 1}, {"frame": "test/b", "ticks": 2, "flip": true}]}
+    \\ }}
     },
     .{ .name = "apple", .text =
-        \\{"family": "item", "team": "neutral", "behaviour": "none", "palette": 2,
-        \\ "boxes": {"body": {"x": [-4, 4], "depth": [-2, 2], "height": [-8, 0]}},
-        \\ "animations": {"lie": {"loop": true, "frames": [{"frame": "test/item", "ticks": 1, "body": "body"}]}}}
+    \\{"family": "item", "team": "neutral", "behaviour": "none", "palette": 2,
+    \\ "boxes": {"body": {"x": [-4, 4], "depth": [-2, 2], "height": [-8, 0]}},
+    \\ "animations": {"lie": {"loop": true, "frames": [{"frame": "test/item", "ticks": 1, "body": "body"}]}}}
     },
 };
 
@@ -551,6 +552,31 @@ test "the world's canonical form names a differing field" {
     const d = canonical.firstDifference(World, canonical.write(World, &a, buf_a), canonical.write(World, &b, buf_b)).?;
     try testing.expectEqualStrings("entities[0].position.depth", d.name());
     try testing.expect(a.hash() != b.hash());
+}
+
+test "play: the logic at every other display tick, with both display ticks' pads" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    var play: schedule.Play = .{};
+    _ = try withHero(&f, &play.world);
+    var rng: random.Random = .{};
+    var out: Output = .{};
+    // B only at a first display tick: the logic tick at the next display tick sees the press.
+    try testing.expect(!play.displayTick(&f.kinds, &rng, .{ .pad1 = .{ .b = true } }, &out));
+    try testing.expectEqual(@as(u32, 0), play.world.tick);
+    try testing.expect(play.displayTick(&f.kinds, &rng, .{}, &out));
+    try testing.expectEqual(@as(u32, 1), play.world.tick);
+    try testing.expect(play.world.players[0].command.pressed.b);
+    try testing.expectEqualStrings("swing", out.sounds.items[0].name);
+    // The draw list stays for the display tick in between.
+    try testing.expect(!play.displayTick(&f.kinds, &rng, .{}, &out));
+    try testing.expectEqual(@as(usize, 1), out.sprites.len);
+    try testing.expectEqualStrings("punch_0", out.sprites.items[0].frame.name);
+    // A screen at 60 a second runs its logic at each display tick, with that tick's pads twice.
+    var screen: schedule.Play = .{ .schedule = .{ .rate = .display } };
+    _ = try withHero(&f, &screen.world);
+    for (0..3) |_| try testing.expect(screen.displayTick(&f.kinds, &rng, .{}, &out));
+    try testing.expectEqual(@as(u32, 3), screen.world.tick);
 }
 
 test "binding refuses a definition its behaviour cannot run, and names the field" {

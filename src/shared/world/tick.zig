@@ -164,12 +164,12 @@ pub fn Actor(comptime M: type) type {
 
         /// Starts the animation `which` from its first frame.
         pub fn animate(a: Self, which: M.Animation) void {
-            a.tick.kinds.startAnimation(a.entity, a.kind.animation_of[@intFromEnum(which)]);
+            a.tick.kinds.startAnimation(a.entity, a.kind.animation_of[@backingInt(which)]);
         }
 
         /// Whether the animation `which` plays.
         pub fn playing(a: Self, which: M.Animation) bool {
-            return a.entity.animation.index == a.kind.animation_of[@intFromEnum(which)];
+            return a.entity.animation.index == a.kind.animation_of[@backingInt(which)];
         }
 
         /// Plays the animation `which`, starting it unless it plays already.
@@ -184,7 +184,7 @@ pub fn Actor(comptime M: type) type {
 
         /// Starts the move `which`: its animation, its sound.
         pub fn startMove(a: Self, which: M.Move) void {
-            a.tick.startMove(a.handle, a.entity, a.kind.move_of[@intFromEnum(which)]);
+            a.tick.startMove(a.handle, a.entity, a.kind.move_of[@backingInt(which)]);
         }
 
         pub fn endMove(a: Self) void {
@@ -193,7 +193,7 @@ pub fn Actor(comptime M: type) type {
 
         /// Asks for the sound `which` of its definition.
         pub fn sound(a: Self, which: M.Sound) void {
-            a.tick.sound(a.kind.sound_of[@intFromEnum(which)], a.handle);
+            a.tick.sound(a.kind.sound_of[@backingInt(which)], a.handle);
         }
 
         pub fn draw(a: Self, comptime purpose: random.Purpose) u16 {
