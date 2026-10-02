@@ -67,7 +67,7 @@
 
 ## F4 — Round 1
 
-- [ ] **10 — World and systems** — Depends: 08.
+- [x] **10 — World and systems** — Depends: 08.
   - Entities with typed fields and handles; the systems in their order; fixed-point; the random
     generator; the logic tick (D13).
   - Gate: unit tests; a world of synthetic entities replays identically.
