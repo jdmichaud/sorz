@@ -1,15 +1,19 @@
 Purpose of this project:
-Implement a modern port of TODO(game name). The code is portable and maintainable, with modern
-engineering practices.
+Implement a modern re-implementation of Streets of Rage (Sega Mega Drive, 1991). The code is
+portable, maintainable and extensible, with modern engineering practices, and written in the
+game's terms: it is neither an emulator nor a translation of the original's program. Its content
+comes from a human-readable tree that the game extracts from the ROM the user supplies.
 
 The targeted platforms are Linux/SDL, Windows/SDL and the browser through WebAssembly.
 
-The game plays as the original does: the port recreates the experience of the DOS game.
+The game plays as the original does: first similar (its mechanics measured equal), then exact if
+needed; the sound is exact. The reference is sor-remaster, a translation of the original verified
+against it, outside this repository (DESIGN.md section 12).
 
 Rules:
 - Create small self-contained commits on the main branch, each one building and passing the
   tests. The subject is `area: description`; the body says why and how it was verified, wrapped
-  at 100 columns. Do not push: the user decides what leaves the machine.
+  at 100 columns. Never push: the user decides what leaves the machine.
 - Maintain PLAN.md: a missing item is first documented in PLAN.md, in its own commit, with the
   rationale in the commit message. When an item's gate is met, flag it ([x]). The plan holds
   items, scopes and gates, not commentary.
@@ -31,6 +35,10 @@ Rules:
   outside the repository, with a reproduction. If it blocks the work, stop and raise the flag.
 - Put scratch output (builds, captures, screenshots, logs) under /tmp/<project>, never in the
   repository or in zig-out, and delete it when the check is done.
-- Never write into the original's files: copy the game directory before an emulator runs it.
+- Never write into the original's files: an emulator runs a copy of the ROM.
 - Stop processes by PID. `pkill -f` and `pgrep -f` also match the caller's own command line.
 - Remove an agent worktree and its branch once its work has landed.
+- Never port sor-remaster's code line by line. A mechanic is written in the game's terms, with
+  its numbers as content, and checked against sor-remaster at the level of meaning.
+- No ROM address, RAM offset, register name or console term in the engine's code (DESIGN.md P1):
+  the original's places belong to the extractor, the content's provenance and sor-re's port maps.
