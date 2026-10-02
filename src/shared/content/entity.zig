@@ -110,7 +110,8 @@ pub const Definition = struct {
     team: Team,
     /// The behaviour that drives it, by its name (world/behaviours.zig).
     behaviour: []const u8,
-    health: u16 = 0,
+    /// 0 to 32767: the world's health is signed (an enemy's goes below zero, as the original's).
+    health: u15 = 0,
     /// Added to its frames' palettes.
     palette: u2 = 0,
     /// Added to the height's speed each logic tick in the air, in 1/65536 pixel.
@@ -170,7 +171,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *con
         .behaviour = try (try root.get("behaviour")).string(),
     };
     if (!art.validName(d.behaviour)) return (try root.get("behaviour")).fail("not a behaviour's name (a-z, 0-9, _)");
-    if (try root.opt("health")) |n| d.health = try n.int(u16);
+    if (try root.opt("health")) |n| d.health = std.math.cast(u15, try n.int(i64)) orelse return n.fail("not 0 to 32767");
     if (try root.opt("palette")) |n| d.palette = std.math.cast(u2, try n.int(i64)) orelse return n.fail("not 0 to 3");
     if (try root.opt("gravity")) |n| d.gravity = try n.int(i32);
     if (try root.opt("shadow")) |n| d.shadow = try n.boolean();
@@ -536,6 +537,7 @@ test "a refused definition names its field" {
         .{ .text = "{\"family\": \"enemy\", \"team\": \"enemy\", \"behaviour\": \"x\", \"boxes\": {\"b\": {\"x\": [3, 1], \"depth\": [0, 0], \"height\": [0, 0]}}}", .want = "entities/dummy.json: field boxes.b.x: from past to" },
         .{ .text = "{\"family\": \"enemy\", \"team\": \"enemy\", \"behaviour\": \"x\", \"moves\": {\"m\": {\"animation\": \"none\"}}}", .want = "entities/dummy.json: field moves.m.animation: no animation of this name" },
         .{ .text = "{\"family\": \"enemy\", \"team\": \"enemy\", \"behaviour\": \"x\", \"palette\": 4}", .want = "entities/dummy.json: field palette: not 0 to 3" },
+        .{ .text = "{\"family\": \"enemy\", \"team\": \"enemy\", \"behaviour\": \"x\", \"health\": 40000}", .want = "entities/dummy.json: field health: not 0 to 32767" },
         .{ .text = "{\"family\": \"enemy\", \"team\": \"enemy\", \"behaviour\": \"Big\"}", .want = "entities/dummy.json: field behaviour: not a behaviour's name (a-z, 0-9, _)" },
     };
     for (cases) |c| {

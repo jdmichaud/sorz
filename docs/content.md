@@ -179,9 +179,9 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
 - `behaviour`: the behaviour module that drives it, by name. The world refuses a kind whose
   behaviour does not exist, or that lacks a number, a sound, an animation or a move the behaviour
   reads, naming the file and what is missing.
-- `health`; `palette` (0 to 3), added to its frames' palettes; `gravity`, added to its height's
-  speed every logic tick in the air; `shadow`, whether a shadow follows it on the ground. Each is
-  optional: 0, or false.
+- `health` (0 to 32767); `palette` (0 to 3), added to its frames' palettes; `gravity`, added to
+  its height's speed every logic tick in the air; `shadow`, whether a shadow follows it on the
+  ground. Each is optional: 0, or false.
 - `numbers`: the behaviour's numbers by name, integers in the units the behaviour gives them.
   `sounds`: the sounds the behaviour asks for, by their role, each a name of the sound content
   (`docs/content-sound.md`).

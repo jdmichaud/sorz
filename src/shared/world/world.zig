@@ -103,7 +103,7 @@ pub const World = struct {
             .team = k.definition.team,
             .position = position,
             .facing = facing,
-            .health = std.math.cast(i16, k.definition.health) orelse std.math.maxInt(i16),
+            .health = k.definition.health,
             .palette = k.definition.palette,
             .mind = behaviours.initial(k.behaviour),
         };
