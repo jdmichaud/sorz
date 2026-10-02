@@ -1,34 +1,68 @@
 # sorz — design
 
-Design statement, TODO(date). This document defines the architecture and its contracts. It changes
-only with the user's approval (`AGENTS.md`). The sections marked TODO describe the original game;
-write them when the port starts. The rest is the design that previous ports arrived at, and it
-applies to any port of an old game as it is.
+Approved 2026-10-02 (the user: "Implement the proposal", sor-re/docs/sorz-design.md). This
+document defines the architecture and its contracts. It changes only with the user's approval
+(`AGENTS.md`).
+
+sorz is a clean re-implementation of Streets of Rage (Sega Mega Drive, 1991). A first port, now
+**sor-remaster**, translated the cartridge's program routine by routine and is verified against the
+original field by field, write by write and pixel by pixel; it is sorz's **reference**. sorz is
+written in the game's terms, with its own structure, and is checked against sor-remaster at the
+level of meaning (section 12).
 
 The game owns the rules, the simulation, the input interpretation, the drawing and the sound
 generation. The platform supplies devices, storage, time and transport. The interfaces make
 errors, memory ownership, asynchronous operations and the frame format explicit.
 
-## 1. Principles
+## 1. Goals and principles
 
-- **Fidelity is defined by the original game's observable behaviour.** The original executable,
-  its data files and recorded traces of it running are the reference. Disassembly and recovered
-  source code help to find and understand that behaviour; they are not the reference
-  (`docs/reverse-engineering.md`).
-- **The port chooses its own structure.** APIs, data structures, algorithms and control flow are
-  chosen for clarity and portability, and their results are checked against the original. The
-  original's addresses and register conventions belong in comments, port maps and compatibility
-  parsers, not in the runtime's structure.
-- **Linux/SDL first, the agent host alongside.** The headless agent host drives the same game
-  without a window from the first items. Windows and the browser follow on the same shared code.
-- **Few dependencies.** Zig and SDL2 for the native game; nothing beyond the browser for the
-  browser build.
-- **Static linking where practical** (section 8).
+- **G1 Plays as the original**, in two steps:
+  - **similar** first: the mechanics measured equal (section 11);
+  - then **exact** if similar is not good enough: the same pictures and the same events tick by
+    tick.
+  - **Sound is exact from the start.**
+- **G2 A modern, readable program.** Code in the game's terms (a punch, a grab, a wave of
+  enemies), not the console's (a RAM offset, a VDP command).
+- **G3 Extensible.** New rules, moves, characters, rounds and screens are additions to data and to
+  small systems, not forks of code (section 10.7).
+- **G4 Efficient.** A few percent of a core, in a debug build too.
+- **G5 The same platforms and features**:
+  - Linux, Windows and the browser;
+  - network play, with the native host, the native guest and the relay;
+  - the settings.
+
+- **P1 The game's terms, not the console's.** No ROM address, RAM offset, register name or VDP
+  command in the engine's code. The original's knowledge lives in three places:
+  - the **content** (data with names, made by the extractor);
+  - the **extractor** (the one place that reads the ROM, by address, as a parser);
+  - the **port maps** in sor-re.
+
+  A check in the build fails on hexadecimal addresses in the engine's sources.
+- **P2 Data-driven content.** Characters, moves, enemies, items, rounds, screens, music and sound
+  effects are data in the asset tree: human-readable, named, validated when loaded. Code
+  implements systems and behaviours, parametrised by data.
+- **P3 Deterministic, exact-capable.** Determinism is what keeps the step to exact free of a
+  redesign:
+  - integer fixed-point at the original's precisions, never floating point, in the simulation;
+  - a fixed tick, and a defined order of the systems within it;
+  - one random generator with the original's algorithm, whose draws are explicit and named.
+
+  The same properties make network play and replays work.
+- **P4 Quirks are named behaviour.** Where exact needs one of the original's oddities (a sprite
+  list that drops pieces, a sound held back while a sample plays), it becomes a named, documented
+  rule in one place, never an accident of structure.
+- **P5 Verified against sor-remaster, at the level of meaning** (section 11).
+- **P6 One way to do a thing.** No parallel paths for "original" and "extended" spread through
+  the code: variants are configurations of the same systems (section 10.7).
 - **The repository stands alone.** No file of the original enters the repository, and no build or
   test needs one; a build that embeds the game's files takes a copy the user supplies.
 - **Each executable is self-contained.** At run time it reads only the user's copy of the game's
   files, its settings and its saves. Nothing it needs is installed beside it, and no option points
   it at such files.
+- **Few dependencies.** Zig and SDL2 for the native game; nothing beyond the browser for the
+  browser build. **Static linking where practical** (section 8).
+- **Linux/SDL first, the agent host alongside.** The headless agent host drives the same game
+  without a window. Windows and the browser follow on the same shared code.
 
 ## 2. The platform boundary
 
@@ -227,7 +261,8 @@ a defect. It is not the game the user runs: gates also run the SDL build (`docs/
 ### 5.2 The SDL host (`sorz-sdl`)
 
 The interactive game on Linux and Windows. The first positional argument names the game
-directory. Options select the window scale, a software renderer, an event log on standard output
+directory. The window's scale and full screen are the settings' (section 7); options select the
+window scale for a run, a software renderer, an event log on standard output
 (JSON lines, so a played session can be replayed headlessly once the agent host reads them), a
 run time, and the saves directory. Its updates are paced by the display when the renderer
 presents in step with it, and by a fallback pacer otherwise: a loop that presents nothing must
@@ -255,17 +290,25 @@ The browser keeps the game's records in its own storage, per address, and gives 
 the game starts.
 
 **Where the game's files come from.** The server that sends the page serves them: the page reads
-`assets/manifest.json` and fetches each `assets/NAME` it lists, and that server is the native game,
-reading the user's copy through its `AssetSource` (section 9). The page never asks the player to
-pick or upload the original's files. A page without a manifest says so and stops; it does not run
-a game without its files.
+`assets/manifest.json` (`{"files": [{"name", "size"}]}`) and fetches each `assets/NAME` it lists,
+and that server is the native game (`--netplay`, or the relay of `--server`), reading the user's
+copy through its `AssetSource` (section 9): the asset tree on disk, or the one exported from the
+ROM in memory. The tree has a `manifest.json` of its own at its root (`docs/assets.md`), so it is
+served under `assets/tree/`: the listing names `tree/manifest.json`, `tree/art/art.json`, and so
+on, and the page gives each file to the module under its name in the tree. The page never asks
+the player to pick or upload the original's files. A page without a manifest says so and stops;
+it does not run a game without its files.
 
 **The page looks like the game.** The player sees the game's style from the first frame. The page
-fetches first the few files the module needs to draw a screen, and from then on the module draws
-the loading screen and its progress itself, in the game's own palette, font and boxes. Until then,
-and for an error, the page's own text stands in, in the game's colours and the closest font, never
-in a browser or framework style. Messages reach the player in the game's words and look, not as
-browser dialogs.
+fetches first the three files the module needs to draw a screen (the play font's codes and tiles,
+and the menu's palette), and from then on the module draws the loading screen and its count of
+files itself, with the look of the game's menu after the title: black, the play font, the menu's
+colours. The choice that starts the game is that menu, 1 PLAYER, 2 PLAYERS and SETTINGS (a line
+the page cannot offer dimmed, as the menu dims 2 PLAYERS without a second pad), and the messages
+of network play and of errors are drawn the same way, over the game's picture once it has one.
+Until then, and for an error the module cannot draw, the page's own text stands in, in the menu's
+colours and the closest font (bold slanted capitals), never in a browser or framework style.
+Messages reach the player in the game's words and look, not as browser dialogs.
 
 ### 5.4 A build with the game's files inside (optional)
 
@@ -280,17 +323,14 @@ the game then disables what needs it.
 
 - **Explicit state.** A game is a value; nothing is global. Several games in one process do not
   share state.
-- **The original's arithmetic.** Fixed-point values keep the original's widths, signedness,
-  intermediate widths, rounding, wrapping and division. Central helpers do the arithmetic; a
-  wider intermediate truncates at the original's point.
-- **One explicit RNG**, with the original's algorithm and the original's call order. A draw that
-  the original makes, the port makes, even when it does not use the value.
-- **Event order, not step size.** An event-driven simulation keeps the original's event order and
-  tie-breaking; the scheduler's data structures are the port's own.
-- **Flags as values.** A routine of the original that answers in a CPU flag returns an optional
-  or a second value in the port.
+- **Integer fixed-point** at the original's precisions in the simulation, never floating point;
+  central helpers do the arithmetic, with the original's widths and rounding where they are
+  observable.
+- **One explicit random generator**, with the original's algorithm. Each draw is a named call, so
+  that their order can be made the original's (exact).
+- **A fixed tick and a fixed order** of the systems within it (section 10).
 - **Canonical state.** A hash and a serialisation over named fields in a defined order and byte
-  order, never over padding or pointers, identify the state for tests, saves and the network.
+  order, never over padding or pointers, identify the state for tests, replays and the network.
 
 ## 7. Assets and saves
 
@@ -298,8 +338,32 @@ the game then disables what needs it.
   source the port adds: a CD image, files built in). The port never commits them.
 - **Saves.** One versioned format per kind of record (settings, a game in progress, ...). A record
   of another version is refused, not converted: no readers for old versions.
-- **The original's own files** (its saves, its configuration) are the original's formats, read
-  by importers; whether the port also writes them is decision D1 of the plan.
+- **Settings.** The cartridge has no saves (decision D2), so the port's one record is its own
+  settings: `settings.json` in the platform's `Storage` (`src/shared/settings/`), with the pads'
+  keys, the controllers' buttons, the volume and the SDL host's window. The game's own options
+  stay the original's and reset at power-on, so no record changes the simulation. The player
+  changes the settings on a screen of the game (F1), which holds the game while it is open. A
+  damaged record never stops the game: a field that does not read gives its default and the rest
+  is kept, the player is told once, and the damaged record is kept beside the repaired one. A
+  host's command line wins over the record for its run.
+
+### Content
+
+- **C1 The extractor** (today's exporter, rewritten around the content model) reads the user's ROM
+  and writes the content:
+  - art and maps as images and tile maps;
+  - characters and enemies with their moves (frames, boxes, damage, sounds);
+  - rounds with their scripts;
+  - music as sequences;
+  - texts.
+
+  It is the one place that knows ROM addresses, and it says where each value comes from in a
+  comment of the data, for provenance.
+- **C2 The content's schema** is part of the design: versioned, validated when loaded, with errors
+  that name the file and the field.
+- **C3 Overlays:** a mod is a directory of content over the extracted one, on the same paths.
+- **C4 The repository holds no content of the game**: the extractor and the schema, never the
+  data (as now).
 
 ## 8. Builds and linking
 
@@ -324,71 +388,291 @@ The toolchain is pinned (`build.zig.zon`, `build.zig`). The modules, and what ea
 - **The browser.** `wasm32-freestanding`, imported memory, no compiler-rt, imported symbols for the
   host functions, no entry point (section 5.3).
 
-## 9. Networking (TODO: remove if the original has no network play)
+## 9. Networking
 
-**Network play simulates complete commands deterministically on both sides.** The canonical game
-state holds the players, the simulation state, the rules state and the RNG; the camera, menus,
-devices and connections live outside it. Human input, computer players, replays and the network
-use the same typed commands, and shared game logic checks their legality.
+The original's two players share one console. Network play is an addition (plan items A1 and A2):
+two players on two machines, each with their own pad, playing the same game as if on one console.
 
-- The game logic and the simulation apply validated commands and expose state and outcomes.
-- The session protocol adapter, in shared code, encodes and decodes messages and keeps the
-  handshake, the ordering, the acknowledgements, the retries and the epochs.
-- The platform transport moves messages and reports connection events. The skeleton has none:
-  the port adds it to the platform contract (connect, listen, send, close; connected,
-  disconnected and received events) and to each backend.
+**The ways to play** (the user, 2026-10-01). Two players on one machine use the native game; a
+browser always has one player.
 
-The port's own protocol is versioned: a handshake (protocol and simulation versions, asset
-identity, rules, players, initial state), commands proposed by the active player and ordered by
-the host peer, and a canonical state hash compared at each turn boundary. A mismatch pauses the
-game with its diagnostics. Previews of aiming or movement are separate from commands, rate-limited
-and discarded when stale. A disconnect keeps the session's epoch, and a duplicated command never
-acts twice.
+| How it starts | Players on the machine | Who is who |
+| --- | --- | --- |
+| `sorz DATA` | 1 or 2 (the keyboard's two layouts, two gamepads) | as on the console |
+| `sorz DATA --netplay PORT` | 1 | the host is player 1; its guest (a browser on the served page, or `sorz DATA --join`) player 2 |
+| `sorz DATA --server PORT` | 1 a browser, none on the server | the first browser to choose 2 PLAYERS is player 1, the next player 2 |
+| a browser on the relay's page, 1 PLAYER | 1 | player 1, alone, no network |
 
-The transport delivers whole messages, reliably and in order, while a connection lives. `send`
-means accepted into a bounded queue; received messages arrive through `pollEvents`. The first
-transport is decision D2 of the plan (in a previous port, the native game served the browser build
-and a WebSocket on one port).
+A machine with one player shows one layout of keys in its settings, and every gamepad drives that
+player; network play sends that player's pad. A player who opens the settings during a network
+game pauses both games, and the other player is told why.
 
-The native game serves the browser build from inside itself. `build.zig` embeds the page, the
-script and the module into the executable (a generated module with `@embedFile`, the same way the
-module-import check reads them), so there is no `web` directory to serve and no option to serve
-one. The game files the guest loads come from the host's `AssetSource`, the user's copy.
+**Delay-based input lockstep.** Both peers run the same deterministic simulation from power-on;
+the only thing that crosses the network in play is each player's pad. The host is player 1, the
+guest player 2. Every VBlank, a peer samples its pad and sends it for VBlank N + D, where the input
+delay D is chosen at the session's start from the measured round trip (2 to 6 VBlanks); VBlank N
+runs when both pads for N are in. The loads' waits (sim/load_times.zig) are VBlanks like any
+other, so the peers stay in step through them. Rollback (predicting the other pad and re-running
+the VBlanks it changes) is not planned: a co-operative beat-'em-up tolerates a few VBlanks of
+delay, and re-running VBlanks would replay the sound. It is the upgrade if the delay is felt.
 
-Two browsers can also play with no native game (in a previous port, `--server ADDRESS:PORT`). The
-native program then only serves the page and relays the session's binary messages between two
-WebSockets; the first browser to connect is the host. The server tells each page its role in a
-text message (`host`, `guest`), and tells the host when its guest arrives and leaves (`peer`,
-`left`). The host's page shows its guest to the module as a connection of its own, so the game's
+- **Canonical state.** The simulation's state is one value, and the lockstep's RAM projection
+  (`State.project`) is its canonical serialisation. Its hash is exchanged every 30 VBlanks; a
+  mismatch pauses the game, and the peers then compare their projections field by field, as the
+  lockstep does, to name the first differing field.
+- **Time.** Each peer runs its VBlanks at its own sound device's rate (section 3.4), and the two
+  devices' clocks differ slightly. The peer that gets ahead of the other stretches its sound by up
+  to 0.5 % (the synthesiser's output rate) until they are level again, so neither waits with an
+  empty sound queue. A peer whose partner's input is late holds: no VBlank runs, the picture stays,
+  and the sound fades rather than breaks.
+- **Game data.** A browser guest loads the game's files of the native game that serves its page
+  (section 5.3): the host's copy, or the relay's. A native guest uses its own. The handshake
+  compares the data's identity, its asset tree's digest (a ROM's is the digest of the tree
+  exported from it, so a ROM, an unedited export of it and a page's copy of either are the same
+  data), and refuses a session between different data. In a session, only the pads cross the
+  network.
+
+The layers:
+
+- The game (game.zig) takes the merged pads of each VBlank from the session instead of the local
+  controls, and never runs a VBlank ahead of them.
+- The session protocol, in shared code, encodes and decodes messages and keeps the handshake
+  (protocol and build versions, data identity, roles, input delay), the inputs by VBlank, pings,
+  state hashes, the hold, and reconnection. It is outside the simulation.
+- The platform transport moves whole messages, reliably and in order, while a connection lives:
+  `connect`, `listen`, `send` (accepted into a bounded queue) and `close`, and the events
+  `connected`, `disconnected` and `received` through `pollEvents`. The transport is WebSocket
+  (RFC 6455): the native build implements a server and a client on `std.Io.net`, the browser uses
+  the page's WebSocket. The agent host has an in-memory pair, so two agent instances can play a
+  session in one test.
+
+**Netplay** (`sorz DATA --netplay [ADDRESS:]PORT`): the native game serves the browser build's
+files, the game's files of DATA (section 5.3) and a WebSocket on one port, and is the host. A guest
+joins from a browser at that address, whose page loads the host's files and offers 2 PLAYERS
+only, or from another native game with its own data (`sorz DATA --join ws://ADDRESS:PORT`). The
+native game serves the browser build from inside itself: `build.zig` embeds the page, the script
+and the module into each executable (the generated module `web_page`, with `@embedFile`), so there
+is no `web` directory to serve and no option to serve one.
+
+**Server mode** (`sorz DATA --server [ADDRESS:]PORT`): `sorz-sdl --server` and `sorz-agent
+--server` run no game; `sorz-server`, a program of its own that links nothing, does the same on a
+machine without the display and sound libraries that `sorz-sdl` needs to start. It serves the
+page built into it and the game's files of DATA, and relays the session's binary messages between
+two WebSockets; it never parses them. A page whose player chooses 1 PLAYER plays alone on the
+served files and never joins the relay: one player has the browser game with nothing but a
+server. Of the pages whose players choose 2 PLAYERS, the first to connect is the host. The server
+tells each page its role in a text message (`host`, `guest`), and tells the host when its guest
+arrives and leaves (`peer`, `left`). The host's page answers a `left` with its own `left`, and the
+server drops what the host sent before that answer, so that no stale message reaches the next
+guest. The host's page shows its guest to the module as a connection of its own, so the game's
 host logic needs no listening socket; its manifest says it is a relay, so the page reports the
-connection open only after its role. A host that leaves ends its guest's connection, and the next
-browser to join hosts.
+connection open only after its role. A host that leaves ends its guest's connection (the guest's
+page is told `left`), and the next browser to join hosts. A third browser while two play is told
+`busy` and turned away; its page offers 1 PLAYER again. Each connection's queue is bounded: a page
+that does not read is dropped when its queue is full, so that its partner never stalls; a page
+silent for 15 seconds is dropped. A relay guest whose connection drops starts a new session on
+reload.
 
-The original's own protocol, if the port must talk to the original, is a separate adapter: an
-offline codec from captured packets first, then its session rules.
+A session starts at power-on: both games boot together once the handshake is done. A dropped
+connection holds both games; the same session resumes when the guest reconnects, since both
+peers kept their state. A game that restarts starts a new session.
 
-TODO: what the original's network code does (message types, the synchronisation model), from
-its bytes.
+## 10. The game
 
-## 10. Faithfulness
+### 10.1 Architecture
 
-- Every behaviour has evidence: a reading of the original's bytes, a measurement of the original
-  running, or a recorded trace. A comment names the original's routine and address it follows.
-- Each subsystem has a port map (`docs/port-map-template.md`): what the original's pieces are,
-  where they are in the port, and how they were checked.
-- A deliberate difference from the original is the user's decision, recorded where the code makes
-  it and, for a feature, as an addition in the plan (A1, A2, ...).
-- A report of a defect is a lead: measure the original before changing the port.
+```
+ hosts (SDL, agent, browser)      platform contract: frames, input, audio, storage, transport
+        |
+ app: scenes (boot, title, menu, options, select, round, continue, ending, settings...)
+        |
+ engine: world (entities, systems), camera, rounds' scripts     <- content (asset tree)
+        |                     |
+ renderer (layers, sprites)   audio (sequencer -> chips -> PCM)
+```
 
-## 11. The original (TODO)
+- **Hosts and platform:** carried over from sor-remaster after review (plan item F1). The contract
+  stays: the game is a value; hosts give it time, input, storage and a transport, and take its
+  frames and PCM.
+- **The app** is a stack of **scenes**. Each scene owns its state, takes input, advances on the
+  tick, and draws.
+- **The engine** runs a round: a world of entities, the systems that move them, the round's
+  script and the camera.
+- **The renderer and the audio** are subsystems the scenes and the engine drive through plain
+  descriptions: a frame's layers and sprites, sound events.
 
-- TODO: the executable: its format (DOS extender, protected or real mode), its memory map, where
-  its tables are, the version the port follows and its digest.
-- TODO: video: the modes, their drivers, resolutions and palettes, and what differs per mode
-  (fonts, cursors, layout).
-- TODO: sound: the devices the original supports and the one the port reproduces.
-- TODO: input: keyboard tables, the mouse model (absolute or integrated deltas, sensitivity),
-  joysticks.
-- TODO: files: the layout of the CD and of the installed game, the configuration file.
-- TODO: network: the link types the original offers.
-- TODO: the subsystems, each with its port map in `docs/`.
+### 10.2 Time
+
+- **T1 The display tick** is 59.92 Hz, the console's frame. Presentation, fades and the audio
+  pacing count display ticks.
+- **T2 The logic tick:** in play the original runs its logic every other display tick (30 Hz)
+  and draws in between. The engine has a logic tick at that rate, and the round's systems run on
+  it; screens that run at 60 Hz have their own rate. The scheduler says which ticks run what, in
+  one place.
+- **T3 Lag and slowdown** (the original's dropped frames, decision D3): not reproduced, unless
+  decided otherwise; the scheduler is the one place where it would go.
+- **T4 Loads** (the original's waits while a round loads) are scenes of their own with their
+  measured length, so the timing of music and fades around them stays the original's.
+
+### 10.3 The world
+
+- **W1 Entities.** A fixed pool, enough for the original's 66 objects at once and room to spare.
+  An entity has a stable handle (index and generation), so a stale reference is caught.
+- **W2 Its data is typed fields, not a record of bytes:**
+  - position: x, depth on the ground and height, fixed-point;
+  - velocity;
+  - facing;
+  - team: player, enemy, neutral;
+  - health and lives;
+  - the current move and its frame;
+  - the animation and its frame;
+  - the collision boxes in use;
+  - timers;
+  - a reference to its definition in the content.
+- **W3 Behaviour** is a state machine per kind of entity, with named states:
+  - player: walk, attack, grab, thrown, knocked down...;
+  - enemy: approach, wait, attack, flee...;
+  - weapon: lying, held, thrown.
+
+  The states are code; their numbers (speeds, durations, ranges, damage) are the definition's
+  data. A kind of enemy is one definition plus, when its behaviour is its own (a boss), one
+  behaviour module.
+- **W4 Systems in a fixed order per logic tick:**
+  1. input to commands;
+  2. player control;
+  3. AI decisions;
+  4. movement and gravity;
+  5. hit and hurt boxes, hits and their reactions;
+  6. grabs and throws;
+  7. pick-ups;
+  8. the round's script (spawns, events, walls of the camera);
+  9. the camera;
+  10. animation;
+  11. sound events;
+  12. the draw list.
+
+  The order is part of the game's definition: exact may require reordering a step, and then it is
+  done here.
+- **W5 Depth and drawing order:** entities are drawn by depth, with the original's tie-breaking
+  as a named rule.
+- **W6 The round's script:** a round is data:
+  - its map and layers;
+  - the camera's limits and stops;
+  - the triggers that bring waves of enemies;
+  - the items in its scenery;
+  - its special events: the police car, the lift, the boss's arrival;
+  - its music.
+
+  Special set pieces that are more than data (round 5's ship, round 7's lift, round 8's offer)
+  are behaviour modules the script names.
+
+### 10.4 Scenes and flow
+
+- **S1 Scenes:**
+  - boot, Sega logo, intro, title, game menu, options, character select;
+  - round (intro, play, clear, tally), continue, game over, name entry, ending, high scores;
+  - the port's settings screen.
+- **S2 The flow between scenes is a graph described in one place** (a table of scenes and their
+  exits). The ways to play (`docs/workflows.md` of sor-remaster: W1 to W6) are variants of that
+  graph. The browser's flow, for example, has no second menu, and its 2 PLAYERS means the other
+  machine.
+- **S3 Overlays** (the settings screen, the network messages, the pause) are scenes pushed over
+  another, which they hold or not by their own rule.
+
+### 10.5 Rendering
+
+- **R1 A description, not a VDP.** A frame is:
+  - two scrolling tile layers, with per-line or per-column scroll for the effects that need it
+    (round 3's waves);
+  - a fixed layer for the status bar and the window;
+  - sprites with priority and palette;
+  - 4 palettes of 16 colours, with fades and cycles.
+
+  The renderer composes it into 320 × 224 indexed pixels, then RGBA.
+- **R2 Art by name:** tiles, maps and sprite frames are assets with names; the renderer keeps them
+  ready to draw. There is no VRAM to manage, and no tile slots.
+- **R3 Exactness of pixels** is reachable because the layers' rules are the console's: priority,
+  transparency, the 8-pixel cells. The sprite limits are not reproduced (decision D4).
+- **R4 Efficiency:**
+  - the layers are drawn by cell and by run;
+  - unchanged layers are not drawn again;
+  - a frame is composed only when the picture changed.
+
+### 10.6 Sound
+
+- **A1 The game asks for sounds by name** ("menu move", "punch hits", "round 1 music"), and the
+  content maps each name to its music or effect.
+- **A2 A sequencer plays them:**
+  - tracks of notes, rests, instrument and volume changes, loops, vibrato;
+  - channels assigned with the original's priorities: an effect takes a music channel and gives
+    it back.
+
+  It is a clean implementation of the original driver's semantics, its music data turned into
+  readable sequences by the extractor.
+- **A3 The chip models** (YM2612 from ymfm, the PSG, the DAC and its samples, the model 1 output
+  stage) carry over from sor-remaster as they are. They model hardware, are bit-exact against
+  ymfm, and are already efficient.
+- **A4 Exact:** the sequencer's register writes are checked against sor-remaster's driver for
+  every song and effect, then the PCM. The five known drum-hit cases depend on the 68000's and
+  the Z80's timing: they get a deliberate, named model.
+
+### 10.7 Extensibility and variants
+
+- **E1 The extension points:**
+  - new content: characters, moves, enemies, rounds, items, music;
+  - rules as small, named policies, each a function with a default: may two players choose the
+    same character; the player palettes for a duplicate; the number of lives; friendly fire;
+  - scenes and the flow graph;
+  - behaviour modules for special enemies and set pieces;
+  - the settings.
+- **E2 Variants** are configurations: a flow graph, a set of policies and content overlays.
+  - **original**: the cartridge's flow and rules, the target of exact.
+  - **extended**: the default; port additions such as VOLUME in OPTIONS, or the same character
+    twice.
+  - **network**: the flow adapted to one player a machine.
+
+  A variant is chosen at start; in network play the host's is both games'.
+- **E3 Example: the same character twice.** The select scene asks the policy whether a choice is
+  taken. The world loads each player's palette from the character's definition and the
+  "duplicate" palette rule. No other code knows about it.
+
+## 11. Verification
+
+- **V1 Unit tests** for each system, on synthetic content.
+- **V2 Semantic traces.** Both programs emit the same vocabulary of events per tick:
+  - "entity of kind K entered state S";
+  - "hit: attacker, target, damage";
+  - "spawn";
+  - "sound requested";
+  - "camera moved";
+  - "scene changed".
+
+  sor-remaster gets an observer that derives them from its state each tick, so its code does not
+  change.
+- **V3 Similar, mechanic by mechanic:** short scenarios run from the same starting state in both
+  programs (sor-remaster can produce the state at any tick; a converter gives the new sorz the
+  same situation in its terms). Then their traces and measurements are compared:
+  - each move's start-up, active and recovery frames, hit boxes, damage, knock-back;
+  - speeds, jumps and throws' arcs;
+  - the AI's delays, ranges and choices, as distributions over many runs;
+  - the rounds' spawns and the camera's stops;
+  - the screens' timings.
+
+  Each comparison has a stated tolerance. Long runs are not compared: two plausible games diverge
+  at the first different decision.
+- **V4 Exact:** the traces equal tick by tick from power-on with the same inputs; the pictures
+  equal sor-remaster's (which equal the original's); the sound's writes and PCM equal.
+- **V5 The user plays it:** feel is judged by hand once the numbers match.
+- **Evidence.** Every mechanic has evidence: a measurement of sor-remaster or of the original
+  running. A deliberate difference from the original is the user's decision, recorded where the
+  code makes it, and as a variant's policy (section 10.7).
+- **A report of a defect is a lead:** measure sor-remaster (or the original) before changing sorz.
+
+## 12. The reference and the original
+
+- **sor-remaster** (`/home/jd/sor/sor-remaster`, outside this repository) is the reference: a
+  program that plays exactly as the original, deterministic, inspectable at every tick, with an
+  observer that writes its semantic traces (section 11).
+- **The original's description** lives in sor-re: the port maps (`sor-re/docs/*-port-map.md`), the
+  disassembly and the tools. The extractor's comments name the ROM's places it reads.
+
