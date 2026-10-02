@@ -10,10 +10,10 @@ const std = @import("std");
 const json = @import("../formats/json.zig");
 const art = @import("art.zig");
 
-pub const flip_h: u32 = 0x8000_0000;
-pub const flip_v: u32 = 0x4000_0000;
-pub const flip_d: u32 = 0x2000_0000;
-const gid_mask: u32 = 0x1FFF_FFFF;
+pub const flip_h: u32 = 1 << 31;
+pub const flip_v: u32 = 1 << 30;
+pub const flip_d: u32 = 1 << 29;
+const gid_mask: u32 = flip_d - 1;
 
 pub const attributes_name = "attributes";
 pub const attributes_count = 8;

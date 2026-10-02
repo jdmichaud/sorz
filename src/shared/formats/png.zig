@@ -101,7 +101,7 @@ pub fn encode(gpa: std.mem.Allocator, width: u32, height: u32, pixels: []const u
     try z.appendSlice(gpa, &.{ 0x78, 0x01 });
     var at: usize = 0;
     while (true) {
-        const n = @min(raw.len - at, 0xFFFF);
+        const n = @min(raw.len - at, std.math.maxInt(u16));
         const last = at + n == raw.len;
         try z.append(gpa, @intFromBool(last));
         var len: [4]u8 = undefined;
