@@ -12,3 +12,6 @@ src/shared/audio/chips/ hex -- the sound chips' models (YM2612, PSG, DAC, model 
 src/shared/audio/chips/ cpu -- the chip models name the processors that write to the chips, as the hardware's documentation does (A3)
 src/shared/audio/chips/ vdp -- the PSG sits in the console's video chip; its model says so (A3)
 src/shared/audio/chips/ vblank -- the synthesiser counts chip cycles per display tick, the hardware's clock ratio (A3)
+src/shared/audio/clock.zig cpu -- the sound's timing model: the drum hits held while a sample plays depend on the two processors' cycles, a named quirk (DESIGN.md 10.6 A4)
+src/shared/audio/output.zig cpu -- the output stage times the samples in the processors' cycles, as the timing model gives them (A4)
+src/shared/audio/output.zig vblank -- the output stage counts chip cycles per display tick (A4)
