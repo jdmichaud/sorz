@@ -1,7 +1,7 @@
 // `zig build browser-check`: the browser build in Chromium, against the agent host, and two pages
 // through the relay.
 //
-//   node browser_check.mjs --web DIR --agent SORZ_AGENT --server SORZ_SERVER
+//   node browser_check.mjs --web DIR --agent SORZ_AGENT --server SORZ_SERVER [--content DIR]
 //                          [--chromium PATH] [--ticks N] [--seconds S] [--keep DIR]
 //                          [--only relay | --only page]
 //
@@ -14,8 +14,13 @@
 //      page says so and stops, in its own text in the game's colours; served by the relay over a
 //      slow network, it says LOADING and its share of the files, then shows the choice that starts
 //      the game: 1 PLAYER, 2 PLAYERS, and SETTINGS dimmed (the settings screen is PLAN item 19).
-//      Pending (PLAN item 08): the module draws no screen yet, so its loading screen and menu are
-//      not compared with the game's.
+//      The small tree has no art: the module cannot draw its screens, and the page's text stands
+//      in, as it does for a tree without the game's font and menu.
+//   screens (with --content, a content tree extracted from the user's ROM): its font, its menu and
+//      its sound added to the small tree, over the slow network: the module draws the loading
+//      screen once it has the font and the menu, which come first, then the menu, in the game's
+//      font and colours, the arrow where the game's menu has it and SETTINGS dimmed; its sounds
+//      are made from the content.
 //   steps: 1 PLAYER, one tick per update (`sorz.step`), N ticks: the canvas's pixels and the
 //      frame's hash at the ticks the agent host wrote pictures of must equal the agent host's, and
 //      so must the state's hash and the frame's hash at the end, and every block of sound the game
@@ -70,7 +75,7 @@ for (let i = 2; i < process.argv.length; i += 2) {
 if (!options.web || !options.agent || !options.server) usage();
 
 function usage() {
-  console.error('usage: node browser_check.mjs --web DIR --agent SORZ_AGENT --server SORZ_SERVER [--chromium PATH] [--ticks N] [--seconds S] [--keep DIR] [--only relay|page]');
+  console.error('usage: node browser_check.mjs --web DIR --agent SORZ_AGENT --server SORZ_SERVER [--content DIR] [--chromium PATH] [--ticks N] [--seconds S] [--keep DIR] [--only relay|page]');
   process.exit(2);
 }
 
@@ -90,6 +95,12 @@ function makeTree(dir) {
   for (let i = 0; i < 40; i++) {
     fs.writeFileSync(path.join(dir, 'art', `blob-${String(i).padStart(2, '0')}.bin`), crypto.randomBytes(64 * 1024));
   }
+}
+
+// The small tree with the content's sets that the page's screens are drawn from, and its sound.
+function makeScreensTree(dir) {
+  makeTree(dir);
+  for (const sub of ['fonts', 'menu', 'sound']) fs.cpSync(path.join(options.content, sub), path.join(dir, sub), { recursive: true });
 }
 
 // --- the agent host's reference -------------------------------------------------------------
@@ -363,9 +374,9 @@ async function netplaySession(browser, realtime) {
 
 // The relay on a free port of 127.0.0.1, serving the page and the game's files of the tree; it says
 // so on standard error.
-async function startRelay() {
+async function startRelay(data = options.data) {
   const port = await freePort();
-  const child = spawn(options.server, [options.data, '--server', `127.0.0.1:${port}`], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const child = spawn(options.server, [data, '--server', `127.0.0.1:${port}`], { stdio: ['ignore', 'ignore', 'pipe'] });
   const relay = { child, url: `http://127.0.0.1:${port}/`, log: '', done: new Promise((resolve) => child.on('exit', resolve)) };
   child.stderr.on('data', (d) => { relay.log += d; });
   for (let tries = 0; !relay.log.includes('relaying'); tries++) {
@@ -681,7 +692,65 @@ async function pageCheck(browser, bareUrl) {
       no_files: { message: bare.message.split('\n')[0], color: bare.color, font_style: bare.font_style, overlay: bare.overlay },
       loading: { message: loading.message, files: loading.files, screens: loading.screens },
       menu: { message: menu.message, screens: menu.screens },
-      pending: 'the module\'s own loading screen and menu, drawn in the game\'s style and compared with the game\'s (PLAN item 08)',
+    }];
+  } finally {
+    await page.close();
+    if (relay.child.exitCode === null) relay.child.kill();
+    await relay.done;
+  }
+}
+
+// Part `screens`: the page of the relay over a slow network, its tree with the content's font,
+// menu and sound: the module draws the loading screen, then the menu, in the game's style.
+async function screensCheck(browser, data) {
+  const relay = await startRelay(data);
+  const page = await Page.open(browser.cdp);
+  // The canvas's pixels: those of the cell (column, row) in the colour `rgb`.
+  const cellHas = (pixels, column, row, rgb) => {
+    let n = 0;
+    for (let y = row * 8; y < row * 8 + 8; y++) for (let x = column * 8; x < column * 8 + 8; x++) {
+      const i = (y * 320 + x) * 4;
+      if (pixels[i] === rgb[0] && pixels[i + 1] === rgb[1] && pixels[i + 2] === rgb[2]) n += 1;
+    }
+    return n;
+  };
+  const look = `({ message: sorz.message, phase: sorz.phase, screens: sorz.screens, files: sorz.files,
+    overlay: document.getElementById('overlay').className, size: [sorz.canvasPixels().length] })`;
+  try {
+    await page.send('Network.enable');
+    await page.send('Network.emulateNetworkConditions', { offline: false, latency: 20, downloadThroughput: 1 << 20, uploadThroughput: 1 << 20 });
+    await page.navigate(relay.url);
+    await page.waitFor(`window.sorz !== undefined && sorz.screens && sorz.files.done > 15`, 60000, 'the module\'s loading screen');
+    const loading = await page.evaluate(look);
+    const loadingPixels = Buffer.from(await page.evaluate(canvasBase64), 'base64');
+    if (options.keep) await page.screenshot(path.join(options.keep, 'page-screens-loading.png'));
+    // LOADING on row 13, from column 14 to 26 or so: the font's white in its cells; the bar's
+    // dashes two rows below.
+    const white = [255, 255, 255];
+    const loadingLit = [15, 16, 17, 18].reduce((n, c) => n + cellHas(loadingPixels, c, 13, white), 0);
+    const loadingOk = loading.screens && /^LOADING \d{1,3}%$/.test(loading.message) && loading.overlay.includes('screen') &&
+      loadingPixels.length === 320 * 224 * 4 && loadingLit > 20;
+
+    await page.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    await page.waitFor(`sorz.phase === 'ready'`, 120000, 'the menu');
+    await page.waitFor(`sorz.stats().menu_sounds.every((n) => n > 0)`, 30000, 'the menu\'s sounds');
+    const menu = await page.evaluate(look);
+    const sounds = (await page.evaluate('sorz.stats()')).menu_sounds;
+    const pixels = Buffer.from(await page.evaluate(canvasBase64), 'base64');
+    if (options.keep) await page.screenshot(path.join(options.keep, 'page-screens-menu.png'));
+    // The game's menu's places: the lines at column 16 of rows 11, 13 and 15, the arrow two cells
+    // left; 1 PLAYER and 2 PLAYERS in the menu's white, SETTINGS dimmed (the menu's one-pad grey).
+    const dim = [49, 49, 49];
+    const arrow = [11, 13, 15].map((row) => cellHas(pixels, 14, row, white));
+    const lines = [11, 13, 15].map((row) => [16, 17, 18, 19].reduce((n, c) => n + cellHas(pixels, c, row, white), 0));
+    const dimmed = [16, 17, 18, 19].reduce((n, c) => n + cellHas(pixels, c, 15, dim), 0);
+    const menuOk = menu.screens && menu.message === '▶ 1 PLAYER\n2 PLAYERS\nSETTINGS (not here)' && menu.overlay.includes('screen') &&
+      arrow[0] > 5 && arrow[1] === 0 && arrow[2] === 0 && lines[0] > 20 && lines[1] > 20 && lines[2] === 0 && dimmed > 20 &&
+      sounds.every((n) => n > 1000);
+    return [loadingOk && menuOk, {
+      loading: { message: loading.message, files: loading.files, screens: loading.screens, lit: loadingLit },
+      menu: { message: menu.message, screens: menu.screens, arrow, lines, dimmed },
+      menu_sounds: sounds,
     }];
   } finally {
     await page.close();
@@ -711,9 +780,11 @@ async function main() {
       for (const [part, pass, fields] of await relayCheck(browser, chromium, path.join(scratch, 'profile-relay'))) report(part, pass, fields);
       return;
     }
+    if (options.content) makeScreensTree(path.join(scratch, 'game-screens'));
     if (options.only === 'page') {
       browser = await launch(chromium, path.join(scratch, 'profile'));
       report('page', ...await pageCheck(browser, bareUrl));
+      if (options.content) report('screens', ...await screensCheck(browser, path.join(scratch, 'game-screens')));
       return;
     }
     const began = Date.now();
@@ -729,6 +800,7 @@ async function main() {
     const url = relay.url;
 
     report('page', ...await pageCheck(browser, bareUrl));
+    if (options.content) report('screens', ...await screensCheck(browser, path.join(scratch, 'game-screens')));
 
     const page = await Page.open(browser.cdp);
 

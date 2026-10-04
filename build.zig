@@ -14,7 +14,8 @@
 //! dependency and that each executable, alone in a directory, serves its page
 //! (tools/check_alone.sh); `all` installs every binary of the target and of Windows (under
 //! <prefix>/windows) and the browser build. `browser-check` runs the browser build in Chromium
-//! against the agent host, and two pages through the relay (it needs Node.js and a Chromium);
+//! against the agent host, and two pages through the relay, and with `-Drom=ROM` the page's
+//! screens drawn from the ROM's content (it needs Node.js and a Chromium);
 //! `sound-check` compares the sound with sor-remaster's, from the user's ROM (`-Drom=ROM
 //! -Dremaster=DIR`), and `screens-check` the screens' pictures and sound, tick by tick from
 //! power-on (the same options).
@@ -469,9 +470,10 @@ pub fn build(b: *std.Build) void {
     // the page without files, its text from the loading to the menu, the game's frames and sound
     // compared tick by tick with the agent host's, a settings record applied, the game as the
     // player runs it, a hidden page, the keyboard, a gamepad, network play with the agent host as
-    // the host, and two pages through the relay (`sorz-server DIR --server`) and its rules. It
-    // needs Node.js and a Chromium, so it is not part of `test`; build it optimised
-    // (-Doptimize=ReleaseFast) for its real-time parts.
+    // the host, and two pages through the relay (`sorz-server DIR --server`) and its rules; with
+    // -Drom=PATH, the page's screens drawn by the module from the ROM's content. It needs Node.js
+    // and a Chromium, so it is not part of `test`; build it optimised (-Doptimize=ReleaseFast) for
+    // its real-time parts.
     const chromium = b.option([]const u8, "chromium", "The Chromium that browser-check drives (default: $CHROME, else chromium or chrome on the PATH)");
     const browser_check_step = b.step("browser-check", "Run the browser build in Chromium against the agent host, and two pages through the relay (needs Node.js and a Chromium)");
     {
@@ -489,6 +491,14 @@ pub fn build(b: *std.Build) void {
         run.addArg("--server");
         run.addArtifactArg(server_exe);
         if (chromium) |path| run.addArgs(&.{ "--chromium", path });
+        // With the user's ROM, the page's screens too, drawn by the module from its content.
+        if (rom_path) |rom| {
+            const tree = b.addRunArtifact(extract_exe);
+            tree.addArg(rom);
+            const content = tree.addOutputDirectoryArg("content");
+            run.addArg("--content");
+            run.addDirectoryArg(content);
+        }
         run.step.dependOn(web_step);
         run.has_side_effects = true;
         browser_check_step.dependOn(&run.step);

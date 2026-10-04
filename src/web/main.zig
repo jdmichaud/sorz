@@ -7,10 +7,10 @@
 //! and the script gives it its memory.
 //!
 //! The page's own screens (the loading screen, the menu that starts the game, the messages of
-//! network play and of errors) are the module's to draw in the game's style, from the first files
-//! the page fetches (`gp_screen_*`). TODO(PLAN item 08): the module draws them once the content
-//! (item 06), the renderer (07) and the menu's scene (08) exist; until then `gp_screen_open`
-//! refuses and the page's own text stands in, in the menu's colours.
+//! network play and of errors) are the module's to draw in the game's style (`screens.zig`), from
+//! the first files the page fetches, the content's font and menu (`gp_screen_*`); without them
+//! (a tree without that art), `gp_screen_open` refuses and the page's own text stands in, in the
+//! menu's colours.
 //!
 //! The game's settings record is the page's only settings (`settings.zig`): the module tells the
 //! page the record's sound and window when the game starts and whenever they change
@@ -23,6 +23,7 @@ const PageStorage = @import("storage.zig").PageStorage;
 const keys = @import("keys.zig");
 const gamepad = @import("gamepad.zig");
 const page_settings = @import("settings.zig");
+const screens_mod = @import("screens.zig");
 const record = sorz.settings.record;
 
 // --- the functions of the page ---------------------------------------------------------------
@@ -160,6 +161,10 @@ var ready = false;
 var game: ?*sorz.Game = null;
 /// The view of the settings the page was last told (`js_settings`).
 var told: ?page_settings.View = null;
+/// The page's screens, once the module has their files (`gp_screen_open`).
+var screens: ?*screens_mod.Screens = null;
+/// The last menu's sound made (`gp_menu_sound`).
+var menu_sound: []i16 = &.{};
 /// Why the last call failed, for `gp_error`.
 var error_text: [512]u8 = undefined;
 var error_len: usize = 0;
@@ -360,66 +365,98 @@ export fn gp_net_disconnected(id: u32, reason: u32) void {
 
 // --- the page's screens, in the game's style ---------------------------------------------------
 
-// TODO(PLAN item 08): the module draws the page's screens (DESIGN.md 5.3) from the files it needs
-// first (the play font's codes and tiles, and the menu's palette), which `gp_screen_files` names
-// for the page to fetch before the others: the loading screen and its count, the menu (1 PLAYER,
-// 2 PLAYERS, SETTINGS, a line it cannot offer dimmed, the arrow on the chosen one), and messages
-// over the game's picture. Until then it names no file and draws nothing, and the page's own text
-// stands in.
+// The module draws the page's screens (DESIGN.md 5.3) from the files it needs first, the content's
+// font and menu (`screens.zig`), which `gp_screen_files` names for the page to fetch before the
+// others: the loading screen and its count, the menu (1 PLAYER, 2 PLAYERS, SETTINGS, a line it
+// cannot offer dimmed, the arrow on the chosen one), and messages over the game's picture.
 
-/// The files the screens are drawn from, which the page fetches before the others: their names,
-/// one a line, in the scratch buffer. Returns the length (none yet).
+/// The files the screens are drawn from, which the page fetches before the others: the
+/// directories of the tree that hold them, each with its `/`, one a line, in the scratch buffer.
+/// Returns the length.
 export fn gp_screen_files() u32 {
-    return 0;
+    var w: std.Io.Writer = .fixed(&scratch);
+    for (screens_mod.sets, 0..) |set, i| w.print("{s}{s}/", .{ if (i == 0) "" else "\n", set }) catch return 0;
+    return @intCast(w.end);
 }
 
 /// Makes the screens from the files the page gave so far. Returns 0, or -1 with the reason in
 /// `gp_error` while the module cannot draw them: the page's own text then stands in.
 export fn gp_screen_open() i32 {
-    setError("the module draws no screen of the page yet (PLAN item 08)", .{});
-    return -1;
+    if (screens != null) return 0;
+    if (!ready) return -1;
+    const s = gpa.create(screens_mod.Screens) catch {
+        setError("no memory for the page's screens", .{});
+        return -1;
+    };
+    var reason: std.Io.Writer = .fixed(&error_text);
+    reason.writeAll("the page's screens: ") catch {};
+    s.open(gpa, assets.assetSource(), &reason) catch |err| {
+        gpa.destroy(s);
+        error_len = reason.end;
+        if (err != error.BadContent) setError("the page's screens: {s}", .{@errorName(err)});
+        return -1;
+    };
+    screens = s;
+    return 0;
+}
+
+fn presentScreen(rgba: []const u8) void {
+    page.js_present(rgba.ptr, screens_mod.width, screens_mod.height, screens_mod.width * 4);
 }
 
 /// The loading screen: `done` of `total` files.
 export fn gp_screen_loading(done: u32, total: u32) void {
-    _ = done;
-    _ = total;
+    const s = screens orelse return;
+    presentScreen(s.loading(done, total) catch return);
 }
 
 /// The menu that starts the game, the arrow on `choice`, a line whose bit of `available` is clear
 /// dimmed, and a note (`note_len` bytes in the scratch buffer) below.
 export fn gp_screen_menu(choice: u32, available: u32, note_len: u32) void {
-    _ = choice;
-    _ = available;
-    _ = note_len;
+    const s = screens orelse return;
+    presentScreen(s.menu(choice, available, scratch[0..@min(note_len, scratch.len)]) catch return);
 }
 
 /// The menu's line at (x, y) of the canvas, or -1.
 export fn gp_screen_pick(x: i32, y: i32) i32 {
-    _ = x;
-    _ = y;
-    return -1;
+    const s = screens orelse return -1;
+    const line = s.pick(x, y) orelse return -1;
+    return @intCast(line);
 }
 
 /// A message (`len` bytes in the scratch buffer, lines split at '\n'): on black, or, with `over`,
 /// over the game's last picture once it has one. Returns 0, or -1 when the module cannot draw it.
 export fn gp_screen_message(len: u32, over: u32) i32 {
-    _ = len;
-    _ = over;
-    return -1;
+    const s = screens orelse return -1;
+    var under: ?sorz.platform.RgbaFrame = null;
+    if (over != 0) if (game) |g| if (g.frames_presented != 0) {
+        under = g.frame();
+    };
+    presentScreen(s.show(scratch[0..@min(len, scratch.len)], under) catch return -1);
+    return 0;
 }
 
 /// A sound of the game's menu for the page's menu (`which`: 0 the arrow's move, 1 a choice), at
-/// 48 kHz: its frame count, the stereo frames then at `gp_menu_sound_ptr`; 0 when there is none.
-/// TODO(PLAN item 09): the menu's sounds, once the game plays sounds.
+/// 48 kHz, made from the sound content once the page gave it: its frame count, the stereo frames
+/// then at `gp_menu_sound_ptr`; 0 when there is none (the reason in `gp_error`).
 export fn gp_menu_sound(which: u32) u32 {
-    _ = which;
-    return 0;
+    if (!ready or which >= screens_mod.menu_sounds.len) return 0;
+    gpa.free(menu_sound);
+    menu_sound = &.{};
+    var reason: std.Io.Writer = .fixed(&error_text);
+    reason.writeAll("the menu's sound: ") catch {};
+    const before = reason.end;
+    menu_sound = screens_mod.menuSound(gpa, assets.assetSource(), screens_mod.menu_sounds[which], 48000, &reason) catch |err| {
+        error_len = reason.end;
+        if (reason.end == before) setError("the menu's sound: {s}", .{@errorName(err)});
+        return 0;
+    };
+    return @intCast(menu_sound.len / 2);
 }
 
 /// Where the frames of the last `gp_menu_sound` are.
 export fn gp_menu_sound_ptr() u32 {
-    return 0;
+    return @intFromPtr(menu_sound.ptr);
 }
 
 // --- the game ------------------------------------------------------------------------------------

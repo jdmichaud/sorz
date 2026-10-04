@@ -2,10 +2,10 @@
 // server that sent this page (the native game, from the user's own copy: DESIGN.md 5.3), then
 // runs the game: one update for each animation frame, the frames to the canvas, the keys, the
 // gamepads and the sound to the module and back. The player never picks or uploads a file. The
-// module keeps the tables of keys and buttons and all game logic, and is to draw the page's
-// screens in the game's style once its first files are in (`gp_screen_*`, src/web/main.zig: not
-// yet); this script only moves data, and its own text stands in, in the game's colours, until then
-// and for an error the module cannot draw. The game's settings record is the page's only settings:
+// module keeps the tables of keys and buttons and all game logic, and draws the page's screens in
+// the game's style once its first files are in (`gp_screen_*`, src/web/main.zig); this script only
+// moves data, and its own text stands in, in the game's colours, until then and for an error the
+// module cannot draw (a tree without the game's font and menu). The game's settings record is the page's only settings:
 // the game's screen is to change it, and the script applies it as a browser does (the gain, the
 // scale, the full screen).
 'use strict';
@@ -42,24 +42,33 @@ function sorzHelpers(memory) {
 // "size"}]}`, each file at `assets/NAME`. The asset tree is under `tree/` (its own `manifest.json`
 // would collide with the listing's path: src/native/served.zig), and the module takes each file
 // under its name in the tree. The result is `[{ url, name, size }]`, the files named in `first`
-// (by their names in the tree, in any case) first and in that order, then the others in the
-// listing's. A listing without files, a malformed entry or a file outside the tree is an error:
+// (by their names in the tree, in any case; a name ending in `/` names the files under that
+// directory) first and in that order, then the others in the listing's. A listing without files, a malformed entry or a file outside the tree is an error:
 // the page does not run a game without its files.
 function sorzListing(listing, first = []) {
   const files = listing && Array.isArray(listing.files) ? listing.files : null;
   if (!files || files.length === 0) throw new Error('the listing names no file');
-  const wanted = first.map((name) => name.toLowerCase());
   const out = files.map((f, i) => {
     if (!f || typeof f.name !== 'string' || !Number.isInteger(f.size) || f.size < 0) throw new Error('entry ' + i + ' of the listing is malformed');
     if (!f.name.startsWith('tree/') || f.name.length === 5) throw new Error(f.name + ' is not a file of the asset tree');
     const name = f.name.slice(5);
     // Each part of the name is escaped, and the separators stay.
     const url = 'assets/' + f.name.split('/').map(encodeURIComponent).join('/');
-    const rank = wanted.indexOf(name.toLowerCase());
-    return { url, name, size: f.size, order: rank < 0 ? wanted.length : rank, at: i };
+    const rank = sorzFirst(name, first);
+    return { url, name, size: f.size, order: rank < 0 ? first.length : rank, at: i };
   });
   out.sort((a, b) => a.order - b.order || a.at - b.at);
   return out.map(({ url, name, size }) => ({ url, name, size }));
+}
+
+// Where the tree's file `name` is in `first` (names, in any case, or directories ending in `/`),
+// or -1.
+function sorzFirst(name, first) {
+  const lower = name.toLowerCase();
+  return first.findIndex((w) => {
+    const want = w.toLowerCase();
+    return want.endsWith('/') ? want.length > 1 && lower.startsWith(want) : want === lower;
+  });
 }
 
 // The page's side of network play's transport (DESIGN.md 9, PLAN A1 and A2): whole binary
@@ -1335,9 +1344,9 @@ function sorzTransport(Socket, events, limits = {}) {
   const loading = { done: 0, total: 0 };
 
   async function loadFiles(listing) {
-    const first = readScratch(wasm.gp_screen_files()).split('\n');
+    const first = readScratch(wasm.gp_screen_files()).split('\n').filter((name) => name !== '');
     const files = sorzListing(listing, first);
-    const firstCount = files.filter((f) => first.includes(f.name.toLowerCase())).length;
+    const firstCount = files.filter((f) => sorzFirst(f.name, first) >= 0).length;
     loading.total = files.length;
     let next = 0;
     let drawn = 0;

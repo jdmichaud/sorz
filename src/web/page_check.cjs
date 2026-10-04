@@ -33,6 +33,9 @@ check('the listing gives the tree\'s files, the screens\' first, and refuses wha
     { url: 'assets/tree/manifest.json', name: 'manifest.json', size: 12 },
     { url: 'assets/tree/my%20mod/a%23b.png', name: 'my mod/a#b.png', size: 4 },
   ]);
+  // A directory names every file under it, in the listing's order; `/` alone names none.
+  assert.deepEqual(sorzListing(listing, ['my mod/', 'fonts/', '/']).map((f) => f.name),
+    ['my mod/a#b.png', 'FONTS/play.json', 'art/art.json', 'manifest.json']);
   for (const bad of [null, {}, { files: [] }, { files: [{ name: 'manifest.json', size: 1 }] },
     { files: [{ name: 'tree/', size: 1 }] }, { files: [{ name: 'tree/a', size: -1 }] }, { files: [{ name: 'tree/a' }] }]) {
     assert.throws(() => sorzListing(bad), Error);
@@ -265,17 +268,21 @@ check('the module refuses to start without data', () => {
   assert.equal(wasm.gp_alloc(0x80000), ptr);
 });
 
-// The module draws no screen of the page yet (PLAN item 08): it names no file to fetch first, its
-// screens refuse with the reason, and the page's own text stands in. Its menu has no sound yet.
-check('the module names no file for its screens and draws none yet; the page\'s text stands in', () => {
-  const { wasm, error } = instantiateModule();
-  assert.equal(wasm.gp_screen_files(), 0);
+// The module draws the page's screens from the content's font and menu, whose directories it names
+// for the page to fetch first. Without them its screens refuse, naming the file they lack, and the
+// page's own text stands in; without the sound content, its menu has no sound.
+check('the module names its screens\' directories; without their files it draws none, and says why', () => {
+  const { wasm, memory, error } = instantiateModule();
+  const len = wasm.gp_screen_files();
+  assert.equal(new TextDecoder().decode(new Uint8Array(memory.buffer, wasm.gp_scratch(), len)), 'fonts/\nmenu/');
   assert.equal(wasm.gp_screen_open(), -1);
-  assert.match(error(), /PLAN item 08/);
+  assert.match(error(), /the page's screens: fonts\/art\.json/);
   assert.equal(wasm.gp_screen_message(0, 1), -1);
   assert.equal(wasm.gp_screen_pick(100, 90), -1);
   assert.equal(wasm.gp_menu_sound(0), 0);
+  assert.match(error(), /the menu's sound: sound\//);
   assert.equal(wasm.gp_menu_sound(1), 0);
+  assert.equal(wasm.gp_menu_sound(2), 0);
 });
 
 check('the memory grows under the page, which makes its views again', () => {
