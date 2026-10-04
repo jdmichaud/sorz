@@ -1,0 +1,9 @@
+# axel: walk into the first wave until a Galsia is within 100 pixels, then the special attack.
+start axel
+until state 1 ready
++right
+until near galsia 100 within 300
+-right
+special
+until phase play within 1000
+wait 60

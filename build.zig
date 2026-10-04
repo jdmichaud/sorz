@@ -17,8 +17,9 @@
 //! against the agent host, and two pages through the relay, and with `-Drom=ROM` the page's
 //! screens drawn from the ROM's content (it needs Node.js and a Chromium);
 //! `sound-check` compares the sound with sor-remaster's, from the user's ROM (`-Drom=ROM
-//! -Dremaster=DIR`), and `screens-check` the screens' pictures and sound, tick by tick from
-//! power-on (the same options).
+//! -Dremaster=DIR`), `screens-check` the screens' pictures and sound, tick by tick from
+//! power-on (the same options), and `similar-check` Axel's moves in the catalogue's scenarios
+//! (`-Drom=ROM -Dremaster=DIR|AGENT`).
 const std = @import("std");
 
 /// The SDL2 release that the Linux host is built and tested against.
@@ -331,7 +332,7 @@ pub fn build(b: *std.Build) void {
     // sor-remaster checkout, which is built as a library and never written to. Optimised, as it
     // plays every song for minutes.
     const sound_check_step = b.step("sound-check", "Compare the sound with sor-remaster's (needs -Drom=ROM -Dremaster=DIR)");
-    const remaster = b.option([]const u8, "remaster", "A sor-remaster checkout, the reference of sound-check and screens-check");
+    const remaster = b.option([]const u8, "remaster", "A sor-remaster checkout, the reference of sound-check, screens-check and similar-check (for similar-check, its built agent will do)");
     const sound_only = b.option([]const u8, "sound-only", "One group of sound-check's scenarios: songs, round6, effects, pairs, changes, fades, pauses, stops, voices, quirks, pcm, random; or bench, the sequencer's cost");
     const sound_tree = b.option([]const u8, "sound-tree", "Where sound-check writes the sound content's files, for reading");
     const sound_optimize = b.option(std.builtin.OptimizeMode, "sound-check-optimize", "The build mode of sound-check (default: fast; debug to measure the bench in a debug build)") orelse .fast;
@@ -427,9 +428,56 @@ pub fn build(b: *std.Build) void {
         screens_check_step.dependOn(&b.addFail("screens-check needs -Drom=ROM and -Dremaster=DIR").step);
     }
 
+    // `similar-check`, the gate of Axel (PLAN items 05 and 11, src/tools/similar_check.zig): the
+    // catalogue's scenarios of Axel (tests/scenarios/axel) run in sor-remaster and in sorz, their
+    // traces, probes and measurements compared move by move. -Dremaster is sor-remaster's
+    // checkout (its agent built as screens-check builds it) or an agent already built.
+    const similar_out = b.option([]const u8, "similar-out", "Where similar-check writes its runs and report (default: <prefix>/similar)");
+    const similar_only = b.option([]const u8, "similar-only", "The scenarios similar-check runs, separated by commas (default: all)");
+    const similar_check_step = b.step("similar-check", "Compare Axel's moves with sor-remaster's in the catalogue's scenarios (needs -Drom=ROM -Dremaster=DIR|AGENT)");
+    const similar_module = b.createModule(.{
+        .root_source_file = b.path("src/tools/similar_check.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "sorz", .module = shared },
+            .{ .name = "agent", .module = agent },
+            .{ .name = "extract", .module = extract },
+        },
+    });
+    if (rom_path != null and remaster != null) {
+        const similar_exe = b.addExecutable(.{ .name = "sorz-similar-check", .root_module = similar_module });
+        const check = b.addRunArtifact(similar_exe);
+        check.addArg(rom_path.?);
+        if (std.Io.Dir.cwd().openDir(b.graph.io, remaster.?, .{})) |dir| {
+            dir.close(b.graph.io);
+            const reference = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "agent", "-Doptimize=ReleaseFast", "--prefix" });
+            const reference_prefix = reference.addOutputDirectoryArg("remaster");
+            reference.addArg("--cache-dir");
+            reference.addDirectoryArg2(.{ .relative = .{ .base = .local_cache } }, .{ .make_absolute = true });
+            reference.setCwd(.{ .cwd_relative = remaster.? });
+            reference.has_side_effects = true;
+            check.addFileArg(reference_prefix.path(b, "bin/sorz-agent"));
+        } else |_| check.addArg(remaster.?);
+        check.addDirectoryArg(b.path("tests/scenarios/axel"));
+        if (similar_out) |dir| {
+            check.addArg(dir);
+        } else {
+            check.addDirectoryArg2(.{ .relative = .{ .base = .install_prefix, .sub_path = "similar" } }, .{ .make_absolute = true });
+        }
+        if (similar_only) |names| {
+            var it = std.mem.tokenizeScalar(u8, names, ',');
+            while (it.next()) |n| check.addArg(n);
+        }
+        check.has_side_effects = true;
+        similar_check_step.dependOn(&check.step);
+    } else {
+        similar_check_step.dependOn(&b.addFail("similar-check needs -Drom=ROM and -Dremaster=DIR|AGENT").step);
+    }
+
     // Unit tests of every module. The tests of the SDL module link SDL2 as the host does.
     const test_step = b.step("test", "Run the unit tests of every module");
-    const unit_modules = [_]*std.Build.Module{ shared, agent, native, sdl, web_parts, extract };
+    const unit_modules = [_]*std.Build.Module{ shared, agent, native, sdl, web_parts, extract, similar_module };
     for (unit_modules) |m| {
         const t = b.addTest(.{ .root_module = m });
         test_step.dependOn(&b.addRunArtifact(t).step);

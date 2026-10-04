@@ -1,0 +1,9 @@
+# axel: walk into the first Galsia until the grab; then the pad away from the one held for 6 ticks.
+start axel
+until state 1 ready
++right
+until state 1 grab within 300
+-right
+wait 4
+left 6
+wait 60

@@ -1,0 +1,15 @@
+# A family: {N} takes the values 0 to 15 (16 runs).
+# axel: blows 1 to 2, each pressed once; B again N ticks after the last ends.
+start axel
+until state 1 ready
++right
+until near galsia 75 8
+-right
+until near galsia 58 8 within 60
+attack
+until state 1 ready|idle within 40
+attack
+until state 1 ready|idle within 40
+wait {N}
+attack
+wait 40

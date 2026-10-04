@@ -1,0 +1,31 @@
+# axel: B every 2 ticks on the first Galsia as it comes in.
+start axel
+until state 1 ready
++right
+until near galsia 75 8
+-right
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+wait 60

@@ -1,0 +1,12 @@
+# A family: {N} takes the values 0 to 23 (24 runs).
+# axel: a forward jump, B pressed {N} ticks after the jump's press.
+start axel
+until state 1 ready
+wait 30
++right
+jump
+wait {N}
+attack
+wait 40
+-right
+wait 10

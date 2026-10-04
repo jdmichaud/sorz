@@ -1,0 +1,7 @@
+# axel: the special attack (A), no enemy near, to its end.
+start axel
+until state 1 ready
+wait 30
+special
+until phase play within 1000
+wait 30

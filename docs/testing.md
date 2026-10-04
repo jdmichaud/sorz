@@ -116,6 +116,31 @@ green suites. So, before an item is done:
 - A report can be the reverse of the truth. In a previous port, "the computer plays too well"
   measured as "it pots less than the original"; later, measured properly, the two were equal.
 
+## Scenarios and the similar-check
+
+The mechanics are compared with sor-remaster's (DESIGN.md V3, D14) through scenarios, in
+sor-remaster's format: a start (`start axel`), then pad events and conditions by logic tick. The
+catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (its header says
+"{N} takes the values A to B") is a run per value.
+
+- `sorz-agent DIR|ROM --scenario FILE --situation TRACE [--trace-events OUT] [--probe OUT]` runs
+  one in sorz. Until round 1's content (PLAN item 13) sorz cannot reach play from power-on, so
+  the run takes up its start from sor-remaster's trace of the same scenario (`--situation`): the
+  round scene's first `phase play`, its entities with their ids, states, places and health, the
+  camera, the players' lives. It writes the semantic trace and the probe (each fighter's frame,
+  boxes and power per tick) in sor-remaster's formats.
+- `sorz-agent trace-compare FIRST SECOND` compares two traces (the first difference, the counts
+  per kind of event), from a scene on (`--scene round --after TICK`), with kinds of entity,
+  events and fields left out and sor-remaster's sound names translated (`--sounds`).
+- `zig build similar-check -Drom=ROM -Dremaster=DIR|AGENT` (src/tools/similar_check.zig), the
+  gate of PLAN items 05 and 11: each scenario runs in sor-remaster (its checkout, whose agent the
+  build builds, or that agent) and in sorz; then the traces, the probes and the catalogue's
+  measurements of each move (frame data, states and their ticks, damage, pushes, arcs, speeds,
+  boxes, power) are compared, all equal but the special attack's times (its car a stand-in: 1
+  tick). It prints a verdict per move, equal, within tolerance or different, with the numbers,
+  writes it with the runs into `<prefix>/similar` (`-Dsimilar-out=DIR`), and fails when a move
+  differs. `-Dsimilar-only=NAME,...` runs some scenarios.
+
 ## Comparing behaviours with statistics
 
 When the outcome is random (a computer player, a shuffled deck, a random start), compare rates,
