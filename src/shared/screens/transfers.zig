@@ -20,9 +20,32 @@ pub const Frame = struct {
     /// The scroll by cells, both planes' (the Sega logo's frames: play's way, with nothing to
     /// scroll).
     cell_scroll: bool = false,
-    /// Tiles the game makes, in words (Axel's picture revealed, the title's set-up).
-    tile_words: u16 = 0,
+    /// Tiles the game copies, a transfer each (Axel's picture revealed, the title's set-up, the
+    /// select's portraits' frames).
+    tiles: Tiles = .{},
 };
+
+/// Transfers of tiles, each its length in words (16 a tile).
+pub const Tiles = struct {
+    pub const max = 6;
+    words: [max]u16 = @splat(0),
+    len: u8 = 0,
+
+    pub fn one(words: u16) Tiles {
+        var t: Tiles = .{};
+        t.add(words);
+        return t;
+    }
+
+    /// A transfer of `words` (none when 0, or when there are `max` already).
+    pub fn add(self: *Tiles, words: u16) void {
+        if (words == 0 or self.len == max) return;
+        self.words[self.len] = words;
+        self.len += 1;
+    }
+};
+
+pub const words_per_tile = 16;
 
 /// The sprites' list: 320 words, every frame.
 const sprite_list_words = 320;
@@ -47,7 +70,7 @@ pub fn hold(f: Frame) u32 {
     if (f.colours) h += transfer(colour_words, true);
     if (f.line_scroll) h += transfer(line_scroll_words, false);
     if (f.cell_scroll) h += 2 * transfer(cell_scroll_words, false);
-    if (f.tile_words != 0) h += transfer(f.tile_words, false);
+    for (f.tiles.words[0..f.tiles.len]) |w| h += transfer(w, false);
     return h;
 }
 
@@ -55,5 +78,10 @@ test "the transfers' cycles, as sor-remaster measured them" {
     try std.testing.expectEqual(@as(u32, 775), hold(.{}));
     try std.testing.expectEqual(@as(u32, 775 + 135 + 1202), hold(.{ .colours = true, .line_scroll = true }));
     try std.testing.expectEqual(@as(u32, 775 + 270), hold(.{ .cell_scroll = true }));
-    try std.testing.expectEqual(@as(u32, 775 + 6327), hold(.{ .tile_words = 2816 }));
+    try std.testing.expectEqual(@as(u32, 775 + 6327), hold(.{ .tiles = .one(2816) }));
+    // Each transfer its own: a frame's two parts, 34 tiles then 32.
+    var parts: Tiles = .{};
+    parts.add(34 * words_per_tile);
+    parts.add(32 * words_per_tile);
+    try std.testing.expectEqual(@as(u32, 775 + 1274 + 1202), hold(.{ .tiles = parts }));
 }

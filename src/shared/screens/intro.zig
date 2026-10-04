@@ -417,7 +417,7 @@ pub const Intro = struct {
     /// scroll, and Axel's picture's tiles while it forms.
     fn frame(self: *const Intro) ?transfers.Frame {
         if ((self.phase == .dark and self.ticks == 0) or self.split) return null;
-        return .{ .colours = self.colours.copy, .line_scroll = true, .tile_words = if (self.hero_copying) title.hero_words else 0 };
+        return .{ .colours = self.colours.copy, .line_scroll = true, .tiles = .one(if (self.hero_copying) title.hero_words else 0) };
     }
 
     /// The script's next entry when its countdown is out; true at its end.

@@ -193,7 +193,7 @@ pub const Title = struct {
         self.shown_sprites = self.sprites;
         defer self.ticks +|= 1;
         // The set-up copies Axel's picture's tiles at its frame; every frame the line scroll.
-        defer turn.frame = .{ .colours = self.colours.copy, .line_scroll = true, .tile_words = if (self.ticks == 0) hero_words else 0 };
+        defer turn.frame = .{ .colours = self.colours.copy, .line_scroll = true, .tiles = .one(if (self.ticks == 0) hero_words else 0) };
         if (self.ticks == 0) {
             // Its colours over the black the intro faded to; its pictures in place, running from
             // this tick.
