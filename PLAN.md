@@ -53,7 +53,7 @@
   - Layers with per-line and per-column scroll, a fixed layer, sprites with priority and palette,
     four palettes, fades and cycles; drawn by cell and run; composed only when changed.
   - Gate: synthetic frames exact; a debug build draws a frame in under 1 ms.
-- [ ] **08 — Scenes and the flow graph** — Depends: 07.
+- [x] **08 — Scenes and the flow graph** — Depends: 07.
   - The scene stack and the flow graph; the Sega logo, the intro, the title, the game menu,
     options and character select.
   - Gate: each screen's pictures equal sor-remaster's at the same moments, and its timings.
