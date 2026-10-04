@@ -23,6 +23,7 @@ const usage =
     \\       sorz-agent [DIR|ROM] --pair [--delay N] [--frames N] [--key ...]... [--guest-key ...]...
     \\                  [--corrupt TICK]
     \\       sorz-agent DIR|ROM --server [ADDRESS:]PORT
+    \\       sorz-agent DIR|ROM --scenario FILE --situation TRACE [--trace-events OUT] [--probe OUT]
     \\  --frames N       run N frames, a display tick each (default 120)
     \\  --key FRAME:NAME[:HOLD]  press the key NAME (a platform.Key, as `enter` or `left`) at
     \\                   frame FRAME, release it HOLD frames later (default 1); repeats
@@ -44,6 +45,11 @@ const usage =
     \\                   negative control: both games stop and name the field)
     \\  --server         server mode, as sorz-server: serve the page and the game's files of
     \\                   DIR|ROM, and relay network play between two browsers, with no game
+    \\  --scenario FILE  run a scenario (sor-remaster's format) from the situation of round 1's
+    \\                   play in TRACE (another program's trace of it): its script of pad events
+    \\                   to its end; --trace-events writes its semantic trace, --probe the
+    \\                   fighters' frames, boxes and power; a condition that does not come in
+    \\                   time ends the run with status 1
     \\
 ;
 
@@ -73,6 +79,10 @@ pub fn main(init: std.process.Init) !void {
     defer guest_presses.deinit(gpa);
     var pair = false;
     var corrupt: ?u64 = null;
+    var scenario: ?agent.scenario_cmd.Options = null;
+    var situation: ?[]const u8 = null;
+    var trace_events: ?[]const u8 = null;
+    var probe: ?[]const u8 = null;
     var options: native.cli.Options = .{};
     // `iterateAllocator` is the form that Windows needs; the arena keeps the arguments for the
     // whole run.
@@ -94,6 +104,14 @@ pub fn main(init: std.process.Init) !void {
             pair = true;
         } else if (std.mem.eql(u8, arg, "--corrupt")) {
             corrupt = std.fmt.parseInt(u64, args.next() orelse return fail(io), 10) catch return fail(io);
+        } else if (std.mem.eql(u8, arg, "--scenario")) {
+            scenario = .{ .scenario = args.next() orelse return fail(io) };
+        } else if (std.mem.eql(u8, arg, "--situation")) {
+            situation = args.next() orelse return fail(io);
+        } else if (std.mem.eql(u8, arg, "--trace-events")) {
+            trace_events = args.next() orelse return fail(io);
+        } else if (std.mem.eql(u8, arg, "--probe")) {
+            probe = args.next() orelse return fail(io);
         } else {
             return fail(io);
         }
@@ -133,6 +151,24 @@ pub fn main(init: std.process.Init) !void {
         };
         assets = providers.assetSource() orelse assets;
     }
+
+    // A scenario's run, on the game's data.
+    if (scenario) |*sc| {
+        if (options.assets == null or pair or presses.items.len != 0 or shots.items.len != 0 or wav_path != null) return fail(io);
+        sc.situation = situation;
+        sc.trace = trace_events;
+        sc.probe = probe;
+        var obuf: [512]u8 = undefined;
+        var ow = std.Io.File.stdout().writerStreaming(io, &obuf);
+        const done = agent.scenario_cmd.run(gpa, io, assets.?, sc.*, &ow.interface) catch |err| {
+            std.log.err("the scenario did not run: {s}", .{@errorName(err)});
+            std.process.exit(2);
+        };
+        try ow.interface.flush();
+        if (!done) std.process.exit(1);
+        return;
+    }
+    if (situation != null or trace_events != null or probe != null) return fail(io);
 
     // Network play: a session over WebSockets, or two games in one process. (`--delay` goes with
     // `--netplay`, or with `--pair`.)

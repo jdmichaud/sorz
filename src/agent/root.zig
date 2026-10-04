@@ -6,6 +6,9 @@ pub const AgentBackend = @import("backend.zig").AgentBackend;
 pub const png = @import("png.zig");
 /// Network play in the agent host: a session over WebSockets, or two games in one process.
 pub const netplay_cmd = @import("netplay_cmd.zig");
+/// Scenarios: a converted start, then a script of pad events; their traces and probes.
+pub const scenario = @import("scenario.zig");
+pub const scenario_cmd = @import("scenario_cmd.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
