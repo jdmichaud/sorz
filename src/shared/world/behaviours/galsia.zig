@@ -353,6 +353,8 @@ pub fn struck(a: Actor, blow: tick.Blow) bool {
             a.mind.touch_taken = true;
             a.mind.other = blow.attacker;
             if (takeReelBlow(a, blow.damage, blow.reaction == .knock_down, true)) a.mind.settle_wait = true;
+            // Knocked down, it still shakes at this tick: its knock-down starts at the next.
+            if (a.mind.state == .knocked_down) a.setFrame(a.frame() ^ 1);
             return true;
         },
         else => {},
@@ -408,6 +410,7 @@ fn reel(a: Actor) void {
     }
     if (a.mind.settle_wait) {
         a.mind.settle_wait = false;
+        a.setFrame(a.frame() ^ 1);
         return;
     }
     if (a.mind.settling) {
