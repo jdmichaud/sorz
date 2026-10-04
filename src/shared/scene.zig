@@ -34,6 +34,7 @@ pub const TestPattern = @import("screens/test_pattern.zig").TestPattern;
 pub const Load = @import("screens/load.zig").Load;
 pub const StandIn = @import("screens/stand_in.zig").StandIn;
 pub const SegaLogo = @import("screens/sega_logo.zig").SegaLogo;
+pub const Intro = @import("screens/intro.zig").Intro;
 pub const Title = @import("screens/title.zig").Title;
 
 /// The scenes' state, by kind.
@@ -41,7 +42,7 @@ pub const Scene = union(Kind) {
     test_pattern: TestPattern,
     load: Load,
     sega_logo: SegaLogo,
-    intro: StandIn,
+    intro: Intro,
     title: Title,
     menu: StandIn,
     options: StandIn,
@@ -113,6 +114,7 @@ pub const Assets = struct {
     load: Load.Assets,
     stand_in: StandIn.Assets,
     sega_logo: SegaLogo.Assets,
+    intro: Intro.Assets,
     title: Title.Assets,
 
     pub fn find(c: *const library.Content, diag: *json.Diagnostic) library.LoadError!Assets {
