@@ -8,7 +8,8 @@
 //! power-on with the keys and writes its pictures at the ticks compared, and its sound; sorz runs
 //! the same keys in this process, on the content extracted from ROM, and each of its pictures is
 //! compared with sor-remaster's, pixel by pixel, then the sound, sample by sample. The pictures
-//! of a stand-in (a scene sorz does not have yet: the attract demo, play) are not compared. Prints
+//! and the sound of a stand-in (a scene sorz does not have yet: the attract demo, play) are left
+//! out of the ticks compared. Prints
 //! a JSON line per scenario: the pictures compared and the first that differs (its picture and a
 //! diff are written in OUT_DIR), the first tick whose sound differs; exits with 1 when anything
 //! differs.
@@ -36,6 +37,10 @@ const Scenario = struct {
     sound: bool = true,
     sound_until: ?u32 = null,
 };
+
+/// The way to the character select: START on the intro, on the title, 1 PLAYER; or 2 PLAYERS.
+const select_one = [_]Press{ .{ .frame = 500, .key = .enter }, .{ .frame = 560, .key = .enter }, .{ .frame = 640, .key = .enter } };
+const select_two = [_]Press{ .{ .frame = 500, .key = .enter }, .{ .frame = 560, .key = .enter }, .{ .frame = 600, .key = .down }, .{ .frame = 640, .key = .enter } };
 
 /// The scenarios: the pictures at the ticks where each screen's parts begin and end, from
 /// power-on, with sor-remaster's keys.
@@ -156,6 +161,68 @@ pub const scenarios = [_]Scenario{
         .frames = 8260,
         .pictures = &.{ .{ .from = 7625, .to = 7700 }, .{ .from = 8200, .to = 8259 } },
         .sound_until = 5696,
+    },
+    .{
+        .name = "select_idle",
+        .what = "1 PLAYER to the character select: its load, the fade in, Adam posing, the others idle, the eye's blinks",
+        .frames = 2200,
+        .keys = &select_one,
+        .pictures = &.{ .{ .from = 700, .to = 1110 }, .{ .from = 1395, .to = 1425 }, .{ .from = 2015, .to = 2045 } },
+    },
+    .{
+        .name = "select_moves",
+        .what = "the cursor's moves (right, round the ends, left, up and down as left, a key at either display tick), the choice, the wait, the fade out, round 1's load",
+        .frames = 1170,
+        .keys = &(select_one ++ [_]Press{ .{ .frame = 850, .key = .right }, .{ .frame = 869, .key = .right }, .{ .frame = 900, .key = .right }, .{ .frame = 930, .key = .left }, .{ .frame = 960, .key = .up }, .{ .frame = 990, .key = .down }, .{ .frame = 1020, .key = .x } }),
+        .pictures = &.{.{ .from = 800, .to = 1158 }},
+        .sound_until = 1158,
+    },
+    .{
+        .name = "select_early",
+        .what = "presses lost before the select's first tick (in the load, the fade in), then one at a second display tick",
+        .frames = 900,
+        .keys = &(select_one ++ [_]Press{ .{ .frame = 737, .key = .right }, .{ .frame = 760, .key = .right }, .{ .frame = 803, .key = .right }, .{ .frame = 805, .key = .right } }),
+        .pictures = &.{.{ .from = 730, .to = 899 }},
+    },
+    .{
+        .name = "select_two",
+        .what = "2 PLAYERS: moves past the other's portrait, both moving in one tick, a press after the choice, both chosen, round 1's load",
+        .frames = 1230,
+        .keys = &(select_two ++ [_]Press{
+            .{ .frame = 850, .key = .right },  .{ .frame = 869, .key = .a },     .{ .frame = 900, .key = .right }, .{ .frame = 930, .key = .left },
+            .{ .frame = 930, .key = .d },      .{ .frame = 960, .key = .enter }, .{ .frame = 990, .key = .a },     .{ .frame = 1020, .key = .a },
+            .{ .frame = 1050, .key = .right }, .{ .frame = 1080, .key = .g },
+        }),
+        .pictures = &.{.{ .from = 800, .to = 1218 }},
+        .sound_until = 1218,
+    },
+    .{
+        .name = "select_blaze",
+        .what = "Blaze's poses and three jumps, each landing a pixel apart (her height keeps its fraction)",
+        .frames = 1300,
+        .keys = &(select_one ++ [_]Press{.{ .frame = 804, .key = .left }}),
+        .pictures = &.{.{ .from = 800, .to = 1299 }},
+    },
+    .{
+        .name = "select_leave",
+        .what = "the cursor leaving Blaze in her jump (on the ground at once), and back",
+        .frames = 1200,
+        .keys = &(select_one ++ [_]Press{ .{ .frame = 804, .key = .left }, .{ .frame = 894, .key = .right }, .{ .frame = 924, .key = .left } }),
+        .pictures = &.{.{ .from = 800, .to = 1199 }},
+    },
+    .{
+        .name = "select_two_idle",
+        .what = "2 PLAYERS idle: both labels, Adam and Blaze posing, the eye's blinks",
+        .frames = 2300,
+        .keys = &select_two,
+        .pictures = &.{ .{ .from = 700, .to = 1100 }, .{ .from = 1395, .to = 1425 }, .{ .from = 2015, .to = 2045 } },
+    },
+    .{
+        .name = "select_overlap",
+        .what = "player 2 on Axel beside Adam: Adam's fist over Axel",
+        .frames = 900,
+        .keys = &(select_two ++ [_]Press{.{ .frame = 824, .key = .a }}),
+        .pictures = &.{.{ .from = 800, .to = 899 }},
     },
     .{
         .name = "logo_start_pad2",
