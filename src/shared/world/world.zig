@@ -20,6 +20,9 @@ const Entity = entity.Entity;
 const Handle = entity.Handle;
 const KindId = entity.KindId;
 const Kinds = kinds_mod.Kinds;
+pub const Spawn = entity.Spawn;
+pub const Entrance = entity.Entrance;
+pub const Traits = entity.Traits;
 
 pub const capacity = entity.capacity;
 
@@ -163,6 +166,15 @@ pub const World = struct {
             .mind = behaviours.initial(k.behaviour),
         };
         if (k.definition.animations.len != 0) kinds.startAnimation(e, 0);
+    }
+
+    /// An enemy the round's script places: a new entity of `kind` at `position`, facing right, in
+    /// its first state, placed as `how` says (its way in, its traits, its place beside its
+    /// target, its strength).
+    pub fn spawnEnemy(self: *World, kinds: *const Kinds, kind: KindId, position: Vec3, how: Spawn) Full!Handle {
+        const h = try self.spawn(kinds, kind, position, .right);
+        self.get(h).?.spawn = how;
+        return h;
     }
 
     /// The entity goes: its place is freed, its handles find nothing, and a grab it was in ends.

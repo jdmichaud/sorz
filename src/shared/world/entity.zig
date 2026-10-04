@@ -76,7 +76,10 @@ pub const Flags = packed struct(u16) {
     /// Not drawn at this tick, a blink's dark phase: unlike `hidden`, it keeps its frame's boxes
     /// and its place (the original's blinking objects are only not drawn).
     blinked: bool = false,
-    _: u5 = 0,
+    /// It stops whoever walks into it, within its definition's `solid` box (a breakable
+    /// standing).
+    solid: bool = false,
+    _: u4 = 0,
 };
 
 /// The animation an entity plays: one of its kind's, the frame it is on, and the logic ticks
@@ -96,6 +99,83 @@ pub const Animation = struct {
     /// The ticks each frame shows, set by its behaviour for all the frames (the original's
     /// objects pace their animation themselves); null: each frame's own.
     pace: ?u8 = null,
+};
+
+/// The way an enemy comes in, as the round's script places it (DESIGN.md W6): what it does once
+/// it is out of hiding. Each kind's behaviour reads the ways it has; a kind placed with a way it
+/// does not have takes its first.
+pub const Entrance = enum(u8) {
+    /// It heads for its place beside its target.
+    approach,
+    /// It closes in on its target at once.
+    close_in,
+    /// It waits at the screen's far edge for its target to come near.
+    edge,
+    /// It waits, facing its target, until it comes near or a while passes.
+    wait,
+    /// It lies in wait behind a rolling shutter, and drops out when its target comes near.
+    shutter,
+    /// It squares up to its target first.
+    square_up,
+    /// It jumps in at its target.
+    jump_in,
+    /// It sizes its target up first.
+    size_up,
+    /// It follows its target, keeping its distance.
+    follow,
+    /// It leaps in from the screen's edge, or drops from above.
+    enter,
+    /// It circles its target first.
+    circle,
+};
+
+/// What else the round's script says of an enemy it places, each by its meaning (the kinds read
+/// those they have).
+pub const Traits = packed struct(u16) {
+    /// It stays hidden until the camera reaches its place across (else, until its place is on
+    /// the screen).
+    waits_for_camera: bool = false,
+    /// It closes in slower (a Galsia, an acrobat), and an acrobat leaps in only from nearer.
+    slow: bool = false,
+    /// A stalker that has lurked closes in to strike instead of walking off.
+    closes_in_after_lurking: bool = false,
+    /// A pipe Galsia fights with the other pipe, and its own moves.
+    pipe_b: bool = false,
+    /// Signal slides in at a target level with it.
+    slides: bool = false,
+    /// An acrobat flips away from a knock-down.
+    flips_away: bool = false,
+    /// An acrobat drops in from above.
+    drops_in: bool = false,
+    /// An acrobat flips at a target that comes near while it circles.
+    flips_at_close_range: bool = false,
+    /// A brawler shrugs blows off without reeling.
+    unflinching: bool = false,
+    /// A brawler walks off after its punches.
+    walks_off: bool = false,
+    /// A boss is the second of twins.
+    twin: bool = false,
+    _: u5 = 0,
+};
+
+/// A thing flying or swung as a blow: a body thrown, a weapon in the hand or thrown. What its
+/// attack box meets takes `damage`, as a blow of `by` (the one who threw or swings it), and is
+/// knocked down; it lands on the enemies of `by` (and, `on_players`, on the players but `by`).
+pub const Missile = struct {
+    by: Handle,
+    damage: u8,
+    on_players: bool = false,
+};
+
+/// How the round's script placed an enemy: its way in, its traits, its place beside its target
+/// (pixels across, on the side it comes from, and in depth), and its strength (the row of its
+/// kind's health, damage and points).
+pub const Spawn = struct {
+    entrance: Entrance = .approach,
+    traits: Traits = .{},
+    offset_x: i16 = 0,
+    offset_depth: i16 = 0,
+    strength: u2 = 0,
 };
 
 /// The boxes in use (DESIGN.md W2): those of the frame the entity last showed, or of the first
@@ -130,6 +210,13 @@ pub const Entity = struct {
     holding: ?Handle = null,
     /// The last entity whose blow landed on it.
     struck_by: ?Handle = null,
+    /// How the round's script placed it (an enemy).
+    spawn: Spawn = .{},
+    /// It flies or is swung as a blow.
+    missile: ?Missile = null,
+    /// The damage its blows do, for a kind whose blows all do the same (an enemy's, from its
+    /// strength, kept when it loses its weapon); 0: each move's own.
+    power: u8 = 0,
     /// Its behaviour's state and memory.
     mind: behaviours.Mind = .none,
 
