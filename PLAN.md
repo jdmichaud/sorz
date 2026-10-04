@@ -30,12 +30,17 @@
   - A build check that fails on hexadecimal addresses and console terms in the engine's sources
     (DESIGN.md P1), with the extractor and its tests exempt.
   - Gate: the check fails on a planted address and passes on the tree.
-- [ ] **04 — Semantic traces** — Depends: 01.
+- [x] **04 — Semantic traces** — Depends: 01.
   - The event vocabulary (DESIGN.md V2); an observer in sor-remaster that derives it from its
     state each tick (outside its simulation); a trace format and a comparison tool that names the
     first difference and applies tolerances.
   - Gate: sor-remaster's traces of the attract demo and of round 1 are written, repeatable, and a
     planted difference is named.
+  - [x] The vocabulary and the observer in sor-remaster (its `docs/traces.md`, `--trace-events`,
+    e2d34a2); the comparison tool carried into sorz (`sorz-agent trace-compare`). Checked
+    2026-10-05: the attract demo (7,600 display ticks, 1,969 events) and round 1 played from
+    power-on (18,000, 26,311 events, 160 hits) traced twice, byte-identical; a hit's damage
+    changed by one is named with its line, field and tick.
 - [x] **05 — Scenarios** — Depends: 04.
   - Starting situations taken from sor-remaster (its state at a tick, converted for the players
     and the common enemies), and scripted scenarios from power-on for the rest (D14); the
