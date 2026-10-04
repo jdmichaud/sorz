@@ -34,6 +34,7 @@ pub const TestPattern = @import("screens/test_pattern.zig").TestPattern;
 pub const Load = @import("screens/load.zig").Load;
 pub const StandIn = @import("screens/stand_in.zig").StandIn;
 pub const SegaLogo = @import("screens/sega_logo.zig").SegaLogo;
+pub const Menu = @import("screens/menu.zig").Menu;
 pub const Intro = @import("screens/intro.zig").Intro;
 pub const Title = @import("screens/title.zig").Title;
 
@@ -44,7 +45,7 @@ pub const Scene = union(Kind) {
     sega_logo: SegaLogo,
     intro: Intro,
     title: Title,
-    menu: StandIn,
+    menu: Menu,
     options: StandIn,
     select: StandIn,
     demo: StandIn,
@@ -114,6 +115,7 @@ pub const Assets = struct {
     load: Load.Assets,
     stand_in: StandIn.Assets,
     sega_logo: SegaLogo.Assets,
+    menu: Menu.Assets,
     intro: Intro.Assets,
     title: Title.Assets,
 
