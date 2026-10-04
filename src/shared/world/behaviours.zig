@@ -28,13 +28,16 @@
 //!     default it goes);
 //!   - `specialCalled(a)`, `specialBlast(a)`: a player called the special attack, on the
 //!     screen; its blast came (`Tick.callSpecial`);
+//!   - `leftBehind(a)`: an enemy left behind the camera was brought back to its edge by the
+//!     round's script (script.zig);
 //! - `drives_animation`, true when its behaviour advances its animation's frames itself, as the
 //!   original's players do (`a.step()`), and keeps its boxes (`a.showBoxes()`): the animation
 //!   system then only notes the frame it shows.
 //!
 //! `sparring` and `pawn` are synthetic: the enemy and the player of the world's tests. `player`
 //! is the original's players' (PLAN item 11), `galsia` round 1's Galsias' as its first wave
-//! meets a player (PLAN item 12 completes it).
+//! meets a player (PLAN item 12 completes it); `police_car` the special attack's, `go_arrow` the
+//! arrow a section's opening shows (PLAN item 13).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -44,6 +47,7 @@ pub const pawn = @import("behaviours/pawn.zig");
 pub const player = @import("behaviours/player.zig");
 pub const galsia = @import("behaviours/galsia.zig");
 pub const police_car = @import("behaviours/police_car.zig");
+pub const go_arrow = @import("behaviours/go_arrow.zig");
 
 /// An entity's behaviour and its memory: one line a behaviour module.
 pub const Mind = union(enum) {
@@ -53,6 +57,7 @@ pub const Mind = union(enum) {
     player: player.Mind,
     galsia: galsia.Mind,
     police_car: police_car.Mind,
+    go_arrow: go_arrow.Mind,
 };
 
 pub const Behaviour = std.meta.Tag(Mind);

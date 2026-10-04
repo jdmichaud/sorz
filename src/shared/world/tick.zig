@@ -17,6 +17,7 @@ const world_mod = @import("world.zig");
 const output = @import("output.zig");
 const behaviours = @import("behaviours.zig");
 const systems = @import("systems.zig");
+const script = @import("script.zig");
 
 const Fixed = fixed.Fixed;
 const Vec3 = fixed.Vec3;
@@ -55,6 +56,8 @@ pub const Tick = struct {
     random: *random.Random,
     out: *Output,
     input: Input = .{},
+    /// The round's script the world follows (null: none, a world of the tests or the screens).
+    plan: ?*const script.Plan = null,
 
     pub fn kindOf(t: *const Tick, e: *const Entity) *const Kind {
         return t.kinds.get(e.kind.?);
@@ -239,6 +242,38 @@ pub const Tick = struct {
             p.score = @min(p.score + points, world_mod.score_most);
             return;
         }
+    }
+
+    /// The players in play: those who have an entity in the world.
+    pub fn playersInPlay(t: *const Tick) u8 {
+        var n: u8 = 0;
+        for (t.world.players) |p| {
+            if (p.entity) |h| if (t.world.getConst(h) != null) {
+                n += 1;
+            };
+        }
+        return n;
+    }
+
+    /// Whether every player in play plays as a fighter (none waits to continue): the round's
+    /// timer runs only then.
+    pub fn playersPlay(t: *const Tick) bool {
+        for (t.world.players) |p| {
+            const e = t.world.getConst(p.entity orelse continue) orelse continue;
+            if (e.mind != .player) return false;
+        }
+        return true;
+    }
+
+    /// An enemy left behind the camera was brought back to its edge by the round's script: its
+    /// behaviour takes it up from there (`leftBehind`).
+    pub fn leftBehind(t: *Tick, h: Handle) void {
+        dispatch(t, h, "leftBehind", void, {}, .{});
+    }
+
+    /// A beaten boss ends the round: the round is won (script.zig).
+    pub fn roundWon(t: *Tick) void {
+        script.won(t.world);
     }
 
     /// Whether `h` is a player's entity.

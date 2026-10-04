@@ -12,6 +12,7 @@ const fixed = @import("fixed.zig");
 const entity = @import("entity.zig");
 const kinds_mod = @import("kinds.zig");
 const behaviours = @import("behaviours.zig");
+const script = @import("script.zig");
 
 const Fixed = fixed.Fixed;
 const Vec3 = fixed.Vec3;
@@ -73,11 +74,9 @@ pub const Camera = struct {
     };
 };
 
-/// The round's script's place in the round (PLAN item 13 fills it in).
-pub const Script = struct {
-    /// The stretch between two walls of the camera.
-    section: u8 = 0,
-};
+/// The round's script's place in the round, and the round's timer (script.zig).
+pub const Script = script.State;
+pub const Timer = script.Timer;
 
 pub const World = struct {
     /// Logic ticks since the world began.
@@ -86,6 +85,7 @@ pub const World = struct {
     players: [2]Player = @splat(.{}),
     camera: Camera = .{},
     script: Script = .{},
+    timer: Timer = .{},
     /// The ground's height, until the round's floor gives it place by place (PLAN item 13).
     ground: Fixed = .zero,
     /// A special attack is under way (play's phase `special`): the players stand still, the

@@ -17,6 +17,7 @@ const kinds_mod = @import("kinds.zig");
 const output = @import("output.zig");
 const systems = @import("systems.zig");
 const tick_mod = @import("tick.zig");
+const script = @import("script.zig");
 
 pub const Rate = enum {
     /// Every display tick: the screens that run at 60 a second.
@@ -56,13 +57,18 @@ pub const Play = struct {
     /// the pads of its two display ticks, and `out` takes the tick's output. Returns whether the
     /// logic ran.
     pub fn displayTick(self: *Play, kinds: *const kinds_mod.Kinds, rng: *random.Random, pads: input.Pads, out: *output.Output) bool {
+        return self.roundTick(kinds, rng, pads, out, null);
+    }
+
+    /// `displayTick` in a round, whose world follows the round's script `plan`.
+    pub fn roundTick(self: *Play, kinds: *const kinds_mod.Kinds, rng: *random.Random, pads: input.Pads, out: *output.Output, plan: ?*const script.Plan) bool {
         const due = self.schedule.displayTick();
         if (!due) {
             self.first = pads;
             return false;
         }
         const first = if (self.schedule.rate == .play) self.first else pads;
-        systems.run(&self.world, kinds, rng, .{ .pads = .{ first, pads } }, out);
+        systems.runRound(&self.world, kinds, rng, .{ .pads = .{ first, pads } }, out, plan);
         return true;
     }
 };

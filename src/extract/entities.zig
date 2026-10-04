@@ -802,11 +802,43 @@ pub fn policeCar(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definit
     };
 }
 
+/// The GO arrow (type $48, 0x67A4), which a section's opening shows (sorz's `go_arrow`
+/// behaviour): its frame (animation 0 of the set at 0x6F06E, the effects' art), its place on the
+/// screen, its blinks and their times, its sound, from the immediates of its code.
+pub fn goArrow(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set = 0x6F06E;
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "play", .set = set, .box_table = object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
+    const arrow = try readAnimation(arena, rom, set, 0);
+    const index = std.mem.indexOfScalar(u32, d.frame_addresses, arrow.frames[0].address) orelse return error.BadData;
+    const frames = try arena.alloc(entity.Frame, 1);
+    frames[0] = .{ .frame = try std.fmt.allocPrint(arena, "play/arrow_{d:0>2}", .{index}), .ticks = 1 };
+    try d.animations.append(arena, .{ .name = "arrow", .loop = true, .frames = frames });
+    try d.number("x", try immediate(rom, 0x67CC, &.{ 0x34, 0x3C }, 2), "ROM 0x067CC (move.w #N,d2)");
+    try d.number("depth", try immediate(rom, 0x67E2, &.{ 0x31, 0x7C }, 2), "ROM 0x067E2 (move.w #N,($14,a0))");
+    try d.number("blinks", 1 + try immediate(rom, 0x67F2, &.{ 0x11, 0x7C }, 2), "ROM 0x067F2 (move.b #N,($50,a0): the blinks after the first)");
+    try d.number("shown", try immediate(rom, 0x67FE, &.{ 0x11, 0x7C }, 2), "ROM 0x067FE (move.b #N,($0D,a0))");
+    try d.number("hidden", try immediate(rom, 0x6820, &.{ 0x11, 0x7C }, 2), "ROM 0x06820 (move.b #N,($0D,a0))");
+    try d.number("wait", try immediate(rom, 0x684E, &.{ 0x11, 0x7C }, 2), "ROM 0x0684E (move.b #N,($0D,a0))");
+    if (rom[0x67F8] != 0x7E) return error.BadData;
+    try d.sound("blink", rom[0x67F9]);
+    return .{
+        .name = "go_arrow",
+        .provenance = try std.fmt.allocPrint(arena, "the GO arrow (type $48, 0x67A4): its frame from the animation set at ROM 0x{X:0>5}; its sound ROM 0x067F8 (moveq #N,d7){s}", .{ set, d.number_notes.items }),
+        .family = .effect,
+        .team = .neutral,
+        .behaviour = "go_arrow",
+        .numbers = d.numbers.items,
+        .sounds = d.sounds.items,
+        .animations = d.animations.items,
+    };
+}
+
 /// The definitions the extractor writes, in the manifest's order.
 pub fn all(arena: std.mem.Allocator, rom: []const u8) Error![]const entity.Definition {
-    const out = try arena.alloc(entity.Definition, 3);
+    const out = try arena.alloc(entity.Definition, 4);
     out[0] = try player(arena, rom, "axel", 0);
     out[1] = try galsia(arena, rom);
     out[2] = try policeCar(arena, rom);
+    out[3] = try goArrow(arena, rom);
     return out;
 }

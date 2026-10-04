@@ -16,6 +16,7 @@ const output = @import("output.zig");
 const tick_mod = @import("tick.zig");
 const draw_list = @import("draw_list.zig");
 const behaviours = @import("behaviours.zig");
+const script = @import("script.zig");
 
 const Fixed = fixed.Fixed;
 const Entity = entity.Entity;
@@ -32,13 +33,16 @@ pub const System = struct {
     run: *const fn (*Tick) void,
 };
 
-/// The logic tick, in order. As in the original, the players act and move first, and the
-/// camera follows them; then the others begin their tick, take the blows and the grabs of the
-/// tick where they stand, decide, and move.
+/// The logic tick, in order. As in the original, the round's timer counts first; the players act
+/// and move, a section due opens (its wall), and the camera follows them; then the others begin
+/// their tick, take the blows and the grabs of the tick where they stand, decide, and move; the
+/// round's script brings who comes.
 pub const pipeline = [_]System{
+    .{ .name = "timer", .run = script.timer },
     .{ .name = "commands", .run = commands },
     .{ .name = "control", .run = control },
     .{ .name = "players_move", .run = playersMove },
+    .{ .name = "section", .run = script.opening },
     .{ .name = "camera", .run = camera },
     .{ .name = "begin", .run = begin },
     .{ .name = "hits", .run = hits },
@@ -46,7 +50,7 @@ pub const pipeline = [_]System{
     .{ .name = "ai", .run = ai },
     .{ .name = "movement", .run = movement },
     .{ .name = "pickups", .run = pickups },
-    .{ .name = "script", .run = script },
+    .{ .name = "script", .run = script.run },
     .{ .name = "animation", .run = animation },
     .{ .name = "sounds", .run = sounds },
     .{ .name = "draw_list", .run = draw_list.build },
@@ -54,8 +58,13 @@ pub const pipeline = [_]System{
 
 /// One logic tick of `world`, with the pads `in`; its output in `out`.
 pub fn run(world: *World, kinds: *const Kinds, rng: *random.Random, in: Input, out: *Output) void {
+    runRound(world, kinds, rng, in, out, null);
+}
+
+/// One logic tick of a round's world, which follows the round's script `plan` (null: none).
+pub fn runRound(world: *World, kinds: *const Kinds, rng: *random.Random, in: Input, out: *Output, plan: ?*const script.Plan) void {
     out.begin();
-    var t: Tick = .{ .world = world, .kinds = kinds, .random = rng, .out = out, .input = in };
+    var t: Tick = .{ .world = world, .kinds = kinds, .random = rng, .out = out, .input = in, .plan = plan };
     inline for (pipeline) |s| s.run(&t);
     world.tick +%= 1;
 }
@@ -295,14 +304,6 @@ fn pickups(t: *Tick) void {
     }
 }
 
-// The round's script ------------------------------------------------------------------------------
-
-/// The round's script (DESIGN.md W6): its waves, its events, the camera's walls. A round's
-/// content and its set pieces come with PLAN item 13; until then a world has no script.
-fn script(t: *Tick) void {
-    _ = t;
-}
-
 // The camera --------------------------------------------------------------------------------------
 
 /// How the camera follows the players (the original's, measured in sor-remaster; TODO(PLAN item
@@ -330,8 +331,8 @@ pub const shaking = struct {
 /// The camera follows the players across (when it `follows`), from where the last tick drew
 /// them, never going back (its limit on the left follows it), and stays within its limits (but
 /// while it shakes); then the players are kept inside its view. While the special attack runs
-/// it (`Camera.run`), it neither follows nor holds the players.
-/// TODO(PLAN item 13): it stops at the script's walls, as the original's does.
+/// it (`Camera.run`), it neither follows nor holds the players. Its limit on the right is the
+/// round's script's wall (script.zig).
 fn camera(t: *Tick) void {
     const c = &t.world.camera;
     if (c.run) |*r| switch (r.state) {

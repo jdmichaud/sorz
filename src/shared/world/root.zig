@@ -23,6 +23,7 @@ pub const systems = @import("systems.zig");
 pub const draw_list = @import("draw_list.zig");
 pub const schedule = @import("schedule.zig");
 pub const trace = @import("trace.zig");
+pub const script = @import("script.zig");
 const world = @import("world.zig");
 
 pub const Fixed = fixed.Fixed;
@@ -43,4 +44,5 @@ test {
     @import("std").testing.refAllDecls(@This());
     _ = @import("tests.zig");
     _ = @import("fighters_test.zig");
+    _ = @import("script_test.zig");
 }

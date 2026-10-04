@@ -4,7 +4,8 @@
 //!
 //! The world gives its events of a tick in its output (the draws, the blows, the pick-ups, the
 //! sounds); the rest is what changed since the last tick: the entities that appeared and went,
-//! their states, sides, health and places, the pads, the players' lives and scores, the camera.
+//! their states, sides, health and places, the pads, the players' lives and scores, the round's
+//! timer, the camera.
 //! The scene's layer tells the scene and play's phase (`startScene`, `setPhase`).
 //!
 //! A line is `{"v":V,"t":T,"ev":"KIND",...}`: `v` the display tick from power-on, `t` the scene's
@@ -95,6 +96,9 @@ pub const Writer = struct {
     camera: [2]i32 = .{ 0, 0 },
     camera_stop: [3]i32 = .{ 0, 0, 0 },
     section: u8 = 0,
+    /// The round's timer's seconds last written (0: none yet, as the original's before its
+    /// round).
+    timer: u8 = 0,
 
     pub const Scene = struct {
         name: []const u8,
@@ -208,6 +212,13 @@ pub const Writer = struct {
             var l = try self.line("score");
             try l.int("player", k + 1);
             try l.int("score", p.score);
+            try l.close();
+        }
+
+        if (self.timer != world.timer.seconds) {
+            self.timer = world.timer.seconds;
+            var l = try self.line("timer");
+            try l.int("time", self.timer);
             try l.close();
         }
 
