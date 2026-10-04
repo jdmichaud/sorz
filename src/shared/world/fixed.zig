@@ -229,7 +229,7 @@ pub fn heading(dx: i32, ddepth: i32, speed: Fixed) Heading {
 }
 
 /// The sine and the cosine of each slope of 64ths, in 1/65536 and rounded: the original's table
-/// (the extractor's tests check it against the ROM's).
+/// (the extractor checks it against the ROM's).
 pub const slopes = blk: {
     var out: [64]struct { sine: u32, cosine: u32 } = undefined;
     for (&out, 0..) |*o, k| o.* = .{ .sine = slopeComponent(@intCast(k), @intCast(k)), .cosine = slopeComponent(@intCast(k), 64) };

@@ -217,8 +217,12 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
   lands.
 
 The optional fields are written only when they are not their defaults, so a file read and
-written again keeps its bytes. The extractor writes the original's characters and enemies (PLAN
-item 11 and on); until then a tree has no `entities`.
+written again keeps its bytes. The extractor writes Axel (`axel`, behaviour `player`), round 1's
+Galsia (`galsia`) and a stand-in for the special attack's police car (`police_car`); the other
+characters and enemies come with PLAN items 12 to 15. Their numbers are read from the ROM's
+tables and from the immediate values of the code that uses them, each with its place in the
+definition's provenance, but the car's times, which the original's car, camera and shells make
+together: those are measured in sor-remaster and said so.
 
 ## screens/NAME.json
 

@@ -177,7 +177,7 @@ fn validFrame(rom: []const u8, fa: u32, player: bool) bool {
 /// The frames the set's animations show, in address order: its table of signed word offsets
 /// (no count: it ends where the first animation starts; 0 is no animation), each animation a
 /// count, a timing and its frames' offsets (bit 15: drawn mirrored).
-fn frameAddresses(arena: std.mem.Allocator, rom: []const u8, base: u32) ![]u32 {
+pub fn frameAddresses(arena: std.mem.Allocator, rom: []const u8, base: u32) ![]u32 {
     var anims: std.ArrayList(u32) = .empty;
     var limit: u32 = 256;
     var i: u32 = 0;
