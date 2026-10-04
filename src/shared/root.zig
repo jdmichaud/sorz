@@ -20,6 +20,7 @@ pub const screens = struct {
     pub const sega_logo = @import("screens/sega_logo.zig");
     pub const menu = @import("screens/menu.zig");
     pub const options = @import("screens/options.zig");
+    pub const high_scores = @import("screens/high_scores.zig");
     pub const half_colours = @import("screens/half_colours.zig");
     pub const intro = @import("screens/intro.zig");
     pub const title = @import("screens/title.zig");

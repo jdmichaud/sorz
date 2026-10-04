@@ -36,6 +36,7 @@ pub const StandIn = @import("screens/stand_in.zig").StandIn;
 pub const SegaLogo = @import("screens/sega_logo.zig").SegaLogo;
 pub const Menu = @import("screens/menu.zig").Menu;
 pub const Options = @import("screens/options.zig").Options;
+pub const HighScores = @import("screens/high_scores.zig").HighScores;
 pub const Intro = @import("screens/intro.zig").Intro;
 pub const Title = @import("screens/title.zig").Title;
 
@@ -50,7 +51,7 @@ pub const Scene = union(Kind) {
     options: Options,
     select: StandIn,
     demo: StandIn,
-    high_scores: StandIn,
+    high_scores: HighScores,
     round: StandIn,
 
     /// The scene of kind `k` as it begins (a load is pushed by the flow, with its length).
@@ -118,6 +119,7 @@ pub const Assets = struct {
     sega_logo: SegaLogo.Assets,
     menu: Menu.Assets,
     options: Options.Assets,
+    high_scores: HighScores.Assets,
     intro: Intro.Assets,
     title: Title.Assets,
 
