@@ -32,20 +32,27 @@
 //!   original's players do (`a.step()`), and keeps its boxes (`a.showBoxes()`): the animation
 //!   system then only notes the frame it shows.
 //!
-//! `sparring` and `pawn` are synthetic: the enemy and the player of the world's tests, and the
-//! pattern of the original's characters and enemies (PLAN items 11 and 12).
+//! `sparring` and `pawn` are synthetic: the enemy and the player of the world's tests. `player`
+//! is the original's players' (PLAN item 11), `galsia` round 1's Galsias' as its first wave
+//! meets a player (PLAN item 12 completes it).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
 pub const none = struct {};
 pub const sparring = @import("behaviours/sparring.zig");
 pub const pawn = @import("behaviours/pawn.zig");
+pub const player = @import("behaviours/player.zig");
+pub const galsia = @import("behaviours/galsia.zig");
+pub const police_car = @import("behaviours/police_car.zig");
 
 /// An entity's behaviour and its memory: one line a behaviour module.
 pub const Mind = union(enum) {
     none,
     sparring: sparring.Mind,
     pawn: pawn.Mind,
+    player: player.Mind,
+    galsia: galsia.Mind,
+    police_car: police_car.Mind,
 };
 
 pub const Behaviour = std.meta.Tag(Mind);

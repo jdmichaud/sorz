@@ -42,4 +42,5 @@ pub const Schedule = schedule.Schedule;
 test {
     @import("std").testing.refAllDecls(@This());
     _ = @import("tests.zig");
+    _ = @import("fighters_test.zig");
 }
