@@ -84,6 +84,7 @@ pub const Menu = struct {
     pub fn tick(self: *Menu, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
         self.ticks +|= 1;
         self.colours.latch();
+        defer turn.frame = .{ .colours = self.colours.copy };
         self.shown_arrow = if (self.hidden) null else self.choice;
         switch (self.phase) {
             .setup => {

@@ -26,6 +26,7 @@ const Setup = @import("../setup.zig").Setup;
 const half = @import("half_colours.zig");
 const HalfColours = half.HalfColours;
 const title = @import("title.zig");
+const transfers = @import("transfers.zig");
 
 const lines = render.height;
 
@@ -242,6 +243,8 @@ pub const Intro = struct {
     rush: ?Run = null,
     hero: ?Run = null,
     hero_drawn: bool = false,
+    /// Its tiles copied to the picture at each frame while it forms.
+    hero_copying: bool = false,
     passes: u8 = 0,
     shown_passes: u8 = 0,
     adam: ?Slider = null,
@@ -358,6 +361,7 @@ pub const Intro = struct {
 
     pub fn tick(self: *Intro, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
         defer self.ticks +|= 1;
+        defer turn.frame = self.frame();
         self.colours.latch();
         self.shown_scroll = self.scroll;
         self.shown_sprites = self.sprites;
@@ -406,6 +410,14 @@ pub const Intro = struct {
         if (self.scriptEnd(a)) return .done;
         self.run(turn, a);
         return null;
+    }
+
+    /// What this tick's picture transfers as the next frame starts: none after its first tick
+    /// (its wait) or the first part of the city's flash; else the colours when touched, the line
+    /// scroll, and Axel's picture's tiles while it forms.
+    fn frame(self: *const Intro) ?transfers.Frame {
+        if ((self.phase == .dark and self.ticks == 0) or self.split) return null;
+        return .{ .colours = self.colours.copy, .line_scroll = true, .tile_words = if (self.hero_copying) title.hero_words else 0 };
     }
 
     /// The script's next entry when its countdown is out; true at its end.
@@ -530,6 +542,8 @@ pub const Intro = struct {
     /// The city's lights: after 96 ticks, every 16 the next of their steps (from the second,
     /// round to the first).
     fn cityLights(self: *Intro, a: *const Assets) void {
+        // The lights ask for the colours' copy at every tick, the one they end at too.
+        if (self.lights != null) self.colours.copy = true;
         const t = Run.next(&self.lights) orelse return;
         if (t < 96 or (t - 96) % 16 != 0) return;
         self.lights_step = (self.lights_step + 1) % @as(u8, @intCast(a.lights.steps.len));
@@ -596,6 +610,7 @@ pub const Intro = struct {
 
     fn border(self: *Intro, who: usize, lit: bool) void {
         self.colours.now[0][borders[who]] = if (lit) border_lit else border_unlit;
+        self.colours.copy = true;
     }
 
     fn count(self: *Intro) bool {
@@ -807,9 +822,12 @@ pub const Intro = struct {
             Scroll.add(&self.scroll.a_left, 0, lines - 1, 160);
         } else if (t == 1) {
             self.hero_drawn = true;
+        } else if (t == 2) {
+            self.hero_copying = true;
         } else if (t == 2 + 160) {
             self.hero = null;
-        } else if (t > 2 and (t - 2) % 6 == 0) self.passes += 1;
+            self.hero_copying = false;
+        } else if ((t - 2) % 6 == 0) self.passes += 1;
     }
 
     /// A palette line's flash: towards white every `period` ticks until its 64th tick, then back

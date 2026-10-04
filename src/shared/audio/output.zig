@@ -77,9 +77,15 @@ pub const Output = struct {
 
     /// One update's PCM from its writes; valid until the next call.
     pub fn tick(o: *Output, t: *const sequencer.Tick) []const i16 {
+        return o.tickHeld(t, 0);
+    }
+
+    /// One update's PCM from its writes, the Z80 held `held` cycles more in it by the game (the
+    /// picture's transfers, the pads' reading).
+    pub fn tickHeld(o: *Output, t: *const sequencer.Tick, held: u32) []const i16 {
         const writes = t.items();
         for (writes) |w| if (w.port == .sample) o.sample(w.value);
-        o.synth.holdZ80(t.hold);
+        o.synth.holdZ80(t.hold + held);
         const start = o.synth.now;
         const update_cycles = chips.synth.cycles_per_vblank;
         var count: u64 = 0;

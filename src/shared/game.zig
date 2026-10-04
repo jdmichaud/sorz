@@ -38,6 +38,7 @@ const picture = @import("picture.zig");
 const sound_out = @import("sound_out.zig");
 const net = @import("net/root.zig");
 const View = @import("view.zig").View;
+const transfers = @import("screens/transfers.zig");
 const Setup = @import("setup.zig").Setup;
 
 pub const page_width = picture.width;
@@ -149,6 +150,9 @@ pub const Game = struct {
     view: ?View = null,
     /// The top scene's state as it was last drawn: the next drawing draws what changed since.
     drawn: scene.Scene = .{ .load = .{} },
+    /// The cycles the last frame's transfers stop the sound's processor at the next frame's start
+    /// (screens/transfers.zig).
+    transfers_due: u32 = 0,
     /// The test pattern's picture, without content, and what it shows.
     pic: picture.Picture,
     pattern_drawn: scene.TestPattern.Drawn = .{},
@@ -402,8 +406,16 @@ pub const Game = struct {
         if (self.netplay) |np| pads = np.pads(p, pads.pad1) orelse return false;
         const turn = self.state.step(pads, self.secondPad(), if (self.scene_assets) |*a| a else null);
         self.redraw = true;
+        // The frame that starts this tick holds the sound's processor for the last tick's picture
+        // and the pads' reading, unless a load holds the frame's work and the sound together.
+        var held: u32 = 0;
+        if (turn.sound_driver) {
+            held = self.transfers_due + transfers.pads;
+            self.transfers_due = 0;
+        }
+        if (turn.frame) |f| self.transfers_due = transfers.hold(f);
         if (self.sound) |*s| {
-            const frames = s.play(self.stretchPpm(), turn.requests.slice(), turn.sound_driver, turn.sound_restart);
+            const frames = s.play(self.stretchPpm(), turn.requests.slice(), turn.sound_driver, turn.sound_restart, held);
             _ = p.audioQueue(self.atVolume(frames)) catch {};
         }
         if (self.netplay) |np| {
@@ -423,6 +435,7 @@ pub const Game = struct {
         self.state = self.startState();
         self.redraw = true;
         self.pattern_drawn = .{};
+        self.transfers_due = 0;
         if (self.view) |*v| v.shows = null;
         self.clock_base_ns = p.nowNs();
         self.clock_ticks = 0;

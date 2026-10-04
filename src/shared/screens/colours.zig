@@ -10,20 +10,25 @@ pub const Colours = struct {
     fade: ?render.Fade = null,
     /// What the picture shows at this tick: the colours at the end of the tick before.
     shown: render.palettes.Colours = render.palettes.black,
+    /// The tick touched the colours: the next frame copies them (screens/transfers.zig).
+    copy: bool = false,
 
     /// At the start of a tick: the picture takes the colours the tick before left.
     pub fn latch(self: *Colours) void {
         self.shown = self.palettes.shown;
+        self.copy = false;
     }
 
     /// Shows a palette asset's colours (from the next tick on).
     pub fn show(self: *Colours, p: *const art.Palette) void {
         self.palettes.show(p);
+        self.copy = true;
     }
 
     /// Makes a palette asset's colours the target of a fade in.
     pub fn aim(self: *Colours, p: *const art.Palette) void {
         self.palettes.aim(p);
+        self.copy = true;
     }
 
     /// Shows palette step `i` of `steps`.
@@ -31,6 +36,7 @@ pub const Colours = struct {
         for (steps.steps[i], 0..) |line, p| for (line, 0..) |c, k| {
             if (c) |colour| self.palettes.shown[p][k] = colour;
         };
+        self.copy = true;
     }
 
     /// Starts a fade of every colour, to black or to the target, a step a tick from the next.
@@ -38,9 +44,11 @@ pub const Colours = struct {
         self.fade = .{ .to = to };
     }
 
-    /// One step of the fade running; true when that was its last (or none runs).
+    /// One step of the fade running; true when that was its last (or none runs). A step to black
+    /// touches the colours, a step in only when it moves a channel (as the original's do).
     pub fn stepFade(self: *Colours) bool {
         const f = &(self.fade orelse return true);
+        if (f.to == .black or f.channel() != null) self.copy = true;
         if (f.step(&self.palettes)) return false;
         self.fade = null;
         return true;

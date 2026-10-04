@@ -52,6 +52,8 @@ pub const SegaLogo = struct {
     pub fn tick(self: *SegaLogo, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
         self.colours.latch();
         defer self.ticks +|= 1;
+        // Its frames are play's, whose scroll by cells has nothing to scroll.
+        defer turn.frame = .{ .colours = self.colours.copy, .cell_scroll = true };
         switch (self.phase) {
             .setup => {
                 // The logo white and the sweep's colours black, the pads released, the sound's

@@ -19,9 +19,12 @@ pub const HalfColours = struct {
     target: [lines][size]Half = @splat(@splat(.{ 0, 0, 0 })),
     /// What the picture shows at this tick: the colours the tick before left.
     shown: render.palettes.Colours = render.palettes.black,
+    /// The tick touched the colours: the next frame copies them (screens/transfers.zig).
+    copy: bool = false,
 
     pub fn latch(self: *HalfColours) void {
         self.shown = self.levels();
+        self.copy = false;
     }
 
     /// The colours as levels.
@@ -42,6 +45,7 @@ pub const HalfColours = struct {
         for (p.colours, 0..) |line, i| for (line, 0..) |c, k| {
             if (c) |colour| self.now[i][k] = half(colour);
         };
+        self.copy = true;
     }
 
     /// Makes a palette asset's colours the target (those it gives).
@@ -49,6 +53,7 @@ pub const HalfColours = struct {
         for (p.colours, 0..) |line, i| for (line, 0..) |c, k| {
             if (c) |colour| self.target[i][k] = half(colour);
         };
+        self.copy = true;
     }
 
     /// Shows step `i` of palette steps (the colours it gives).
@@ -56,12 +61,14 @@ pub const HalfColours = struct {
         for (steps.steps[i], 0..) |line, p| for (line, 0..) |c, k| {
             if (c) |colour| self.now[p][k] = half(colour);
         };
+        self.copy = true;
     }
 
     /// Every colour black, shown and target.
     pub fn clear(self: *HalfColours) void {
         self.now = @splat(@splat(.{ 0, 0, 0 }));
         self.target = self.now;
+        self.copy = true;
     }
 
     /// The colours `first` to `last` of palette `line`.
@@ -80,6 +87,7 @@ pub const HalfColours = struct {
 
     /// One step of a fade over `r`.
     pub fn step(self: *HalfColours, r: Range, s: Step) void {
+        self.copy = true;
         var k: usize = r.first;
         while (k <= r.last) : (k += 1) {
             const c = &self.now[r.line][k];
@@ -95,6 +103,7 @@ pub const HalfColours = struct {
 
     /// One step of the fade of everything on START: two half-levels down, every colour.
     pub fn fadeAll(self: *HalfColours) void {
+        self.copy = true;
         for (&self.now) |*line| for (line) |*c| {
             for (c) |*h| h.* = h.* -| 2;
         };

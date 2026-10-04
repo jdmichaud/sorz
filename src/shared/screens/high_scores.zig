@@ -63,6 +63,7 @@ pub const HighScores = struct {
     pub fn tick(self: *HighScores, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
         self.ticks +|= 1;
         self.colours.latch();
+        defer turn.frame = .{ .colours = self.colours.copy };
         if (self.ticks == 1) {
             turn.releasePads();
             self.colours.show(a.colours);

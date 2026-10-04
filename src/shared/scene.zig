@@ -27,6 +27,7 @@ const library = @import("library.zig");
 const json = @import("formats/json.zig");
 const View = @import("view.zig").View;
 const Setup = @import("setup.zig").Setup;
+const transfers = @import("screens/transfers.zig");
 
 pub const Kind = flow.Kind;
 pub const Exit = flow.Exit;
@@ -97,6 +98,9 @@ pub const Turn = struct {
     /// Set by the start-up: the sound's driver starts again from its first state (the original
     /// loads it again), which stops every sound at its next update.
     sound_restart: bool = false,
+    /// What this tick's picture transfers as the next frame starts (screens/transfers.zig);
+    /// null for a tick that ends no frame (a load's, a tick split in two).
+    frame: ?transfers.Frame = null,
 
     /// A set-up's release of the pads: no button is pressed at this tick, and every button counts
     /// as held at the next reading.

@@ -18,7 +18,9 @@
 //! sor-remaster's model agrees with the original's flag at 557 of the 559 reads of complete long
 //! plays in its references; the two others are within a few hundred cycles of the play's end, and
 //! there a drum hit can differ from the original's (the five drum-hit cases of sor-remaster's item
-//! 15). The game's own holds of the bus (the display's transfers) are not modelled in sorz.
+//! 15). The game's own holds of the bus (the picture's transfers, the pads' reading) come from the
+//! game at each update (screens/transfers.zig, `SoundOut.play`); the 68000's other work in a
+//! frame, before the driver's look, is not modelled (it matters only to a voice's end).
 const std = @import("std");
 const content = @import("content.zig");
 

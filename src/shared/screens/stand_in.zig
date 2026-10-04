@@ -39,6 +39,7 @@ pub const StandIn = struct {
 
     pub fn tick(self: *StandIn, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
         self.ticks +|= 1;
+        turn.frame = .{};
         switch (self.what) {
             .demo => {
                 if (self.ticks == 1) turn.releasePads();

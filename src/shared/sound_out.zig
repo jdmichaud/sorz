@@ -72,16 +72,22 @@ pub const SoundOut = struct {
     /// sounds the tick asked for, play from the next update on, as the original's driver takes
     /// the requests of a frame's logic at the next frame. `restart` starts the sequencer again
     /// from its first state after the update (the original's start-up loads its driver again):
-    /// its next update stops every sound, the chips ringing on until then. The frames stay valid
-    /// until the next call. Without the content's sound, silence.
-    pub fn play(self: *SoundOut, stretch_ppm: u32, requests: []const audio.sound.Id, driver: bool, restart: bool) []const i16 {
+    /// its next update stops every sound, the chips ringing on until then. `held`: the cycles the
+    /// game stopped the sound's processor at this frame's start (the picture's transfers, the
+    /// pads' reading: screens/transfers.zig), which delay the samples and the voices' clock.
+    /// The frames stay valid until the next call. Without the content's sound, silence.
+    pub fn play(self: *SoundOut, stretch_ppm: u32, requests: []const audio.sound.Id, driver: bool, restart: bool, held: u32) []const i16 {
         const s = if (self.sound) |*s| s else return self.tick(stretch_ppm);
         const ppm = @min(stretch_ppm, max_stretch_ppm);
         if (ppm != self.stretch_ppm) {
             s.output.stretch(ppm);
             self.stretch_ppm = ppm;
         }
-        const frames = if (driver) s.tick() else s.output.tick(&.{});
+        const frames = if (driver) blk: {
+            const t = s.sequencer.update();
+            s.sequencer.clock.held +|= held;
+            break :blk s.output.tickHeld(t, held);
+        } else s.output.tick(&.{});
         if (restart) s.sequencer = .init(s.sounds);
         for (requests) |r| s.play(r);
         return frames;

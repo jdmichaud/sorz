@@ -17,6 +17,9 @@ const HalfColours = @import("half_colours.zig").HalfColours;
 
 /// The title's wait for START before the demo.
 const wait_ticks = 300;
+/// Axel's picture's tiles, in words: the game copies them whole at the title's set-up, part by
+/// part during the intro.
+pub const hero_words = 2816;
 /// Plane A's place: the board's column 120 at the screen's left (the name and the hero).
 pub const name_left = 120;
 
@@ -189,6 +192,8 @@ pub const Title = struct {
         self.colours.latch();
         self.shown_sprites = self.sprites;
         defer self.ticks +|= 1;
+        // The set-up copies Axel's picture's tiles at its frame; every frame the line scroll.
+        defer turn.frame = .{ .colours = self.colours.copy, .line_scroll = true, .tile_words = if (self.ticks == 0) hero_words else 0 };
         if (self.ticks == 0) {
             // Its colours over the black the intro faded to; its pictures in place, running from
             // this tick.
