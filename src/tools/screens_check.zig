@@ -31,8 +31,10 @@ const Scenario = struct {
     keys: []const Press = &.{},
     /// The ticks whose pictures are compared.
     pictures: []const Span,
-    /// Whether the sound is compared (over the whole run).
+    /// Whether the sound is compared, and up to which tick (the attract demo's stand-in plays
+    /// round 1's music without the demo's own sounds: the sound is compared before it).
     sound: bool = true,
+    sound_until: ?u32 = null,
 };
 
 /// The scenarios: the pictures at the ticks where each screen's parts begin and end, from
@@ -50,6 +52,110 @@ pub const scenarios = [_]Scenario{
         .frames = 240,
         .keys = &.{ .{ .frame = 77, .key = .enter }, .{ .frame = 100, .key = .enter }, .{ .frame = 180, .key = .enter } },
         .pictures = &.{.{ .from = 70, .to = 239 }},
+    },
+    .{
+        .name = "intro",
+        .what = "the whole intro and its title with no keys, to the attract demo's load",
+        .frames = 5700,
+        .pictures = &.{.{ .from = 280, .to = 5695 }},
+        .sound_until = 5696,
+    },
+    .{
+        .name = "intro_start",
+        .what = "START in the story (the fade to the title in place), the title's colour steps and blink, its timeout to the demo",
+        .frames = 760,
+        .keys = &.{.{ .frame = 400, .key = .enter }},
+        .pictures = &.{.{ .from = 395, .to = 759 }},
+    },
+    .{
+        .name = "intro_start_profiles",
+        .what = "START during the profiles (boards 128 cells wide): the fade, the title in place",
+        .frames = 3560,
+        .keys = &.{.{ .frame = 3500, .key = .enter }},
+        .pictures = &.{.{ .from = 3495, .to = 3559 }},
+    },
+    .{
+        .name = "intro_start_flash",
+        .what = "START at the first frame of the city's flash's split tick: taken",
+        .frames = 4700,
+        .keys = &.{.{ .frame = 4659, .key = .enter }},
+        .pictures = &.{.{ .from = 4655, .to = 4699 }},
+    },
+    .{
+        .name = "intro_start_lost",
+        .what = "START at the second frame of the city's flash's split tick: lost (quirk Q3)",
+        .frames = 4700,
+        .keys = &.{.{ .frame = 4660, .key = .enter }},
+        .pictures = &.{.{ .from = 4655, .to = 4699 }},
+    },
+    .{
+        .name = "intro_start_press",
+        .what = "START at the tick PRESS START BUTTON comes (the title path still), and after it (the menu)",
+        .frames = 5130,
+        .keys = &.{ .{ .frame = 5047, .key = .enter }, .{ .frame = 5100, .key = .enter } },
+        .pictures = &.{.{ .from = 5040, .to = 5129 }},
+    },
+    .{
+        .name = "intro_start_menu",
+        .what = "START on the script's title: the game menu at once",
+        .frames = 5180,
+        .keys = &.{.{ .frame = 5100, .key = .enter }},
+        .pictures = &.{.{ .from = 5095, .to = 5179 }},
+    },
+    .{
+        .name = "menu",
+        .what = "the title by START, the game menu's fade in, the arrow's blink and moves, 1 PLAYER chosen, its fade out",
+        .frames = 760,
+        .keys = &.{ .{ .frame = 500, .key = .enter }, .{ .frame = 560, .key = .enter }, .{ .frame = 565, .key = .down }, .{ .frame = 566, .key = .down }, .{ .frame = 600, .key = .up }, .{ .frame = 627, .key = .z }, .{ .frame = 640, .key = .enter } },
+        .pictures = &.{.{ .from = 500, .to = 759 }},
+    },
+    .{
+        .name = "options",
+        .what = "the options: the sound test (its names and sounds), the level, the control, EXIT, back to the menu",
+        .frames = 1260,
+        .keys = &.{
+            .{ .frame = 500, .key = .enter },  .{ .frame = 560, .key = .enter },  .{ .frame = 640, .key = .down },   .{ .frame = 660, .key = .down },
+            .{ .frame = 720, .key = .z },      .{ .frame = 852, .key = .enter },  .{ .frame = 870, .key = .right },  .{ .frame = 880, .key = .right },
+            .{ .frame = 890, .key = .left },   .{ .frame = 900, .key = .left },   .{ .frame = 910, .key = .left },   .{ .frame = 920, .key = .z },
+            .{ .frame = 940, .key = .c },      .{ .frame = 960, .key = .down },   .{ .frame = 961, .key = .right },  .{ .frame = 980, .key = .right },
+            .{ .frame = 1000, .key = .right }, .{ .frame = 1010, .key = .right }, .{ .frame = 1020, .key = .left },  .{ .frame = 1030, .key = .down },
+            .{ .frame = 1040, .key = .right }, .{ .frame = 1050, .key = .right }, .{ .frame = 1060, .key = .right }, .{ .frame = 1070, .key = .down },
+            .{ .frame = 1080, .key = .down },  .{ .frame = 1090, .key = .up },    .{ .frame = 1100, .key = .up },    .{ .frame = 1110, .key = .up },
+            .{ .frame = 1120, .key = .up },    .{ .frame = 1130, .key = .up },    .{ .frame = 1140, .key = .z },
+        },
+        .pictures = &.{.{ .from = 700, .to = 1259 }},
+    },
+    .{
+        .name = "options_hidden",
+        .what = "the options' hidden lines opened by pad 2 (A, B, C and right held), the lives and the first round, START leaving",
+        .frames = 1200,
+        .keys = &.{
+            .{ .frame = 500, .key = .enter },          .{ .frame = 560, .key = .enter },          .{ .frame = 640, .key = .down },           .{ .frame = 660, .key = .down },
+            .{ .frame = 700, .key = .f, .hold = 100 }, .{ .frame = 700, .key = .g, .hold = 100 }, .{ .frame = 700, .key = .h, .hold = 100 }, .{ .frame = 700, .key = .d, .hold = 100 },
+            .{ .frame = 720, .key = .z },              .{ .frame = 860, .key = .down },           .{ .frame = 870, .key = .down },           .{ .frame = 880, .key = .down },
+            .{ .frame = 890, .key = .right },          .{ .frame = 900, .key = .right },          .{ .frame = 910, .key = .down },           .{ .frame = 920, .key = .right },
+            .{ .frame = 930, .key = .right },          .{ .frame = 940, .key = .right },          .{ .frame = 950, .key = .right },          .{ .frame = 960, .key = .right },
+            .{ .frame = 970, .key = .right },          .{ .frame = 980, .key = .right },          .{ .frame = 990, .key = .right },          .{ .frame = 1000, .key = .left },
+            .{ .frame = 1010, .key = .down },          .{ .frame = 1020, .key = .down },          .{ .frame = 1030, .key = .up },            .{ .frame = 1040, .key = .up },
+            .{ .frame = 1050, .key = .up },            .{ .frame = 1060, .key = .up },            .{ .frame = 1070, .key = .up },            .{ .frame = 1080, .key = .up },
+            .{ .frame = 1090, .key = .up },            .{ .frame = 1100, .key = .enter },
+        },
+        .pictures = &.{.{ .from = 780, .to = 1199 }},
+    },
+    .{
+        .name = "high_scores",
+        .what = "the high scores after the attract demo (whose stand-in is not compared), START on them, the Sega logo again",
+        .frames = 7720,
+        .keys = &.{.{ .frame = 7631, .key = .enter }},
+        .pictures = &.{.{ .from = 7625, .to = 7719 }},
+        .sound_until = 5696,
+    },
+    .{
+        .name = "high_scores_timeout",
+        .what = "the high scores' 600 ticks, then the start-up and the Sega logo again",
+        .frames = 8260,
+        .pictures = &.{ .{ .from = 7625, .to = 7700 }, .{ .from = 8200, .to = 8259 } },
+        .sound_until = 5696,
     },
     .{
         .name = "logo_start_pad2",
@@ -180,11 +286,18 @@ fn run(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator, assets: sor
     if (sc.sound) {
         const wav = try std.Io.Dir.cwd().readFileAlloc(io, wav_path, gpa, .limited(1 << 30));
         defer gpa.free(wav);
-        const s = soundDifference(wav, backend.audio.pcm.items);
+        // A tick is 896,040 periods of the 53,693,175 Hz clock: about 801 frames at 48 kHz.
+        const until: ?usize = if (sc.sound_until) |t| @intCast(@as(u64, t) * 896_040 * 48_000 / 53_693_175) else null;
+        const s = soundDifference(wav, backend.audio.pcm.items, until);
         sound_same = s.first == null;
         try line.print(arena, ",\"sound\":{{\"frames\":{d},\"reference_frames\":{d}", .{ s.frames, s.reference_frames });
         // A tick is 896,040 periods of the 53,693,175 Hz clock: 801 frames at 48 kHz.
-        if (s.first) |frame| try line.print(arena, ",\"first_difference\":{{\"frame\":{d},\"tick\":{d}}}", .{ frame, @as(u64, frame) * 53_693_175 / (896_040 * 48_000) });
+        if (s.first) |frame| {
+            try line.print(arena, ",\"first_difference\":{{\"frame\":{d},\"tick\":{d}}},\"differing_frames\":{d},\"largest\":{d}", .{ frame, @as(u64, frame) * 53_693_175 / (896_040 * 48_000), s.differing, s.largest });
+            // sorz's sound beside the reference's, to listen to and to compare.
+            var name_buf: [128]u8 = undefined;
+            try writeWav(gpa, io, out_dir, try std.fmt.bufPrint(&name_buf, "sorz_{s}.wav", .{sc.name}), backend.audio.pcm.items, wav);
+        }
         try line.appendSlice(arena, "}");
     }
     try line.appendSlice(arena, "}");
@@ -221,20 +334,35 @@ fn differ(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, ref: *const png.I
     return n;
 }
 
-const SoundDifference = struct { frames: usize, reference_frames: usize, first: ?usize };
+const SoundDifference = struct { frames: usize, reference_frames: usize, first: ?usize, differing: usize = 0, largest: u32 = 0 };
 
 /// The first stereo frame where sorz's sound differs from the reference's WAV (16-bit stereo, a
-/// 44-byte header), over the length both have.
-fn soundDifference(wav: []const u8, pcm: []const i16) SoundDifference {
+/// 44-byte header), over the length both have, the frames that differ and the largest difference.
+fn soundDifference(wav: []const u8, pcm: []const i16, until: ?usize) SoundDifference {
     const data = if (wav.len > 44) wav[44..] else wav[0..0];
     const ref_frames = data.len / 4;
     const frames = pcm.len / 2;
-    for (0..@min(frames, ref_frames)) |i| {
+    var d: SoundDifference = .{ .frames = frames, .reference_frames = ref_frames, .first = null };
+    for (0..@min(frames, ref_frames, until orelse frames)) |i| {
         const l = std.mem.readInt(i16, data[i * 4 ..][0..2], .little);
         const r = std.mem.readInt(i16, data[i * 4 + 2 ..][0..2], .little);
-        if (l != pcm[2 * i] or r != pcm[2 * i + 1]) return .{ .frames = frames, .reference_frames = ref_frames, .first = i };
+        if (l == pcm[2 * i] and r == pcm[2 * i + 1]) continue;
+        if (d.first == null) d.first = i;
+        d.differing += 1;
+        d.largest = @max(d.largest, @abs(@as(i32, l) - pcm[2 * i]), @abs(@as(i32, r) - pcm[2 * i + 1]));
     }
-    return .{ .frames = frames, .reference_frames = ref_frames, .first = null };
+    return d;
+}
+
+/// `pcm` as a WAV file with the reference's header (the same format).
+fn writeWav(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, name: []const u8, pcm: []const i16, reference: []const u8) !void {
+    const bytes = try gpa.alloc(u8, 44 + pcm.len * 2);
+    defer gpa.free(bytes);
+    @memcpy(bytes[0..44], reference[0..44]);
+    std.mem.writeInt(u32, bytes[4..8], @intCast(36 + pcm.len * 2), .little);
+    std.mem.writeInt(u32, bytes[40..44], @intCast(pcm.len * 2), .little);
+    for (pcm, 0..) |v, i| std.mem.writeInt(i16, bytes[44 + 2 * i ..][0..2], v, .little);
+    try dir.writeFile(io, .{ .sub_path = name, .data = bytes });
 }
 
 fn usage(io: std.Io) !void {
