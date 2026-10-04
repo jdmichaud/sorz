@@ -49,12 +49,15 @@ pub fn write(arena: std.mem.Allocator, c: *const content.Content) Error![]const 
             .sample => |n| try object(arena, &.{.{ .key = "sample", .value = .num(n) }}),
             .fade_out, .stop, .stop_effects => try object(arena, &.{.{ .key = "command", .value = .{ .str = @tagName(s.plays) } }}),
         };
-        try sounds.append(arena, try object(arena, &.{
+        var fields: std.ArrayList(json.Field) = .empty;
+        try fields.appendSlice(arena, &.{
             .{ .key = "name", .value = .{ .str = s.name } },
             .{ .key = "priority", .value = .num(s.priority) },
             .{ .key = "plays", .value = plays },
             .{ .key = "provenance", .value = .{ .str = s.provenance } },
-        }));
+        });
+        if (s.request) |r| try fields.append(arena, .{ .key = "request", .value = .num(r) });
+        try sounds.append(arena, try object(arena, fields.items));
     }
     try add.json_(arena, &files, "sound/sounds.json", try object(arena, &.{.{ .key = "sounds", .value = .{ .array = sounds.items } }}));
 
@@ -151,12 +154,13 @@ pub fn load(arena: std.mem.Allocator, source: anytype, diag: *json.Diagnostic) E
     const out = try arena.alloc(content.Sound, try list.len());
     for (out, 0..) |*s, i| {
         const n = try list.at(i);
-        try n.only(&.{ "name", "priority", "plays", "provenance" });
+        try n.only(&.{ "name", "priority", "plays", "request", "provenance" });
         const plays = try n.get("plays");
         try plays.only(&.{ "song", "effect", "sample", "command" });
         s.* = .{
             .name = try (try n.get("name")).string(),
             .priority = try (try n.get("priority")).int(u8),
+            .request = if (try n.opt("request")) |r| try r.int(u8) else null,
             .provenance = if (try n.opt("provenance")) |p| try p.string() else "",
             .plays = if (try plays.opt("song")) |song|
                 .{ .song = try indexOf(arena, &song_names, try song.string()) }

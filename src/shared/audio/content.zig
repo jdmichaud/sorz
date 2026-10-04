@@ -33,6 +33,9 @@ pub const Sound = struct {
     /// least the playing one's; a song's (128 and above) never holds it (sound port map 3.1).
     priority: u8,
     plays: Plays,
+    /// The original's number for this request, for comparing a trace with sor-remaster's, which
+    /// names sounds by it; the game never reads it (it asks for sounds by name).
+    request: ?u8 = null,
     provenance: []const u8 = "",
 };
 

@@ -111,6 +111,7 @@ const Extractor = struct {
                 .name = e.name,
                 .priority = priority,
                 .plays = plays,
+                .request = e.request,
                 .provenance = try std.fmt.allocPrint(x.arena, "request ${X:0>2}: {s}", .{ e.request, e.note }),
             });
             try requests.append(x.arena, e.request);
@@ -482,6 +483,7 @@ test "the sound content from a synthetic ROM: the tables, a song, the effects, t
     try testing.expectEqual(names.entries.len, c.sounds.len);
     try testing.expectEqual(@as(u8, 0xA0), x.requests[17]);
     try testing.expectEqual(@as(u8, 0xA0 - 0x81), c.sounds[17].priority);
+    try testing.expectEqual(@as(?u8, 0xA0), c.sounds[17].request);
     // The tables.
     try testing.expectEqual(@as(u16, 0x285), c.driver.fm_keys[5]);
     try testing.expectEqual(@as(u8, 0x40 - 6), c.driver.volume_levels[3]);

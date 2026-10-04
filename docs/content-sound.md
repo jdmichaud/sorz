@@ -21,7 +21,7 @@ DESIGN.md 10.6). The files carry no ROM address; each item says where it comes f
 
 ```json
 {"sounds": [
-  {"name": "menu move", "priority": 111, "plays": {"effect": "menu_move"},
+  {"name": "menu move", "priority": 111, "plays": {"effect": "menu_move"}, "request": 185,
    "provenance": "request $B9: sound test SE 26"},
   {"name": "round 1 music", "priority": 128, "plays": {"song": "round_1"}, "provenance": "..."},
   {"name": "axel shout", "priority": 114, "plays": {"sample": 16}, "provenance": "..."},
@@ -38,6 +38,10 @@ priority is at least the playing effect's wins; a priority of 128 or more (the s
 kept, so songs never hold off effects, and an effect holds off lower ones only while it plays.
 
 Two names may play the same item ("name entry music" and "round clear music" are one song).
+
+`request` (optional) is the original's number for the request, 129 to 226: sor-remaster's
+semantic traces name a sound by it (`sfx_b9` is 185), so the comparison of the two programs'
+traces maps one name to the other with it. The game never reads it: it asks for sounds by name.
 
 ## Songs and effects (the notation)
 
