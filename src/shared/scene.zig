@@ -35,6 +35,7 @@ pub const Load = @import("screens/load.zig").Load;
 pub const StandIn = @import("screens/stand_in.zig").StandIn;
 pub const SegaLogo = @import("screens/sega_logo.zig").SegaLogo;
 pub const Menu = @import("screens/menu.zig").Menu;
+pub const Options = @import("screens/options.zig").Options;
 pub const Intro = @import("screens/intro.zig").Intro;
 pub const Title = @import("screens/title.zig").Title;
 
@@ -46,7 +47,7 @@ pub const Scene = union(Kind) {
     intro: Intro,
     title: Title,
     menu: Menu,
-    options: StandIn,
+    options: Options,
     select: StandIn,
     demo: StandIn,
     high_scores: StandIn,
@@ -116,6 +117,7 @@ pub const Assets = struct {
     stand_in: StandIn.Assets,
     sega_logo: SegaLogo.Assets,
     menu: Menu.Assets,
+    options: Options.Assets,
     intro: Intro.Assets,
     title: Title.Assets,
 
