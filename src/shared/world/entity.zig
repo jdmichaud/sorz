@@ -73,7 +73,10 @@ pub const Flags = packed struct(u16) {
     /// It does not move by its speed at this tick: its behaviour holds it still and keeps its
     /// speed (the original's objects move only when their code moves them).
     still: bool = false,
-    _: u6 = 0,
+    /// Not drawn at this tick, a blink's dark phase: unlike `hidden`, it keeps its frame's boxes
+    /// and its place (the original's blinking objects are only not drawn).
+    blinked: bool = false,
+    _: u5 = 0,
 };
 
 /// The animation an entity plays: one of its kind's, the frame it is on, and the logic ticks

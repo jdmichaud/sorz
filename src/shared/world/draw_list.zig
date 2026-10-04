@@ -78,7 +78,7 @@ pub fn build(t: *Tick) void {
     var n: usize = 0;
     for (w.updateOrder(&buf)) |i| {
         const e = &w.entities[i];
-        if (e.flags.hidden or out.shown[i] == null) continue;
+        if (e.flags.hidden or e.flags.blinked or out.shown[i] == null) continue;
         if (!e.flags.stays and farOff(screenPlace(w, e))) {
             w.remove(w.handleAt(i).?);
             out.shown[i] = null;

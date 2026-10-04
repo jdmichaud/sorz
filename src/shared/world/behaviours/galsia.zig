@@ -578,7 +578,7 @@ fn knockedOut(a: Actor) void {
         if (by) |h| a.tick.score(h, n.points);
         return a.remove();
     }
-    a.entity.flags.hidden = !a.entity.flags.hidden;
+    a.entity.flags.blinked = !a.entity.flags.blinked;
     a.mind.timer = n.blink;
 }
 

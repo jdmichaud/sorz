@@ -709,7 +709,7 @@ test "the camera follows a player drawn past the view's middle band, and keeps t
     try testing.expectEqual(@as(i32, systems.following.depth_to), w.get(hero).?.position.depth.whole());
 }
 
-test "an entity held still keeps its speed; a hidden one has no boxes and its frame stays" {
+test "an entity held still keeps its speed; a hidden one has no boxes and its frame stays; a blinked one keeps them, not drawn" {
     var f = try Fixture.init();
     defer f.deinit();
     var w: World = .{};
@@ -729,4 +729,14 @@ test "an entity held still keeps its speed; a hidden one has no boxes and its fr
     try testing.expectEqual(@as(i32, 58), w.get(p).?.position.x.whole());
     try testing.expectEqual(frame, w.get(p).?.animation.frame);
     try testing.expect(w.get(p).?.boxes.body == null and out.shown[p.index] == null);
+    // Blinked (a blink's dark phase), it shows its frames and their boxes, and is not drawn.
+    w.get(p).?.flags.hidden = false;
+    w.get(p).?.flags.blinked = true;
+    var bodies: usize = 0;
+    for (0..5) |_| {
+        step(&w, &f, &rng, &out, .{});
+        try testing.expect(out.shown[p.index] != null and out.sprites.slice().len == 0);
+        if (w.get(p).?.boxes.body != null) bodies += 1;
+    }
+    try testing.expectEqual(@as(usize, 2), bodies);
 }
