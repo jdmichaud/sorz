@@ -536,19 +536,22 @@ peers kept their state. A game that restarts starts a new session.
   The states are code; their numbers (speeds, durations, ranges, damage) are the definition's
   data. A kind of enemy is one definition plus, when its behaviour is its own (a boss), one
   behaviour module.
-- **W4 Systems in a fixed order per logic tick:**
+- **W4 Systems in a fixed order per logic tick** (the original's turn, as measured against
+  sor-remaster):
   1. input to commands;
   2. player control;
-  3. AI decisions;
-  4. movement and gravity;
-  5. hit and hurt boxes, hits and their reactions;
-  6. grabs and throws;
-  7. pick-ups;
-  8. the round's script (spawns, events, walls of the camera);
-  9. the camera;
-  10. animation;
-  11. sound events;
-  12. the draw list.
+  3. the players' movement;
+  4. the camera;
+  5. the other entities' tick begins (a state entered at the last tick sets itself up);
+  6. hit and hurt boxes, hits and their reactions;
+  7. grabs and throws;
+  8. AI decisions;
+  9. the others' movement and gravity;
+  10. pick-ups;
+  11. the round's script (spawns, events, walls of the camera);
+  12. animation;
+  13. sound events;
+  14. the draw list.
 
   The order is part of the game's definition: exact may require reordering a step, and then it is
   done here.
