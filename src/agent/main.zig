@@ -24,6 +24,9 @@ const usage =
     \\                  [--corrupt TICK]
     \\       sorz-agent DIR|ROM --server [ADDRESS:]PORT
     \\       sorz-agent DIR|ROM --scenario FILE --situation TRACE [--trace-events OUT] [--probe OUT]
+    \\       sorz-agent trace-compare FIRST SECOND [--ticks M] [--pos PIXELS] [--tol FIELD=N]...
+    \\                  [--ignore EV[,EV...]] [--scene NAME] [--after TICK] [--ignore-kind K[,K...]]
+    \\                  [--ignore-field F[,F...]] [--sounds SOUNDS_JSON] [--all]
     \\  --frames N       run N frames, a display tick each (default 120)
     \\  --key FRAME:NAME[:HOLD]  press the key NAME (a platform.Key, as `enter` or `left`) at
     \\                   frame FRAME, release it HOLD frames later (default 1); repeats
@@ -50,6 +53,15 @@ const usage =
     \\                   to its end; --trace-events writes its semantic trace, --probe the
     \\                   fighters' frames, boxes and power; a condition that does not come in
     \\                   time ends the run with status 1
+    \\  trace-compare    compare two semantic traces (sor-remaster's docs/traces.md): the first
+    \\                   difference and the counts per kind of event; events match within
+    \\                   --ticks M ticks, positions and speeds within --pos PIXELS, a field
+    \\                   within --tol's N (its own unit); --ignore leaves kinds of event out,
+    \\                   --ignore-kind the events about entities of those kinds, --ignore-field
+    \\                   fields; --scene compares the last scene of that name in each, after
+    \\                   tick --after; --sounds names the first trace's sounds (sor-remaster's
+    \\                   `sfx_b2`) as the sound content's sounds.json does (\"enemy hit\");
+    \\                   --all writes every difference; exits 1 when they differ
     \\
 ;
 
@@ -88,7 +100,17 @@ pub fn main(init: std.process.Init) !void {
     // whole run.
     var args = try init.minimal.args.iterateAllocator(init.arena.allocator());
     _ = args.skip();
+    var first_arg = true;
     while (args.next()) |arg| {
+        if (first_arg and std.mem.eql(u8, arg, "trace-compare")) {
+            var obuf: [4096]u8 = undefined;
+            var ow = std.Io.File.stdout().writerStreaming(io, &obuf);
+            const same = try traceCompare(init, &args, &ow.interface);
+            try ow.interface.flush();
+            if (!same) std.process.exit(1);
+            return;
+        }
+        first_arg = false;
         if (options.take(arg, &args) catch return fail(io)) continue;
         if (std.mem.eql(u8, arg, "--frames")) {
             frames = std.fmt.parseInt(u64, args.next() orelse return fail(io), 10) catch return fail(io);
@@ -277,6 +299,88 @@ fn writeWav(gpa: std.mem.Allocator, io: std.Io, path: []const u8, pcm: []const i
     std.mem.writeInt(u32, bytes[40..44], data_bytes, .little);
     for (pcm, 0..) |v, i| std.mem.writeInt(i16, bytes[44 + 2 * i ..][0..2], v, .little);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = bytes });
+}
+
+/// `trace-compare FIRST SECOND [options]`: true when the traces agree.
+fn traceCompare(init: std.process.Init, args: anytype, out: *std.Io.Writer) !bool {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const compare = agent.trace_compare;
+    var paths: [2][]const u8 = undefined;
+    var n: usize = 0;
+    var options: compare.Options = .{};
+    var tolerances: std.ArrayList(compare.Tolerance) = .empty;
+    var ignore: std.ArrayList([]const u8) = .empty;
+    var ignore_kinds: std.ArrayList([]const u8) = .empty;
+    var ignore_fields: std.ArrayList([]const u8) = .empty;
+    var sounds: ?[]const u8 = null;
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--ticks")) {
+            options.ticks = std.fmt.parseInt(i64, args.next() orelse return failed(io), 10) catch return failed(io);
+        } else if (std.mem.eql(u8, arg, "--pos")) {
+            const px = std.fmt.parseInt(i64, args.next() orelse return failed(io), 10) catch return failed(io);
+            for (compare.position_fields) |f| try tolerances.append(arena, .{ .field = f, .within = px * 65536 });
+        } else if (std.mem.eql(u8, arg, "--tol")) {
+            const spec = args.next() orelse return failed(io);
+            const eq = std.mem.indexOfScalar(u8, spec, '=') orelse return failed(io);
+            const within = std.fmt.parseInt(i64, spec[eq + 1 ..], 10) catch return failed(io);
+            try tolerances.append(arena, .{ .field = spec[0..eq], .within = within });
+        } else if (std.mem.eql(u8, arg, "--ignore") or std.mem.eql(u8, arg, "--ignore-kind") or std.mem.eql(u8, arg, "--ignore-field")) {
+            const list = if (std.mem.eql(u8, arg, "--ignore")) &ignore else if (std.mem.eql(u8, arg, "--ignore-kind")) &ignore_kinds else &ignore_fields;
+            var it = std.mem.splitScalar(u8, args.next() orelse return failed(io), ',');
+            while (it.next()) |x| if (x.len != 0) try list.append(arena, x);
+        } else if (std.mem.eql(u8, arg, "--scene")) {
+            options.from_scene = args.next() orelse return failed(io);
+        } else if (std.mem.eql(u8, arg, "--after")) {
+            options.after = std.fmt.parseInt(i64, args.next() orelse return failed(io), 10) catch return failed(io);
+        } else if (std.mem.eql(u8, arg, "--sounds")) {
+            sounds = args.next() orelse return failed(io);
+        } else if (std.mem.eql(u8, arg, "--all")) {
+            options.all = true;
+        } else if (n < 2 and arg.len != 0 and arg[0] != '-') {
+            paths[n] = arg;
+            n += 1;
+        } else return failed(io);
+    }
+    if (n != 2) return failed(io);
+    options.tolerances = tolerances.items;
+    options.ignore = ignore.items;
+    options.ignore_kinds = ignore_kinds.items;
+    options.ignore_fields = ignore_fields.items;
+    if (sounds) |path| {
+        const text = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 24)) catch |err| {
+            std.log.err("cannot read the sounds {s}: {s}", .{ path, @errorName(err) });
+            std.process.exit(2);
+        };
+        options.sound_names = compare.soundNames(arena, text) catch |err| {
+            std.log.err("the sounds {s} are refused: {s}", .{ path, @errorName(err) });
+            std.process.exit(2);
+        };
+    }
+    var traces: [2]compare.Trace = undefined;
+    for (paths, 0..) |path, k| {
+        const text = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 31)) catch |err| {
+            std.log.err("cannot read the trace {s}: {s}", .{ path, @errorName(err) });
+            std.process.exit(2);
+        };
+        var diag: compare.Diagnostic = .{};
+        const t = compare.parse(arena, text, &diag) catch |err| {
+            std.log.err("the trace {s} is refused at line {d}: {s} ({s})", .{ path, diag.line, diag.what, @errorName(err) });
+            std.process.exit(2);
+        };
+        traces[k] = compare.restrict(arena, &t, options, k == 0) catch |err| {
+            std.log.err("the trace {s} has no scene {s} ({s})", .{ path, options.from_scene orelse "", @errorName(err) });
+            std.process.exit(2);
+        };
+    }
+    const result = try compare.compare(arena, &traces[0], &traces[1], options, out);
+    try out.print("{{\"same\":{},\"differences\":{d}}}\n", .{ result.differences == 0, result.differences });
+    return result.differences == 0;
+}
+
+fn failed(io: std.Io) bool {
+    fail(io) catch {};
+    return false;
 }
 
 fn fail(io: std.Io) !void {
