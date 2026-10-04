@@ -159,8 +159,9 @@ const punk =
 
 const car =
     \\{"family": "effect", "team": "neutral", "behaviour": "police_car",
-    \\ "numbers": {"siren": 61, "brakes": 76, "bazooka": 114, "shell": 180, "explosion": 233,
-    \\   "blast": 278, "ends": 318},
+    \\ "numbers": {"run": 1048576, "run_most": 50331648, "comes": 33554432, "siren": 29,
+    \\   "brakes": 44, "bazooka": 82, "shell": 148, "explosion": 201, "blast": 245, "run_ahead": 100,
+    \\   "ends": 286},
     \\ "sounds": {"siren": "police siren", "brakes": "police car brakes", "bazooka": "police bazooka",
     \\   "shell": "bazooka shell", "explosion": "explosion"},
     \\ "animations": {"car": {"loop": true, "frames": [{"frame": "t/f4", "ticks": 1}]}}}
@@ -371,28 +372,44 @@ test "a grab: the walk's reach catches the punk; two knees, and the last knocks 
     try testing.expect(r.player().holding == null);
 }
 
-test "the special attack: the car comes, the punk stands without health, the blast, the end" {
+test "the special attack: the camera runs back, the car comes, the punk stands without health, the blast, the end" {
     var r = try Round.init();
     defer r.deinit();
     const p = try r.punk(900);
+    r.step(.{});
     r.step(.{ .pad1 = .{ .a = true } });
     try testing.expect(r.w.special);
     try testing.expectEqual(@as(u8, 0), r.w.players[0].specials);
     try testing.expectEqual(@as(i16, -1), r.w.get(p).?.health);
     try testing.expect(r.w.get(p).?.mind.galsia.state == .stand);
+    // At the call's tick the camera still follows the player, on the left of its band.
+    try testing.expectEqual(@as(i32, 765), r.w.camera.x.whole());
     const x = r.player().position.x;
     var knocked_at: ?usize = null;
     var ended_at: ?usize = null;
+    var back_at: ?usize = null;
+    var ahead_at: ?usize = null;
+    var returned_at: ?usize = null;
     for (1..330) |i| {
+        const was = r.w.camera.x.whole();
         r.step(.{ .pad1 = .{ .right = true } });
+        const now = r.w.camera.x.whole();
+        if (back_at == null and now == 0) back_at = i;
+        if (ahead_at == null and now > was) ahead_at = i;
+        if (returned_at == null and ahead_at != null and r.w.camera.run == null) returned_at = i;
         if (knocked_at == null) if (r.w.get(p)) |e| if (e.mind.galsia.state == .knocked_down) {
             knocked_at = i;
         };
         if (ended_at == null and !r.w.special) ended_at = i;
         if (ended_at == null) try testing.expect(r.player().position.x.eql(x));
     }
-    try testing.expectEqual(@as(?usize, 278), knocked_at);
-    try testing.expectEqual(@as(?usize, 318), ended_at);
+    // 765 to 0 at 16 a tick; the car comes when the camera is 512 back from 768 (tick 32).
+    try testing.expectEqual(@as(?usize, 48), back_at);
+    try testing.expectEqual(@as(?usize, 32 + 100 + 1), ahead_at);
+    try testing.expectEqual(@as(?usize, 32 + 100 + 48), returned_at);
+    try testing.expectEqual(@as(i32, 768), r.w.camera.x.whole());
+    try testing.expectEqual(@as(?usize, 32 + 245), knocked_at);
+    try testing.expectEqual(@as(?usize, 32 + 286), ended_at);
     // A second call needs a special left.
     r.step(.{ .pad1 = .{ .a = true } });
     try testing.expect(!r.w.special);

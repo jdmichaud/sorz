@@ -16,6 +16,7 @@ const kinds_mod = @import("kinds.zig");
 const world_mod = @import("world.zig");
 const output = @import("output.zig");
 const behaviours = @import("behaviours.zig");
+const systems = @import("systems.zig");
 
 const Fixed = fixed.Fixed;
 const Vec3 = fixed.Vec3;
@@ -223,6 +224,13 @@ pub const Tick = struct {
         dispatch(t, held, "letGoBy", void, {}, .{holder});
     }
 
+    /// A heavy fall shakes the screen, unless a shake is under way or the special attack is.
+    pub fn shake(t: *Tick) void {
+        const c = &t.world.camera;
+        if (t.world.special or c.shake != 0) return;
+        c.shake = systems.shaking.ticks;
+    }
+
     /// The kind of entity of a special attack's call: the police car.
     pub const special_kind = "police_car";
 
@@ -236,6 +244,7 @@ pub const Tick = struct {
         const car = t.world.spawn(t.kinds, kind, .{ .x = c.x, .depth = .zero, .height = t.world.ground }, .right) catch return false;
         if (t.world.get(car)) |e| e.flags.on_screen = false;
         t.world.special = true;
+        dispatch(t, car, "specialCalled", void, {}, .{});
         var buf: [capacity_]u8 = undefined;
         for (t.world.updateOrder(&buf)) |i| {
             const h = t.world.handleAt(i) orelse continue;

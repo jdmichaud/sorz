@@ -751,14 +751,22 @@ pub fn policeCar(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definit
     const frames = try arena.alloc(entity.Frame, 1);
     frames[0] = .{ .frame = try d.frameName(car.frames[0].address), .ticks = 1 };
     try d.animations.append(arena, .{ .name = "car", .loop = true, .frames = frames });
-    const measured = "measured: the ticks from the call in sor-remaster's special attack (catalogue player-special-axel.scn)";
-    try d.number("siren", 61, measured);
-    try d.number("brakes", 76, measured);
-    try d.number("bazooka", 114, measured);
-    try d.number("shell", 180, measured);
-    try d.number("explosion", 233, measured);
-    try d.number("blast", 278, measured);
-    try d.number("ends", 318, measured);
+    // The camera's run (its plane's special attack modes): back at 0x18CC4, ahead at 0x18DC2,
+    // at the same speed; its limit at 0x192E4; the car comes at 0x18CDE.
+    const back = try immediate(rom, 0x18CC4, &.{ 0x23, 0x7C }, 4);
+    if (try immediate(rom, 0x18DC2, &.{ 0x23, 0x7C }, 4) != -back) return error.BadData;
+    try d.number("run", -back, "ROM 0x18CC4 (move.l to the camera's speed; 0x18DC2 the same ahead)");
+    try d.number("run_most", -(try immediate(rom, 0x192E4, &.{ 0x06, 0x80 }, 4)), "ROM 0x192E4 (addi.l to the camera's place)");
+    try d.number("comes", (try immediate(rom, 0x18CDE, &.{ 0x04, 0x40 }, 2)) << 16, "ROM 0x18CDE (subi.w from the camera's place at the call)");
+    const measured = "measured: the ticks from the car's coming in sor-remaster's special attack (catalogue player-special-axel.scn, player-special-enemies-axel.scn)";
+    try d.number("siren", 29, measured);
+    try d.number("brakes", 44, measured);
+    try d.number("bazooka", 82, measured);
+    try d.number("shell", 148, measured);
+    try d.number("explosion", 201, measured);
+    try d.number("blast", 245, measured);
+    try d.number("run_ahead", 100, measured);
+    try d.number("ends", 286, measured);
     try d.sound("siren", 0xCE);
     try d.sound("brakes", 0xAE);
     try d.sound("bazooka", 0xA9);

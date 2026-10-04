@@ -49,9 +49,24 @@ pub const Camera = struct {
     x_max: Fixed = .of(std.math.maxInt(i32)),
     y_min: Fixed = .zero,
     y_max: Fixed = .of(std.math.maxInt(i32)),
-    /// It follows the players across (in play), from where the last tick drew them.
+    /// It follows the players across (in play), from where the last tick drew them, and never
+    /// goes back: its limit on the left follows it.
     follows: bool = false,
     drawn: [2]?Fixed = .{ null, null },
+    /// The special attack's run, while it lasts: the camera neither follows nor holds the players.
+    run: ?Run = null,
+    /// A shake under way (`Tick.shake`): its ticks left.
+    shake: u8 = 0,
+
+    /// The special attack's run (behaviours/police_car.zig): called, the camera follows for the
+    /// tick of the call; then it runs back across at `speed` to `limit`; then (its effect over) it
+    /// runs ahead at that speed until it is back where it was at the call.
+    pub const Run = struct {
+        from: Fixed,
+        state: enum { called, back, ahead } = .called,
+        speed: Fixed = .zero,
+        limit: Fixed = .zero,
+    };
 };
 
 /// The round's script's place in the round (PLAN item 13 fills it in).

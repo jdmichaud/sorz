@@ -71,6 +71,8 @@ pub const Mind = struct {
     /// Held: the holder's move it last took a blow from, a slam's ticks under way.
     hold_move: ?u8 = null,
     slam: u8 = 0,
+    /// Its slam shakes the screen, from its own tick (after the camera's).
+    shakes: bool = false,
     /// Knocked out: the blinks left.
     blinks: u8 = 0,
     /// The walk off: it paces across (after its walk away in depth), on the right of its target
@@ -192,6 +194,10 @@ pub fn think(a: Actor) void {
     a.mind.touched = false;
     // It moves only where its state walks or flies (`go`), its speed kept otherwise.
     a.entity.flags.still = true;
+    if (a.mind.shakes) {
+        a.mind.shakes = false;
+        a.tick.shake();
+    }
     if (a.mind.waits) {
         a.mind.waits = false;
         return;
@@ -714,6 +720,7 @@ pub fn letGoBy(a: Actor, holder: Handle) void {
         },
         .slammed => {
             a.sound(.thud);
+            a.mind.shakes = true;
             a.mind.slam = n.slam_ticks;
             a.mind.other = holder;
             a.mind.hold_move = h.move;

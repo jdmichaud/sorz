@@ -319,12 +319,39 @@ pub const following = struct {
     pub const depth_to = 112;
 };
 
+/// How the camera shakes (`Tick.shake`; the original's, measured in sor-remaster; TODO(PLAN item
+/// 13): from the round's camera's content): for `ticks` ticks it moves `by` pixels down at an odd
+/// tick left and back up at an even one.
+pub const shaking = struct {
+    pub const ticks = 8;
+    pub const by = 3;
+};
+
 /// The camera follows the players across (when it `follows`), from where the last tick drew
-/// them, and stays within its limits; then the players are kept inside its view.
+/// them, never going back (its limit on the left follows it), and stays within its limits (but
+/// while it shakes); then the players are kept inside its view. While the special attack runs
+/// it (`Camera.run`), it neither follows nor holds the players.
 /// TODO(PLAN item 13): it stops at the script's walls, as the original's does.
 fn camera(t: *Tick) void {
     const c = &t.world.camera;
+    if (c.run) |*r| switch (r.state) {
+        // At the call's tick it follows as before, but its limit is already the run's.
+        .called => {
+            c.x_min = r.limit;
+            r.state = .back;
+        },
+        .back => {
+            c.x = c.x.sub(r.speed).max(r.limit);
+            return noteDrawn(t);
+        },
+        .ahead => {
+            c.x = c.x.add(r.speed).min(c.x_max);
+            if (c.x.whole() >= r.from.whole()) c.run = null;
+            return noteDrawn(t);
+        },
+    };
     if (c.follows) {
+        if (c.run == null) c.x_min = c.x;
         // Where a player was drawn, in whole pixels on the screen.
         var speed: i32 = 0;
         for (c.drawn) |d| {
@@ -340,10 +367,12 @@ fn camera(t: *Tick) void {
         c.x = c.x.add(.pixels(std.math.clamp(speed, -most, most)));
     }
     c.x = c.x.clamp(c.x_min, c.x_max);
-    c.y = c.y.clamp(c.y_min, c.y_max);
+    if (c.shake != 0) {
+        c.shake -= 1;
+        c.y = c.y.add(.pixels(if (c.shake & 1 != 0) shaking.by else -shaking.by));
+    } else c.y = c.y.clamp(c.y_min, c.y_max);
     if (!c.follows) return;
-    for (t.world.players, &c.drawn) |p, *d| {
-        d.* = null;
+    for (t.world.players) |p| {
         const e = t.world.get(p.entity orelse continue) orelse continue;
         if (e.holding == null and e.holder == null) {
             const left = c.x.add(.pixels(following.margin));
@@ -351,6 +380,15 @@ fn camera(t: *Tick) void {
             e.position.x = e.position.x.clamp(left, right);
         }
         e.position.depth = e.position.depth.clamp(.pixels(following.depth_from), .pixels(following.depth_to));
+    }
+    noteDrawn(t);
+}
+
+/// Where the players are drawn at this tick, for the camera's next.
+fn noteDrawn(t: *Tick) void {
+    for (t.world.players, &t.world.camera.drawn) |p, *d| {
+        d.* = null;
+        const e = t.world.get(p.entity orelse continue) orelse continue;
         d.* = e.position.x;
     }
 }
