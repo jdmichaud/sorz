@@ -93,6 +93,13 @@ pub const Turn = struct {
     /// loads it again), which stops every sound at its next update.
     sound_restart: bool = false,
 
+    /// A set-up's release of the pads: no button is pressed at this tick, and every button counts
+    /// as held at the next reading.
+    pub fn releasePads(self: *Turn) void {
+        self.release_pads = true;
+        self.pressed = .{};
+    }
+
     pub fn play(self: *Turn, s: library.Sound) void {
         if (self.requests.len == self.requests.items.len) return;
         self.requests.items[self.requests.len] = s;
@@ -127,8 +134,9 @@ pub const Stack = struct {
     /// The scene that follows at the next tick: the top scene ended, and its last picture stays
     /// until the next scene's set-up.
     next: ?Next = null,
-    /// The load that follows the top scene's next tick, its set-up (0: none).
+    /// The load that follows the top scene's set-up (0: none), and the set-up's ticks to come.
     load_after_setup: Load = .{},
+    setup_left: u8 = 0,
 
     pub const Next = struct { kind: Kind, load: u16, sound_held: bool };
 
@@ -171,6 +179,7 @@ pub fn tick(stack: *Stack, graph: *const flow.Graph, turn: *Turn, assets: ?*cons
     if (stack.next) |n| {
         stack.replace(.start(n.kind, turn.setup));
         stack.load_after_setup = .{ .left = n.load, .sound_held = n.sound_held };
+        stack.setup_left = setupTicks(n.kind);
         stack.next = null;
     }
     const s = stack.top();
@@ -183,8 +192,12 @@ pub fn tick(stack: *Stack, graph: *const flow.Graph, turn: *Turn, assets: ?*cons
     };
     // The load after a set-up holds the scene from the next tick.
     if (stack.load_after_setup.left != 0 and s.* != .load) {
-        stack.push(.{ .load = stack.load_after_setup }) catch unreachable;
-        stack.load_after_setup = .{};
+        if (stack.setup_left > 1) {
+            stack.setup_left -= 1;
+        } else {
+            stack.push(.{ .load = stack.load_after_setup }) catch unreachable;
+            stack.load_after_setup = .{};
+        }
     }
     const how = exit orelse return;
     const edge = graph.next(std.meta.activeTag(s.*), how) orelse {
@@ -200,7 +213,18 @@ pub fn powerOn(graph: *const flow.Graph, setup: *const Setup) Stack {
     var s: Stack = .{};
     s.replace(.start(graph.first, setup));
     s.load_after_setup = .{ .left = graph.power_on };
+    s.setup_left = setupTicks(graph.first);
     return s;
+}
+
+/// The ticks a scene's set-up takes before the load after it: one, unless it says otherwise.
+fn setupTicks(k: Kind) u8 {
+    return switch (k) {
+        inline else => |tag| blk: {
+            const T = @FieldType(Scene, @tagName(tag));
+            break :blk if (@hasDecl(T, "setup_ticks")) T.setup_ticks else 1;
+        },
+    };
 }
 
 /// Draws the top scene on `v`: whole when the view shows another scene (or none), else what
@@ -211,7 +235,10 @@ pub fn draw(stack: *Stack, prev: *Scene, v: *View, assets: *const Assets) !void 
     if (fresh) {
         const layout = switch (s.*) {
             .test_pattern => unreachable,
-            inline else => |_, tag| @FieldType(Scene, @tagName(tag)).layout,
+            inline else => |*payload, tag| blk: {
+                const T = @FieldType(Scene, @tagName(tag));
+                break :blk if (@hasDecl(T, "layoutOf")) payload.layoutOf() else T.layout;
+            },
         };
         try v.begin(stack.topSerial(), layout);
     }

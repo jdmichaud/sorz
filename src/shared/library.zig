@@ -11,9 +11,29 @@ const json = @import("formats/json.zig");
 const audio = @import("audio/root.zig");
 
 const art = content.art;
+const records = content.screens;
 
 /// A sound of the content, as the sequencer plays it.
 pub const Sound = audio.sound.Id;
+
+/// The sounds of the options' sound test (`screens/options`), each entry's by its name.
+pub const SoundTest = struct {
+    pub const max = 128;
+    ids: [max]Sound = undefined,
+    len: u8 = 0,
+};
+
+/// The intro's script (`screens/intro`), its parts by their names in `Part`, an enum of the
+/// scene's: a name the scene does not have refuses the content.
+pub fn Script(comptime Part: type) type {
+    return struct {
+        pub const max = 64;
+        pub const is_script = true;
+        pub const Entry = struct { part: Part, wait: u16, life: u16 };
+        entries: [max]Entry = undefined,
+        len: u8 = 0,
+    };
+}
 
 /// A font with the sheet its glyphs are tiles of: what a text is written with.
 pub const Text = struct {
@@ -91,9 +111,30 @@ fn findOne(comptime F: type, c: *const Content, name: []const u8, diag: *json.Di
         *const art.TileSheet => a.sheet(name),
         *const art.Cycle => a.cycle(name),
         *const art.PaletteSteps => a.steps(name),
+        // The screens' records, by their files' names (`screens/options`).
+        *const records.Options => if (std.mem.eql(u8, name, "screens/options")) if (c.tree.screens.options) |*r| r else null else null,
+        *const records.HighScores => if (std.mem.eql(u8, name, "screens/high_scores")) if (c.tree.screens.high_scores) |*r| r else null else null,
+        *const records.Select => if (std.mem.eql(u8, name, "screens/select")) if (c.tree.screens.select) |*r| r else null else null,
+        *const records.Intro => if (std.mem.eql(u8, name, "screens/intro")) if (c.tree.screens.intro) |*r| r else null else null,
         Text => if (a.font(name)) |f| if (a.sheet(f.sheet)) |s| Text{ .font = f, .sheet = s } else null else null,
         Sound => c.sounds.find(name),
-        else => switch (@typeInfo(F)) {
+        SoundTest => blk: {
+            const o = if (c.tree.screens.options) |*r| r else break :blk null;
+            if (o.sound_test.len > SoundTest.max) return refuse(diag, name, "more sound test entries than the game shows");
+            var t: SoundTest = .{ .len = @intCast(o.sound_test.len) };
+            for (o.sound_test, 0..) |e, i| t.ids[i] = c.sounds.find(e.sound) orelse return refuse(diag, e.sound, "a sound test entry's sound, not in sound/sounds.json");
+            break :blk t;
+        },
+        else => if (comptime @typeInfo(F) == .@"struct" and @hasDecl(F, "is_script")) blk: {
+            const it = if (c.tree.screens.intro) |*r| r else break :blk null;
+            if (it.script.len > F.max) return refuse(diag, name, "a script longer than the game takes");
+            var s: F = .{ .len = @intCast(it.script.len) };
+            for (it.script, 0..) |e, i| {
+                const part = std.meta.stringToEnum(@FieldType(F.Entry, "part"), e.part) orelse return refuse(diag, e.part, "not a part of the intro");
+                s.entries[i] = .{ .part = part, .wait = e.wait, .life = e.life };
+            }
+            break :blk s;
+        } else switch (@typeInfo(F)) {
             // An array of assets: the names of `name` with `_N` added, N from 0 (`intro/picture`
             // gives `intro/picture_00`...). Its length is the type's.
             .array => |arr| blk: {

@@ -58,7 +58,7 @@ pub const SegaLogo = struct {
                 // driver loaded again.
                 self.colours.show(a.colours);
                 self.colours.show(a.trademark_colour);
-                turn.release_pads = true;
+                turn.releasePads();
                 turn.sound_restart = true;
                 self.phase = .sweep;
             },

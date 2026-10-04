@@ -36,12 +36,18 @@ pub const View = struct {
     made_frames: std.ArrayList(*art.Frame) = .empty,
     /// Tiles the game makes (a picture drawn a part at a time), kept for as long as the picture.
     made_tiles: std.ArrayList(*art.Tile) = .empty,
+    /// A block of tiles the game makes, for as long as the picture (`tileBlock`).
+    tile_block: ?[]art.Tile = null,
+    /// The layers' scroll per line, when a scene gives one (`lineScroll`): plane A's, plane B's.
+    line_x: *[2][height]i32,
     /// The scene whose drawing the boards hold (its number, `scene.Stack.serial`); null: none, the
     /// next scene draws whole.
     shows: ?u32 = null,
 
     pub fn init(gpa: std.mem.Allocator) error{OutOfMemory}!View {
-        return .{ .gpa = gpa, .composer = try render.Composer.create(gpa) };
+        const line_x = try gpa.create([2][height]i32);
+        errdefer gpa.destroy(line_x);
+        return .{ .gpa = gpa, .composer = try render.Composer.create(gpa), .line_x = line_x };
     }
 
     pub fn deinit(self: *View) void {
@@ -52,6 +58,7 @@ pub const View = struct {
         self.made_frames.deinit(self.gpa);
         self.made_tiles.deinit(self.gpa);
         self.composer.destroy();
+        self.gpa.destroy(self.line_x);
         self.* = undefined;
     }
 
@@ -60,6 +67,28 @@ pub const View = struct {
         self.made_frames.clearRetainingCapacity();
         for (self.made_tiles.items) |t| self.gpa.destroy(t);
         self.made_tiles.clearRetainingCapacity();
+        if (self.tile_block) |b| self.gpa.free(b);
+        self.tile_block = null;
+    }
+
+    /// A block of `n` tiles the game makes, the same at each call while the picture lasts.
+    pub fn tileBlock(self: *View, n: usize) error{OutOfMemory}![]art.Tile {
+        if (self.tile_block) |b| if (b.len == n) return b;
+        if (self.tile_block) |b| self.gpa.free(b);
+        self.tile_block = null;
+        const b = try self.gpa.alloc(art.Tile, n);
+        @memset(b, @splat(0));
+        self.tile_block = b;
+        return b;
+    }
+
+    /// Scrolls plane `p` per line: line L shows its board from the pixel column `left[L]`.
+    pub fn lineScroll(self: *View, p: Plane, left: *const [height]i16) void {
+        const k: usize = if (p == .a) 0 else 1;
+        for (&self.line_x[k], left) |*x, l| x.* = l;
+        const layer = if (p == .a) &self.screen.plane_a else &self.screen.plane_b;
+        layer.x = 0;
+        layer.line_x = &self.line_x[k];
     }
 
     /// Starts the picture of scene `serial`: the boards of `layout`, empty, at no scroll; no
@@ -117,6 +146,8 @@ pub const View = struct {
     pub fn glyphFrame(self: *View, t: Text, glyph: []const u8) error{ OutOfMemory, NoGlyph }!*const art.Frame {
         const g = t.font.glyphAt(glyph) orelse return error.NoGlyph;
         if (g.len != glyph.len) return error.NoGlyph;
+        // One frame a glyph for the picture: the same at each draw.
+        for (self.made_frames.items) |f| if (f.pixels.ptr == @as([*]const u8, &t.sheet.tiles[g.tile])) return f;
         const f = try self.gpa.create(art.Frame);
         errdefer self.gpa.destroy(f);
         f.* = .{ .name = "glyph", .file = "", .width = art.tile_side, .height = art.tile_side, .origin_x = 0, .origin_y = 0, .pixels = &t.sheet.tiles[g.tile] };
