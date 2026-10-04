@@ -722,6 +722,10 @@ pub const intro_japan_steps = blk: {
 };
 
 test "a map's cells resolve to their blocks' tiles, blank slots to empty cells" {
+    // The warning of the unresolved cell below is expected here: the build would print it.
+    const level = std.testing.log_level;
+    std.testing.log_level = .err;
+    defer std.testing.log_level = level;
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
