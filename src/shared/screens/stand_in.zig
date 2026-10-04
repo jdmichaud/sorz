@@ -3,14 +3,15 @@
 //! time and sound: the demo's stand-in plays round 1's music when the demo does, lasts as long as
 //! the original's demo and stops the music at its end, so that the high scores come at the
 //! original's tick; START on either pad leaves it as the demo's START does, after its fade. Play's
-//! stand-in stops the music, as the round's set-up does, and stays.
+//! stand-in names the characters chosen, and stays (the select stopped the music).
 const std = @import("std");
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
 const library = @import("../library.zig");
 const view = @import("../view.zig");
 const art = @import("../content/art.zig");
-const Setup = @import("../setup.zig").Setup;
+const setup_mod = @import("../setup.zig");
+const Setup = setup_mod.Setup;
 
 /// The demo's ticks from its set-up to its last, the load after its set-up left out (sor-remaster:
 /// the high scores' set-up 1977 display ticks after the demo's, its load 47 of them).
@@ -23,6 +24,8 @@ pub const StandIn = struct {
     ticks: u32 = 0,
     /// The tick at which START leaves (after the demo's fade).
     leaving_at: ?u32 = null,
+    /// The players' characters, as the select left them.
+    characters: [2]?setup_mod.Character = .{ null, null },
 
     pub const Assets = struct {
         text: library.Text,
@@ -33,8 +36,8 @@ pub const StandIn = struct {
     };
     pub const layout: view.Layout = .{ .a = .{ .width = 64, .height = 32 } };
 
-    pub fn of(what: flow.Kind) StandIn {
-        return .{ .what = what };
+    pub fn of(what: flow.Kind, setup: *const Setup) StandIn {
+        return .{ .what = what, .characters = setup.characters };
     }
 
     pub fn tick(self: *StandIn, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
@@ -55,27 +58,37 @@ pub const StandIn = struct {
                     return .done;
                 }
             },
-            .round => if (self.ticks == 1) {
-                turn.releasePads();
-                turn.play(a.stop);
-            },
+            .round => if (self.ticks == 1) turn.releasePads(),
             else => {},
         }
         return null;
     }
 
-    /// What it says, a line a row.
-    fn lines(self: *const StandIn) [3][]const u8 {
+    /// What it says, a line a row (`buf` holds the characters' names).
+    fn lines(self: *const StandIn, buf: []u8) [3][]const u8 {
         return switch (self.what) {
             .demo => .{ "THE ATTRACT DEMO", "PLAYS ROUND 1:", "NOT IN SORZ YET" },
-            .round => .{ "ROUND 1", "IS NOT IN SORZ YET", "" },
+            .round => .{ "ROUND 1 WITH", self.names(buf), "IS NOT IN SORZ YET" },
             else => .{ @tagName(self.what), "IS NOT IN SORZ YET", "" },
         };
     }
 
+    /// The characters chosen: "AXEL", or "ADAM AND BLAZE".
+    fn names(self: *const StandIn, buf: []u8) []const u8 {
+        var w: std.Io.Writer = .fixed(buf);
+        var first = true;
+        for (self.characters) |c| if (c) |who| {
+            if (!first) w.writeAll(" AND ") catch {};
+            first = false;
+            w.writeAll(@tagName(who)) catch {};
+        };
+        return w.buffered();
+    }
+
     pub fn draw(self: *const StandIn, prev: ?*const StandIn, v: *view.View, a: *const Assets) !void {
         if (prev == null) {
-            const text = self.lines();
+            var names_buf: [40]u8 = undefined;
+            const text = self.lines(&names_buf);
             for (text, 0..) |line, i| {
                 var buf: [40]u8 = undefined;
                 const upper = std.ascii.upperString(&buf, line[0..@min(line.len, buf.len)]);

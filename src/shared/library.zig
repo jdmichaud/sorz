@@ -9,6 +9,7 @@ const platform = @import("platform.zig");
 const content = @import("content/root.zig");
 const json = @import("formats/json.zig");
 const audio = @import("audio/root.zig");
+const Character = @import("setup.zig").Character;
 
 const art = content.art;
 const records = content.screens;
@@ -34,6 +35,34 @@ pub fn Script(comptime Part: type) type {
         len: u8 = 0,
     };
 }
+
+/// An animation of the character select's poses, its frames found in the art.
+pub const Animation = struct {
+    pub const max = 16;
+    pub const Step = struct {
+        frame: *const art.Frame,
+        ticks: u8,
+        mirrored: bool,
+        /// The tiles copied to show it, a copy each (0: none).
+        copied: [records.max_copies]u16,
+    };
+    steps: [max]Step = undefined,
+    len: u8 = 0,
+
+    pub fn slice(self: *const Animation) []const Step {
+        return self.steps[0..self.len];
+    }
+};
+
+/// The character select's poses (`screens/select`): each character's animation of each pose.
+pub const Poses = struct {
+    pub const Pose = enum { stand, idle, pose_a, pose_b, pose_c, landing };
+    characters: std.EnumArray(Character, std.EnumArray(Pose, Animation)) = .initFill(.initFill(.{})),
+
+    pub fn of(self: *const Poses, who: Character, pose: Pose) *const Animation {
+        return self.characters.getPtrConst(who).getPtrConst(pose);
+    }
+};
 
 /// A font with the sheet its glyphs are tiles of: what a text is written with.
 pub const Text = struct {
@@ -118,6 +147,18 @@ fn findOne(comptime F: type, c: *const Content, name: []const u8, diag: *json.Di
         *const records.Intro => if (std.mem.eql(u8, name, "screens/intro")) if (c.tree.screens.intro) |*r| r else null else null,
         Text => if (a.font(name)) |f| if (a.sheet(f.sheet)) |s| Text{ .font = f, .sheet = s } else null else null,
         Sound => c.sounds.find(name),
+        Poses => blk: {
+            if (!std.mem.eql(u8, name, "screens/select")) break :blk null;
+            const sel = if (c.tree.screens.select) |*r| r else break :blk null;
+            var p: Poses = .{};
+            inline for (.{ "adam", "axel", "blaze" }) |who| {
+                inline for (.{ "stand", "idle", "pose_a", "pose_b", "pose_c", "landing" }) |pose| {
+                    const steps = @field(@field(sel.*, who), pose);
+                    p.characters.getPtr(@field(Character, who)).set(@field(Poses.Pose, pose), try animation(a, steps, name, diag));
+                }
+            }
+            break :blk p;
+        },
         SoundTest => blk: {
             const o = if (c.tree.screens.options) |*r| r else break :blk null;
             if (o.sound_test.len > SoundTest.max) return refuse(diag, name, "more sound test entries than the game shows");
@@ -153,6 +194,22 @@ fn findOne(comptime F: type, c: *const Content, name: []const u8, diag: *json.Di
         Sound => "no sound of this name in sound/sounds.json",
         else => "no asset of this name and kind in the content",
     });
+}
+
+/// The steps of a pose, their frames found in the art.
+fn animation(a: *const art.Art, steps: []const records.Step, name: []const u8, diag: *json.Diagnostic) LoadError!Animation {
+    if (steps.len > Animation.max) return refuse(diag, name, "a pose longer than the game takes");
+    var out: Animation = .{ .len = @intCast(steps.len) };
+    for (steps, out.steps[0..steps.len]) |s, *o| {
+        o.* = .{
+            .frame = a.frame(s.frame) orelse return refuse(diag, s.frame, "a pose's frame, not in the art"),
+            .ticks = s.ticks,
+            .mirrored = s.mirrored,
+            .copied = @splat(0),
+        };
+        for (s.copied[0..@min(s.copied.len, records.max_copies)], 0..) |t, k| o.copied[k] = t;
+    }
+    return out;
 }
 
 fn refuse(diag: *json.Diagnostic, name: []const u8, why: []const u8) LoadError {

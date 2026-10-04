@@ -12,7 +12,9 @@
 //!   on the view: whole when `prev` is null (a new picture), else what changed since `prev`, the
 //!   state it last drew. Sprites and colours are given again at every draw.
 //!
-//! Two of the original's rules hold for every screen (`docs/screens.md`):
+//! The screens run their logic every display tick, but the character select, which runs at
+//! play's rate (a tick of two display ticks, as `world/schedule.zig` says of play). Two of the
+//! original's rules hold for every screen, as measured against sor-remaster:
 //! - **The picture's colours and sprites are a tick late**: the console takes them as a frame
 //!   starts, so a tick's colours and sprites show at the next tick that runs (after a load, at the
 //!   first tick after it); its tiles show at once. Each scene latches what it shows at the start of
@@ -40,6 +42,7 @@ pub const Options = @import("screens/options.zig").Options;
 pub const HighScores = @import("screens/high_scores.zig").HighScores;
 pub const Intro = @import("screens/intro.zig").Intro;
 pub const Title = @import("screens/title.zig").Title;
+pub const Select = @import("screens/select.zig").Select;
 
 /// The scenes' state, by kind.
 pub const Scene = union(Kind) {
@@ -50,7 +53,7 @@ pub const Scene = union(Kind) {
     title: Title,
     menu: Menu,
     options: Options,
-    select: StandIn,
+    select: Select,
     demo: StandIn,
     high_scores: HighScores,
     round: StandIn,
@@ -62,7 +65,7 @@ pub const Scene = union(Kind) {
             .load => unreachable,
             inline else => |tag| blk: {
                 const T = @FieldType(Scene, @tagName(tag));
-                break :blk @unionInit(Scene, @tagName(tag), if (T == StandIn) StandIn.of(tag) else T.start(setup));
+                break :blk @unionInit(Scene, @tagName(tag), if (T == StandIn) StandIn.of(tag, setup) else T.start(setup));
             },
         };
     }
@@ -126,6 +129,7 @@ pub const Assets = struct {
     high_scores: HighScores.Assets,
     intro: Intro.Assets,
     title: Title.Assets,
+    select: Select.Assets,
 
     pub fn find(c: *const library.Content, diag: *json.Diagnostic) library.LoadError!Assets {
         var a: Assets = undefined;

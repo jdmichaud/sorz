@@ -19,11 +19,13 @@ pub const Kind = enum {
     /// 1 PLAYER, 2 PLAYERS, OPTIONS.
     menu,
     options,
+    /// The character select.
     select,
     /// The attract demo: round 1 played by the game (PLAN items 11-13); a stand-in until then.
     demo,
     high_scores,
-    /// Play: round 1 and on (PLAN item 13); a stand-in until then.
+    /// Play: round 1 and on (PLAN item 13); a stand-in until then, which says so and names the
+    /// characters chosen.
     round,
 };
 

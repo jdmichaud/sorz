@@ -13,6 +13,8 @@ const std = @import("std");
 
 /// The bytes of `T`'s canonical form.
 pub fn size(comptime T: type) usize {
+    // The game's state has many fields: room for them all.
+    @setEvalBranchQuota(100_000);
     return comptime switch (@typeInfo(T)) {
         .void => 0,
         .bool => 1,
