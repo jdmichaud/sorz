@@ -15,6 +15,7 @@ const kinds_mod = @import("kinds.zig");
 const output = @import("output.zig");
 const tick_mod = @import("tick.zig");
 const draw_list = @import("draw_list.zig");
+const behaviours = @import("behaviours.zig");
 
 const Fixed = fixed.Fixed;
 const Entity = entity.Entity;
@@ -31,17 +32,21 @@ pub const System = struct {
     run: *const fn (*Tick) void,
 };
 
-/// The logic tick, in order.
+/// The logic tick, in order. As in the original, the players act and move first, and the
+/// camera follows them; then the others begin their tick, take the blows and the grabs of the
+/// tick where they stand, decide, and move.
 pub const pipeline = [_]System{
     .{ .name = "commands", .run = commands },
     .{ .name = "control", .run = control },
-    .{ .name = "ai", .run = ai },
-    .{ .name = "movement", .run = movement },
+    .{ .name = "players_move", .run = playersMove },
+    .{ .name = "camera", .run = camera },
+    .{ .name = "begin", .run = begin },
     .{ .name = "hits", .run = hits },
     .{ .name = "grabs", .run = grabs },
+    .{ .name = "ai", .run = ai },
+    .{ .name = "movement", .run = movement },
     .{ .name = "pickups", .run = pickups },
     .{ .name = "script", .run = script },
-    .{ .name = "camera", .run = camera },
     .{ .name = "animation", .run = animation },
     .{ .name = "sounds", .run = sounds },
     .{ .name = "draw_list", .run = draw_list.build },
@@ -55,7 +60,7 @@ pub fn run(world: *World, kinds: *const Kinds, rng: *random.Random, in: Input, o
     world.tick +%= 1;
 }
 
-// 1. Input to commands ------------------------------------------------------------------------
+// Input to commands -------------------------------------------------------------------------------
 
 /// The players' commands, from the pads read at the logic tick's two display ticks, as the
 /// original's players read theirs: the directions as the last read has them; the buttons (A, B,
@@ -86,7 +91,7 @@ fn padOf(pads: input.Pads, player: usize) input.Pad {
     return if (player == 0) pads.pad1 else pads.pad2;
 }
 
-// 2. Player control ---------------------------------------------------------------------------
+// Player control ----------------------------------------------------------------------------------
 
 fn control(t: *Tick) void {
     for (t.world.players) |p| {
@@ -95,7 +100,17 @@ fn control(t: *Tick) void {
     }
 }
 
-// 3. AI ---------------------------------------------------------------------------------------
+// The AI ------------------------------------------------------------------------------------------
+
+/// The others' ticks begin (a state entered at the last tick sets itself up), before the blows.
+fn begin(t: *Tick) void {
+    var buf: [capacity]u8 = undefined;
+    for (t.world.updateOrder(&buf)) |i| {
+        const h = t.world.handleAt(i) orelse continue;
+        if (t.world.playerOf(h) != null) continue;
+        t.begin(h);
+    }
+}
 
 fn ai(t: *Tick) void {
     var buf: [capacity]u8 = undefined;
@@ -106,36 +121,41 @@ fn ai(t: *Tick) void {
     }
 }
 
-// 4. Movement and gravity ---------------------------------------------------------------------
+// Movement and gravity ----------------------------------------------------------------------------
 
 /// The depths of the ground, in whole pixels: an entity drawn is kept on them (the original
 /// keeps them where it orders its drawing).
 pub const ground_depths: struct { near: i32, far: i32 } = .{ .far = 0, .near = 240 };
 
-/// Each entity moves by its speed, except one held, which its holder places. In the air, it
-/// lands when it has come down to the ground; otherwise its gravity adds to its speed in height.
-/// A drawn entity's depth is kept on the ground's depths, its fraction kept.
+/// The entities the players play move, in their turn.
+fn playersMove(t: *Tick) void {
+    for (t.world.players) |p| {
+        const h = p.entity orelse continue;
+        move(t, h);
+    }
+}
+
+/// The other entities move, in the world's order.
 fn movement(t: *Tick) void {
     var buf: [capacity]u8 = undefined;
     for (t.world.updateOrder(&buf)) |i| {
         const h = t.world.handleAt(i) orelse continue;
-        const e = t.world.get(h).?;
-        e.flags.landed = false;
-        if (e.holder != null) continue;
-        e.position = e.position.add(e.velocity);
-        if (e.flags.airborne) {
-            if (!e.position.height.lessThan(t.world.ground) and e.velocity.height.raw >= 0) {
-                e.position.height = t.world.ground;
-                e.velocity.height = .zero;
-                e.flags.airborne = false;
-                e.flags.landed = true;
-                t.landed(h);
-            } else {
-                e.velocity.height = e.velocity.height.add(.of(t.kindOf(e).definition.gravity));
-            }
-        }
-        if (t.world.get(h)) |still| if (!still.flags.hidden) keepOnGround(still);
+        if (t.world.playerOf(h) != null) continue;
+        move(t, h);
     }
+}
+
+/// An entity moves by its speed, unless it is held (its holder places it) or still. In the air,
+/// its behaviour's `fall` decides (`Tick.fall`); by default it lands when it has come down to
+/// the ground (`Tick.land`), and otherwise its gravity adds to its speed in height. A drawn
+/// entity's depth is kept on the ground's depths, its fraction kept.
+fn move(t: *Tick, h: Handle) void {
+    const e = t.world.get(h) orelse return;
+    e.flags.landed = false;
+    if (e.holder != null or e.flags.still) return;
+    e.position = e.position.add(e.velocity);
+    if (e.flags.airborne) t.fall(h);
+    if (t.world.get(h)) |still| if (!still.flags.hidden) keepOnGround(still);
 }
 
 fn keepOnGround(e: *Entity) void {
@@ -144,7 +164,7 @@ fn keepOnGround(e: *Entity) void {
     if (kept != d) e.position.depth = .parts(@intCast(kept), e.position.depth.frac());
 }
 
-// 5. Hits -------------------------------------------------------------------------------------
+// Hits --------------------------------------------------------------------------------------------
 
 /// Whether a blow of `attacker`'s team lands on `target`'s team: the players' blows land on the
 /// enemies, on the neutral entities (the breakables) and on the other player (the original's
@@ -157,9 +177,11 @@ pub fn blowsLand(attacker: entity.Team, target: entity.Team) bool {
     };
 }
 
-/// Each entity whose move is under way and whose frame has an attack box strikes each entity
-/// whose body box it meets, of a team its blows land on: the struck entity's behaviour takes
-/// the blow or not (`struck`); a blow taken costs the move's damage and asks for its hit sound.
+/// Each entity whose blow is under way (`Tick.power`) and whose frame has an attack box strikes
+/// each entity whose body box it meets, of a team its blows land on: the struck entity's
+/// behaviour takes the blow or not (`Tick.struck`: by default, its damage at once); a blow
+/// taken is told to the striker (`blowLanded`) and asks for the move's hit sound. An attack box
+/// without a blow under way is a reach, which the grabs answer.
 fn hits(t: *Tick) void {
     var buf: [capacity]u8 = undefined;
     const order = t.world.updateOrder(&buf);
@@ -170,6 +192,8 @@ fn hits(t: *Tick) void {
             const a = t.world.get(ah) orelse break;
             const attack = a.boxes.attack orelse break;
             const move_index = a.move orelse break;
+            const damage = t.power(a);
+            if (damage == 0) break;
             const th = t.world.handleAt(ti) orelse continue;
             const target = t.world.get(th).?;
             const body = target.boxes.body orelse continue;
@@ -184,15 +208,12 @@ fn hits(t: *Tick) void {
             };
             const blow: tick_mod.Blow = .{
                 .attacker = ah,
-                .damage = std.math.cast(i16, m.damage) orelse std.math.maxInt(i16),
+                .damage = damage,
                 .reaction = m.reaction,
                 .push = .{ .x = Fixed.of(m.push_x).times(away), .height = .of(m.push_height) },
             };
             if (!t.struck(th, blow)) continue;
-            const struck = t.world.get(th) orelse continue;
-            struck.health -|= blow.damage;
-            struck.struck_by = ah;
-            t.out.hits.append(.{ .attacker = ah, .target = th, .damage = blow.damage });
+            t.blowLanded(ah, th);
             if (m.hit_sound) |s| t.sound(s, ah);
         }
     }
@@ -210,13 +231,13 @@ fn spansMeet(pa: i32, sa: content_entity.Span, pb: i32, sb: content_entity.Span)
     return pa + sa.from <= pb + sb.to and pb + sb.from <= pa + sa.to;
 }
 
-// 6. Grabs ------------------------------------------------------------------------------------
+// Grabs -------------------------------------------------------------------------------------------
 
-/// An entity whose behaviour asks to grab, holding nothing and held by nothing, holds the first
-/// entity (in the world's order) whose body its body meets, of a team its blows land on, free
-/// too, and whose behaviour lets it (`grabbable`). The holder's behaviour places the one it
-/// holds; a grab ends when either goes (`World.remove`) or a behaviour lets go.
-/// TODO(PLAN item 11): the reach of a grab, its depth and its facing, from Axel's measurements.
+/// An entity whose behaviour asks to grab, holding nothing and held by nothing, with a reach (an
+/// attack box while no blow is under way), holds the first entity (in the world's order) whose
+/// body its reach meets, of a team its blows land on, free too, and whose behaviour lets it
+/// (`grabbable`). The holder's behaviour places the one it holds; a grab ends when either goes
+/// (`World.remove`) or a behaviour lets go.
 fn grabs(t: *Tick) void {
     var buf: [capacity]u8 = undefined;
     const order = t.world.updateOrder(&buf);
@@ -226,14 +247,15 @@ fn grabs(t: *Tick) void {
         if (!e.flags.wants_grab) continue;
         e.flags.wants_grab = false;
         if (e.holding != null or e.holder != null) continue;
-        const body = e.boxes.body orelse continue;
+        const reach = e.boxes.attack orelse continue;
+        if (t.power(e) != 0) continue;
         for (order) |j| {
             if (j == i) continue;
             const oh = t.world.handleAt(j) orelse continue;
             const o = t.world.get(oh).?;
             if (o.holder != null or o.holding != null or !blowsLand(e.team, o.team)) continue;
             const ob = o.boxes.body orelse continue;
-            if (!meet(e, &t.kindOf(e).definition.boxes[body], o, &t.kindOf(o).definition.boxes[ob])) continue;
+            if (!meet(e, &t.kindOf(e).definition.boxes[reach], o, &t.kindOf(o).definition.boxes[ob])) continue;
             if (!t.grabbable(oh, h)) continue;
             e.holding = oh;
             o.holder = h;
@@ -243,7 +265,7 @@ fn grabs(t: *Tick) void {
     }
 }
 
-// 7. Pick-ups ---------------------------------------------------------------------------------
+// Pick-ups ----------------------------------------------------------------------------------------
 
 /// An entity whose behaviour asks to pick up takes the first weapon or item (in the world's
 /// order) that nothing holds and whose body its body meets: the pick-up is noted, the picker's
@@ -273,7 +295,7 @@ fn pickups(t: *Tick) void {
     }
 }
 
-// 8. The round's script -----------------------------------------------------------------------
+// The round's script ------------------------------------------------------------------------------
 
 /// The round's script (DESIGN.md W6): its waves, its events, the camera's walls. A round's
 /// content and its set pieces come with PLAN item 13; until then a world has no script.
@@ -281,24 +303,70 @@ fn script(t: *Tick) void {
     _ = t;
 }
 
-// 9. The camera -------------------------------------------------------------------------------
+// The camera --------------------------------------------------------------------------------------
 
-/// The camera stays within its limits. TODO(PLAN item 13): it follows the players across and
-/// stops at the script's walls, as the original's does.
+/// How the camera follows the players (the original's, measured in sor-remaster; TODO(PLAN item
+/// 13): the round's camera from its content): a player drawn past the view's middle band moves
+/// it by as much, at most `follow_most` a tick; the players are kept `margin` pixels inside the
+/// view's sides (but in a hold) and on the walkable depths.
+pub const following = struct {
+    pub const band_from = 144;
+    pub const band_to = 176;
+    pub const follow_most = 3;
+    pub const margin = 32;
+    pub const width = 320;
+    pub const depth_from = 2;
+    pub const depth_to = 112;
+};
+
+/// The camera follows the players across (when it `follows`), from where the last tick drew
+/// them, and stays within its limits; then the players are kept inside its view.
+/// TODO(PLAN item 13): it stops at the script's walls, as the original's does.
 fn camera(t: *Tick) void {
     const c = &t.world.camera;
+    if (c.follows) {
+        // Where a player was drawn, in whole pixels on the screen.
+        var speed: i32 = 0;
+        for (c.drawn) |d| {
+            const x = d orelse continue;
+            const on_screen = x.whole() - c.x.whole();
+            if (on_screen < following.band_from) {
+                speed = on_screen - following.band_from;
+            } else if (on_screen >= following.band_to) {
+                speed = on_screen - following.band_to;
+            }
+        }
+        const most = following.follow_most;
+        c.x = c.x.add(.pixels(std.math.clamp(speed, -most, most)));
+    }
     c.x = c.x.clamp(c.x_min, c.x_max);
     c.y = c.y.clamp(c.y_min, c.y_max);
+    if (!c.follows) return;
+    for (t.world.players, &c.drawn) |p, *d| {
+        d.* = null;
+        const e = t.world.get(p.entity orelse continue) orelse continue;
+        if (e.holding == null and e.holder == null) {
+            const left = c.x.add(.pixels(following.margin));
+            const right = left.add(.pixels(following.width - 2 * following.margin));
+            e.position.x = e.position.x.clamp(left, right);
+        }
+        e.position.depth = e.position.depth.clamp(.pixels(following.depth_from), .pixels(following.depth_to));
+        d.* = e.position.x;
+    }
 }
 
-// 10. Animation -------------------------------------------------------------------------------
+// Animation ---------------------------------------------------------------------------------------
 
 /// Each entity shows the frame it is on at this tick (noted in the output, which the draw list
-/// draws), and that frame's boxes are those in use from now on; then the frame's ticks count
-/// down, and when they run out the next frame comes for the next tick: after the last, the first
-/// again (a looping animation) or the last stays, and the animation is done. So a frame shows
-/// for its ticks from the tick its animation starts, and the logic of a tick sees the frame that
-/// tick shows, as in the original, where the frame advances after it is drawn.
+/// draws), and that frame's boxes are those in use from now on; at the frame's first tick its
+/// sound is asked for; then the frame's ticks count down, and when they run out the next frame
+/// comes for the next tick: after the last, the first again (a looping animation) or the last
+/// stays, and the animation is done. So a frame shows for its ticks from the tick its animation
+/// starts, and the logic of a tick sees the frame the tick before showed, as in the original,
+/// where an object's frame advances after it is drawn. A hidden entity is not drawn: its frame
+/// stays and it has no boxes. An entity whose behaviour drives its animation (the players,
+/// behaviours.zig) has its frame noted only: its behaviour advanced it and set its boxes, before
+/// the blows of the tick.
 fn animation(t: *Tick) void {
     for (&t.world.entities, 0..) |*e, i| {
         if (!e.alive()) continue;
@@ -307,8 +375,21 @@ fn animation(t: *Tick) void {
         const an = k.definition.animations[index];
         const step = an.frames[e.animation.frame];
         const mirrored = e.facingLeft() != step.flip;
+        if (behaviours.drivesAnimation(&e.mind)) {
+            t.out.shown[i] = .{ .frame = k.frames[index][e.animation.frame], .mirrored = mirrored };
+            continue;
+        }
+        // Hidden, it is not drawn: as the original's, its frame stays and it has no boxes.
+        if (e.flags.hidden) {
+            e.boxes = .{};
+            continue;
+        }
         t.out.shown[i] = .{ .frame = k.frames[index][e.animation.frame], .mirrored = mirrored };
         e.boxes = .{ .body = step.body, .attack = step.attack, .mirrored = mirrored };
+        if (e.animation.left == step.ticks and !(e.animation.done and !an.loop)) {
+            if (step.sound) |sound| t.sound(sound, t.world.handleAt(i));
+        }
+        if (e.animation.paused) continue;
         if (e.animation.done and !an.loop) continue;
         e.animation.left -|= 1;
         if (e.animation.left != 0) continue;
@@ -321,11 +402,11 @@ fn animation(t: *Tick) void {
             e.animation.done = true;
             continue;
         }
-        e.animation.left = an.frames[e.animation.frame].ticks;
+        e.animation.left = e.animation.pace orelse an.frames[e.animation.frame].ticks;
     }
 }
 
-// 11. Sound events ----------------------------------------------------------------------------
+// Sound events ------------------------------------------------------------------------------------
 
 /// The tick's sounds go out in the order they were asked for; a sound asked for twice in a tick
 /// is asked for once, as the original's sound requests are.

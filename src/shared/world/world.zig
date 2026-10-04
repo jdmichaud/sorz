@@ -49,6 +49,9 @@ pub const Camera = struct {
     x_max: Fixed = .of(std.math.maxInt(i32)),
     y_min: Fixed = .zero,
     y_max: Fixed = .of(std.math.maxInt(i32)),
+    /// It follows the players across (in play), from where the last tick drew them.
+    follows: bool = false,
+    drawn: [2]?Fixed = .{ null, null },
 };
 
 /// The round's script's place in the round (PLAN item 13 fills it in).
@@ -66,6 +69,9 @@ pub const World = struct {
     script: Script = .{},
     /// The ground's height, until the round's floor gives it place by place (PLAN item 13).
     ground: Fixed = .zero,
+    /// A special attack is under way (play's phase `special`): the players stand still, the
+    /// enemies it caught wait for its blast.
+    special: bool = false,
 
     pub const Full = error{Full};
 

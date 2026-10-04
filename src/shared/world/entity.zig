@@ -70,7 +70,10 @@ pub const Flags = packed struct(u16) {
     /// this tick (the grabs and pick-ups systems answer, then clear the asks).
     wants_grab: bool = false,
     wants_pickup: bool = false,
-    _: u7 = 0,
+    /// It does not move by its speed at this tick: its behaviour holds it still and keeps its
+    /// speed (the original's objects move only when their code moves them).
+    still: bool = false,
+    _: u6 = 0,
 };
 
 /// The animation an entity plays: one of its kind's, the frame it is on, and the logic ticks
@@ -84,6 +87,12 @@ pub const Animation = struct {
     left: u8 = 0,
     /// It has shown all its frames once (a looping one has started again).
     done: bool = false,
+    /// It holds the frame it is on: its behaviour sets its frames (the original's objects
+    /// whose animation stops while their code poses them).
+    paused: bool = false,
+    /// The ticks each frame shows, set by its behaviour for all the frames (the original's
+    /// objects pace their animation themselves); null: each frame's own.
+    pace: ?u8 = null,
 };
 
 /// The boxes in use (DESIGN.md W2): those of the frame the entity last showed, or of the first

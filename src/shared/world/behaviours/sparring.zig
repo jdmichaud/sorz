@@ -90,7 +90,8 @@ pub fn struck(a: Actor, blow: tick.Blow) bool {
     }
     a.endMove();
     a.sound(.hurt);
-    if (blow.reaction == .knock_down or a.entity.health <= blow.damage) {
+    a.takeDamage(blow.attacker, blow.damage);
+    if (blow.reaction == .knock_down or a.entity.health <= 0) {
         enter(a, .knocked_down);
         a.animate(.down);
         a.takePush(blow);

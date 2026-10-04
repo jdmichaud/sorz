@@ -81,8 +81,8 @@ pub fn landed(a: Actor) void {
 }
 
 pub fn struck(a: Actor, blow: tick.Blow) bool {
-    _ = blow;
     if (a.mind.state == .hurt) return false;
+    a.takeDamage(blow.attacker, blow.damage);
     a.endMove();
     a.stop();
     enter(a, .hurt);

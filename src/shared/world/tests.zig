@@ -65,7 +65,7 @@ const definitions = [_]struct { name: []const u8, text: []const u8 }{
         \\   "walk": {"loop": true, "frames": [{"frame": "test/walk_0", "ticks": 4, "body": "body"},
         \\                                     {"frame": "test/walk_1", "ticks": 4, "body": "body"}]},
         \\   "attack": {"frames": [{"frame": "test/punch_0", "ticks": 2, "body": "body"},
-        \\                         {"frame": "test/punch_1", "ticks": 3, "body": "body", "attack": "fist"},
+        \\                         {"frame": "test/punch_1", "ticks": 3, "body": "body", "attack": "fist", "blow": true},
         \\                         {"frame": "test/punch_0", "ticks": 2, "body": "body"}]},
         \\   "jump": {"frames": [{"frame": "test/walk_1", "ticks": 1, "body": "body"}]},
         \\   "hurt": {"frames": [{"frame": "test/reel", "ticks": 6}]}
@@ -86,7 +86,7 @@ const definitions = [_]struct { name: []const u8, text: []const u8 }{
         \\   "walk": {"loop": true, "frames": [{"frame": "test/walk_0", "ticks": 4, "body": "body"},
         \\                                     {"frame": "test/walk_1", "ticks": 4, "body": "body"}]},
         \\   "punch": {"frames": [{"frame": "test/punch_0", "ticks": 3, "body": "body"},
-        \\                        {"frame": "test/punch_1", "ticks": 3, "body": "body", "attack": "fist"},
+        \\                        {"frame": "test/punch_1", "ticks": 3, "body": "body", "attack": "fist", "blow": true},
         \\                        {"frame": "test/punch_0", "ticks": 3, "body": "body"}]},
         \\   "reel": {"frames": [{"frame": "test/reel", "ticks": 5}]},
         \\   "down": {"frames": [{"frame": "test/down", "ticks": 1}]}
@@ -155,7 +155,7 @@ fn step(w: *World, f: *const Fixture, rng: *random.Random, out: *Output, pads: i
 test "the systems run in their order" {
     var names: [systems.pipeline.len][]const u8 = undefined;
     for (&names, systems.pipeline) |*n, s| n.* = s.name;
-    const want = [_][]const u8{ "commands", "control", "ai", "movement", "hits", "grabs", "pickups", "script", "camera", "animation", "sounds", "draw_list" };
+    const want = [_][]const u8{ "commands", "control", "players_move", "camera", "begin", "hits", "grabs", "ai", "movement", "pickups", "script", "animation", "sounds", "draw_list" };
     try testing.expectEqual(want.len, names.len);
     for (want, names) |a, b| try testing.expectEqualStrings(a, b);
 }
@@ -378,8 +378,9 @@ test "knocked out: the last health knocks it down, it lands, lies, and goes" {
         step(&w, &f, &rng, &out, .{});
         if (w.get(dummy) == null and gone_at == null) gone_at = i;
     }
-    // Struck at 4 (knocked down, in the air), lands at 5, lies 8 ticks, gone at 13.
-    try testing.expectEqual(@as(?usize, 13), gone_at);
+    // Struck at 4 (knocked down, with no speed up: it lands at once, as it moves after the
+    // blows of its tick), lies 8 ticks, gone at 12.
+    try testing.expectEqual(@as(?usize, 12), gone_at);
 }
 
 test "grabs and pick-ups: asked for, answered, then the asks cleared" {
@@ -682,4 +683,50 @@ test "the trace's ids: new entities by kind's name and place; removals; pick-ups
     // The order of the kinds of event: remove, spawn, pickup.
     try testing.expect(std.mem.indexOf(u8, lines, "remove").? < std.mem.indexOf(u8, lines, "spawn").?);
     try testing.expect(std.mem.indexOf(u8, lines, "spawn").? < std.mem.indexOf(u8, lines, "pickup").?);
+}
+
+test "the camera follows a player drawn past the view's middle band, and keeps the players in view" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    var w: World = undefined;
+    const hero = try withHero(&f, &w);
+    w.get(hero).?.position = .pixels(200, 100, 0);
+    w.camera = .{ .x_max = .pixels(1000), .follows = true };
+    var rng: random.Random = .{};
+    var out: Output = .{};
+    // The first tick has no drawing to follow; then 3 a tick until the player is at 176 on the
+    // screen.
+    var cams: [12]i32 = undefined;
+    for (&cams) |*x| {
+        step(&w, &f, &rng, &out, .{});
+        x.* = w.camera.x.whole();
+    }
+    try testing.expectEqualSlices(i32, &.{ 0, 3, 6, 9, 12, 15, 18, 21, 24, 24, 24, 24 }, &cams);
+    // Kept 32 pixels inside the view's left edge, and on the walkable depths.
+    w.get(hero).?.position = .pixels(10, 300, 0);
+    step(&w, &f, &rng, &out, .{});
+    try testing.expectEqual(@as(i32, 24 + 32), w.get(hero).?.position.x.whole());
+    try testing.expectEqual(@as(i32, systems.following.depth_to), w.get(hero).?.position.depth.whole());
+}
+
+test "an entity held still keeps its speed; a hidden one has no boxes and its frame stays" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    var w: World = .{};
+    var rng: random.Random = .{};
+    var out: Output = .{};
+    const p = try w.spawn(&f.kinds, f.kind("prop"), .pixels(50, 50, 0), .right);
+    const e = w.get(p).?;
+    e.velocity = .{ .x = .pixels(2) };
+    e.flags.still = true;
+    step(&w, &f, &rng, &out, .{});
+    try testing.expectEqual(@as(i32, 50), w.get(p).?.position.x.whole());
+    try testing.expectEqual(@as(i32, 2), w.get(p).?.velocity.x.whole());
+    w.get(p).?.flags.still = false;
+    w.get(p).?.flags.hidden = true;
+    const frame = w.get(p).?.animation.frame;
+    for (0..4) |_| step(&w, &f, &rng, &out, .{});
+    try testing.expectEqual(@as(i32, 58), w.get(p).?.position.x.whole());
+    try testing.expectEqual(frame, w.get(p).?.animation.frame);
+    try testing.expect(w.get(p).?.boxes.body == null and out.shown[p.index] == null);
 }

@@ -199,3 +199,65 @@ test "the format: whole pixels and the fraction, exactly" {
     try testing.expectEqualStrings("-3+32768/65536", try std.fmt.bufPrint(&buf, "{f}", .{Fixed.parts(-3, 0x8000)}));
     try testing.expectEqualStrings("12", try std.fmt.bufPrint(&buf, "{f}", .{Fixed.pixels(12)}));
 }
+
+/// A speed across and in depth, a logic tick.
+pub const Heading = struct { x: Fixed, depth: Fixed };
+
+/// The speed, `speed` pixels a tick along the direction from a place to another `dx` and
+/// `ddepth` whole pixels away, as the original's objects head for a point: the longer of the two
+/// ways takes the speed times the direction's cosine, the shorter times its sine, the slope (the
+/// shorter over the longer) cut to 64ths and the speed to 1/256 pixel.
+pub fn heading(dx: i32, ddepth: i32, speed: Fixed) Heading {
+    const across: u32 = @abs(dx);
+    const deep: u32 = @abs(ddepth);
+    const depth_longer = across <= deep;
+    const longer = if (depth_longer) deep else across;
+    const shorter = if (depth_longer) across else deep;
+    const slope: u32 = if (longer == 0) 0 else @min((shorter << 6) / longer, 63);
+    const s: u32 = @as(u32, @bitCast(speed.raw)) >> 8 & std.math.maxInt(u16);
+    var along_longer: u32 = s;
+    var along_shorter: u32 = 0;
+    if (slope != 0) {
+        along_shorter = (slopes[slope].sine * s) >> 16;
+        along_longer = (slopes[slope].cosine * s) >> 16;
+    }
+    var x: i32 = @intCast((if (depth_longer) along_shorter else along_longer) << 8);
+    var d: i32 = @intCast((if (depth_longer) along_longer else along_shorter) << 8);
+    if (dx < 0) x = -x;
+    if (ddepth < 0) d = -d;
+    return .{ .x = .of(x), .depth = .of(d) };
+}
+
+/// The sine and the cosine of each slope of 64ths, in 1/65536 and rounded: the original's table
+/// (the extractor's tests check it against the ROM's).
+pub const slopes = blk: {
+    var out: [64]struct { sine: u32, cosine: u32 } = undefined;
+    for (&out, 0..) |*o, k| o.* = .{ .sine = slopeComponent(@intCast(k), @intCast(k)), .cosine = slopeComponent(@intCast(k), 64) };
+    break :blk out;
+};
+
+/// 65536 times `along` over the hypotenuse of the slope `k`/64, rounded: the integer `r` with
+/// (2r - 1)^2 n <= 4 * 65536^2 * along^2 < (2r + 1)^2 n, n = k^2 + 64^2.
+fn slopeComponent(comptime k: u64, comptime along: u64) u32 {
+    @setEvalBranchQuota(100_000);
+    const n: u64 = k * k + 64 * 64;
+    const t: u64 = 4 * 65536 * 65536 * along * along;
+    var r: u64 = (std.math.sqrt(t / n) + 1) / 2;
+    while ((2 * r + 1) * (2 * r + 1) * n <= t) r += 1;
+    while (r > 0 and (2 * r - 1) * (2 * r - 1) * n > t) r -= 1;
+    return @intCast(r);
+}
+
+test "a heading: along an axis the whole speed; slanted, the original's components" {
+    const three = Fixed.pixels(3);
+    try testing.expectEqual(Heading{ .x = .pixels(-3), .depth = .zero }, heading(-40, 0, three));
+    try testing.expectEqual(Heading{ .x = .zero, .depth = .pixels(3) }, heading(0, 12, three));
+    // The original's table at slope 1: 1024 and 65528 in 1/65536.
+    try testing.expectEqual(@as(u32, 1024), slopes[1].sine);
+    try testing.expectEqual(@as(u32, 65528), slopes[1].cosine);
+    try testing.expectEqual(@as(u32, 45975), slopes[63].sine);
+    // Slope 32 (twice as far across): 3 * 58617 / 65536 and 3 * 29309 / 65536, in 1/256.
+    const h = heading(64, -32, three);
+    try testing.expectEqual(@as(i32, (58617 * 0x300 >> 16) << 8), h.x.raw);
+    try testing.expectEqual(@as(i32, -((29309 * 0x300 >> 16) << 8)), h.depth.raw);
+}

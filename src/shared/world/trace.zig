@@ -82,8 +82,11 @@ pub const Writer = struct {
     v: u64 = 0,
     t: u64 = 0,
     events: u64 = 0,
-    /// A scene told since the last observation, which the next writes first.
+    /// A scene told since the last observation, which the next writes first, at its tick.
     scene: ?Scene = null,
+    scene_tick: u64 = 0,
+    /// Ids given in advance, by place (`assignId`).
+    preset: [capacity]?struct { generation: u16, id: u32 } = @splat(null),
     phase: ?[]const u8 = null,
     phase_told: bool = false,
     pads: [2]input.Pad = .{ .{}, .{} },
@@ -104,6 +107,14 @@ pub const Writer = struct {
         return .{ .w = w };
     }
 
+    /// The trace id the last observation gave the entity at place `index`, of generation
+    /// `generation`, if it saw it.
+    pub fn idOf(self: *const Writer, index: usize, generation: u16) ?u32 {
+        const s = self.seen[index];
+        if (!s.live or s.generation != generation) return null;
+        return s.id;
+    }
+
     /// The trace's first line: `start` is `power-on`, or `reference` for a run started from a
     /// recorded state.
     pub fn begin(self: *Writer, start: []const u8) std.Io.Writer.Error!void {
@@ -120,6 +131,21 @@ pub const Writer = struct {
     /// A scene begins: written with the next observation, whose scene tick is then 0.
     pub fn startScene(self: *Writer, scene: Scene) void {
         self.scene = scene;
+        self.scene_tick = 0;
+    }
+
+    /// A scene taken up at its tick `t` (a run started from a situation that another trace
+    /// recorded): written with the next observation, whose scene tick is then `t`.
+    pub fn takeUpScene(self: *Writer, scene: Scene, t: u64) void {
+        self.scene = scene;
+        self.scene_tick = t;
+    }
+
+    /// The entity at place `index`, of generation `generation`, has the trace id `id` (the id
+    /// another trace gave it, in a run started from that trace's situation); new entities take
+    /// ids from `next` on.
+    pub fn assignId(self: *Writer, index: usize, generation: u16, id: u32) void {
+        self.preset[index] = .{ .generation = generation, .id = id };
     }
 
     /// Play's phase (`intro`, `play`, `paused`...): written with the next observation when it
@@ -134,7 +160,7 @@ pub const Writer = struct {
     pub fn observe(self: *Writer, v: u64, world: *const World, kinds: *const Kinds, out: *const Output) std.Io.Writer.Error!void {
         self.v = v;
         if (self.scene) |s| {
-            self.t = 0;
+            self.t = self.scene_tick;
             var l = try self.line("scene");
             try l.str("scene", s.name);
             if (s.round) |r| {
@@ -280,6 +306,11 @@ pub const Writer = struct {
         var n: usize = 0;
         for (0..capacity) |i| if (spawned[i]) {
             const h: Handle = .{ .index = @intCast(i), .generation = now[i].generation };
+            if (self.preset[i]) |p| if (p.generation == now[i].generation) {
+                now[i].id = p.id;
+                self.preset[i] = null;
+                continue;
+            };
             if (world.playerOf(h)) |p| {
                 now[i].id = @as(u32, p) + 1;
             } else {

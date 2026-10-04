@@ -10,11 +10,27 @@
 //!   the animations and moves it starts), `Numbers` (a struct of the numbers it reads: whole
 //!   numbers, or `Fixed` for speeds in 1/65536 pixel), `Sound` (an enum of the sounds it asks
 //!   for). Binding the kinds refuses a definition that lacks one (kinds.zig);
-//! - its hooks, each optional, each taking its `Actor` first (tick.zig): `control(a, command)` for
-//!   the entity a player plays, `think(a)` for the others, `struck(a, blow) bool` (whether it
-//!   takes a blow that meets its body; by default it does), `landed(a)`, `grabbable(a, by) bool`,
-//!   `holds(a, held)`, `heldBy(a, holder)`, `picks(a, item)`, `pickedUp(a, by) bool` (whether
-//!   the item stays in the world; by default it goes).
+//! - its hooks, each optional, each taking its `Actor` first (tick.zig):
+//!   - `control(a, command)` for the entity a player plays, `think(a)` for the others, and
+//!     `begin(a)` for the others before the blows of the tick;
+//!   - `struck(a, blow) bool`: whether it takes a blow that meets its body; with the hook, the
+//!     behaviour takes the blow's damage itself, at once or later (`a.takeDamage`); without,
+//!     the damage is taken at once;
+//!   - `blowLanded(a, target)`: its blow was taken;
+//!   - `takeUp(a)`: put in a state from a situation another program recorded, it starts that
+//!     state's animation;
+//!   - `landed(a)`; `fall(a)`, in the air after its move: whether it lands (`a.land`) and how
+//!     it falls (by default it lands when it comes down to the ground, and its definition's
+//!     gravity adds to its speed);
+//!   - `grabbable(a, by) bool`, `holds(a, held)`, `heldBy(a, holder)`, `letGoBy(a, holder)`
+//!     (the hold ended, its holder still at the frame that let go);
+//!   - `picks(a, item)`, `pickedUp(a, by) bool` (whether the item stays in the world; by
+//!     default it goes);
+//!   - `specialCalled(a)`, `specialBlast(a)`: a player called the special attack, on the
+//!     screen; its blast came (`Tick.callSpecial`);
+//! - `drives_animation`, true when its behaviour advances its animation's frames itself, as the
+//!   original's players do (`a.step()`), and keeps its boxes (`a.showBoxes()`): the animation
+//!   system then only notes the frame it shows.
 //!
 //! `sparring` and `pawn` are synthetic: the enemy and the player of the world's tests, and the
 //! pattern of the original's characters and enemies (PLAN items 11 and 12).
@@ -52,6 +68,30 @@ pub fn initial(b: Behaviour) Mind {
     switch (b) {
         .none => return .none,
         inline else => |t| return @unionInit(Mind, @tagName(t), .{}),
+    }
+}
+
+/// Whether the behaviour of `m` advances its entity's animation itself.
+pub fn drivesAnimation(m: *const Mind) bool {
+    switch (m.*) {
+        .none => return false,
+        inline else => |_, tag| {
+            const M = module(tag);
+            return @hasDecl(M, "drives_animation") and M.drives_animation;
+        },
+    }
+}
+
+/// Puts the behaviour of `m` in its state named `name` (a situation another program recorded,
+/// converted): false when it has no state of that name.
+pub fn setState(m: *Mind, name: []const u8) bool {
+    switch (m.*) {
+        .none => return false,
+        inline else => |*x| {
+            const S = @TypeOf(x.state);
+            x.state = std.meta.stringToEnum(S, name) orelse return false;
+            return true;
+        },
     }
 }
 

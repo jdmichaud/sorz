@@ -26,6 +26,7 @@ const Kinds = kinds_mod.Kinds;
 const World = world_mod.World;
 const Command = world_mod.Command;
 const Output = output.Output;
+const capacity_ = entity.capacity;
 
 /// The pads of a logic tick, as read at its two display ticks in play, in their order (the
 /// systems' `commands` says how a player reads them).
@@ -76,8 +77,45 @@ pub const Tick = struct {
     pub fn startMove(t: *Tick, h: Handle, e: *Entity, index: u8) void {
         const m = t.kindOf(e).definition.moves[index];
         e.move = index;
-        t.kinds.startAnimation(e, m.animation);
+        t.startAnimation(h, e, m.animation);
         if (m.sound) |s| t.sound(s, h);
+    }
+
+    /// Starts animation `index` of `e`'s kind from its first frame, and asks for that frame's
+    /// sound.
+    pub fn startAnimation(t: *Tick, h: Handle, e: *Entity, index: u8) void {
+        t.kinds.startAnimation(e, index);
+        t.frameStarts(h, e);
+    }
+
+    /// The frame `e` is on starts showing: its sound is asked for.
+    pub fn frameStarts(t: *Tick, h: Handle, e: *const Entity) void {
+        const f = t.frameOf(e) orelse return;
+        if (f.sound) |s| t.sound(s, h);
+    }
+
+    /// The frame of its animation `e` is on, if any.
+    pub fn frameOf(t: *const Tick, e: *const Entity) ?*const content_entity.Frame {
+        const index = e.animation.index orelse return null;
+        return &t.kindOf(e).definition.animations[index].frames[e.animation.frame];
+    }
+
+    /// The damage `e`'s blow does at this tick: its move's, while the frame it shows has the
+    /// blow under way; 0 otherwise.
+    pub fn power(t: *const Tick, e: *const Entity) i16 {
+        const m = e.move orelse return 0;
+        const f = t.frameOf(e) orelse return 0;
+        if (!f.blow) return 0;
+        return std.math.cast(i16, t.kindOf(e).definition.moves[m].damage) orelse std.math.maxInt(i16);
+    }
+
+    /// `target` takes `damage` from `attacker` (null: no entity's, the special attack's): its
+    /// health falls, and the blow is noted for the traces.
+    pub fn takeDamage(t: *Tick, target: Handle, attacker: ?Handle, damage: i16) void {
+        const e = t.world.get(target) orelse return;
+        e.health -|= damage;
+        if (attacker) |a| e.struck_by = a;
+        t.out.hits.append(.{ .attacker = attacker, .target = target, .damage = damage });
     }
 
     /// `h`'s behaviour seen as module `M`'s actor; null when `h` has gone or is driven by
@@ -101,9 +139,61 @@ pub const Tick = struct {
         dispatch(t, h, "think", void, {}, .{});
     }
 
-    /// A blow meets the entity's body: whether it takes it (by default, yes).
+    /// The entity's tick begins, before the blows of the tick (the begin system).
+    pub fn begin(t: *Tick, h: Handle) void {
+        dispatch(t, h, "begin", void, {}, .{});
+    }
+
+    /// A blow meets the entity's body: whether it takes it. Its behaviour's hook takes the
+    /// damage itself; without the hook, it takes it at once.
     pub fn struck(t: *Tick, h: Handle, blow: Blow) bool {
-        return dispatch(t, h, "struck", bool, true, .{blow});
+        const e = t.world.get(h) orelse return false;
+        if (hasHook(e, "struck")) return dispatch(t, h, "struck", bool, false, .{blow});
+        t.takeDamage(h, blow.attacker, blow.damage);
+        return true;
+    }
+
+    /// The entity's blow was taken by `target`.
+    pub fn blowLanded(t: *Tick, h: Handle, target: Handle) void {
+        dispatch(t, h, "blowLanded", void, {}, .{target});
+    }
+
+    /// The entity is in the air after its move. Its behaviour's `fall` decides whether it lands
+    /// (`land`) and how it falls; by default it lands when it has come down to the ground, and
+    /// otherwise its definition's gravity adds to its speed in height.
+    pub fn fall(t: *Tick, h: Handle) void {
+        const e = t.world.get(h) orelse return;
+        if (hasHook(e, "fall")) return dispatch(t, h, "fall", void, {}, .{});
+        if (!e.position.height.lessThan(t.world.ground) and e.velocity.height.raw >= 0) return t.land(h, .whole);
+        e.velocity.height = e.velocity.height.add(.of(t.kindOf(e).definition.gravity));
+    }
+
+    /// How a landing puts the entity on the ground: on its whole pixels, or with the fraction
+    /// of its height kept (the original's objects other than the players set the whole pixels
+    /// alone).
+    pub const Landing = enum { whole, fraction_kept };
+
+    /// The entity lands on the ground: out of the air, its behaviour told (`landed`) while its
+    /// speed of the fall is still there (a bounce takes some of it back); then, unless it is in
+    /// the air again, that speed is gone.
+    pub fn land(t: *Tick, h: Handle, how: Landing) void {
+        const e = t.world.get(h) orelse return;
+        e.position.height = switch (how) {
+            .whole => t.world.ground,
+            .fraction_kept => .parts(@intCast(t.world.ground.whole()), e.position.height.frac()),
+        };
+        e.flags.airborne = false;
+        e.flags.landed = true;
+        t.landed(h);
+        if (t.world.get(h)) |x| if (!x.flags.airborne) {
+            x.velocity.height = .zero;
+        };
+    }
+
+    /// The entity was put in its state from a situation another program recorded (a converted
+    /// start, DESIGN.md decision D14): its behaviour takes it up from there.
+    pub fn takeUp(t: *Tick, h: Handle) void {
+        dispatch(t, h, "takeUp", void, {}, .{});
     }
 
     /// The entity landed on the ground (the movement system).
@@ -122,6 +212,69 @@ pub const Tick = struct {
         dispatch(t, held, "heldBy", void, {}, .{holder});
     }
 
+    /// The hold of `holder` ends: neither holds the other any more, and the one it held is told
+    /// (`letGoBy`), while its holder still shows the frame that let go.
+    pub fn letGo(t: *Tick, holder: Handle) void {
+        const e = t.world.get(holder) orelse return;
+        const held = e.holding orelse return;
+        e.holding = null;
+        const o = t.world.get(held) orelse return;
+        o.holder = null;
+        dispatch(t, held, "letGoBy", void, {}, .{holder});
+    }
+
+    /// The kind of entity of a special attack's call: the police car.
+    pub const special_kind = "police_car";
+
+    /// A player calls the special attack: unless one is under way, the police car comes (its
+    /// behaviour runs the attack) and every entity on the screen is told (`specialCalled`).
+    /// Returns whether it came.
+    pub fn callSpecial(t: *Tick, by: Handle) bool {
+        if (t.world.special) return false;
+        const kind = t.kinds.find(special_kind) orelse return false;
+        const c = t.world.camera;
+        const car = t.world.spawn(t.kinds, kind, .{ .x = c.x, .depth = .zero, .height = t.world.ground }, .right) catch return false;
+        if (t.world.get(car)) |e| e.flags.on_screen = false;
+        t.world.special = true;
+        var buf: [capacity_]u8 = undefined;
+        for (t.world.updateOrder(&buf)) |i| {
+            const h = t.world.handleAt(i) orelse continue;
+            const e = t.world.get(h).?;
+            if (e.flags.hidden or h.eql(car) or h.eql(by)) continue;
+            dispatch(t, h, "specialCalled", void, {}, .{});
+        }
+        return true;
+    }
+
+    /// The special attack's blast: every entity it caught is told (`specialBlast`).
+    pub fn specialBlast(t: *Tick) void {
+        var buf: [capacity_]u8 = undefined;
+        for (t.world.updateOrder(&buf)) |i| {
+            const h = t.world.handleAt(i) orelse continue;
+            dispatch(t, h, "specialBlast", void, {}, .{});
+        }
+    }
+
+    /// The first item or weapon (in the world's order) that nothing holds whose place lies
+    /// within `across` and `depth` pixels of `e`'s, and from its feet up to `height` above.
+    pub fn itemNear(t: *Tick, e: *const Entity, across: i16, depth: i16, height: i16) ?Handle {
+        var buf: [capacity_]u8 = undefined;
+        for (t.world.updateOrder(&buf)) |i| {
+            const oh = t.world.handleAt(i) orelse continue;
+            const o = t.world.get(oh).?;
+            if (o == e) continue;
+            const family = t.kindOf(o).family();
+            if (family != .item and family != .weapon) continue;
+            if (o.holder != null) continue;
+            const dx = o.position.x.whole() - e.position.x.whole();
+            const dd = o.position.depth.whole() - e.position.depth.whole();
+            const dh = o.position.height.whole() - e.position.height.whole();
+            if (@abs(dx) > across or @abs(dd) > depth or dh < -height or dh > 0) continue;
+            return oh;
+        }
+        return null;
+    }
+
     /// The item or weapon `item` is picked up by `by`: whether it stays in the world (by
     /// default it goes), and what `by` does with it.
     pub fn pickedUp(t: *Tick, item: Handle, by: Handle) void {
@@ -129,6 +282,14 @@ pub const Tick = struct {
         if (!dispatch(t, item, "pickedUp", bool, false, .{by})) t.world.remove(item);
     }
 };
+
+/// Whether `e`'s behaviour has the hook `hook`.
+fn hasHook(e: *const Entity, comptime hook: []const u8) bool {
+    switch (e.mind) {
+        .none => return false,
+        inline else => |_, tag| return @hasDecl(behaviours.module(tag), hook),
+    }
+}
 
 /// Calls hook `hook` of `h`'s behaviour with the actor and `args`; `default` when the entity has
 /// gone or its behaviour has no such hook.
@@ -162,9 +323,137 @@ pub fn Actor(comptime M: type) type {
             return kinds_mod.numbersOf(M, a.kind);
         }
 
-        /// Starts the animation `which` from its first frame.
+        /// Starts the animation `which` from its first frame (that frame's sound asked for).
         pub fn animate(a: Self, which: M.Animation) void {
-            a.tick.kinds.startAnimation(a.entity, a.kind.animation_of[@backingInt(which)]);
+            a.tick.startAnimation(a.handle, a.entity, a.kind.animation_of[@backingInt(which)]);
+        }
+
+        // The animation driven by the behaviour (`drives_animation`, behaviours.zig).
+
+        /// The frame of its animation it is on.
+        pub fn frame(a: Self) u8 {
+            return a.entity.animation.frame;
+        }
+
+        /// Whether the animation `which` is the one it plays.
+        pub fn plays(a: Self, which: M.Animation) bool {
+            return a.playing(which);
+        }
+
+        /// Holds its frame (`paused`), or lets the animation run again.
+        pub fn pause(a: Self, paused: bool) void {
+            a.entity.animation.paused = paused;
+        }
+
+        /// Each frame shows `ticks` ticks (null: its own), and the frame it is on `left` more.
+        pub fn pace(a: Self, ticks: ?u8, left: u8) void {
+            a.entity.animation.pace = ticks;
+            a.entity.animation.left = left;
+        }
+
+        /// The frame `index` of the animation it plays, from now (the animation system shows it
+        /// and puts its boxes in use at the tick's end).
+        pub fn setFrame(a: Self, index: u8) void {
+            a.entity.animation.frame = index;
+        }
+
+        /// One tick of its animation: the frame's ticks count down; when they run out the
+        /// next frame comes (after the last, the first), with its boxes and its sound. Returns
+        /// whether the frame changed.
+        pub fn step(a: Self) bool {
+            if (!a.countDown()) return false;
+            const an = a.currentAnimation() orelse return false;
+            const next = if (a.entity.animation.frame + 1 < an.frames.len) a.entity.animation.frame + 1 else 0;
+            a.showFrame(next, null);
+            return true;
+        }
+
+        /// The frame's ticks count down, the frame staying (a state timed by its frame):
+        /// whether they ran out.
+        pub fn countDown(a: Self) bool {
+            a.entity.animation.left -%= 1;
+            return a.entity.animation.left == 0;
+        }
+
+        /// The ticks the frame still shows.
+        pub fn ticksLeft(a: Self) u8 {
+            return a.entity.animation.left;
+        }
+
+        pub fn setTicksLeft(a: Self, ticks: u8) void {
+            a.entity.animation.left = ticks;
+        }
+
+        /// The frame `index` of the animation playing shows from now, for `ticks` ticks (its
+        /// own by default), with its boxes; its sound is asked for.
+        pub fn showFrame(a: Self, index: u8, ticks: ?u8) void {
+            const an = a.currentAnimation() orelse return;
+            a.entity.animation.frame = index;
+            a.entity.animation.left = ticks orelse an.frames[index].ticks;
+            a.showBoxes();
+            a.tick.frameStarts(a.handle, a.entity);
+        }
+
+        /// The animation `which` plays on from the frame it is on, with `ticks` left: another
+        /// timing of the same frames.
+        pub fn retime(a: Self, which: M.Animation, ticks: u8) void {
+            a.entity.animation.index = a.kind.animation_of[@backingInt(which)];
+            a.entity.animation.left = ticks;
+        }
+
+        /// The boxes of the frame it shows, facing as it faces.
+        pub fn showBoxes(a: Self) void {
+            const an = a.currentAnimation() orelse return;
+            const f = an.frames[a.entity.animation.frame];
+            a.entity.boxes = .{ .body = f.body, .attack = f.attack, .mirrored = a.entity.facingLeft() != f.flip };
+        }
+
+        fn currentAnimation(a: Self) ?*const content_entity.Animation {
+            const index = a.entity.animation.index orelse return null;
+            return &a.kind.definition.animations[index];
+        }
+
+        /// The frame it shows, as its definition gives it.
+        pub fn currentFrame(a: Self) ?*const content_entity.Frame {
+            return a.tick.frameOf(a.entity);
+        }
+
+        /// The damage its blow does at this tick (`Tick.power`).
+        pub fn power(a: Self) i16 {
+            return a.tick.power(a.entity);
+        }
+
+        /// Whether its place is down on the ground or below it.
+        pub fn atGround(a: Self) bool {
+            return !a.entity.position.height.lessThan(a.tick.world.ground);
+        }
+
+        /// It lands (`Tick.land`).
+        pub fn land(a: Self, how: Tick.Landing) void {
+            a.tick.land(a.handle, how);
+        }
+
+        /// It takes `damage` from `attacker` (`Tick.takeDamage`).
+        pub fn takeDamage(a: Self, attacker: ?Handle, damage: i16) void {
+            a.tick.takeDamage(a.handle, attacker, damage);
+        }
+
+        /// The hold it is in ends, whether it holds or is held (`Tick.letGo`).
+        pub fn letGo(a: Self) void {
+            if (a.entity.holding != null) return a.tick.letGo(a.handle);
+            if (a.entity.holder) |h| a.tick.letGo(h);
+        }
+
+        /// An item near it (`Tick.itemNear`).
+        pub fn itemNear(a: Self, across: i16, depth: i16, height: i16) ?Handle {
+            return a.tick.itemNear(a.entity, across, depth, height);
+        }
+
+        /// It picks up `item`: noted for the traces, and the item's behaviour told.
+        pub fn pickUp(a: Self, item: Handle) void {
+            const o = a.tick.world.get(item) orelse return;
+            a.tick.out.pickups.append(.{ .item = item, .kind = o.kind.?, .by = a.handle });
+            a.tick.pickedUp(item, a.handle);
         }
 
         /// Whether the animation `which` plays.

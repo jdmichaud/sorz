@@ -90,7 +90,7 @@ pub const Kinds = struct {
     pub fn startAnimation(self: *const Kinds, e: *Entity, index: u8) void {
         const k = self.get(e.kind.?);
         const step = k.definition.animations[index].frames[0];
-        e.animation = .{ .index = index, .frame = 0, .left = step.ticks };
+        e.animation = .{ .index = index, .frame = 0, .left = step.ticks, .paused = e.animation.paused, .pace = null };
         e.boxes = .{ .body = step.body, .attack = step.attack, .mirrored = e.facingLeft() != step.flip };
     }
 };
