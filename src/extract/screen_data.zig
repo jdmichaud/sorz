@@ -9,7 +9,9 @@
 //! - select: the characters' poses, animations of their animation sets (Axel 0x49AE0, Adam
 //!   0x53EFE, Blaze 0x5E90A; a set is a table of word offsets to its animations, an animation its
 //!   count of frames, its durations' entry in the table 0x3A30, and a word per frame: the frame's
-//!   record's offset from the words, bit 15 mirrored);
+//!   record's offset from the words, bit 15 mirrored); each frame's copies, from its record's
+//!   bytes 5 and 6 (0xB118): the entries of the players' art's transfers (0x1A160, 34 tiles, and
+//!   0x1A53E, 32 tiles) the display routine makes when the frame comes (0x1A0D6), 0 for none;
 //! - intro: the story outside Japan (0x3FB24: 28 lines of 22 codes of the italic font), the
 //!   profiles (0x3F9F2: three pointers to texts of the profiles' font's codes, with 0 a blank, $FF
 //!   a new line, $FD a pause and $FE the end; 0xCBE0: where each starts, a cell of a plane 128
@@ -191,10 +193,23 @@ fn animation(arena: std.mem.Allocator, rom: []const u8, names: *const std.AutoHa
     for (out, 0..) |*s, k| {
         const w = u16be(rom, a + 2 + 2 * @as(u32, @intCast(k))) -% 2;
         const frame = a + 2 + (w & 0x7FFF);
-        s.* = .{ .frame = names.get(frame) orelse return error.BadData, .ticks = rom[ticks + k], .mirrored = w & 0x8000 != 0 };
+        s.* = .{ .frame = names.get(frame) orelse return error.BadData, .ticks = rom[ticks + k], .mirrored = w & 0x8000 != 0, .copied = try copies(arena, rom, frame) };
         if (s.ticks == 0) return error.BadData;
     }
     return out;
+}
+
+/// The players' art's transfers: a frame's first part of 34 tiles, its second of 32.
+const copy_tiles = [screens.max_copies]u16{ 34, 32 };
+
+/// The tiles copied to show the frame whose record is at `frame`: a copy for each of its two
+/// transfers' entries that is not 0. A frame without (bit 7 of its count of pieces) keeps the art
+/// of the frame before: not one of the select's.
+fn copies(arena: std.mem.Allocator, rom: []const u8, frame: u32) ![]const u16 {
+    if (rom[frame] & 0x80 != 0) return error.BadData;
+    var out: std.ArrayList(u16) = .empty;
+    for (copy_tiles, 0..) |tiles, k| if (rom[frame + 5 + k] != 0) try out.append(arena, tiles);
+    return out.items;
 }
 
 fn select(arena: std.mem.Allocator, rom: []const u8, b: *const Builder) !screens.Select {

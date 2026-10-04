@@ -232,8 +232,10 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   code), the ticks to `wait` before the next entry, and the part's `life` in ticks.
 - `select`: `characters.adam`, `axel` and `blaze`, each character's poses on the character
   select, each an animation: `stand`, `idle`, `pose_a`, `pose_b`, `pose_c` and Blaze's `landing`.
-  An animation is a list of steps, each a `frame`, the `ticks` it shows (1 or more) and, when it
-  is drawn mirrored, `mirrored`. (They are the players' animations in the original's sets; the
+  An animation is a list of steps, each a `frame`, the `ticks` it shows (1 or more), when it is
+  drawn mirrored, `mirrored`, and the tiles the game `copied` to show it, a number a copy (the
+  players' frames are copied whole as they come, in a part of 34 tiles and, for the larger
+  frames, a second of 32: what the copies cost the sound's processor, DESIGN.md A4). (They are the players' animations in the original's sets; the
   characters' own definitions will hold them with their moves, PLAN 11.)
 
 ```json

@@ -34,8 +34,13 @@ pub const HighScores = struct {
     provenance: []const u8 = "",
 };
 
-/// A step of an animation: a frame (its full name), shown for `ticks` ticks, mirrored or not.
-pub const Step = struct { frame: []const u8, ticks: u8, mirrored: bool = false };
+/// A step of an animation: a frame (its full name), shown for `ticks` ticks, mirrored or not, and
+/// the tiles the game copies to show it, a copy each (`copied`: the players' frames are copied
+/// whole when they come, in a part of 34 tiles and, for the larger ones, a second of 32).
+pub const Step = struct { frame: []const u8, ticks: u8, mirrored: bool = false, copied: []const u16 = &.{} };
+
+/// The most copies a step has.
+pub const max_copies = 2;
 
 /// A character's poses on the character select, each an animation.
 pub const Poses = struct {
@@ -125,6 +130,11 @@ fn steps(arena: std.mem.Allocator, xs: []const Step) !json.Value {
         try fields.append(arena, .{ .key = "frame", .value = .{ .str = s.frame } });
         try fields.append(arena, .{ .key = "ticks", .value = json.Value.num(s.ticks) });
         if (s.mirrored) try fields.append(arena, .{ .key = "mirrored", .value = .{ .bool = true } });
+        if (s.copied.len != 0) {
+            const copied = try arena.alloc(json.Value, s.copied.len);
+            for (copied, s.copied) |*c, t| c.* = json.Value.num(t);
+            try fields.append(arena, .{ .key = "copied", .value = .{ .array = copied } });
+        }
         o.* = .{ .object = fields.items };
     }
     return .{ .array = out };
@@ -213,13 +223,19 @@ fn readSteps(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error![
     if (out.len == 0) return n.fail("no step");
     for (out, 0..) |*s, i| {
         const e = try n.at(i);
-        try e.only(&.{ "frame", "ticks", "mirrored" });
+        try e.only(&.{ "frame", "ticks", "mirrored", "copied" });
         const frame = try e.get("frame");
         s.* = .{
             .frame = try frame.string(),
             .ticks = try (try e.get("ticks")).int(u8),
             .mirrored = if (try e.opt("mirrored")) |m| try m.boolean() else false,
         };
+        if (try e.opt("copied")) |c| {
+            const copied = try arena.alloc(u16, try c.len());
+            if (copied.len > max_copies) return c.fail("more copies than a frame has");
+            for (copied, 0..) |*t, k| t.* = try (try c.at(k)).int(u16);
+            s.copied = copied;
+        }
         if (a) |x| if (x.frame(s.frame) == null) return frame.fail("no frame of this name in the art");
         if (s.ticks == 0) return (try e.get("ticks")).fail("not 1 or more");
     }
@@ -333,7 +349,7 @@ test "the screens' records write and read back the same" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const stand = [_]Step{.{ .frame = "adam/001", .ticks = 100 }};
-    const pose = [_]Step{ .{ .frame = "adam/002", .ticks = 1, .mirrored = true }, .{ .frame = "adam/012", .ticks = 5 } };
+    const pose = [_]Step{ .{ .frame = "adam/002", .ticks = 1, .mirrored = true, .copied = &.{ 34, 32 } }, .{ .frame = "adam/012", .ticks = 5, .copied = &.{34} } };
     const poses: Poses = .{ .provenance = "synthetic", .stand = &stand, .idle = &pose, .pose_a = &pose, .pose_b = &pose, .pose_c = &pose };
     var blaze = poses;
     blaze.landing = &stand;
