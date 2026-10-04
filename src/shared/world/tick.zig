@@ -49,6 +49,8 @@ pub const Blow = struct {
     reaction: content_entity.Reaction,
     /// The speed it gives: across, away from the attacker, and in height.
     push: Vec3,
+    /// A missile's (a body thrown, a weapon): it knocks down with its damage at once.
+    missile: bool = false,
 };
 
 pub const Tick = struct {
@@ -111,6 +113,7 @@ pub const Tick = struct {
         const m = e.move orelse return 0;
         const f = t.frameOf(e) orelse return 0;
         if (!f.blow) return 0;
+        if (e.power != 0) return e.power;
         return std.math.cast(i16, t.kindOf(e).definition.moves[m].damage) orelse std.math.maxInt(i16);
     }
 
@@ -329,6 +332,24 @@ pub const Tick = struct {
         }
     }
 
+    /// Whether a solid thing other than `h` stands at `place` (whole pixels, across and in
+    /// depth): strictly inside its definition's `solid` box.
+    pub fn solidAt(t: *const Tick, h: Handle, place: Vec3) bool {
+        const x = place.x.whole();
+        const d = place.depth.whole();
+        for (&t.world.entities, 0..) |*o, i| {
+            if (!o.alive() or !o.flags.solid or i == h.index) continue;
+            const def = t.kindOf(o).definition;
+            const b = def.boxes[def.box("solid") orelse continue];
+            const ox = o.position.x.whole();
+            const od = o.position.depth.whole();
+            if (x < ox + b.x.from or x > ox + b.x.to) continue;
+            if (d < od + b.depth.from or d > od + b.depth.to) continue;
+            return true;
+        }
+        return false;
+    }
+
     /// The first item or weapon (in the world's order) that nothing holds whose place lies
     /// within `across` and `depth` pixels of `e`'s, and from its feet up to `height` above.
     pub fn itemNear(t: *Tick, e: *const Entity, across: i16, depth: i16, height: i16) ?Handle {
@@ -395,6 +416,16 @@ pub fn Actor(comptime M: type) type {
         /// The behaviour's numbers, as `M.Numbers` types them, from the definition.
         pub fn numbers(a: Self) M.Numbers {
             return kinds_mod.numbersOf(M, a.kind);
+        }
+
+        /// The behaviour's tables (`M.Tables`), from the definition.
+        pub fn tables(a: Self) *const M.Tables {
+            return @ptrCast(@alignCast(a.kind.tables.?));
+        }
+
+        /// The behaviour's choices of states (`M.Choices`), from the definition.
+        pub fn choices(a: Self) *const M.Choices {
+            return @ptrCast(@alignCast(a.kind.choices.?));
         }
 
         /// Starts the animation `which` from its first frame (that frame's sound asked for).

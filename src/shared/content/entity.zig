@@ -132,6 +132,13 @@ pub const Number = struct { name: []const u8, value: i32 };
 /// A sound the behaviour asks for, by its role (`hurt`) and the sound content's name.
 pub const Sound = struct { name: []const u8, sound: []const u8 };
 
+/// A list of numbers the behaviour reads by place (a draw's low bits, the tick's), by its name.
+pub const Table = struct { name: []const u8, values: []const i32 };
+
+/// A list of the behaviour's states, by their names, it picks from by place (the tick's low bits
+/// choose what follows a move).
+pub const Choice = struct { name: []const u8, states: []const []const u8 };
+
 pub const Definition = struct {
     /// The kind's name: the file's (`entities/galsia.json` is `galsia`), which the traces use.
     name: []const u8,
@@ -148,6 +155,8 @@ pub const Definition = struct {
     gravity: i32 = 0,
     shadow: bool = false,
     numbers: []const Number = &.{},
+    tables: []const Table = &.{},
+    choices: []const Choice = &.{},
     sounds: []const Sound = &.{},
     boxes: []const Box = &.{},
     animations: []const Animation = &.{},
@@ -168,6 +177,14 @@ pub const Definition = struct {
     }
     pub fn sound(d: *const Definition, name: []const u8) ?[]const u8 {
         for (d.sounds) |s| if (std.mem.eql(u8, s.name, name)) return s.sound;
+        return null;
+    }
+    pub fn table(d: *const Definition, name: []const u8) ?[]const i32 {
+        for (d.tables) |t| if (std.mem.eql(u8, t.name, name)) return t.values;
+        return null;
+    }
+    pub fn choice(d: *const Definition, name: []const u8) ?[]const []const u8 {
+        for (d.choices) |c| if (std.mem.eql(u8, c.name, name)) return c.states;
         return null;
     }
 };
@@ -192,7 +209,7 @@ pub const max_items = 255;
 /// Reads definition `name` from its file's parsed `root`, checking every value; the frames must
 /// be `a`'s. A refusal names the field in the diagnostic.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *const art.Art) json.Error!Definition {
-    try root.only(&.{ "provenance", "family", "team", "behaviour", "health", "palette", "gravity", "shadow", "numbers", "sounds", "boxes", "animations", "moves" });
+    try root.only(&.{ "provenance", "family", "team", "behaviour", "health", "palette", "gravity", "shadow", "numbers", "tables", "choices", "sounds", "boxes", "animations", "moves" });
     var d: Definition = .{
         .name = name,
         .provenance = if (try root.opt("provenance")) |p| try p.string() else "",
@@ -214,6 +231,38 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *con
             x.* = .{ .name = try checkedName(e.value, e.key), .value = try e.value.int(i32) };
         }
         d.numbers = out;
+    }
+    if (try root.opt("tables")) |node| {
+        var it = try listed(node);
+        const out = try arena.alloc(Table, it.count());
+        for (out) |*x| {
+            const e = (try it.next()).?;
+            const n = try e.value.len();
+            if (n == 0) return e.value.fail("an empty table");
+            if (n > max_items) return e.value.fail("more than 255 values");
+            const values = try arena.alloc(i32, n);
+            for (values, 0..) |*v, i| v.* = try (try e.value.at(i)).int(i32);
+            x.* = .{ .name = try checkedName(e.value, e.key), .values = values };
+        }
+        d.tables = out;
+    }
+    if (try root.opt("choices")) |node| {
+        var it = try listed(node);
+        const out = try arena.alloc(Choice, it.count());
+        for (out) |*x| {
+            const e = (try it.next()).?;
+            const n = try e.value.len();
+            if (n == 0) return e.value.fail("an empty choice");
+            if (n > max_items) return e.value.fail("more than 255 states");
+            const states = try arena.alloc([]const u8, n);
+            for (states, 0..) |*v, i| {
+                const node_i = try e.value.at(i);
+                v.* = try node_i.string();
+                if (!art.validName(v.*)) return node_i.fail("not a state's name (a-z, 0-9, _)");
+            }
+            x.* = .{ .name = try checkedName(e.value, e.key), .states = states };
+        }
+        d.choices = out;
     }
     if (try root.opt("sounds")) |node| {
         var it = try listed(node);
@@ -385,6 +434,24 @@ pub fn value(arena: std.mem.Allocator, d: *const Definition) error{OutOfMemory}!
         for (out, d.numbers) |*o, n| o.* = .{ .key = n.name, .value = json.Value.num(n.value) };
         try top.append(arena, .{ .key = "numbers", .value = .{ .object = out } });
     }
+    if (d.tables.len != 0) {
+        const out = try arena.alloc(json.Field, d.tables.len);
+        for (out, d.tables) |*o, t| {
+            const values = try arena.alloc(json.Value, t.values.len);
+            for (values, t.values) |*v, x| v.* = json.Value.num(x);
+            o.* = .{ .key = t.name, .value = .{ .array = values } };
+        }
+        try top.append(arena, .{ .key = "tables", .value = .{ .object = out } });
+    }
+    if (d.choices.len != 0) {
+        const out = try arena.alloc(json.Field, d.choices.len);
+        for (out, d.choices) |*o, c| {
+            const states = try arena.alloc(json.Value, c.states.len);
+            for (states, c.states) |*v, x| v.* = .{ .str = x };
+            o.* = .{ .key = c.name, .value = .{ .array = states } };
+        }
+        try top.append(arena, .{ .key = "choices", .value = .{ .object = out } });
+    }
     if (d.sounds.len != 0) {
         const out = try arena.alloc(json.Field, d.sounds.len);
         for (out, d.sounds) |*o, s| o.* = .{ .key = s.name, .value = .{ .str = s.sound } };
@@ -544,6 +611,9 @@ const sample =
     \\      "x_left": [-31, -11]
     \\    }
     \\  },
+    \\  "choices": {
+    \\    "next": ["stand", "punch"]
+    \\  },
     \\  "family": "enemy",
     \\  "gravity": 24576,
     \\  "health": 32,
@@ -569,6 +639,9 @@ const sample =
     \\  "sounds": {
     \\    "hurt": "enemy hit"
     \\  },
+    \\  "tables": {
+    \\    "wait": [3, -1]
+    \\  },
     \\  "team": "enemy"
     \\}
     \\
@@ -590,6 +663,8 @@ test "a definition reads, names its parts, and writes the same bytes again" {
     try testing.expectEqual(@as(u16, 32), d.health);
     try testing.expectEqual(@as(?i32, 65536), d.number("walk_speed"));
     try testing.expectEqualStrings("enemy hit", d.sound("hurt").?);
+    try testing.expectEqualSlices(i32, &.{ 3, -1 }, d.table("wait").?);
+    try testing.expectEqualStrings("punch", d.choice("next").?[1]);
     const punch = d.moves[d.move("punch").?];
     try testing.expectEqual(Reaction.knock_down, punch.reaction);
     try testing.expectEqual(@as(i32, 65536), punch.push_x);

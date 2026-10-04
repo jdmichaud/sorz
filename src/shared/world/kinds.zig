@@ -27,6 +27,9 @@ pub const Kind = struct {
     move_of: []const u8 = &.{},
     numbers: []const i32 = &.{},
     sound_of: []const []const u8 = &.{},
+    /// The behaviour's tables and choices (`M.Tables`, `M.Choices`), bound once.
+    tables: ?*const anyopaque = null,
+    choices: ?*const anyopaque = null,
 
     pub fn name(k: *const Kind) []const u8 {
         return k.definition.name;
@@ -128,6 +131,29 @@ fn bindNames(arena: std.mem.Allocator, comptime M: type, k: *Kind, file: []const
             out[i] = v;
         }
         k.numbers = out;
+    }
+    if (@hasDecl(M, "Tables")) {
+        const out = try arena.create(M.Tables);
+        const info = @typeInfo(M.Tables).@"struct";
+        inline for (info.field_names, info.field_types) |n, T| {
+            const values = d.table(n) orelse return refuse(diag, file, "tables." ++ n, missing);
+            const len = @typeInfo(T).array.len;
+            const E = @typeInfo(T).array.child;
+            if (values.len != len) return refuse(diag, file, "tables." ++ n, std.fmt.comptimePrint("not {d} values, as the behaviour " ++ behaviour ++ " reads them", .{len}));
+            for (&@field(out, n), values) |*o, v| o.* = std.math.cast(E, v) orelse return refuse(diag, file, "tables." ++ n, "out of range for the behaviour " ++ behaviour);
+        }
+        k.tables = out;
+    }
+    if (@hasDecl(M, "Choices")) {
+        const out = try arena.create(M.Choices);
+        const info = @typeInfo(M.Choices).@"struct";
+        inline for (info.field_names, info.field_types) |n, T| {
+            const states = d.choice(n) orelse return refuse(diag, file, "choices." ++ n, missing);
+            const len = @typeInfo(T).array.len;
+            if (states.len != len) return refuse(diag, file, "choices." ++ n, std.fmt.comptimePrint("not {d} states, as the behaviour " ++ behaviour ++ " reads them", .{len}));
+            for (&@field(out, n), states) |*o, name| o.* = std.meta.stringToEnum(M.State, name) orelse return refuse(diag, file, "choices." ++ n, "not a state of the behaviour " ++ behaviour);
+        }
+        k.choices = out;
     }
     if (@hasDecl(M, "Sound")) {
         const names = comptime std.meta.fieldNames(M.Sound);
