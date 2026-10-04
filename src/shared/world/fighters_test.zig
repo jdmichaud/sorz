@@ -127,23 +127,32 @@ fn pb(comptime ticks: []const u8) []const u8 {
 const punk =
     \\{"family": "enemy", "team": "enemy", "behaviour": "galsia", "health": 4, "gravity": 73728,
     \\ "shadow": true,
-    \\ "numbers": {"appears_from": -16, "appears_to": 335, "blink": 3, "blinks": 8, "points": 500,
-    \\   "bounce_most": 393216, "bounce_slowing": 16384, "close_in_beside": 32, "close_in_pace": 3,
-    \\   "close_in_speed": 196608, "close_in_ticks": 48, "fall_most": 1048576, "first_blink": 16,
-    \\   "flipped_up": -327680, "flipped_x": 196608, "gets_up_frame": 4, "grab_height": 8,
-    \\   "knocked_out_x": 655360, "knocked_slowing": 21504, "knocked_up": -589824,
-    \\   "knocked_x": 458752, "last_punch_frame": 7, "last_punch_test": 6, "lying": 16,
-    \\   "lying_least": 3, "pacing_0": 16, "pacing_1": 8, "pacing_2": 10, "pacing_3": 5,
-    \\   "pacing_pace_0": 6, "pacing_pace_1": 5, "pacing_pace_2": 4, "pacing_pace_3": 4,
-    \\   "pacing_speed_0": 163840, "pacing_speed_1": 196608, "pacing_speed_2": 262144,
-    \\   "pacing_speed_3": 327680, "punch_ends": 9, "reach_frame": 0, "reel": 24, "reel_nudge": 2,
-    \\   "slam_ticks": 8, "slammed_up": -393216, "slammed_x": 294912, "special_down_frame": 3,
-    \\   "special_shake_pace": 3, "special_shake_turn": 8, "special_spin_frame": 2,
-    \\   "special_spin_turn": 10, "struck_held": 10, "thrown_slide": 7, "thrown_up": -393216,
-    \\   "thrown_x": 360448, "walk_off_again": 7, "walk_off_depth": 196608, "walk_off_down_to": 88,
-    \\   "walk_off_faster": 655360, "walk_off_faster_after": 5, "walk_off_fastest": 851968,
-    \\   "walk_off_fastest_after": 16, "walk_off_near": 80, "walk_off_pace": 4,
-    \\   "walk_off_up_from": 56, "walk_off_up_to": 24},
+    \\ "numbers": {"appears_from": -16, "appears_to": 335, "approach_speed": 163840, "approach_ticks": 80,
+    \\   "blink": 3, "blinks": 8, "bounce_most": 393216, "bounce_slowing": 16384, "close_in_beside": 32,
+    \\   "close_in_pace": 3, "close_in_slow": 196608, "close_in_speed": 294912, "close_in_ticks": 48,
+    \\   "edge_depth": 16, "edge_left": 16, "edge_near": 88, "edge_punch_pace": 4, "edge_right": 304,
+    \\   "edge_speed": 262144, "edge_ticks": 96, "fall_most": 1048576, "first_blink": 16,
+    \\   "flank_beside": 32, "flank_speed": 327680, "flipped_up": -327680, "flipped_x": 196608,
+    \\   "gets_up_frame": 4, "grab_height": 8, "knocked_out_x": 655360, "knocked_slowing": 21504,
+    \\   "knocked_up": -589824, "knocked_x": 458752, "last_punch_frame": 7, "last_punch_test": 6,
+    \\   "lying": 16, "lying_least": 3, "middle_from": 0, "middle_to": 320, "points": 500, "power": 4,
+    \\   "punch_ends": 9, "reach_frame": 0, "reel": 24, "reel_nudge": 2, "slam_ticks": 8,
+    \\   "slammed_up": -393216, "slammed_x": 294912, "special_down_frame": 3, "special_shake_pace": 3,
+    \\   "special_shake_turn": 8, "special_spin_frame": 2, "special_spin_turn": 10, "square_level": 16,
+    \\   "square_ticks": 16, "stand": 160, "struck_from": -8, "struck_held": 10, "struck_to": 328,
+    \\   "taunt_ends": 6, "taunt_pace": 3, "taunts": 3, "thrown_damage": 2, "thrown_slide": 7,
+    \\   "thrown_up": -393216, "thrown_x": 360448, "too_close": 48, "wait_frame": 3, "wait_near": 80,
+    \\   "wait_ticks": 128, "walk_depth_least": 2, "walk_depth_most": 112, "walk_off_again": 7,
+    \\   "walk_off_depth": 196608, "walk_off_down_to": 88, "walk_off_faster": 655360,
+    \\   "walk_off_faster_after": 5, "walk_off_fastest": 851968, "walk_off_fastest_after": 16,
+    \\   "walk_off_near": 80, "walk_off_pace": 4, "walk_off_up_from": 56, "walk_off_up_to": 24,
+    \\   "walk_x_most": 5392},
+    \\ "tables": {"circle_depth": [16, 16, 0, 16, -16, 0, -16, -16, 16, 8, 0, 8, -8, 0, -8, -16],
+    \\   "circle_pace": [7, 6, 5, 3], "circle_speed": [65536, 98304, 131072, 196608],
+    \\   "circle_x": [16, 0, 16, -16, 16, -16, 0, -16, 8, 0, 8, -16, 16, -8, 0, -8],
+    \\   "hesitate": [35, 4, 20, 8], "pacing": [16, 8, 10, 5], "pacing_pace": [6, 5, 4, 4],
+    \\   "pacing_speed": [163840, 196608, 262144, 327680]},
+    \\ "choices": {"after_circle": ["circle", "circle", "circle", "hesitate", "close_in", "hesitate", "choose", "close_in"]},
     \\ "sounds": {"hurt": "enemy hit", "thud": "heavy fall", "cry": "enemy cry", "cry_odd": "enemy cry high"},
     \\ "boxes": {"body": {"x": [-9, 9], "depth": [-8, 8], "height": [-60, 0]},
     \\   "jab": {"x": [0, 40], "depth": [-8, 8], "height": [-50, -44]},
@@ -261,7 +270,7 @@ const Round = struct {
         const h = try r.w.spawn(&r.f.kinds, r.f.kinds.find("punk").?, .pixels(x, 64, 160), .left);
         const e = r.w.get(h).?;
         e.mind.galsia.state = .close_in;
-        e.mind.galsia.target = r.hero;
+        e.mind.galsia.body.target = r.hero;
         return h;
     }
 };
@@ -365,7 +374,7 @@ test "a grab: the walk's reach catches the punk; two knees, and the last knocks 
     defer r.deinit();
     const p = try r.punk(880);
     r.w.get(p).?.mind.galsia.state = .stand;
-    r.w.get(p).?.mind.galsia.fresh = true;
+    r.w.get(p).?.mind.galsia.body.fresh = true;
     var grab_at: ?usize = null;
     for (0..40) |i| {
         r.step(.{ .pad1 = .{ .right = true } });

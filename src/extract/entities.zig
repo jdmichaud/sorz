@@ -15,6 +15,7 @@ const art = sorz.content.art;
 const rom_mod = @import("rom.zig");
 const sprites = @import("sprites.zig");
 const sound_names = @import("sound_names.zig");
+const enemies = @import("enemies.zig");
 
 const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
@@ -22,7 +23,7 @@ const s16be = rom_mod.s16be;
 
 pub const Error = error{ OutOfMemory, BadData };
 
-fn s8(rom: []const u8, a: u32) i8 {
+pub fn s8(rom: []const u8, a: u32) i8 {
     return @bitCast(rom[a]);
 }
 
@@ -40,7 +41,7 @@ const attack_table = 0x423C;
 /// The players' boxes: 5 bytes each (X from, X width, a depth pair, Z from, Z height), and the
 /// depth pairs (from, width).
 const player_boxes = 0x1ABA8;
-const depth_pairs = 0x1AB8E;
+pub const depth_pairs = 0x1AB8E;
 /// A long per character: two signed bytes per state pair, the speeds across and in depth in
 /// sixteenths of a pixel a tick (0x3614).
 const speed_tables = 0x3664;
@@ -58,12 +59,14 @@ const knee_sounds = 0x3610;
 /// The places of the one held by the frames of the holder's throws, by the holder's character
 /// (0xA378): the throw over the shoulder (0xA240) and the back drop (0xA2EC): 3 bytes a frame,
 /// X and height from the holder, the held one's pose; a pose of $99 ends the hold.
-const throw_poses = 0xA3E8;
-const slam_poses = 0xA416;
+pub const throw_poses = 0xA3E8;
+pub const slam_poses = 0xA416;
 /// The places of a player holding an enemy by its animation from $70 (0x4A5A): a word offset per
 /// animation pair (bit 15: present), a byte per character to its list, then 2 bytes a frame: X
 /// toward the player's side and height from the one held.
-const holder_places = 0x4C3E;
+pub const holder_places = 0x4C3E;
+/// The other objects' box table (0xAB24).
+pub const object_boxes = 0x1A68E;
 
 /// The players' states (the trace's names), by the original's number (the table at $1CE2).
 const State = struct {
@@ -101,14 +104,14 @@ const State = struct {
 
 /// A frame of an animation as the set holds it: the frame's address, drawn mirrored or not, and
 /// the box indices it uses that way (the frame holds a pair for each way).
-const RawFrame = struct { address: u32, mirrored: bool, attack: u8, body: u8 };
+pub const RawFrame = struct { address: u32, mirrored: bool, attack: u8, body: u8 };
 
-const RawAnimation = struct { timing: u8, frames: []RawFrame };
+pub const RawAnimation = struct { timing: u8, frames: []RawFrame };
 
 /// Entry `entry` of the set at `set`: a count, a timing, and the frames' word offsets from the
 /// animation (bit 15: drawn mirrored); a frame's box pair is its bytes 1 and 2, or 3 and 4 drawn
 /// mirrored (0x3B12).
-fn readAnimation(arena: std.mem.Allocator, rom: []const u8, set: u32, entry: u32) Error!RawAnimation {
+pub fn readAnimation(arena: std.mem.Allocator, rom: []const u8, set: u32, entry: u32) Error!RawAnimation {
     const off = s16be(rom, set + 2 * entry);
     if (off <= 0) return error.BadData;
     const a = set + @as(u32, @intCast(off));
@@ -139,14 +142,14 @@ fn attackByte(rom: []const u8, entry: u32, character: u8, j: usize) u8 {
 }
 
 /// A box of the players' table (0x4192): [from, to] on each axis, both included.
-const Spans = struct { x: entity.Span, depth: entity.Span, height: entity.Span };
+pub const Spans = struct { x: entity.Span, depth: entity.Span, height: entity.Span };
 
 fn playerBox(rom: []const u8, n: u8) Spans {
     return tableBox(rom, player_boxes, n);
 }
 
 /// Box `n` of the box table at `table` (the players' or the other objects', 0xAB24).
-fn tableBox(rom: []const u8, table: u32, n: u8) Spans {
+pub fn tableBox(rom: []const u8, table: u32, n: u8) Spans {
     const e = table + 5 * @as(u32, n);
     const x0: i16 = s8(rom, e);
     const d = depth_pairs + 2 * @as(u32, rom[e + 2]);
@@ -162,7 +165,7 @@ fn tableBox(rom: []const u8, table: u32, n: u8) Spans {
 // --- Building a definition ---------------------------------------------------------------------
 
 /// A definition as it is built: its lists, and the boxes by the pair of indices they come from.
-const Def = struct {
+pub const Def = struct {
     arena: std.mem.Allocator,
     rom: []const u8,
     /// The art set's directory, its animation set, and the set's frames in address order, which
@@ -174,26 +177,40 @@ const Def = struct {
     box_table: u32 = player_boxes,
     numbers: std.ArrayList(entity.Number) = .empty,
     number_notes: std.ArrayList(u8) = .empty,
+    tables: std.ArrayList(entity.Table) = .empty,
+    choices: std.ArrayList(entity.Choice) = .empty,
     sounds: std.ArrayList(entity.Sound) = .empty,
     boxes: std.ArrayList(entity.Box) = .empty,
     box_keys: std.ArrayList([3]u8) = .empty,
     animations: std.ArrayList(entity.Animation) = .empty,
     moves: std.ArrayList(entity.Move) = .empty,
 
-    fn frameName(d: *Def, address: u32) Error![]const u8 {
+    pub fn frameName(d: *Def, address: u32) Error![]const u8 {
         const i = std.mem.indexOfScalar(u32, d.frame_addresses, address) orelse return error.BadData;
         return std.fmt.allocPrint(d.arena, "{s}/{d:0>3}", .{ d.dir, i });
     }
 
     /// The number `name`; its place goes in the definition's provenance.
-    fn number(d: *Def, name: []const u8, value: i32, place: []const u8) Error!void {
+    pub fn number(d: *Def, name: []const u8, value: i32, place: []const u8) Error!void {
         try d.numbers.append(d.arena, .{ .name = name, .value = value });
+        try d.number_notes.print(d.arena, "; {s}: {s}", .{ name, place });
+    }
+
+    /// The table `name`; its place goes in the definition's provenance.
+    pub fn table(d: *Def, name: []const u8, values: []const i32, place: []const u8) Error!void {
+        try d.tables.append(d.arena, .{ .name = name, .values = try d.arena.dupe(i32, values) });
+        try d.number_notes.print(d.arena, "; {s}: {s}", .{ name, place });
+    }
+
+    /// The choice of states `name`; its place goes in the definition's provenance.
+    pub fn choice(d: *Def, name: []const u8, states: []const []const u8, place: []const u8) Error!void {
+        try d.choices.append(d.arena, .{ .name = name, .states = try d.arena.dupe([]const u8, states) });
         try d.number_notes.print(d.arena, "; {s}: {s}", .{ name, place });
     }
 
     /// The box of the pair (`right`, `left`) of the players' table in role `role`, named the
     /// first time after the animation `animation` that uses it.
-    fn box(d: *Def, role: u8, right: u8, left: u8, animation: []const u8, role_name: []const u8) Error!?u8 {
+    pub fn box(d: *Def, role: u8, right: u8, left: u8, animation: []const u8, role_name: []const u8) Error!?u8 {
         if (right == 0 and left == 0) return null;
         if (right == 0 or left == 0) return error.BadData;
         const key: [3]u8 = .{ role, right, left };
@@ -221,18 +238,18 @@ const Def = struct {
         return null;
     }
 
-    fn animationIndex(d: *const Def, name: []const u8) ?u8 {
+    pub fn animationIndex(d: *const Def, name: []const u8) ?u8 {
         for (d.animations.items, 0..) |a, i| if (std.mem.eql(u8, a.name, name)) return @intCast(i);
         return null;
     }
 
-    fn sound(d: *Def, role: []const u8, request: u8) Error!void {
+    pub fn sound(d: *Def, role: []const u8, request: u8) Error!void {
         try d.sounds.append(d.arena, .{ .name = role, .sound = try soundName(request) });
     }
 };
 
 /// The sound content's name of the original's request `request`.
-fn soundName(request: u8) Error![]const u8 {
+pub fn soundName(request: u8) Error![]const u8 {
     for (sound_names.entries) |e| if (e.request == request) return e.name;
     return error.BadData;
 }
@@ -240,7 +257,7 @@ fn soundName(request: u8) Error![]const u8 {
 /// The immediate value of the instruction at `at`, checked: its first bytes must be `opcode`;
 /// the value is the `width` bytes after them (1: the low byte of a word, a `moveq`'s byte), sign
 /// extended.
-fn immediate(rom: []const u8, at: u32, opcode: []const u8, width: u8) Error!i32 {
+pub fn immediate(rom: []const u8, at: u32, opcode: []const u8, width: u8) Error!i32 {
     if (!std.mem.eql(u8, rom[at..][0..opcode.len], opcode)) return error.BadData;
     const v = at + @as(u32, @intCast(opcode.len));
     return switch (width) {
@@ -252,19 +269,19 @@ fn immediate(rom: []const u8, at: u32, opcode: []const u8, width: u8) Error!i32 
 }
 
 /// `move.b #N,(D,a0)`: the opcode, then the byte's word, then the displacement.
-fn moveByte(rom: []const u8, at: u32, displacement: u8) Error!i32 {
+pub fn moveByte(rom: []const u8, at: u32, displacement: u8) Error!i32 {
     if (u16be(rom, at) != 0x117C or rom[at + 2] != 0 or u16be(rom, at + 4) != displacement) return error.BadData;
     return rom[at + 3];
 }
 
 /// `cmpi.b #N,(10,a0)`: a frame of the animation compared.
-fn frameCompared(rom: []const u8, at: u32) Error!i32 {
+pub fn frameCompared(rom: []const u8, at: u32) Error!i32 {
     if (u16be(rom, at) != 0x0C28 or rom[at + 2] != 0 or u16be(rom, at + 4) != 10) return error.BadData;
     return rom[at + 3];
 }
 
 /// `moveq #N,dR`.
-fn moveq(rom: []const u8, at: u32, register: u3) Error!i32 {
+pub fn moveq(rom: []const u8, at: u32, register: u3) Error!i32 {
     if (rom[at] != 0x70 | (@as(u8, register) << 1)) return error.BadData;
     return s8(rom, at + 1);
 }
@@ -574,194 +591,6 @@ test "an immediate is read only from its instruction" {
     try std.testing.expectError(error.BadData, moveByte(&rom, 8, 0x40));
 }
 
-// --- The enemies ---------------------------------------------------------------------------------
-
-/// A long per enemy type from $20: its animation set (0x938C).
-const enemy_sets = 0x27032;
-/// The other objects' box table (0xAB24).
-const object_boxes = 0x1A68E;
-/// Per enemy type from $20, 6 bytes by palette variant: its health's low byte, then three bytes
-/// on its power (0x93CE).
-const enemy_numbers = 0x26FCE;
-/// Per enemy type from $20, 3 bytes by palette variant: the index of the points it gives (0x93B4).
-const score_indices = 0x27010;
-/// The amounts added to a score, 4 bytes each from index 1, in decimal digits (0x10DDE).
-const score_amounts = 0x10DDE;
-
-/// The points of the score's amount at `index`, read from its digits as the score shows them.
-fn points(rom: []const u8, index: u8) Error!i32 {
-    if (index == 0) return error.BadData;
-    const at = score_amounts + 4 * (@as(u32, index) - 1);
-    var v: i32 = 0;
-    for (rom[at + 1 .. at + 4]) |b| {
-        if (b >> 4 > 9 or b & 0xF > 9) return error.BadData;
-        v = v * 100 + (b >> 4) * 10 + (b & 0xF);
-    }
-    return v;
-}
-
-/// The sine and the cosine of each slope of 64ths (0x982C).
-const slopes = 0x2705E;
-/// The walk off's pacing (0xDD26): a stretch's ticks, and its speed (8.8) with its frames' ticks.
-const pace_lengths = 0x1033A;
-const pace_speeds = 0xDD68;
-
-/// The frames of an enemy's entry `entry` (facing right) with the next one's (facing left), each
-/// shown for the animation's timing byte, as the objects' animations run (0xB0B6).
-fn enemyFrames(d: *Def, name: []const u8, entry: u32) Error![]entity.Frame {
-    const right = try readAnimation(d.arena, d.rom, d.set, entry);
-    const left = try readAnimation(d.arena, d.rom, d.set, entry + 1);
-    if (right.frames.len != left.frames.len or right.timing == 0) return error.BadData;
-    const out = try d.arena.alloc(entity.Frame, right.frames.len);
-    for (out, right.frames, left.frames) |*f, r, l| {
-        if (r.address != l.address or r.mirrored == l.mirrored) return error.BadData;
-        f.* = .{
-            .frame = try d.frameName(r.address),
-            .ticks = right.timing,
-            .flip = r.mirrored,
-            .body = try d.box(0, r.body, l.body, name, "body"),
-            .attack = try d.box(1, r.attack, l.attack, name, "attack"),
-        };
-    }
-    return out;
-}
-
-/// The Galsias of round 1 (type $22, its handler 0xDD78, sor-remaster's obj/galsia.zig), as the
-/// first wave's close in on a player and punch (the other ways to approach come with PLAN item
-/// 12).
-pub fn galsia(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
-    const kind = 0x22 - 0x20;
-    const set = u32be(rom, enemy_sets + 4 * kind);
-    var d: Def = .{ .arena = arena, .rom = rom, .dir = "galsia", .set = set, .box_table = object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
-    // The animations by the entries the code starts (0x96C4 with the animation's offset).
-    const anims = [_]struct { name: []const u8, entry: u32 }{
-        .{ .name = "walk", .entry = 0 },
-        // Knocked down: the flight, lying, getting up; frame 5 upside down in a back drop.
-        .{ .name = "down", .entry = 2 },
-        .{ .name = "reel", .entry = 4 },
-        .{ .name = "stand", .entry = 6 },
-        // Held in front, and thrown over a shoulder.
-        .{ .name = "thrown", .entry = 8 },
-        .{ .name = "punch", .entry = 10 },
-    };
-    for (anims) |an| try d.animations.append(arena, .{ .name = an.name, .loop = true, .frames = try enemyFrames(&d, an.name, an.entry) });
-    // Slammed down in a back drop, it shows the poses of its knock-down's frames (0xA2EC).
-    try d.animations.append(arena, .{ .name = "slammed", .loop = true, .frames = d.animations.items[d.animationIndex("down").?].frames });
-
-    // The punch: a string of blows (its frames with an attack box); from its last punch's frame
-    // on (0xE1FA), a blow that lands knocks down. The reach the Galsia punches from is its first
-    // jab's box (0xE102); the last punch's box is tested once (0xE1D8).
-    const punch: []entity.Frame = @constCast(d.animations.items[d.animationIndex("punch").?].frames);
-    for (punch) |*f| f.blow = f.attack != null;
-    const reach_box = try moveq(rom, 0xE102, 1);
-    const last_box = try moveq(rom, 0xE1D8, 1);
-    const reach_frame = for (punch, 0..) |f, j| {
-        if (f.attack) |b| if (d.box_keys.items[b][1] == reach_box) break j;
-    } else return error.BadData;
-    const last_frame = for (punch, 0..) |f, j| {
-        if (f.attack) |b| if (d.box_keys.items[b][1] == last_box) break j;
-    } else return error.BadData;
-    const knocks_from = try frameCompared(rom, 0xE1FA);
-    if (knocks_from != last_frame) return error.BadData;
-    const power = rom[enemy_numbers + 6 * kind + 3];
-    try d.moves.append(arena, .{ .name = "punch", .provenance = "the punch (0xE190), its power ROM 0x26FDB (0x93CE)", .animation = d.animationIndex("punch").?, .damage = power });
-    try d.moves.append(arena, .{ .name = "punch_last", .provenance = "the punch's last blow, from frame 7 on (0xE1FA): it knocks down", .animation = d.animationIndex("punch").?, .damage = power, .reaction = .knock_down });
-
-    try d.number("reach_frame", @intCast(reach_frame), "the punch's frame with box 18 (ROM 0x0E102: moveq #18,d1)");
-    try d.number("last_punch_frame", @intCast(last_frame), "the punch's frame with box 62 (ROM 0x0E1D8: moveq #62,d1)");
-    try d.number("last_punch_test", try frameCompared(rom, 0xE1CA), "ROM 0x0E1CA: cmpi.b #N,(10,a0)");
-    try d.number("punch_ends", try frameCompared(rom, 0xE1EA), "ROM 0x0E1EA: cmpi.b #N,(10,a0)");
-    try d.number("appears_from", try immediate(rom, 0x97E8, &.{ 0x0C, 0x68 }, 2) - 0x80, "ROM 0x097E8: cmpi.w #N+$80,(40,a0)");
-    try d.number("appears_to", try immediate(rom, 0x97F0, &.{ 0x0C, 0x68 }, 2) - 0x80 - 1, "ROM 0x097F0: cmpi.w #N+$81,(40,a0)");
-    // The first wave's variant closes in at the slower speed (0xE158, variant bit 5).
-    try d.number("close_in_speed", try immediate(rom, 0xE158, &.{ 0x31, 0x7C }, 2) * 0x100, "ROM 0x0E158: move.w #N,(100,a0) (8.8)");
-    try d.number("close_in_ticks", try moveByte(rom, 0xE144, 80), "ROM 0x0E144: move.b #N,(80,a0)");
-    try d.number("close_in_beside", try moveq(rom, 0xE16A, 1), "ROM 0x0E16A: moveq #N,d1");
-    try d.number("close_in_pace", (try immediate(rom, 0xE138, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0E138: move.w #N*$100+1,(12,a0)");
-    try d.number("reel", try moveByte(rom, 0x9B90, 80), "ROM 0x09B90: move.b #N,(80,a0)");
-    try d.number("reel_nudge", try moveq(rom, 0x9BF2, 0), "ROM 0x09BF2: moveq #N,d0");
-    try d.number("knocked_x", try immediate(rom, 0x992E, &.{ 0x31, 0x7C }, 2) << 16, "ROM 0x0992E: move.w #N,(28,a0)");
-    try d.number("knocked_out_x", try immediate(rom, 0x9940, &.{ 0x31, 0x7C }, 2) << 16, "ROM 0x09940: move.w #N,(28,a0)");
-    try d.number("knocked_up", try immediate(rom, 0x9934, &.{ 0x31, 0x7C }, 2) << 16, "ROM 0x09934: move.w #N,(36,a0)");
-    try d.number("knocked_slowing", try immediate(rom, 0x99D2, &.{ 0x20, 0x3C }, 4), "ROM 0x099D2: move.l #N,d0");
-    try d.number("bounce_most", (try immediate(rom, 0x9A72, &.{ 0x0C, 0x68 }, 2)) << 16, "ROM 0x09A72: cmpi.w #N,(36,a0)");
-    try d.number("bounce_slowing", try immediate(rom, 0x9A92, &.{ 0x20, 0x3C }, 4), "ROM 0x09A92: move.l #N,d0");
-    try d.number("lying", (try immediate(rom, 0x9A26, &.{ 0x31, 0x7C }, 2)) & 0xFF, "ROM 0x09A26: move.w #N*$101,(12,a0)");
-    if (rom[0x9A4E] & 0xF1 != 0x50 or rom[0x9A4F] != 0) return error.BadData;
-    try d.number("lying_least", @as(i32, rom[0x9A4E] >> 1) & 7, "ROM 0x09A4E: addq.b #N,d0 (the draw's low two bits, doubled)");
-    try d.number("gets_up_frame", try frameCompared(rom, 0x9A5A), "ROM 0x09A5A: cmpi.b #N,(10,a0)");
-    try d.number("fall_most", try immediate(rom, 0x974E, &.{ 0x0C, 0xA8 }, 4), "ROM 0x0974E: cmpi.l #N,(36,a0)");
-    try d.number("blinks", (try immediate(rom, 0x9D36, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x09D36: move.w #N*$100+T,(70,a0)");
-    try d.number("first_blink", (try immediate(rom, 0x9D36, &.{ 0x31, 0x7C }, 2)) & 0xFF, "ROM 0x09D36: move.w #B*$100+N,(70,a0)");
-    try d.number("blink", try moveByte(rom, 0x9D84, 71), "ROM 0x09D84: move.b #N,(71,a0)");
-    try d.number("points", try points(rom, rom[score_indices + 3 * @as(u32, kind)]), "ROM 0x27010 (the score's index by type and palette variant, 0x93B4), the amount at ROM 0x10DDE (0x9E26)");
-    try d.number("struck_held", try moveByte(rom, 0xA180, 80), "ROM 0x0A180: move.b #N,(80,a0)");
-    try d.number("flipped_x", try immediate(rom, 0xA218, &.{ 0x31, 0x7C }, 2) << 16, "ROM 0x0A218: move.w #N,(28,a0)");
-    try d.number("flipped_up", try immediate(rom, 0xA21E, &.{ 0x21, 0x7C }, 4), "ROM 0x0A21E: move.l #N,(36,a0)");
-    try d.number("thrown_x", try immediate(rom, 0xA26C, &.{ 0x20, 0x3C }, 4), "ROM 0x0A26C: move.l #N,d0");
-    try d.number("thrown_up", try immediate(rom, 0xA272, &.{ 0x22, 0x3C }, 4), "ROM 0x0A272: move.l #N,d1");
-    try d.number("thrown_slide", try moveByte(rom, 0xA2C4, 80), "ROM 0x0A2C4: move.b #N,(80,a0)");
-    try d.number("slam_ticks", try moveByte(rom, 0xA300, 80), "ROM 0x0A300: move.b #N,(80,a0)");
-    try d.number("slammed_x", try immediate(rom, 0xA358, &.{ 0x21, 0x7C }, 4), "ROM 0x0A358: move.l #N,(28,a0)");
-    try d.number("slammed_up", try immediate(rom, 0xA360, &.{ 0x21, 0x7C }, 4), "ROM 0x0A360: move.l #N,(36,a0)");
-    try d.number("grab_height", try immediate(rom, 0xAAF6, &.{ 0x0C, 0x42 }, 2), "ROM 0x0AAF6: cmpi.w #N,d2");
-    // Its heading toward a point (0x982C) takes the sine and cosine of a slope from the table
-    // at 0x2705E: the world computes the same table (world/fixed.zig), checked here.
-    for (sorz.world.fixed.slopes[1..], 1..) |sl, k| {
-        const at = slopes + 4 * @as(u32, @intCast(k));
-        if (u16be(rom, at) != sl.sine or u16be(rom, at + 2) != sl.cosine) return error.BadData;
-    }
-    // Held still by the special attack (0xA496): a pose by its place across's low two bits.
-    try d.number("special_spin_frame", try moveByte(rom, 0xA4FC, 10), "ROM 0x0A4FC: move.b #N,(10,a0)");
-    try d.number("special_spin_turn", try moveByte(rom, 0xA502, 81), "ROM 0x0A502: move.b #N,(81,a0)");
-    try d.number("special_down_frame", try moveByte(rom, 0xA530, 10), "ROM 0x0A530: move.b #N,(10,a0)");
-    try d.number("special_shake_pace", (try immediate(rom, 0xA54C, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0A54C: move.w #N*$101,(12,a0)");
-    try d.number("special_shake_turn", try moveByte(rom, 0xA552, 81), "ROM 0x0A552: move.b #N,(81,a0)");
-    // The walk off (0xDBCC): away in depth, then pacing across near its target.
-    try d.number("walk_off_pace", (try immediate(rom, 0xDBEC, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0DBEC: move.w #N*$100+1,(12,a0)");
-    try d.number("walk_off_depth", try immediate(rom, 0xDC1A, &.{ 0x20, 0x3C }, 4), "ROM 0x0DC1A: move.l #N,d0");
-    try d.number("walk_off_faster", try immediate(rom, 0xDC28, &.{ 0x20, 0x3C }, 4), "ROM 0x0DC28: move.l #N,d0");
-    try d.number("walk_off_fastest", try immediate(rom, 0xDC36, &.{ 0x20, 0x3C }, 4), "ROM 0x0DC36: move.l #N,d0");
-    try d.number("walk_off_faster_after", try immediate(rom, 0xDC20, &.{ 0x0C, 0x28, 0x00 }, 1), "ROM 0x0DC20: cmpi.b #N,(110,a0)");
-    try d.number("walk_off_fastest_after", try immediate(rom, 0xDC2E, &.{ 0x0C, 0x28, 0x00 }, 1), "ROM 0x0DC2E: cmpi.b #N,(110,a0)");
-    try d.number("walk_off_up_from", try immediate(rom, 0xDC66, &.{ 0x0C, 0x69 }, 2), "ROM 0x0DC66: cmpi.w #N,(20,a1)");
-    try d.number("walk_off_down_to", try immediate(rom, 0xDCCA, &.{ 0x0C, 0x68 }, 2), "ROM 0x0DCCA: cmpi.w #N,(20,a0)");
-    try d.number("walk_off_up_to", try immediate(rom, 0xDCD6, &.{ 0x0C, 0x68 }, 2), "ROM 0x0DCD6: cmpi.w #N,(20,a0)");
-    try d.number("walk_off_again", try immediate(rom, 0xDC7C, &.{ 0x0C, 0x40 }, 2), "ROM 0x0DC7C: cmpi.w #N,d0");
-    try d.number("walk_off_near", try moveq(rom, 0xDD12, 0), "ROM 0x0DD12: moveq #N,d0");
-    {
-        if (u32be(rom, 0xDD2E + 2) != pace_lengths) return error.BadData;
-        for (0..4) |k| {
-            const kk: u32 = @intCast(k);
-            try d.number(try std.fmt.allocPrint(arena, "pacing_{d}", .{k}), rom[pace_lengths + kk], "ROM 0x1033A: a stretch's ticks by a draw's low two bits (0xDD26)");
-            try d.number(try std.fmt.allocPrint(arena, "pacing_speed_{d}", .{k}), @as(i32, u16be(rom, pace_speeds + 4 * kk)) << 8, "ROM 0x0DD68: its speed (8.8)");
-            try d.number(try std.fmt.allocPrint(arena, "pacing_pace_{d}", .{k}), u16be(rom, pace_speeds + 4 * kk + 2) >> 8, "ROM 0x0DD6A: its frames' ticks");
-        }
-    }
-
-    try d.sound("hurt", @bitCast(@as(i8, @intCast(try moveq(rom, 0x9BC6, 7)))));
-    try d.sound("thud", @bitCast(@as(i8, @intCast(try moveq(rom, 0x9AB6, 7)))));
-    // The knockout cry (0x997E): one for an even place across, another for an odd one.
-    try d.sound("cry", @bitCast(@as(i8, @intCast(try moveq(rom, 0x9990, 7)))));
-    try d.sound("cry_odd", @bitCast(@as(i8, @intCast(try moveq(rom, 0x999A, 7)))));
-
-    return .{
-        .name = "galsia",
-        .provenance = try std.fmt.allocPrint(arena, "enemy type $22: the animation set at ROM 0x{X:0>5} (0x27032), the boxes (0x1A68E, 0x1AB8E); health ROM 0x26FDA (0x93CE); gravity ROM 0x0973E: addi.l #N,(36,a0){s}", .{ set, d.number_notes.items }),
-        .family = .enemy,
-        .team = .enemy,
-        .behaviour = "galsia",
-        .health = rom[enemy_numbers + 6 * kind],
-        .gravity = try immediate(rom, 0x973E, &.{ 0x06, 0xA8 }, 4),
-        .shadow = true,
-        .numbers = d.numbers.items,
-        .sounds = d.sounds.items,
-        .boxes = d.boxes.items,
-        .animations = d.animations.items,
-        .moves = d.moves.items,
-    };
-}
-
 // --- The special attack's police car --------------------------------------------------------------
 
 /// The police car of the special attack, a stand-in (sorz's `police_car` behaviour): its frame
@@ -864,11 +693,11 @@ pub fn playerWaiting(arena: std.mem.Allocator, rom: []const u8) Error!entity.Def
 
 /// The definitions the extractor writes, in the manifest's order.
 pub fn all(arena: std.mem.Allocator, rom: []const u8) Error![]const entity.Definition {
-    const out = try arena.alloc(entity.Definition, 5);
-    out[0] = try player(arena, rom, "axel", 0);
-    out[1] = try galsia(arena, rom);
-    out[2] = try policeCar(arena, rom);
-    out[3] = try goArrow(arena, rom);
-    out[4] = try playerWaiting(arena, rom);
-    return out;
+    var out: std.ArrayList(entity.Definition) = .empty;
+    try out.append(arena, try player(arena, rom, "axel", 0));
+    try enemies.all(arena, rom, &out);
+    try out.append(arena, try policeCar(arena, rom));
+    try out.append(arena, try goArrow(arena, rom));
+    try out.append(arena, try playerWaiting(arena, rom));
+    return out.items;
 }

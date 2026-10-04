@@ -217,6 +217,10 @@ fn hits(t: *Tick) void {
     const order = t.world.updateOrder(&buf);
     for (order) |ai_| {
         const ah = t.world.handleAt(ai_) orelse continue;
+        if (t.world.get(ah).?.missile != null) {
+            missileHits(t, ah, order);
+            continue;
+        }
         for (order) |ti| {
             if (ti == ai_) continue;
             const a = t.world.get(ah) orelse break;
@@ -246,6 +250,33 @@ fn hits(t: *Tick) void {
             t.blowLanded(ah, th);
             if (m.hit_sound) |s| t.sound(s, ah);
         }
+    }
+}
+
+/// A missile (`Missile`: a body thrown, a weapon swung or thrown) strikes with its attack box each
+/// entity whose body it meets, of a team the blows of the one who threw or swings it land on (a
+/// player's on the enemies and the breakables; with `on_players`, the players but its thrower
+/// too): the struck one's behaviour takes the blow, its damage the missile's, knocking down.
+fn missileHits(t: *Tick, ah: Handle, order: []const u8) void {
+    for (order) |ti| {
+        if (ti == ah.index) continue;
+        const a = t.world.get(ah) orelse return;
+        const m = a.missile orelse return;
+        const attack = a.boxes.attack orelse return;
+        const th = t.world.handleAt(ti) orelse continue;
+        if (th.eql(m.by)) continue;
+        const target = t.world.get(th).?;
+        const body = target.boxes.body orelse continue;
+        const by_team = if (t.world.getConst(m.by)) |b| b.team else a.team;
+        const lands = switch (target.team) {
+            .player => m.on_players or by_team == .enemy,
+            .enemy, .neutral => by_team == .player,
+        };
+        if (!lands) continue;
+        if (!meet(a, &t.kindOf(a).definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) continue;
+        const blow: tick_mod.Blow = .{ .attacker = ah, .damage = m.damage, .reaction = .knock_down, .push = .zero, .missile = true };
+        if (!t.struck(th, blow)) continue;
+        t.blowLanded(ah, th);
     }
 }
 

@@ -36,9 +36,10 @@
 //!   system then only notes the frame it shows.
 //!
 //! `sparring` and `pawn` are synthetic: the enemy and the player of the world's tests. `player`
-//! is the original's players' (PLAN item 11), `galsia` round 1's Galsias' as its first wave
-//! meets a player (PLAN item 12 completes it); `police_car` the special attack's, `go_arrow` the
-//! arrow a section's opening shows, `player_waiting` a player out of lives (PLAN item 13).
+//! is the original's players' (PLAN item 11); `galsia` round 1's Galsias', on the enemies' common
+//! body (behaviours/enemy.zig, not a behaviour of its own: the states every enemy shares);
+//! `police_car` the special attack's, `go_arrow` the arrow a section's opening shows,
+//! `player_waiting` a player out of lives (PLAN item 13).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
