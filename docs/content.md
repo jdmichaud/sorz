@@ -38,6 +38,7 @@ SET/NAME.png           a tile sheet or a sprite frame
 SET/NAME.tmj           a tile map (Tiled)
 entities/NAME.json     a kind of entity's definition: a character, an enemy, an item...
 screens/NAME.json      a screen's record: its texts and tables (the options, the high scores...)
+rounds/NAME.json       a round's script: its sections, walls, waves and boss (round1...)
 sound/...              the sound (docs/content-sound.md)
 ```
 
@@ -54,14 +55,16 @@ an enemy's (`axel`, `galsia`), or art several screens share (`fonts`, `play`).
   "rom": {"sha256": "…", "size": 524288},
   "art": ["fonts", "segalogo", "title", "round1", "axel"],
   "entities": ["axel", "galsia"],
-  "screens": ["high_scores", "intro", "options", "select"]
+  "screens": ["high_scores", "intro", "options", "select"],
+  "rounds": ["round1"]
 }
 ```
 
 `art` lists the art sets the loader reads, in order; `entities`, which a tree without
 definitions leaves out, the kinds of entity (`entities/NAME.json`); `screens`, in name order and
-left out by a tree without any, the screens' records (`screens/NAME.json`). `rom` names the ROM
-the tree was extracted from; it identifies the data (network play compares it).
+left out by a tree without any, the screens' records (`screens/NAME.json`); `rounds`, left out by a
+tree without any, the rounds' scripts (`rounds/NAME.json`). `rom` names the ROM the tree was
+extracted from; it identifies the data (network play compares it).
 
 ## SET/art.json
 
@@ -254,6 +257,90 @@ the sound content, frames by their full names. A list carries its `provenance`. 
 {"first": {"provenance": "…", "entries": [{"score": 100000, "round": 1, "name": "AAA", "level": 1}]}}
 ```
 
+## rounds/NAME.json
+
+A round's script (DESIGN.md W6): who comes, where and when, as the original's level events run
+the round. NAME is `round` and the round's number. A modder moves a wall, a wave or a boss by
+editing it.
+
+```json
+{
+  "provenance": "…",
+  "round": 1,
+  "art": "round1",
+  "music": "round 1 music",
+  "camera": {"provenance": "…", "at": [768, 0], "x_min": 768, "y": [0, 0], "plane_b": [1, 1],
+             "wall_within": 4, "edges": [-8, 328], "left_behind": [-32, 96]},
+  "players": {"provenance": "…", "x": 0, "depth": [64, 32], "height": 0},
+  "timer": {"provenance": "…", "pace": 90},
+  "sections": [
+    {"provenance": "…", "wall": 1216, "timer": 40, "opens_after": 62,
+     "placed": [{"kind": "galsia", "x": 1104, "depth": 64, "entrance": "close_in", "slow": true,
+                 "offset": {"x": 64, "depth": -48}}],
+     "wave": [{"kind": "galsia_stalker", "side": "left", "depth": 32, "after": 16,
+               "entrance": "approach", "offset": {"x": 64, "depth": 0}}],
+     "reserve": [{"kind": "galsia", "side": "left", "depth": 72, "arrives_after": 32}]}
+  ],
+  "boss": {"provenance": "…", "fade": "fade out", "music": "boss music", "music_after": 86,
+           "wave_after": 59, "wave": [{"kind": "antonio", "side": "right", "depth": 16,
+           "after": 16, "bar": 4}], "reserve": []}
+}
+```
+
+The units are pixels of the level (x across, depth on the ground) and logic ticks (30 a second in
+play).
+
+- `art`: the art set of the round's planes (`plane_a`, `plane_b`), colours and cycles. `music`:
+  the round's music, a name of the sound content.
+- `camera`: the view's top-left corner at the start (`at`), how far back it may go at the start
+  (`x_min`; it never goes back after), its limits down (`y`), and plane B's scroll across,
+  `plane_b` = [times, per] of the camera's. It has reached a wall when it is less than
+  `wall_within` pixels from it. A wave's records come in at `edges`, across from its left edge on
+  the left and on the right; when it reaches a wall, the section's enemies at or behind
+  `left_behind`'s first (across from its left edge) come back there, at its second's depth.
+- `players`: where a life starts: `x` from the camera's left edge, each player's `depth`, and the
+  `height` it drops in from.
+- `timer`: `pace`, the ticks a second of the round's timer lasts.
+- `sections`, in order: each the stretch of the level up to its `wall`, the camera's right limit
+  until the section is cleared. A section starts at the previous one's clear (the first: with
+  the round, the tick before its first tick of play): its `placed` come then, each at its place,
+  hidden until its place is on the screen. `opens_after` ticks later (the original's load of the section's art) the section
+  opens: the wall moves to its own, the GO arrow shows and the timer is set to its `timer`
+  seconds (the first section's wall and timer are the round's own). When the camera reaches the
+  wall, the `wave` comes in, each record `after` ticks after the one before (the first, after the
+  camera reached the wall) at the screen's edge on its `side`. Once the wave is in, each of the
+  section's enemies that goes calls the next of the `reserve`, which comes in `arrives_after`
+  ticks later (two are called at once if none is left then). The section is cleared when the
+  last of its enemies goes.
+- `boss`: after the last section's clear, the camera stops where it is and `fade` is asked for;
+  `music_after` ticks after the clear, the boss's `music`; `wave_after` ticks after the music,
+  its `wave` and `reserve` as a section's. A beaten boss ends the round.
+
+A record of `placed`, `wave` or `reserve` is one entity:
+
+- `kind`, a kind of entity (`entities/NAME.json`). A kind the tree does not define yet is kept:
+  the game skips it with a warning.
+- `x` (placed) or `side` (`right` or `left`, wave and reserve), `depth`; `after` (wave),
+  `arrives_after` (reserve).
+- `level`, the lowest LEVEL of the options it comes at (0, the easiest, when absent); in the
+  original the depth's low two bits, which the depth keeps. `two_players`: it comes only with two
+  players.
+- An enemy's: `entrance`, its way in (`approach`, `close_in`, `edge`, `wait`, `shutter`,
+  `square_up`, `jump_in`, `size_up`, `follow`, `enter`, `circle`); its traits, each a field
+  `true` when it has it (`waits_for_camera`: it stays hidden until the camera has reached its
+  place, not only until its place is on the screen; `slow`, `closes_in_after_lurking`, `pipe_b`,
+  `slides`, `flips_away`, `drops_in`, `flips_at_close_range`, `unflinching`, `walks_off`,
+  `twin`); `offset`, where it keeps from its target (`x` away from it, `depth`); `strength`, its
+  row of strength and colours (0 when absent).
+- A breakable's: `holds`, the kind of the item it leaves. A boss's: `bar`, its entry in the
+  status bar's names and bars.
+
+The extractor writes round 1's script (PLAN item 13; the other rounds, whose last sections and set
+pieces differ, with item 15). The times between the events are the original's loads of art: a
+section opens, and a reserve comes in, once its kinds' art is loaded, which the original streams
+at five tiles a display tick; the extractor counts them from the art's sizes and says so in each
+section's provenance.
+
 ## Tile maps (`.tmj`)
 
 A map is a Tiled map in JSON, orthogonal, 8x8 tiles, not infinite, with two tile layers of the
@@ -300,12 +387,13 @@ tell assets apart, the name numbers them (`ending/colours_03`), and the provenan
 each comes from; the scenes' items may rename them when they give them a role.
 
 The screens' records (PLAN 08): `high_scores`, `intro`, `options`, `select` (above); the
-screens' palette steps: `segalogo/sweep`, `intro/lights`, `title/steps`.
+screens' palette steps: `segalogo/sweep`, `intro/lights`, `title/steps`. The rounds' scripts
+(PLAN 13): `round1`.
 
 Not in the tree yet, each with the item that needs it: the endings' texts (PLAN 16); the
 Japanese story and its kana (the game plays outside Japan, decision D5); the fixed sprite lists of the round's banner, the pause and the game over, drawn from
-tiles play builds itself (PLAN 13); the rounds' cameras, bands and floors (PLAN 13); the moves
-(PLAN 11).
+tiles play builds itself (PLAN 13); the rounds' bands and floors, and the scripts of rounds 2 to 8
+(PLAN 15).
 
 ## Extracting and checking
 

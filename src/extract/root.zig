@@ -23,6 +23,7 @@ pub const palette_steps = @import("palette_steps.zig");
 pub const screen_data = @import("screen_data.zig");
 pub const sound = @import("sound.zig");
 pub const entities = @import("entities.zig");
+pub const scripts = @import("scripts.zig");
 
 /// The extractor's name and version, in the tree's manifest.
 pub const name = "sorz-extract 1";
@@ -79,6 +80,13 @@ pub fn extractUnchecked(gpa: std.mem.Allocator, rom_bytes: []const u8) Error!Tre
     };
     const kinds = try arena.alloc([]const u8, definitions.len);
     for (kinds, definitions) |*n, d| n.* = d.name;
+    // The rounds' scripts (docs/content.md).
+    const scripts_ = scripts.all(arena, rom_bytes) catch |e| return switch (e) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.BadData,
+    };
+    const round_names = try arena.alloc([]const u8, scripts_.len);
+    for (round_names, scripts_) |*n, r| n.* = try std.fmt.allocPrint(arena, "round{d}", .{r.number});
     const c: content.Content = .{
         .manifest = .{
             .extractor = name,
@@ -87,10 +95,12 @@ pub fn extractUnchecked(gpa: std.mem.Allocator, rom_bytes: []const u8) Error!Tre
             .art = sets,
             .screens = try arena.dupe([]const u8, records.names(&names_buf)),
             .entities = kinds,
+            .rounds = round_names,
         },
         .art = a,
         .screens = records,
         .entities = definitions,
+        .rounds = scripts_,
     };
     const art_files = try content.write(arena, &c);
     // The sound's files (docs/content-sound.md), with the art's, sorted by path.

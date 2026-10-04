@@ -13,6 +13,7 @@ const art = @import("art.zig");
 const tiled = @import("tiled.zig");
 const entity = @import("entity.zig");
 const screens = @import("screens.zig");
+const round = @import("round.zig");
 
 /// The tree's format and version (`manifest.json`). A tree of another version is refused, not
 /// converted.
@@ -36,6 +37,8 @@ pub const Manifest = struct {
     entities: []const []const u8 = &.{},
     /// The screens' records the tree has (`screens/NAME.json`), in name order.
     screens: []const []const u8 = &.{},
+    /// The rounds' scripts the tree has (`rounds/NAME.json`), in order.
+    rounds: []const []const u8 = &.{},
 };
 
 pub const Content = struct {
@@ -45,6 +48,8 @@ pub const Content = struct {
     entities: []const entity.Definition = &.{},
     /// The screens' records, those the manifest names.
     screens: screens.Screens = .{},
+    /// The rounds' scripts, in the manifest's order.
+    rounds: []const round.Round = &.{},
 };
 
 // --- Writing ---------------------------------------------------------------------------------
@@ -72,6 +77,12 @@ pub fn write(arena: std.mem.Allocator, content: *const Content) WriteError![]Fil
     for (records, content.manifest.screens) |name, listed| {
         if (!std.mem.eql(u8, name, listed)) return error.BadContent;
         try files.append(arena, .{ .path = try screens.path(arena, name), .bytes = try writeJson(arena, try screens.value(arena, &content.screens, name)) });
+    }
+    if (content.rounds.len != content.manifest.rounds.len) return error.BadContent;
+    for (content.rounds, content.manifest.rounds) |*r, name| {
+        var buf: [16]u8 = undefined;
+        if (!std.mem.eql(u8, round.nameOf(&buf, r.number), name)) return error.BadContent;
+        try files.append(arena, .{ .path = try round.path(arena, name), .bytes = try writeJson(arena, try round.value(arena, r)) });
     }
     std.mem.sort(File, files.items, {}, fileLess);
     for (files.items[1..], 0..) |f, i| {
@@ -115,6 +126,11 @@ fn manifestValue(arena: std.mem.Allocator, m: *const Manifest) !json.Value {
         const records = try arena.alloc(json.Value, m.screens.len);
         for (records, m.screens) |*v, s| v.* = .{ .str = s };
         try fields.append(arena, .{ .key = "screens", .value = .{ .array = records } });
+    }
+    if (m.rounds.len != 0) {
+        const rounds = try arena.alloc(json.Value, m.rounds.len);
+        for (rounds, m.rounds) |*v, s| v.* = .{ .str = s };
+        try fields.append(arena, .{ .key = "rounds", .value = .{ .array = rounds } });
     }
     return .{ .object = fields.items };
 }
@@ -350,7 +366,18 @@ pub fn load(arena: std.mem.Allocator, source: platform.AssetSource, diag: *Diagn
         .art = a,
         .entities = try loadEntities(arena, source, m.entities, &a, diag),
         .screens = try loadScreens(arena, source, m.screens, &a, diag),
+        .rounds = try loadRounds(arena, source, m.rounds, &a, diag),
     };
+}
+
+/// Reads the rounds' scripts `names` (`rounds/NAME.json`), whose art sets are `a`'s.
+pub fn loadRounds(arena: std.mem.Allocator, source: platform.AssetSource, names: []const []const u8, a: *const art.Art, diag: *Diagnostic) Error![]const round.Round {
+    const out = try arena.alloc(round.Round, names.len);
+    for (out, names) |*r, name| {
+        const root = try parseFile(arena, source, try round.path(arena, name), diag);
+        r.* = try round.read(arena, name, root, a);
+    }
+    return out;
 }
 
 /// Reads the screens' records `names` (`screens/NAME.json`), whose frames are `a`'s.
@@ -395,7 +422,7 @@ fn parseFile(arena: std.mem.Allocator, source: platform.AssetSource, path: []con
 
 pub fn loadManifest(arena: std.mem.Allocator, source: platform.AssetSource, diag: *Diagnostic) Error!Manifest {
     const root = try parseFile(arena, source, manifest_file, diag);
-    try root.only(&.{ "format", "version", "extractor", "rom", "art", "entities", "screens" });
+    try root.only(&.{ "format", "version", "extractor", "rom", "art", "entities", "screens", "rounds" });
     const f = try root.get("format");
     if (!std.mem.eql(u8, try f.string(), format_name)) return f.fail("not \"" ++ format_name ++ "\"");
     const v = try root.get("version");
@@ -434,6 +461,19 @@ pub fn loadManifest(arena: std.mem.Allocator, source: platform.AssetSource, diag
         }
         records = out;
     }
+    var rounds: []const []const u8 = &.{};
+    if (try root.opt("rounds")) |node| {
+        const out = try arena.alloc([]const u8, try node.len());
+        for (out, 0..) |*s, i| {
+            const n = try node.at(i);
+            s.* = try n.string();
+            var buf: [16]u8 = undefined;
+            const number = if (std.mem.startsWith(u8, s.*, "round")) std.fmt.parseInt(u8, s.*[5..], 10) catch 0 else 0;
+            if (number == 0 or !std.mem.eql(u8, round.nameOf(&buf, number), s.*)) return n.fail("not a round's name (round1, round2...)");
+            for (out[0..i]) |other| if (std.mem.eql(u8, other, s.*)) return n.fail("named twice");
+        }
+        rounds = out;
+    }
     return .{
         .extractor = try (try root.get("extractor")).string(),
         .rom_sha256 = try (try rom.get("sha256")).string(),
@@ -441,6 +481,7 @@ pub fn loadManifest(arena: std.mem.Allocator, source: platform.AssetSource, diag
         .art = sets,
         .entities = kinds,
         .screens = records,
+        .rounds = rounds,
     };
 }
 
