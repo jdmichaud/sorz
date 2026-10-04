@@ -70,16 +70,19 @@ The placeholder name of the project is `sorz`.
 - `docs/lessons.md`: the lessons and traps of previous ports that apply to any port.
 - `src/shared`: the `sorz` module, the game and everything the targets share. It links
   nothing. `platform.zig` holds the platform contract (with network play's transport),
-  `memory.zig` the in-memory providers, `game.zig` the game as the hosts run it (for now a test
-  pattern on the scene stack of `scene.zig`, and silence), `canonical.zig` the canonical form of
-  its state, `input.zig` and `settings/` the controls and the settings record, and `net/` network
-  play's protocol, session and driver.
+  `memory.zig` the in-memory providers, `game.zig` the game as the hosts run it (its content,
+  its picture and sound; a test pattern without content), `scene.zig`, `flow.zig` and `screens/`
+  the scenes, the flow between them and the front-end screens, `library.zig` the scenes' content
+  found by name, `content/` the content tree, `render/` the renderer, `audio/` the sound,
+  `world/` play's world, `canonical.zig` the canonical form of its state, `input.zig` and
+  `settings/` the controls and the settings record, and `net/` network play's protocol, session
+  and driver.
 - `src/agent`: `sorz-agent`, the headless host: the agent backend under a virtual clock of display
   ticks, keys at chosen ticks, frames as PNG files and the sound as a WAV file, one JSON line of
   counters and digests, and network play (`--netplay`, `--join`, `--pair`). It never links SDL.
 - `src/native`: host I/O for the native targets: the directory asset source, the directory
-  storage, their shared contract tests, the command line (where a ROM's content will be extracted,
-  PLAN item 06), the WebSocket transport, the game's files a server gives its pages, the relay of
+  storage, their shared contract tests, the command line (a content tree, or a ROM whose content
+  is extracted in memory), the WebSocket transport, the game's files a server gives its pages, the relay of
   server mode, and the binaries' log lines.
 - `src/sdl`: `sorz-sdl`, the interactive host on SDL2, for Linux and Windows.
 - `src/server`: `sorz-server`, the relay of network play between two browsers (server mode), with
