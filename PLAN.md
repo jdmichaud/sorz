@@ -36,7 +36,7 @@
     first difference and applies tolerances.
   - Gate: sor-remaster's traces of the attract demo and of round 1 are written, repeatable, and a
     planted difference is named.
-- [ ] **05 — Scenarios** — Depends: 04.
+- [x] **05 — Scenarios** — Depends: 04.
   - Starting situations taken from sor-remaster (its state at a tick, converted for the players
     and the common enemies), and scripted scenarios from power-on for the rest (D14); the
     measurements of V3 (frame data, speeds, arcs, AI timings, spawns).
@@ -71,7 +71,7 @@
   - Entities with typed fields and handles; the systems in their order; fixed-point; the random
     generator; the logic tick (D13).
   - Gate: unit tests; a world of synthetic entities replays identically.
-- [ ] **11 — Axel** — Depends: 10, 05.
+- [x] **11 — Axel** — Depends: 10, 05.
   - His moves as data (frames, boxes, damage, sounds), walking, jumping, attacks, grabs, throws,
     the special attack.
   - Gate: similar to sor-remaster in each move's measurements.
