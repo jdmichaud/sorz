@@ -122,7 +122,7 @@ fn pb(comptime ticks: []const u8) []const u8 {
 const punk =
     \\{"family": "enemy", "team": "enemy", "behaviour": "galsia", "health": 4, "gravity": 73728,
     \\ "shadow": true,
-    \\ "numbers": {"appears_from": -16, "appears_to": 335, "blink": 3, "blinks": 8,
+    \\ "numbers": {"appears_from": -16, "appears_to": 335, "blink": 3, "blinks": 8, "points": 500,
     \\   "bounce_most": 393216, "bounce_slowing": 16384, "close_in_beside": 32, "close_in_pace": 3,
     \\   "close_in_speed": 196608, "close_in_ticks": 48, "fall_most": 1048576, "first_blink": 16,
     \\   "flipped_up": -327680, "flipped_x": 196608, "gets_up_frame": 4, "grab_height": 8,
@@ -413,4 +413,12 @@ test "the special attack: the camera runs back, the car comes, the punk stands w
     // A second call needs a special left.
     r.step(.{ .pad1 = .{ .a = true } });
     try testing.expect(!r.w.special);
+    // Knocked out, the punk blinks and goes, and the player it went after scores its points.
+    try testing.expectEqual(@as(u32, 0), r.w.players[0].score);
+    for (0..200) |_| {
+        if (r.w.get(p) == null) break;
+        r.step(.{});
+    }
+    try testing.expect(r.w.get(p) == null);
+    try testing.expectEqual(@as(u32, 500), r.w.players[0].score);
 }

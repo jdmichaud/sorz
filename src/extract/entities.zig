@@ -576,6 +576,23 @@ const object_boxes = 0x1A68E;
 /// Per enemy type from $20, 6 bytes by palette variant: its health's low byte, then three bytes
 /// on its power (0x93CE).
 const enemy_numbers = 0x26FCE;
+/// Per enemy type from $20, 3 bytes by palette variant: the index of the points it gives (0x93B4).
+const score_indices = 0x27010;
+/// The amounts added to a score, 4 bytes each from index 1, in decimal digits (0x10DDE).
+const score_amounts = 0x10DDE;
+
+/// The points of the score's amount at `index`, read from its digits as the score shows them.
+fn points(rom: []const u8, index: u8) Error!i32 {
+    if (index == 0) return error.BadData;
+    const at = score_amounts + 4 * (@as(u32, index) - 1);
+    var v: i32 = 0;
+    for (rom[at + 1 .. at + 4]) |b| {
+        if (b >> 4 > 9 or b & 0xF > 9) return error.BadData;
+        v = v * 100 + (b >> 4) * 10 + (b & 0xF);
+    }
+    return v;
+}
+
 /// The sine and the cosine of each slope of 64ths (0x982C).
 const slopes = 0x2705E;
 /// The walk off's pacing (0xDD26): a stretch's ticks, and its speed (8.8) with its frames' ticks.
@@ -670,6 +687,7 @@ pub fn galsia(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition
     try d.number("blinks", (try immediate(rom, 0x9D36, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x09D36: move.w #N*$100+T,(70,a0)");
     try d.number("first_blink", (try immediate(rom, 0x9D36, &.{ 0x31, 0x7C }, 2)) & 0xFF, "ROM 0x09D36: move.w #B*$100+N,(70,a0)");
     try d.number("blink", try moveByte(rom, 0x9D84, 71), "ROM 0x09D84: move.b #N,(71,a0)");
+    try d.number("points", try points(rom, rom[score_indices + 3 * @as(u32, kind)]), "ROM 0x27010 (the score's index by type and palette variant, 0x93B4), the amount at ROM 0x10DDE (0x9E26)");
     try d.number("struck_held", try moveByte(rom, 0xA180, 80), "ROM 0x0A180: move.b #N,(80,a0)");
     try d.number("flipped_x", try immediate(rom, 0xA218, &.{ 0x31, 0x7C }, 2) << 16, "ROM 0x0A218: move.w #N,(28,a0)");
     try d.number("flipped_up", try immediate(rom, 0xA21E, &.{ 0x21, 0x7C }, 4), "ROM 0x0A21E: move.l #N,(36,a0)");

@@ -28,11 +28,15 @@ pub const Command = struct {
     pressed: input.Pad = .{},
 };
 
+/// The most a player's score holds (six digits, the last two always 0).
+pub const score_most = 999_900;
+
 pub const Player = struct {
     /// The entity the player plays, if any.
     entity: ?Handle = null,
     lives: u8 = 0,
     specials: u8 = 0,
+    /// Points, as the original counts them: they hold at `score_most`.
     score: u32 = 0,
     /// The command of this tick.
     command: Command = .{},

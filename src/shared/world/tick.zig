@@ -231,6 +231,22 @@ pub const Tick = struct {
         c.shake = systems.shaking.ticks;
     }
 
+    /// The player whose entity is `h` scores `points` (nothing when `h` is no player's).
+    pub fn score(t: *Tick, h: Handle, points: u32) void {
+        for (&t.world.players) |*p| {
+            const e = p.entity orelse continue;
+            if (!e.eql(h)) continue;
+            p.score = @min(p.score + points, world_mod.score_most);
+            return;
+        }
+    }
+
+    /// Whether `h` is a player's entity.
+    pub fn isPlayer(t: *const Tick, h: Handle) bool {
+        for (t.world.players) |p| if (p.entity) |e| if (e.eql(h)) return true;
+        return false;
+    }
+
     /// The kind of entity of a special attack's call: the police car.
     pub const special_kind = "police_car";
 

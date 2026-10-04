@@ -119,6 +119,8 @@ pub const Numbers = struct {
     blinks: u8,
     first_blink: u8,
     blink: u8,
+    /// The points the player who knocked it out scores when it goes.
+    points: u32,
     struck_held: u8,
     flipped_x: Fixed,
     flipped_up: Fixed,
@@ -566,7 +568,13 @@ fn knockedOut(a: Actor) void {
     a.mind.timer -%= 1;
     if (a.mind.timer != 0) return;
     a.mind.blinks -%= 1;
-    if (a.mind.blinks == 0) return a.remove();
+    if (a.mind.blinks == 0) {
+        // The one whose blow or hold it took last scores, else the player it went after.
+        // TODO(PLAN item 12): through a thrown enemy or a weapon, the one who threw or swung it.
+        const by = if (a.mind.other) |o| (if (a.tick.isPlayer(o)) o else a.mind.target) else a.mind.target;
+        if (by) |h| a.tick.score(h, n.points);
+        return a.remove();
+    }
     a.entity.flags.hidden = !a.entity.flags.hidden;
     a.mind.timer = n.blink;
 }
