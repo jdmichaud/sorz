@@ -201,12 +201,20 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
 - `animations`: each a list of `frames`, at least one: `frame`, a sprite frame by its full name;
   `ticks`, how many logic ticks it shows (1 to 255); `flip`, drawn mirrored besides the entity's
   facing; `body`, the box blows strike it in, and `attack`, the box its blow strikes with, while
-  the frame shows (a frame without them has none). With `loop` the first frame follows the last;
-  without, the last stays.
+  the frame shows (a frame without them has none); `blow`, the move's blow is under way in this
+  frame: its damage counts (its `attack` box strikes, or the one it holds takes it). An `attack`
+  box without `blow` is a reach: what it meets, the entity may grab. `sound`, a sound asked for
+  when the frame starts showing. In a hold, `held` places the one held from the holder (`x`
+  ahead, `height` downward), with the `pose` it shows (a frame of its own `thrown` animation) or
+  `lets_go` (the hold ends there, the one held placed so); `place` puts the holder itself from
+  the one held (`x` toward the side the holder faces, `height` downward), as it vaults around
+  it. With `loop` the first frame follows the last; without, the last stays.
 - `moves`: a blow or an action: its `animation` (by name); the `damage` its blow does; the
-  `reaction` of the one it strikes, `reel` or `knock_down`; the speed it gives that one, `push`
-  (`x` away from the striker, `height` negative upward); the `sound` asked for when it starts and
-  the `hit_sound` when its blow lands.
+  `reaction` of the one it strikes, `reel` or `knock_down`, and of one held, `thrown` (it flies
+  off where the hold lets it go) or `slammed` (it is slammed down there, and knocked down a
+  moment later); the speed it gives that one, `push` (`x` away from the striker, `height`
+  negative upward); the `sound` asked for when it starts and the `hit_sound` when its blow
+  lands.
 
 The optional fields are written only when they are not their defaults, so a file read and
 written again keeps its bytes. The extractor writes the original's characters and enemies (PLAN

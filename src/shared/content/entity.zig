@@ -6,7 +6,8 @@
 //! - its numbers (speeds, ranges, durations) and its sounds, by the names its behaviour reads;
 //! - its boxes, named, which the frames of its animations put in use;
 //! - its animations: frames of the art (by full name), each shown for a number of logic ticks,
-//!   with the boxes in use while it shows;
+//!   with the boxes in use while it shows, whether its move's blow is under way then, the sound
+//!   it starts with, and in a hold, where the one held is (or where the holder goes);
 //! - its moves: an animation, the damage, the reaction of the one hit, its push, its sounds.
 //!
 //! The units are the world's (world/fixed.zig): pixels for the boxes, 1/65536 pixel for speeds
@@ -58,9 +59,34 @@ pub const Frame = struct {
     ticks: u8,
     flip: bool = false,
     /// The box the entity is struck in, and the box its blow strikes with, by their index in
-    /// `Definition.boxes`.
+    /// `Definition.boxes`. An attack box while no blow is under way is a reach: what it meets,
+    /// the entity may grab.
     body: ?u8 = null,
     attack: ?u8 = null,
+    /// The move's blow is under way in this frame: its damage counts (its attack box strikes,
+    /// or the one it holds takes it).
+    blow: bool = false,
+    /// The sound asked for when the frame starts showing, by the sound content's name.
+    sound: ?[]const u8 = null,
+    /// In a hold: where the one held is, from the holder (`x` ahead of it, `height` downward),
+    /// and the pose it shows (a frame of its own `thrown` animation); `lets_go`: the hold ends
+    /// at this frame, the one held placed there.
+    held: ?Held = null,
+    /// In a hold: where the holder goes, from the one held (`x` toward the side the holder
+    /// faces, `height` downward), as it moves around it.
+    place: ?Place = null,
+};
+
+pub const Held = struct {
+    x: i16 = 0,
+    height: i16 = 0,
+    pose: ?u8 = null,
+    lets_go: bool = false,
+};
+
+pub const Place = struct {
+    x: i16 = 0,
+    height: i16 = 0,
 };
 
 pub const Animation = struct {
@@ -72,10 +98,14 @@ pub const Animation = struct {
 
 /// What the one struck does.
 pub const Reaction = enum {
-    /// It staggers and recovers where it stands.
+    /// It staggers and recovers where it stands (held, it stays held).
     reel,
     /// It is knocked off its feet.
     knock_down,
+    /// Held, it is thrown: it flies off from where the hold lets it go.
+    thrown,
+    /// Held, it is slammed down where the hold lets it go, and knocked down a moment later.
+    slammed,
 };
 
 /// A blow or an action: an animation, and what its blow does when it lands.
@@ -292,7 +322,7 @@ fn span(node: json.Node) json.Error!Span {
 }
 
 fn frame(node: json.Node, d: *const Definition, a: *const art.Art) json.Error!Frame {
-    try node.only(&.{ "frame", "ticks", "flip", "body", "attack" });
+    try node.only(&.{ "frame", "ticks", "flip", "body", "attack", "blow", "sound", "held", "place" });
     const name_node = try node.get("frame");
     const name = try name_node.string();
     if (a.frame(name) == null) return name_node.fail("no sprite frame of this name");
@@ -305,6 +335,28 @@ fn frame(node: json.Node, d: *const Definition, a: *const art.Art) json.Error!Fr
         .flip = if (try node.opt("flip")) |f| try f.boolean() else false,
         .body = try boxRef(node, "body", d),
         .attack = try boxRef(node, "attack", d),
+        .blow = if (try node.opt("blow")) |b| try b.boolean() else false,
+        .sound = if (try node.opt("sound")) |x| try soundName(x) else null,
+        .held = if (try node.opt("held")) |h| try held(h) else null,
+        .place = if (try node.opt("place")) |p| try place(p) else null,
+    };
+}
+
+fn held(node: json.Node) json.Error!Held {
+    try node.only(&.{ "x", "height", "pose", "lets_go" });
+    return .{
+        .x = if (try node.opt("x")) |n| try n.int(i16) else 0,
+        .height = if (try node.opt("height")) |n| try n.int(i16) else 0,
+        .pose = if (try node.opt("pose")) |n| try n.int(u8) else null,
+        .lets_go = if (try node.opt("lets_go")) |n| try n.boolean() else false,
+    };
+}
+
+fn place(node: json.Node) json.Error!Place {
+    try node.only(&.{ "x", "height" });
+    return .{
+        .x = if (try node.opt("x")) |n| try n.int(i16) else 0,
+        .height = if (try node.opt("height")) |n| try n.int(i16) else 0,
     };
 }
 
@@ -361,6 +413,22 @@ pub fn value(arena: std.mem.Allocator, d: *const Definition) error{OutOfMemory}!
                 if (f.flip) try fs.append(arena, .{ .key = "flip", .value = .{ .bool = true } });
                 if (f.body) |b| try fs.append(arena, .{ .key = "body", .value = .{ .str = d.boxes[b].name } });
                 if (f.attack) |b| try fs.append(arena, .{ .key = "attack", .value = .{ .str = d.boxes[b].name } });
+                if (f.blow) try fs.append(arena, .{ .key = "blow", .value = .{ .bool = true } });
+                if (f.sound) |x| try fs.append(arena, .{ .key = "sound", .value = .{ .str = x } });
+                if (f.held) |h| {
+                    var hs: std.ArrayList(json.Field) = .empty;
+                    if (h.x != 0) try hs.append(arena, .{ .key = "x", .value = json.Value.num(h.x) });
+                    if (h.height != 0) try hs.append(arena, .{ .key = "height", .value = json.Value.num(h.height) });
+                    if (h.pose) |p| try hs.append(arena, .{ .key = "pose", .value = json.Value.num(p) });
+                    if (h.lets_go) try hs.append(arena, .{ .key = "lets_go", .value = .{ .bool = true } });
+                    try fs.append(arena, .{ .key = "held", .value = .{ .object = hs.items } });
+                }
+                if (f.place) |p| {
+                    var ps: std.ArrayList(json.Field) = .empty;
+                    if (p.x != 0) try ps.append(arena, .{ .key = "x", .value = json.Value.num(p.x) });
+                    if (p.height != 0) try ps.append(arena, .{ .key = "height", .value = json.Value.num(p.height) });
+                    try fs.append(arena, .{ .key = "place", .value = .{ .object = ps.items } });
+                }
                 v.* = .{ .object = fs.items };
             }
             var fs: std.ArrayList(json.Field) = .empty;
@@ -429,10 +497,25 @@ const sample =
     \\        },
     \\        {
     \\          "attack": "fist",
+    \\          "blow": true,
     \\          "body": "body",
     \\          "flip": true,
     \\          "frame": "dummy/001",
+    \\          "sound": "punch swing",
     \\          "ticks": 4
+    \\        },
+    \\        {
+    \\          "frame": "dummy/000",
+    \\          "held": {
+    \\            "height": -8,
+    \\            "lets_go": true,
+    \\            "pose": 1,
+    \\            "x": 32
+    \\          },
+    \\          "place": {
+    \\            "x": -28
+    \\          },
+    \\          "ticks": 2
     \\        }
     \\      ]
     \\    },
@@ -513,6 +596,10 @@ test "a definition reads, names its parts, and writes the same bytes again" {
     const frames = d.animations[punch.animation].frames;
     try testing.expectEqual(@as(?u8, d.box("fist")), frames[1].attack);
     try testing.expect(frames[1].flip and frames[0].attack == null);
+    try testing.expect(frames[1].blow and !frames[0].blow);
+    try testing.expectEqualStrings("punch swing", frames[1].sound.?);
+    try testing.expectEqual(Held{ .x = 32, .height = -8, .pose = 1, .lets_go = true }, frames[2].held.?);
+    try testing.expectEqual(Place{ .x = -28 }, frames[2].place.?);
     const fist = d.boxes[d.box("fist").?];
     try testing.expectEqual(Span{ .from = -31, .to = -11 }, fist.across(true));
     const body = d.boxes[d.box("body").?];
