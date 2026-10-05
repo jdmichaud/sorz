@@ -152,11 +152,12 @@ fn armed(a: Actor) bool {
 
 // Rushing in, closing in ----------------------------------------------------------------------------
 
-/// It rushes at its target (a blow that knocks down), its knife in hand, unless it left the
-/// screen's middle.
+/// It takes up its knife first, then rushes at its target (a blow that knocks down), unless it
+/// left the screen's middle.
 fn jumpInSetUp(a: Actor) void {
     const n = a.numbers();
     if (!Common.chooseTarget(a)) return;
+    if (!armed(a)) return;
     Common.faceTarget(a);
     a.startMove(.jump_in);
     a.pause(false);
