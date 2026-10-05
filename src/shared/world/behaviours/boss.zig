@@ -396,6 +396,11 @@ pub fn Of(comptime M: type) type {
             m.count -%= 1;
             if (m.count == 0) {
                 if (m.twin == 0) a.tick.roundWon();
+                // His twin is alone from now.
+                if (twinOf(a)) |o| {
+                    o.mind.twin = 0;
+                    o.mind.twin_at = null;
+                }
                 return a.remove();
             }
             if (m.count == n.points_at) return scorePoints(a);
