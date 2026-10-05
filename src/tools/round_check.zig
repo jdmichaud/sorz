@@ -9,13 +9,18 @@
 //! sor-remaster's trace and every `picture_every` display ticks from the round's start.
 //!
 //!   sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...] [--reach FILE...]
-//!       [--reach-min TRACE,FRAMES,SOUND]
+//!       [--reach-min TRACE,FRAMES,SOUND] [--reach-take-up FILE...]
 //!
 //! A scenario given with `--reach` (a recorded play, `start pads FILE V`, kept out of the
 //! repository) is not a gate: its line says how far each comparison stays equal (the trace's
 //! and the frames' first difference by the round's tick, the sound's by display tick). With
 //! `--reach-min`, it is one: a reach below its floor fails the check (the trace's and the
-//! frames' round ticks, the sound's display tick; a floor left empty is none).
+//! frames' round ticks, the sound's display tick; a floor left empty is none). One given with
+//! `--reach-take-up` reaches where sorz's own play does not (the round's end, its clear): sorz
+//! runs the whole game with the recorded pads, but takes the round's world up from
+//! sor-remaster's trace at the script's start (agent/game_run.zig); its trace and frames are
+//! compared from there, its pictures from the next, and its sound says where it differs (the
+//! chips sound on with sorz's own play until each has played anew) and from where it is equal.
 //!
 //! For each scenario (`scenarios` below, the file SCENARIOS_DIR/NAME.scn), sor-remaster's agent
 //! runs it and writes its trace into OUT_DIR; sorz runs it in this process, on the content
@@ -50,7 +55,14 @@ pub const Scenario = struct {
     pictures_before: ?u64 = null,
     /// A reach's floors: the trace's, the frames' (round ticks), the sound's (display ticks).
     reach_min: [3]?u64 = .{ null, null, null },
+    /// A reach whose round's world sorz takes up from sor-remaster's at its script's start
+    /// (`--reach-take-up`): its comparisons start there.
+    take_up: bool = false,
 };
+
+/// Where a run took the round's world up: the display tick of the script's start, and the
+/// round's tick of sor-remaster's last observation by then.
+const TakenUp = struct { v: i64, t: i64 };
 
 /// The display ticks of the pictures compared: from a few before each scene's start to some
 /// after, and every this many in the round (with the next, the other half of a logic tick).
@@ -108,7 +120,7 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
         return false;
     }
     var said: std.Io.Writer.Allocating = .init(arena);
-    const done = try agent.scenario_cmd.run(c.gpa, c.io, c.assets, .{ .scenario = scn, .trace = z_trace, .probe = z_probe, .wav = z_wav }, &said.writer);
+    const done = try agent.scenario_cmd.run(c.gpa, c.io, c.assets, .{ .scenario = scn, .trace = z_trace, .probe = z_probe, .wav = z_wav, .situation = if (sc.take_up) ref_trace else null, .situation_probe = if (sc.take_up) ref_probe else null, .take_up = sc.take_up }, &said.writer);
     if (!done) {
         try w.print("{s}: sorz's run did not end as the scenario does: {s}", .{ sc.name, said.written() });
         return false;
@@ -123,30 +135,59 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
         return false;
     }
 
+    var diag: compare.Diagnostic = .{};
+    var a_full = try compare.parse(arena, try cwd.readFileAlloc(c.io, ref_trace, arena, .limited(1 << 30)), &diag);
+    var b_full = try compare.parse(arena, try cwd.readFileAlloc(c.io, z_trace, arena, .limited(1 << 30)), &diag);
+    const taken: ?TakenUp = if (sc.take_up) try takenUp(ran.stdout, &a_full) else null;
+    // A run taken up is compared to its round's clear's end (the next round's is a stand-in in
+    // sorz until PLAN item 15).
+    var sound_to: ?usize = null;
+    if (taken) |tu| {
+        a_full = untilNextRound(&a_full, tu.v);
+        b_full = untilNextRound(&b_full, tu.v);
+        if (a_full.end) |e| sound_to = frameOf(@intCast(e.v));
+    }
+    // A run taken up: its entities have sor-remaster's ids; the ids its hit sparks took after
+    // the take-up are given up.
     const options: compare.Options = .{
         .from_scene = "round",
-        .renumber = true,
+        .renumber = taken == null,
+        .close_ids = taken != null,
+        .after = if (taken) |tu| tu.t else null,
         .ignore_kinds = &ignored_kinds,
         .ignore = &ignored_events,
         .ignore_fields = sc.ignore_fields,
         .sound_names = c.sound_names,
     };
-    var diag: compare.Diagnostic = .{};
-    const a_full = try compare.parse(arena, try cwd.readFileAlloc(c.io, ref_trace, arena, .limited(1 << 30)), &diag);
-    const b_full = try compare.parse(arena, try cwd.readFileAlloc(c.io, z_trace, arena, .limited(1 << 30)), &diag);
     const a = try compare.restrict(arena, &a_full, options, true);
     const b = try compare.restrict(arena, &b_full, options, false);
     var written: std.Io.Writer.Allocating = .init(arena);
     const result = try compare.compare(arena, &a, &b, options, &written.writer);
     var events: usize = 0;
     for (result.counts) |n| events += n.a;
-    const frames = try framesOf(c, &a_full, &b_full, ref_probe, z_probe);
-    const sound = try soundOf(c, ref_wav, z_wav);
-    const pictures: Pictures = if (sc.reach or !sc.pictures) .{} else try picturesOf(c, sc, scn, &a_full);
+    const frames = try framesOf(c, &a_full, &b_full, ref_probe, z_probe, taken);
+    const sound = try soundOf(c, ref_wav, z_wav, if (taken) |tu| frameOf(@intCast(tu.v)) else 0, sound_to);
+    const pictures: Pictures = if ((sc.reach and taken == null) or !sc.pictures) .{} else try picturesOf(c, sc, scn, &a_full, ref_trace, ref_probe, taken);
     // The runs end a few ticks apart past the round (the runners count the start-up's ticks
     // differently: the original's is a scene of its own): the sound is compared where both are.
     const sound_same = sound.first == null;
     const common = @min(sound.frames, sound.reference_frames);
+    if (taken) |tu| {
+        try w.print("{s}: ({s}: display tick {d}, the round's tick {d})\n  the trace: ", .{ sc.name, sc.what, tu.v, tu.t });
+        if (result.first) |d| try w.print("equal before the round's tick {d}, {d} differences in {d} events\n", .{ firstTick(d), result.differences, events }) else try w.print("equal, {d} events\n", .{events});
+        try w.writeAll("  the frames: ");
+        if (frames.first) |d| try w.print("equal before the round's tick {d} (entity {d}: {f} against {f}), {d} of {d} entities differ\n", .{ d.t, d.e, startOf(d.a), startOf(d.b), frames.differing, frames.entities }) else try w.print("equal, {d} entities\n", .{frames.entities});
+        // The chips sound on with what sorz's own play left them before the take-up, until
+        // each has played anew.
+        try w.writeAll("  the sound: ");
+        if (sound.last) |l| {
+            if (l + 1 < common) try w.print("differs from display tick {d} to {d} (sorz's own sound before the take-up), then equal to {d}\n", .{ ticksOf(sound.first.?), ticksOf(l), ticksOf(common) }) else try w.print("differs from display tick {d} to the end ({d})\n", .{ ticksOf(sound.first.?), ticksOf(common) });
+        } else try w.print("equal, to display tick {d}\n", .{ticksOf(common)});
+        try w.print("  the pictures: {d} of {d} differ ({d} lines past the sprites' limits left out)", .{ pictures.differing, pictures.compared, pictures.lines_left_out });
+        if (pictures.first) |f| try w.print(", the first after display tick {d} ({d} pixels: {s}/{s}-z-{d}.png, its -ref- and -diff-); after display ticks {any}", .{ f.tick, f.pixels, c.out_path, sc.name, f.tick, pictures.ticks[0..@min(pictures.differing, pictures.ticks.len)] });
+        try w.writeAll("\n");
+        return true;
+    }
     if (sc.reach) {
         try w.print("{s}: ({s})\n  the trace: ", .{ sc.name, sc.what });
         if (result.first) |d| try w.print("equal before the round's tick {d}, {d} differences in {d} events\n", .{ firstTick(d), result.differences, events }) else try w.print("equal, {d} events\n", .{events});
@@ -199,16 +240,20 @@ const Pictures = struct {
 /// again writing its pictures at those display ticks, sorz's run again comparing its own with
 /// them as they come; the first that differs written beside the reference's, with the
 /// difference.
-fn picturesOf(c: *const Context, sc: *const Scenario, scn: []const u8, ref: *const compare.Trace) !Pictures {
+fn picturesOf(c: *const Context, sc: *const Scenario, scn: []const u8, ref: *const compare.Trace, ref_trace: []const u8, ref_probe: []const u8, taken: ?TakenUp) !Pictures {
     const arena = c.arena;
     const end: i64 = if (ref.end) |e| e.v else return error.BadTrace;
     var wanted: std.AutoArrayHashMapUnmanaged(u64, void) = .empty;
     var round_from: ?i64 = null;
+    // A run taken up: from the second picture after the take-up (the first shows the world
+    // before it), every `picture_every` display ticks.
+    const first: i64 = if (taken) |tu| tu.v + 2 else 0;
+    if (taken != null) round_from = first;
     for (ref.events) |e| {
         if (!std.mem.eql(u8, e.ev, "scene")) continue;
         const name = ref.scenes[e.scene - 1];
         if (round_from == null and std.mem.eql(u8, name, "round_intro")) round_from = e.v;
-        var v = @max(e.v - picture_before, 0);
+        var v = @max(e.v - picture_before, first);
         while (v <= @min(e.v + picture_after, end - 1)) : (v += 1) try wanted.put(arena, @intCast(v), {});
     }
     if (round_from) |from| {
@@ -239,7 +284,7 @@ fn picturesOf(c: *const Context, sc: *const Scenario, scn: []const u8, ref: *con
     var taker: PictureTaker = .{ .c = c, .sc = sc, .dir = dir, .wanted = &wanted };
     var said: std.Io.Writer.Allocating = .init(arena);
     const sink: agent.scenario_cmd.Pictures = .{ .ctx = &taker, .wanted = PictureTaker.isWanted, .take = PictureTaker.take };
-    const done = try agent.scenario_cmd.run(c.gpa, c.io, c.assets, .{ .scenario = scn, .pictures = sink }, &said.writer);
+    const done = try agent.scenario_cmd.run(c.gpa, c.io, c.assets, .{ .scenario = scn, .pictures = sink, .situation = if (taken != null) ref_trace else null, .situation_probe = if (taken != null) ref_probe else null, .take_up = taken != null }, &said.writer);
     // The reference's pictures go but the first that differs (beside sorz's).
     std.Io.Dir.cwd().deleteTree(c.io, dir) catch {};
     if (!done) return error.ScenarioStopped;
@@ -315,16 +360,61 @@ fn firstTick(d: compare.Difference) i64 {
 }
 
 /// The two runs' frames in their round scenes (the last of each), the entities numbered as the
-/// traces' comparison numbers them.
-fn framesOf(c: *const Context, a: *const compare.Trace, b: *const compare.Trace, ref_probe: []const u8, z_probe: []const u8) !probes.Result {
+/// traces' comparison numbers them; in a run taken up, after the take-up, by their ids.
+fn framesOf(c: *const Context, a: *const compare.Trace, b: *const compare.Trace, ref_probe: []const u8, z_probe: []const u8, taken: ?TakenUp) !probes.Result {
     const cwd = std.Io.Dir.cwd();
-    const na = try compare.numbering(c.arena, a, &ignored_kinds);
-    const nb = try compare.numbering(c.arena, b, &ignored_kinds);
-    const ta = probes.sceneTicks(a, "round") orelse return error.BadTrace;
-    const tb = probes.sceneTicks(b, "round") orelse return error.BadTrace;
+    const na = if (taken != null) try idsOf(c.arena, &.{ a, b }) else try compare.numbering(c.arena, a, &ignored_kinds);
+    const nb = if (taken != null) na else try compare.numbering(c.arena, b, &ignored_kinds);
+    var ta = probes.sceneTicks(a, "round") orelse return error.BadTrace;
+    var tb = probes.sceneTicks(b, "round") orelse return error.BadTrace;
+    if (taken) |tu| {
+        ta[0] = @max(ta[0], tu.v + 1);
+        tb[0] = @max(tb[0], tu.v + 1);
+    }
     const la = try probes.parse(c.arena, try cwd.readFileAlloc(c.io, ref_probe, c.arena, .limited(1 << 30)));
     const lb = try probes.parse(c.arena, try cwd.readFileAlloc(c.io, z_probe, c.arena, .limited(1 << 30)));
     return probes.compare(c.arena, .{ .lines = la, .numbers = &na, .v0 = ta[0], .v1 = ta[1] }, .{ .lines = lb, .numbers = &nb, .v0 = tb[0], .v1 = tb[1] });
+}
+
+/// The traces' entities numbered by their own ids (a run taken up has the other's).
+fn idsOf(arena: std.mem.Allocator, traces: []const *const compare.Trace) !compare.Numbers {
+    var numbers: compare.Numbers = .empty;
+    for (traces) |t| for (t.events) |e| {
+        if (!std.mem.eql(u8, e.ev, "spawn")) continue;
+        const id = switch (e.object.get("e") orelse continue) {
+            .integer => |n| n,
+            else => continue,
+        };
+        try numbers.put(arena, id, id);
+    };
+    return numbers;
+}
+
+/// A trace up to the next round after display tick `v`: its events before the first scene after
+/// the round's clear, where it ends.
+fn untilNextRound(trace: *const compare.Trace, v: i64) compare.Trace {
+    var t = trace.*;
+    for (trace.events, 0..) |e, i| {
+        if (e.v <= v or !std.mem.eql(u8, e.ev, "scene")) continue;
+        if (std.mem.eql(u8, trace.scenes[e.scene - 1], "round_clear")) continue;
+        t.events = trace.events[0..i];
+        t.scenes = trace.scenes[0 .. e.scene - 1];
+        t.end = .{ .scene = e.scene, .v = e.v, .t = e.t };
+        break;
+    }
+    return t;
+}
+
+/// Where sor-remaster's run of a recorded play took the round's world up (its script's start):
+/// the display tick, and the round's tick of the last observation by then.
+fn takenUp(stdout: []const u8, ref: *const compare.Trace) !TakenUp {
+    const v: i64 = @intCast(numberAfter(stdout, "\"script_vblank\":") orelse return error.BadTrace);
+    var t: ?i64 = null;
+    for (ref.events) |e| {
+        if (e.v > v) break;
+        if (std.mem.eql(u8, ref.scenes[e.scene - 1], "round")) t = e.t;
+    }
+    return .{ .v = v, .t = t orelse return error.BadTrace };
 }
 
 /// A frame's start as the report writes it: "frame F at T", or "none".
@@ -340,25 +430,36 @@ fn startOf(s: ?probes.Start) StartText {
     return .{ .s = s };
 }
 
-const Sound = struct { frames: usize, reference_frames: usize, first: ?usize = null, differing: usize = 0, largest: u32 = 0 };
+const Sound = struct { frames: usize, reference_frames: usize, first: ?usize = null, last: ?usize = null, differing: usize = 0, largest: u32 = 0 };
 
 /// The display tick of 48 kHz frame `frame` (a tick is 896,040 periods of the 53,693,175 Hz clock).
 fn ticksOf(frame: usize) u64 {
     return @as(u64, frame) * 53_693_175 / (896_040 * 48_000);
 }
 
-/// The two runs' sound (16-bit stereo WAV files, a 44-byte header), frame by frame: their lengths,
-/// the first frame that differs, how many do and by how much at most.
-fn soundOf(c: *const Context, ref_path: []const u8, z_path: []const u8) !Sound {
+/// The first 48 kHz frame of display tick `tick`.
+fn frameOf(tick: u64) usize {
+    return @intCast((tick * 896_040 * 48_000 + 53_693_175 - 1) / 53_693_175);
+}
+
+/// The two runs' sound (16-bit stereo WAV files, a 44-byte header), frame by frame from frame
+/// `from` (before frame `to`, when given): their lengths, the first and the last frames that
+/// differ, how many do and by how much at most.
+fn soundOf(c: *const Context, ref_path: []const u8, z_path: []const u8, from: usize, to: ?usize) !Sound {
     const cwd = std.Io.Dir.cwd();
     const a = try cwd.readFileAlloc(c.io, ref_path, c.arena, .limited(1 << 30));
     const b = try cwd.readFileAlloc(c.io, z_path, c.arena, .limited(1 << 30));
     const da = if (a.len > 44) a[44..] else a[0..0];
     const db = if (b.len > 44) b[44..] else b[0..0];
     var s: Sound = .{ .frames = db.len / 4, .reference_frames = da.len / 4 };
-    for (0..@min(s.frames, s.reference_frames)) |i| {
+    if (to) |last| {
+        s.frames = @min(s.frames, last);
+        s.reference_frames = @min(s.reference_frames, last);
+    }
+    for (@min(from, s.frames, s.reference_frames)..@min(s.frames, s.reference_frames)) |i| {
         if (std.mem.eql(u8, da[4 * i ..][0..4], db[4 * i ..][0..4])) continue;
         if (s.first == null) s.first = i;
+        s.last = i;
         s.differing += 1;
         for (0..2) |k| {
             const x = std.mem.readInt(i16, da[4 * i + 2 * k ..][0..2], .little);
@@ -397,11 +498,12 @@ pub fn main(init: std.process.Init) !void {
                 const text = floors.next() orelse break;
                 f.* = if (text.len == 0) null else std.fmt.parseInt(u64, text, 10) catch return usage(io);
             }
-        } else if (std.mem.eql(u8, arg, "--reach")) {
+        } else if (std.mem.eql(u8, arg, "--reach") or std.mem.eql(u8, arg, "--reach-take-up")) {
+            const take_up = std.mem.eql(u8, arg, "--reach-take-up");
             const path = args.next() orelse return usage(io);
             const base = std.fs.path.basename(path);
             const name = if (std.mem.endsWith(u8, base, ".scn")) base[0 .. base.len - 4] else base;
-            try reach.append(arena, .{ .name = name, .what = "a recorded play: how far it stays equal", .path = path, .reach = true });
+            try reach.append(arena, .{ .name = name, .what = if (take_up) "a recorded play, the round's world taken up from sor-remaster's at its script's start" else "a recorded play: how far it stays equal", .path = path, .reach = true, .take_up = take_up });
         } else try only.append(arena, arg);
     }
 
@@ -425,7 +527,9 @@ pub fn main(init: std.process.Init) !void {
     try text.writer.writeAll("round-check: round 1's scenes in sorz against sor-remaster's, from power-on (PLAN item 13).\n\n");
     var failed = false;
     var printed: usize = 0;
-    for (reach.items) |*sc| sc.reach_min = reach_min;
+    for (reach.items) |*sc| if (!sc.take_up) {
+        sc.reach_min = reach_min;
+    };
     const all = try std.mem.concat(arena, Scenario, &.{ &scenarios, reach.items });
     for (all) |*sc| {
         if (only.items.len != 0 and !sc.reach) {
@@ -460,7 +564,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn usage(io: std.Io) !void {
-    return fail(io, "usage: sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...] [--reach FILE...] [--reach-min TRACE,FRAMES,SOUND]\n");
+    return fail(io, "usage: sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...] [--reach FILE...] [--reach-min TRACE,FRAMES,SOUND] [--reach-take-up FILE...]\n");
 }
 
 fn fail(io: std.Io, message: []const u8) !void {

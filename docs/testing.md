@@ -191,7 +191,13 @@ events and conditions by logic tick. The catalogue's scenarios of each character
   `--wav`): equal at every display tick. It writes the runs and the report into `<prefix>/round`
   (`-Dround-out=DIR`); `-Dround-only=NAME,...`. `-Dround-reach=FILE,...` also runs scenario
   files kept outside the repository (a recorded play's, `start pads`), not as a gate: their
-  lines say where the trace, the frames and the sound first differ.
+  lines say where the trace, the frames and the sound first differ (`-Dround-reach-min` gives
+  them floors). `-Dround-take-up=FILE,...` runs recorded plays to where sorz's own play does not
+  reach equal (the round's end and its clear): sorz runs the whole game with the pads, its
+  round's world taken up from sor-remaster's trace at the script's start (`sorz-agent
+  --situation TRACE --take-up`); the trace and the frames are compared from there, the pictures
+  from the next tick to the clear's end, and the sound's line says where it differs (the chips
+  sound on with sorz's own play until each plays anew) and from where it is equal.
 
 ## The variants
 
