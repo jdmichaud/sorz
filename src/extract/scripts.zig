@@ -441,6 +441,8 @@ fn enemyRecord(rom: []const u8, s: *round.Spawn, t: u8, variant: u8, offsets: u8
     s.entrance = d.entrance;
     s.traits = d.traits;
     s.offset = d.offset;
+    // The trio's others count on from its offsets' nibbles (0xF7D8).
+    if (t == 0x2A) s.offset_nibbles = offsets;
     s.strength = d.strength;
     s.colours = try coloursOf(rom, t, palette);
 }

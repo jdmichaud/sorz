@@ -74,7 +74,15 @@ pub const Mind = struct {
     /// Coming in: the camera has neared it; it has passed its top.
     reached: bool = false,
     risen: bool = false,
+    /// Its jump kick closes in after it lands (a trio's: acrobat_trio.zig), not the fight's
+    /// start.
+    close_in_after: bool = false,
 };
+
+/// The state a somersault's end may dash back in (the original's state 15).
+pub const somersault_back: ?State = .dash;
+
+const Attack = Attacks(@This());
 
 pub const Animation = enum { walk, down, reel, stand, thrown, slammed, punch, jump_kick, flip, turn };
 pub const Move = enum { punch, somersault, jump_kick };
@@ -173,12 +181,12 @@ pub fn begin(a: Actor) void {
         .approach => approachSetUp(a),
         .circle => circleSetUp(a),
         .level => levelSetUp(a),
-        .close_in => closeInSetUp(a),
-        .punch => punchSetUp(a),
-        .somersault => somersaultSetUp(a),
+        .close_in => Attack.closeInSetUp(a),
+        .punch => Attack.punchSetUp(a),
+        .somersault => Attack.somersaultSetUp(a),
         .dash => dashSetUp(a),
-        .jump_kick => jumpKickSetUp(a),
-        .flip => flipSetUp(a),
+        .jump_kick => Attack.jumpKickSetUp(a),
+        .flip => Attack.flipSetUp(a),
         .flip_away => flipAwaySetUp(a),
         .enter => enterSetUp(a),
         else => Common.setUp(a),
@@ -199,12 +207,12 @@ pub fn think(a: Actor) void {
         .approach => approach(a),
         .circle => circle(a),
         .level => level(a),
-        .close_in => closeIn(a),
-        .punch => punch(a),
-        .somersault => somersault(a),
+        .close_in => Attack.closeIn(a),
+        .punch => Attack.punch(a),
+        .somersault => Attack.somersault(a),
         .dash => dash(a),
-        .jump_kick => jumpKick(a),
-        .flip => flip(a),
+        .jump_kick => Attack.jumpKick(a),
+        .flip => Attack.flip(a),
         .flip_away => flipAway(a),
         .enter => enter(a),
         else => {},
@@ -230,12 +238,8 @@ fn looks(a: Actor) bool {
     return true;
 }
 
-/// It enters a state with its set-up's flags.
-fn go(a: Actor, state: State, flags: struct { back: bool = false, fast: bool = false, turned: bool = false }) void {
-    Common.enter(a, state);
-    a.mind.back = flags.back;
-    a.mind.fast = flags.fast;
-    a.mind.turned = flags.turned;
+fn go(a: Actor, state: State, flags: Attack.Flags) void {
+    Attack.next(a, state, flags);
 }
 
 /// It takes up the fight the way it was placed.
@@ -340,89 +344,7 @@ fn level(a: Actor) void {
     go(a, if (@abs(t.position.x.whole() - a.entity.position.x.whole()) < n.level_near) .close_in else .jump_kick, .{});
 }
 
-// Closing in, punching, somersaulting, dashing ------------------------------------------------------
-
-/// It closes in beside its target a while: its reach meeting its target it punches; near and
-/// level with it, it somersaults; out of time it takes up the fight again.
-fn closeInSetUp(a: Actor) void {
-    const n = a.numbers();
-    a.pause(false);
-    Common.faceTarget(a);
-    a.animate(.walk);
-    a.pace(n.close_in_pace, 1);
-    a.setFrame(1);
-    a.mind.body.timer = n.close_in_ticks;
-}
-
-fn closeIn(a: Actor) void {
-    const n = a.numbers();
-    a.mind.body.timer -%= 1;
-    if (a.mind.body.timer == 0) return go(a, fights, .{});
-    var speed = if (a.mind.fast) n.close_in_fast else n.close_in_speed;
-    if (a.entity.spawn.traits.slow) speed = n.close_in_slow;
-    Common.headForTarget(a, n.close_in_beside, speed);
-    if (!Common.walk(a)) return;
-    const reach = a.kind.definition.box("close_in_reach") orelse return;
-    if (Common.boxMeetsTarget(a, reach)) return go(a, .punch, .{});
-    const t = Common.target(a) orelse return;
-    if (@abs(a.entity.position.depth.whole() - t.position.depth.whole()) >= n.close_in_level) return;
-    if (@abs(a.entity.position.x.whole() - t.position.x.whole()) >= n.close_in_near) return;
-    go(a, .somersault, .{});
-}
-
-/// The punch, unless it left the screen's middle; at its last frame it flips back.
-fn punchSetUp(a: Actor) void {
-    if (Common.offScreen(a)) return;
-    Common.faceTarget(a);
-    a.startMove(.punch);
-    a.pause(false);
-}
-
-fn punch(a: Actor) void {
-    if (a.frame() != a.numbers().punch_ends) return;
-    a.endMove();
-    go(a, .flip, .{ .back = true });
-}
-
-/// The somersault at its target, unless it left the screen's middle: a leap across, held on its
-/// first frame until it is down again (at once when near); then, at its last frame, by a draw it
-/// flips back, dashes back, or takes up the fight.
-fn somersaultSetUp(a: Actor) void {
-    const n = a.numbers();
-    if (Common.offScreen(a)) return;
-    _ = Common.chooseTarget(a);
-    a.sound(.leap);
-    Common.faceTarget(a);
-    a.startMove(.somersault);
-    a.pause(true);
-    a.setTicksLeft(1);
-    a.entity.velocity.x = if (a.entity.facingLeft()) n.somersault_x.neg() else n.somersault_x;
-    a.entity.velocity.height = n.somersault_up;
-    a.mind.down = false;
-    const t = Common.target(a) orelse return;
-    if (@abs(t.position.x.whole() - a.entity.position.x.whole()) > n.somersault_near) return;
-    a.mind.down = true;
-    a.pause(false);
-    a.setFrame(1);
-}
-
-fn somersault(a: Actor) void {
-    const n = a.numbers();
-    if (!a.mind.down) {
-        Common.flyAcross(a);
-        if (!Common.falls(a)) return;
-        a.sound(.land);
-        a.mind.down = true;
-        a.pause(false);
-    }
-    if (a.frame() != n.somersault_ends) return;
-    a.endMove();
-    switch (a.draw(.somersault_end) & 3) {
-        0 => go(a, .flip, .{ .back = true }),
-        1 => go(a, .dash, .{ .turned = true }),
-        else => go(a, fights, .{}),
-    }
-}
+// Dashing ---------------------------------------------------------------------------------------
 
 /// The dash straight at its target until near across, then back the way it came (its speed
 /// across turned, up in depth) a while; then it takes up the fight again. Dashing back after a
@@ -462,51 +384,7 @@ fn turnBack(a: Actor) void {
     a.mind.body.timer = n.dash_back_ticks;
 }
 
-// Leaps -------------------------------------------------------------------------------------------
-
-/// The jump kick at its target: a leap across, its frame held from its second; down again it
-/// takes up the fight. Its blow knocks down.
-fn jumpKickSetUp(a: Actor) void {
-    const n = a.numbers();
-    a.sound(.leap);
-    a.pause(false);
-    Common.faceTarget(a);
-    a.startMove(.jump_kick);
-    a.entity.velocity.height = n.jump_kick_up;
-    a.entity.velocity.x = if (a.entity.facingLeft()) n.jump_kick_x.neg() else n.jump_kick_x;
-}
-
-fn jumpKick(a: Actor) void {
-    if (!a.entity.animation.paused and a.frame() == a.numbers().jump_kick_holds) a.pause(true);
-    Common.flyAcross(a);
-    if (!Common.falls(a)) return;
-    a.sound(.land);
-    a.endMove();
-    go(a, fights, .{});
-}
-
-/// The flip toward its target (or the back flip, away from it): a leap, its frame held from its
-/// last; down again it closes in.
-fn flipSetUp(a: Actor) void {
-    const n = a.numbers();
-    a.sound(.leap);
-    a.pause(false);
-    Common.faceTarget(a);
-    a.animate(.flip);
-    a.entity.velocity.height = if (a.mind.back) n.back_flip_up else n.flip_up;
-    const x = if (a.mind.back) n.back_flip_x else n.flip_x;
-    a.entity.velocity.x = if (a.entity.facingLeft()) x.neg() else x;
-}
-
-fn flip(a: Actor) void {
-    const n = a.numbers();
-    if (!a.entity.animation.paused and a.frame() == n.flip_holds) a.pause(true);
-    Common.flyAcross(a);
-    if (!Common.falls(a)) return;
-    a.sound(.land);
-    a.entity.velocity.height = .zero;
-    go(a, .close_in, .{});
-}
+// Coming in, flipping away -------------------------------------------------------------------------
 
 /// Its leap in: shown, behind the wall, in depth 0 and `enter_below` lower, facing its target
 /// in its flip's first pose, its speed up `enter_up` (whole pixels, the fractions kept). Placed
@@ -617,14 +495,8 @@ fn flipAway(a: Actor) void {
 
 // The hooks ---------------------------------------------------------------------------------------
 
-/// In a jump kick, a player's blow knocks it down at once, its health spared (a thrown or swung
-/// thing's takes its damage); grabs do not hold it.
 pub fn struck(a: Actor, blow: tick.Blow) bool {
-    if (a.mind.state != .jump_kick or blow.missile) return Common.struck(a, blow);
-    a.endMove();
-    a.mind.body.other = blow.attacker;
-    Common.enterAtBlow(a, .knocked_down);
-    return true;
+    return Attack.struck(a, blow);
 }
 
 pub fn fall(a: Actor) void {
@@ -636,8 +508,7 @@ pub fn landed(a: Actor) void {
 }
 
 pub fn grabbable(a: Actor, by: Handle) bool {
-    if (a.mind.state == .jump_kick) return false;
-    return Common.grabbable(a, by);
+    return Attack.grabbable(a, by);
 }
 
 pub fn heldBy(a: Actor, holder: Handle) void {
@@ -693,4 +564,171 @@ pub fn takeUpBounces(a: Actor, times: u8) void {
 
 pub fn takeUpStruck(a: Actor, ago: u32, striking: bool) void {
     Common.takeUpStruck(a, ago, striking);
+}
+
+/// The acrobat's attacks, for module `M` (the acrobat's, the trio's: acrobat_trio.zig): its
+/// close in, punch, somersault, jump kick and flip, by its definition's numbers (the acrobat's).
+/// `M` declares the states `close_in`, `punch`, `somersault`, `jump_kick`, `flip` (numbered as
+/// the acrobat's), `fights`, and `somersault_back` (the state a somersault's end may dash back
+/// in: the acrobat's dash; none for the trio, which takes up the fight then); its `Mind` the
+/// acrobat's flags (`back`, `fast`,
+/// `turned`, `down`, `close_in_after`).
+pub fn Attacks(comptime M: type) type {
+    return struct {
+        const A = tick.Actor(M);
+        const C = enemy.Of(M);
+
+        pub const Flags = struct { back: bool = false, fast: bool = false, turned: bool = false };
+
+        /// It enters a state with its set-up's flags.
+        pub fn next(a: A, state: M.State, flags: Flags) void {
+            C.enter(a, state);
+            a.mind.back = flags.back;
+            a.mind.fast = flags.fast;
+            a.mind.turned = flags.turned;
+        }
+
+        /// It closes in beside its target a while: its reach meeting its target it punches; near
+        /// and level with it, it somersaults; out of time it takes up the fight again.
+        pub fn closeInSetUp(a: A) void {
+            const n = a.numbers();
+            a.pause(false);
+            C.faceTarget(a);
+            a.animate(.walk);
+            a.pace(n.close_in_pace, 1);
+            a.setFrame(1);
+            a.mind.body.timer = n.close_in_ticks;
+        }
+
+        pub fn closeIn(a: A) void {
+            const n = a.numbers();
+            a.mind.body.timer -%= 1;
+            if (a.mind.body.timer == 0) return next(a, M.fights, .{});
+            var speed = if (a.mind.fast) n.close_in_fast else n.close_in_speed;
+            if (a.entity.spawn.traits.slow) speed = n.close_in_slow;
+            C.headForTarget(a, n.close_in_beside, speed);
+            if (!C.walk(a)) return;
+            const reach = a.kind.definition.box("close_in_reach") orelse return;
+            if (C.boxMeetsTarget(a, reach)) return next(a, .punch, .{});
+            const t = C.target(a) orelse return;
+            if (@abs(a.entity.position.depth.whole() - t.position.depth.whole()) >= n.close_in_level) return;
+            if (@abs(a.entity.position.x.whole() - t.position.x.whole()) >= n.close_in_near) return;
+            next(a, .somersault, .{});
+        }
+
+        /// The punch, unless it left the screen's middle; at its last frame it flips back.
+        pub fn punchSetUp(a: A) void {
+            if (C.offScreen(a)) return;
+            C.faceTarget(a);
+            a.startMove(.punch);
+            a.pause(false);
+        }
+
+        pub fn punch(a: A) void {
+            if (a.frame() != a.numbers().punch_ends) return;
+            a.endMove();
+            next(a, .flip, .{ .back = true });
+        }
+
+        /// The somersault at its target, unless it left the screen's middle: a leap across, held
+        /// on its first frame until it is down again (at once when near); then, at its last
+        /// frame, by a draw it flips back, dashes back (`somersault_back`), or takes up the fight.
+        pub fn somersaultSetUp(a: A) void {
+            const n = a.numbers();
+            if (C.offScreen(a)) return;
+            _ = C.chooseTarget(a);
+            a.sound(.leap);
+            C.faceTarget(a);
+            a.startMove(.somersault);
+            a.pause(true);
+            a.setTicksLeft(1);
+            a.entity.velocity.x = if (a.entity.facingLeft()) n.somersault_x.neg() else n.somersault_x;
+            a.entity.velocity.height = n.somersault_up;
+            a.mind.down = false;
+            const t = C.target(a) orelse return;
+            if (@abs(t.position.x.whole() - a.entity.position.x.whole()) > n.somersault_near) return;
+            a.mind.down = true;
+            a.pause(false);
+            a.setFrame(1);
+        }
+
+        pub fn somersault(a: A) void {
+            const n = a.numbers();
+            if (!a.mind.down) {
+                C.flyAcross(a);
+                if (!C.falls(a)) return;
+                a.sound(.land);
+                a.mind.down = true;
+                a.pause(false);
+            }
+            if (a.frame() != n.somersault_ends) return;
+            a.endMove();
+            switch (a.draw(.somersault_end) & 3) {
+                0 => next(a, .flip, .{ .back = true }),
+                1 => if (M.somersault_back) |back| next(a, back, .{ .turned = true }) else next(a, M.fights, .{}),
+                else => next(a, M.fights, .{}),
+            }
+        }
+
+        /// The jump kick at its target: a leap across, its frame held from its second; down
+        /// again it takes up the fight (or closes in, `close_in_after`). Its blow knocks down.
+        pub fn jumpKickSetUp(a: A) void {
+            const n = a.numbers();
+            a.sound(.leap);
+            a.pause(false);
+            C.faceTarget(a);
+            a.startMove(.jump_kick);
+            a.entity.velocity.height = n.jump_kick_up;
+            a.entity.velocity.x = if (a.entity.facingLeft()) n.jump_kick_x.neg() else n.jump_kick_x;
+        }
+
+        pub fn jumpKick(a: A) void {
+            if (!a.entity.animation.paused and a.frame() == a.numbers().jump_kick_holds) a.pause(true);
+            C.flyAcross(a);
+            if (!C.falls(a)) return;
+            a.sound(.land);
+            a.endMove();
+            const after = a.mind.close_in_after;
+            a.mind.close_in_after = false;
+            next(a, if (after) .close_in else M.fights, .{});
+        }
+
+        /// The flip toward its target (or the back flip, away from it): a leap, its frame held
+        /// from its last; down again it closes in.
+        pub fn flipSetUp(a: A) void {
+            const n = a.numbers();
+            a.sound(.leap);
+            a.pause(false);
+            C.faceTarget(a);
+            a.animate(.flip);
+            a.entity.velocity.height = if (a.mind.back) n.back_flip_up else n.flip_up;
+            const x = if (a.mind.back) n.back_flip_x else n.flip_x;
+            a.entity.velocity.x = if (a.entity.facingLeft()) x.neg() else x;
+        }
+
+        pub fn flip(a: A) void {
+            const n = a.numbers();
+            if (!a.entity.animation.paused and a.frame() == n.flip_holds) a.pause(true);
+            C.flyAcross(a);
+            if (!C.falls(a)) return;
+            a.sound(.land);
+            a.entity.velocity.height = .zero;
+            next(a, .close_in, .{});
+        }
+
+        /// In a jump kick, a player's blow knocks it down at once, its health spared (a thrown
+        /// or swung thing's takes its damage); grabs do not hold it.
+        pub fn struck(a: A, blow: tick.Blow) bool {
+            if (a.mind.state != .jump_kick or blow.missile) return C.struck(a, blow);
+            a.endMove();
+            a.mind.body.other = blow.attacker;
+            C.enterAtBlow(a, .knocked_down);
+            return true;
+        }
+
+        pub fn grabbable(a: A, by: Handle) bool {
+            if (a.mind.state == .jump_kick) return false;
+            return C.grabbable(a, by);
+        }
+    };
 }

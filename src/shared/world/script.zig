@@ -736,6 +736,7 @@ pub fn placing(rec: *const Spawn) entity.Spawn {
         sp.offset_x = o.x;
         sp.offset_depth = o.depth;
     }
+    sp.offset_nibbles = rec.offset_nibbles;
     sp.bar = rec.bar;
     sp.colours = rec.colours;
     if (rec.height) |h| sp.height = @intCast(h);

@@ -54,10 +54,10 @@
 //! `flight`s across the screen, their `flier`s and the posters' corners they stir
 //! (`flight_scenery`), the `pepper` a drum holds, and round 2's `juggler` with its knives
 //! (`juggler_knife`), round 2's boss `boss_r2` with his claws (`boss_r2_claws`) and his trail
-//! (`boss_r2_trail`); round 3's: the `lamp`s, the `crate`s, the `drifter`s, the `rain`; round 4's:
-//! the cones, posts and barriers a blow knocks away (`obstacle_r4`), its boss `boss_r4` and his
-//! shoulder (`boss_r4_shoulder`); round 5's: the things on the deck a blow knocks away
-//! (`obstacle`).
+//! (`boss_r2_trail`); round 3's: the `lamp`s, the `crate`s, the `drifter`s, the `rain`, the
+//! acrobats of a trio (`acrobat_trio`); round 4's: the cones, posts and barriers a blow knocks
+//! away (`obstacle_r4`), its boss `boss_r4` and his shoulder (`boss_r4_shoulder`); round 5's: the
+//! things on the deck a blow knocks away (`obstacle`).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -71,6 +71,7 @@ pub const signal = @import("behaviours/signal.zig");
 pub const galsia_pipe = @import("behaviours/galsia_pipe.zig");
 pub const galsia_knife = @import("behaviours/galsia_knife.zig");
 pub const acrobat = @import("behaviours/acrobat.zig");
+pub const acrobat_trio = @import("behaviours/acrobat_trio.zig");
 pub const brawler = @import("behaviours/brawler.zig");
 pub const shutter = @import("behaviours/shutter.zig");
 pub const weapon = @import("behaviours/weapon.zig");
@@ -120,6 +121,7 @@ pub const Mind = union(enum) {
     galsia_pipe: galsia_pipe.Mind,
     galsia_knife: galsia_knife.Mind,
     acrobat: acrobat.Mind,
+    acrobat_trio: acrobat_trio.Mind,
     brawler: brawler.Mind,
     shutter: shutter.Mind,
     weapon: weapon.Mind,

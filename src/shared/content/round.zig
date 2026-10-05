@@ -123,6 +123,9 @@ pub const Spawn = struct {
     entrance: ?Entrance = null,
     traits: Traits = .empty,
     offset: ?Offset = null,
+    /// The two indices its offset comes from (across in the high nibble, in depth in the low:
+    /// its kind's offsets table), for a kind that counts on from them (a trio's others).
+    offset_nibbles: ?u8 = null,
     strength: u8 = 0,
     /// A breakable's: the kind of item it holds.
     holds: ?[]const u8 = null,
@@ -490,6 +493,7 @@ fn spawnValue(arena: std.mem.Allocator, s: *const Spawn, where: Where) !json.Val
         .{ .key = "x", .value = json.Value.num(o.x) },
         .{ .key = "depth", .value = json.Value.num(o.depth) },
     }) });
+    if (s.offset_nibbles) |o| try f.append(arena, .{ .key = "offset_nibbles", .value = json.Value.num(o) });
     if (s.strength != 0) try f.append(arena, .{ .key = "strength", .value = json.Value.num(s.strength) });
     if (s.holds) |h| try f.append(arena, .{ .key = "holds", .value = .{ .str = h } });
     if (s.bar) |b| try f.append(arena, .{ .key = "bar", .value = json.Value.num(b) });
@@ -675,7 +679,7 @@ fn readPair(n: json.Node, comptime T: type) Error![2]T {
 
 /// The fields a spawn record may have, by where it is.
 fn spawnFields(comptime where: Where) []const []const u8 {
-    const common = [_][]const u8{ "kind", "depth", "level", "two_players", "entrance", "offset", "strength", "holds", "bar", "colours", "art" };
+    const common = [_][]const u8{ "kind", "depth", "level", "two_players", "entrance", "offset", "offset_nibbles", "strength", "holds", "bar", "colours", "art" };
     const own: []const []const u8 = switch (where) {
         .placed => &.{ "x", "height", "drift" },
         .wave => &.{ "side", "after" },
@@ -723,6 +727,7 @@ fn readSpawn(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Erro
         try o.only(&.{ "x", "depth" });
         s.offset = .{ .x = try (try o.get("x")).int(i16), .depth = try (try o.get("depth")).int(i16) };
     }
+    if (try n.opt("offset_nibbles")) |o| s.offset_nibbles = try o.int(u8);
     if (try n.opt("strength")) |x| s.strength = try x.int(u8);
     if (try n.opt("holds")) |h| {
         s.holds = try h.string();

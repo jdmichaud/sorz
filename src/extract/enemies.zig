@@ -548,7 +548,55 @@ pub fn galsiaPipe(arena: std.mem.Allocator, rom: []const u8) Error!entity.Defini
 /// The acrobat (type $25, its handler 0xE8F0, sor-remaster's obj/acrobat.zig): it circles its
 /// place, lines up, dashes, closes in and punches, somersaults, jump kicks and flips.
 pub fn acrobat(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
-    var d = try begin(arena, rom, 0x25, "acrobat", &.{
+    var d = try acrobatOf(arena, rom, 0x25);
+    return finish(&d, "acrobat", 0x25, "acrobat", "the acrobat (handler 0xE8F0)");
+}
+
+/// The acrobats who fight as a trio (type $2A, handler 0xF7D0, sor-remaster's
+/// obj/acrobat_trio.zig): the acrobat's art, attacks and numbers, and the trio's own: its others
+/// brought beside the leader (0xF7D8), their places out from the screen's middle (0xF93C), the
+/// walk there, the pose and the charge (0xFB40), the brace (0xF9B6), the leap across (0xF9F0).
+pub fn acrobatTrio(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    var d = try acrobatOf(arena, rom, 0x2A);
+    try d.number("role_1_beside", try moveq(rom, 0xF83E, 0), "ROM 0x0F83E: moveq #N,d0 (role 1's place ahead of the leader)");
+    try d.number("role_0_beside", try moveq(rom, 0xF84C, 0), "ROM 0x0F84C: moveq #N,d0 (role 0's)");
+    if (u32be(rom, 0xF93C) != 0x3038E002 or u32be(rom, 0xF996) != 0x3038E002 or u32be(rom, 0xFA0C) != 0x3038E002) return error.BadData;
+    const middle = try immediate(rom, 0xF940, &.{ 0x06, 0x40 }, 2);
+    if (try immediate(rom, 0xF99A, &.{ 0x06, 0x40 }, 2) != middle or try immediate(rom, 0xFA10, &.{ 0x06, 0x40 }, 2) != middle) return error.BadData;
+    try d.number("middle", middle, "ROM 0x0F940: addi.w #N,d0 (to the camera's place across, $FFE002)");
+    try d.number("leader_out", try moveq(rom, 0xF95C, 1), "ROM 0x0F95C: moveq #N,d1");
+    try d.number("role_1_out", try immediate(rom, 0xF974, &.{ 0x32, 0x3C }, 2), "ROM 0x0F974: move.w #N,d1");
+    try d.number("role_0_out", try immediate(rom, 0xF97E, &.{ 0x32, 0x3C }, 2), "ROM 0x0F97E: move.w #N,d1");
+    try d.number("place_pace", (try immediate(rom, 0xF898, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0F898: move.w #N*$100+1,(12,a0)");
+    try d.number("place_speed", try immediate(rom, 0xF89E, &.{ 0x31, 0x7C }, 2) << 8, "ROM 0x0F89E: move.w #N,(100,a0) (8.8)");
+    const near = try immediate(rom, 0xFAFE, &.{ 0x0C, 0x40 }, 2);
+    if (try immediate(rom, 0xFA80, &.{ 0x0C, 0x40 }, 2) != near) return error.BadData;
+    try d.number("near", near, "ROM 0x0FAFE: cmpi.w #N,d0 (holding: it leaps at its target; landing, ROM 0x0FA80: it closes in)");
+    if (try moveq(rom, 0xFB56, 0) != 4) return error.BadData;
+    try d.number("pose_frame", try moveByte(rom, 0xFB5C, 10), "ROM 0x0FB5C: move.b #N,(10,a0) (of its knock-down's frames, animation 4: ROM 0x0FB56)");
+    try d.number("pose_ticks", try moveByte(rom, 0xFB62, 80), "ROM 0x0FB62: move.b #N,(80,a0)");
+    try d.number("charge_speed", try immediate(rom, 0xFB7A, &.{ 0x21, 0x7C }, 4), "ROM 0x0FB7A: move.l #N,(28,a0)");
+    try d.number("charge_pace", (try immediate(rom, 0xFB8E, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0FB8E: move.w #N*$100+1,(12,a0)");
+    try d.number("role_0_near", try immediate(rom, 0xFBE4, &.{ 0x0C, 0x41 }, 2), "ROM 0x0FBE4: cmpi.w #N,d1");
+    try d.number("role_1_near", try immediate(rom, 0xFBF2, &.{ 0x0C, 0x41 }, 2), "ROM 0x0FBF2: cmpi.w #N,d1");
+    try d.number("leader_near", try immediate(rom, 0xFC06, &.{ 0x0C, 0x41 }, 2), "ROM 0x0FC06: cmpi.w #N,d1");
+    try d.number("brace_ticks", try moveByte(rom, 0xF9D0, 80), "ROM 0x0F9D0: move.b #N,(80,a0)");
+    if (try moveq(rom, 0xF9FE, 0) != 28) return error.BadData;
+    try d.number("leap_up", try immediate(rom, 0xFA04, &.{ 0x21, 0x7C }, 4), "ROM 0x0FA04: move.l #N,(36,a0) (the flip's animation, 28: ROM 0x0F9FE)");
+    try d.number("leap_holds", try frameCompared(rom, 0xFA52), "ROM 0x0FA52: cmpi.b #N,(10,a0)");
+    var speeds: [4]i32 = undefined;
+    for (&speeds, 0..) |*v, k| v.* = @as(i8, @bitCast(rom[0xFA8E + k]));
+    try d.table("leap_speeds", &speeds, "ROM 0x0FA8E: bytes, by the low byte of the distance to the middle, in quarters of 64 (0xFA1C)");
+    var offsets: [16]i32 = undefined;
+    for (&offsets, 0..) |*v, k| v.* = @as(i8, @bitCast(rom[0x9484 + k]));
+    try d.table("offsets", &offsets, "ROM 0x09484: the offsets from the target by a nibble (0x945A): its others' offsets' byte one on for role 1 (0xF7D8)");
+    return finish(&d, "acrobat_trio", 0x2A, "acrobat_trio", "the acrobats of a trio (handler 0xF7D0)");
+}
+
+/// An acrobat's definition of type `kind` (the acrobat's, the trio's): the acrobat's art, attacks
+/// and numbers.
+fn acrobatOf(arena: std.mem.Allocator, rom: []const u8, kind: u8) Error!Def {
+    var d = try begin(arena, rom, kind, "acrobat", &.{
         .{ .name = "punch", .entry = try animEntryWord(rom, 0xEB7C) },
         .{ .name = "jump_kick", .entry = try animEntryWord(rom, 0xEDEC) },
         .{ .name = "flip", .entry = try animEntry(rom, 0xEE9E) },
@@ -629,7 +677,7 @@ pub fn acrobat(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definitio
     try d.sound("leap", @bitCast(@as(i8, @intCast(try moveq(rom, 0xEDE0, 7)))));
     try d.sound("land", @bitCast(@as(i8, @intCast(try moveq(rom, 0xEEF6, 7)))));
     try d.sound("flip_away", @bitCast(@as(i8, @intCast(try moveq(rom, 0xEA92, 7)))));
-    return finish(&d, "acrobat", 0x25, "acrobat", "the acrobat (handler 0xE8F0)");
+    return d;
 }
 
 /// The box of the pair (`right`, `left`) of the objects' table named `animation`_`role`, which a
@@ -1562,6 +1610,7 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity
     try out.append(arena, try signal(arena, rom));
     try out.append(arena, try galsiaPipe(arena, rom));
     try out.append(arena, try acrobat(arena, rom));
+    try out.append(arena, try acrobatTrio(arena, rom));
     try out.append(arena, try shutter(arena, rom));
     try out.append(arena, try antonio(arena, rom));
     try out.append(arena, try boomerang(arena, rom));

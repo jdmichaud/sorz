@@ -84,7 +84,10 @@ pub const Flags = packed struct(u16) {
     keeps_depth: bool = false,
     /// Its kind's shadow is not drawn (an enemy behind its shutter until it lands).
     shadowless: bool = false,
-    _: u2 = 0,
+    /// Its blows land but do no damage: the original never set its power (a trio's others,
+    /// acrobat_trio.zig).
+    harmless: bool = false,
+    _: u1 = 0,
 };
 
 /// The animation an entity plays: one of its kind's, the frame it is on, and the logic ticks
@@ -186,6 +189,8 @@ pub const Spawn = struct {
     traits: Traits = .{},
     offset_x: i16 = 0,
     offset_depth: i16 = 0,
+    /// The indices of its offsets in its kind's table, for a kind that counts on from them.
+    offset_nibbles: ?u8 = null,
     strength: u2 = 0,
     /// A boss's entry in the status bar's names and bars.
     bar: ?u8 = null,

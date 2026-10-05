@@ -491,8 +491,8 @@ fn blow(t: *Tick, ah: Handle, th: Handle) bool {
 fn strike(t: *Tick, ah: Handle, th: Handle) bool {
     const a = t.world.get(ah) orelse return false;
     const move_index = a.move orelse return false;
-    const damage = t.power(a);
-    if (damage == 0) return false;
+    if (t.power(a) == 0) return false;
+    const damage: i16 = if (a.flags.harmless) 0 else t.power(a);
     const target = t.world.get(th) orelse return false;
     const ak = t.kindOf(a);
     const m = ak.definition.moves[move_index];
