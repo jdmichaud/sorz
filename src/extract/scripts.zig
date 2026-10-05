@@ -83,9 +83,9 @@ const wave_end: u16 = 0x0099;
 /// 1's at VBlank 1139, round 2's at 17526); the others' are the flow's until they are measured.
 const measured_loads = [_]u16{ 53, 49 };
 
-/// The rounds whose scripts the extractor writes (PLAN items 13 and 15: rounds 1 to 4; the others,
-/// whose last sections differ, to come).
-pub const extracted = [_]u8{ 1, 2, 3, 4 };
+/// The rounds whose scripts the extractor writes (PLAN items 13 and 15: rounds 1 to 5; the others
+/// to come).
+pub const extracted = [_]u8{ 1, 2, 3, 4, 5 };
 
 /// The kinds' names of the original's object types: the traces' (sor-remaster's docs/traces.md),
 /// but the pepper's (type $0C, the traces' bottle).
@@ -575,15 +575,20 @@ fn jsrTarget(rom: []const u8, at: u32) Error!u32 {
 }
 
 /// The round's own routine (0x112F2, its table at 0x11300, a play tick before the objects): none
-/// (`rts`), or round 3's sound (0x11310): while its times last ($FFFA55), its ticks ($FFFB50)
-/// count down; at zero they come again from $FFFB51, a time is spent and the sound is asked for.
-/// Its set-up (0x19D08: its times, its first ticks and the next ones) runs at the round's load (the
-/// round's entry of 0x19C4C) and at a section's opening (0x195AE: for the round of its
-/// `cmpi.w`). A routine of another kind (round 5's horn) is refused until its round comes.
+/// (`rts`), round 3's sound (0x11310) or round 5's horn (0x1132E, `endless`).
 fn ownSound(arena: std.mem.Allocator, rom: []const u8, r: u32) Error!?round.OwnSound {
     const table: u32 = 0x11300;
     const at: u32 = table + u16be(rom, table + 2 * r);
     if (u16be(rom, at) == 0x4E75) return null;
+    if (u16be(rom, at) == 0x5378) return try endless(arena, rom, r, at);
+    return try counted(arena, rom, r, at);
+}
+
+/// Round 3's kind of own sound: while its times last ($FFFA55), its ticks ($FFFB50) count down; at
+/// zero they come again from $FFFB51, a time is spent and the sound is asked for. Its set-up
+/// (0x19D08: its times, its first ticks and the next ones) runs at the round's load (the round's
+/// entry of 0x19C4C) and at a section's opening (0x195AE: for the round of its `cmpi.w`).
+fn counted(arena: std.mem.Allocator, rom: []const u8, r: u32, at: u32) Error!round.OwnSound {
     const pattern = [_]u8{ 0x4A, 0x38, 0xFA, 0x55, 0x67, 0x16, 0x53, 0x38, 0xFB, 0x50, 0x66, 0x10, 0x11, 0xF8, 0xFB, 0x51, 0xFB, 0x50, 0x53, 0x38, 0xFA, 0x55, 0x7E };
     if (at + pattern.len + 1 > rom.len or !std.mem.eql(u8, rom[at..][0..pattern.len], &pattern)) return error.BadData;
     const request = rom[at + pattern.len];
@@ -598,6 +603,30 @@ fn ownSound(arena: std.mem.Allocator, rom: []const u8, r: u32) Error!?round.OwnS
         .times = rom[setup + 3],
         .first = rom[setup + 8],
         .every = rom[setup + 9],
+    };
+}
+
+/// Round 5's kind of own sound: its ticks (the word $FFFB50) count down; at zero they come again
+/// from the routine's `move.w` and the sound is asked for, endlessly. Its first ticks are set at
+/// the round's load only (the round's entry of 0x19C4C, its `move.w #N,($FFFB50)`).
+fn endless(arena: std.mem.Allocator, rom: []const u8, r: u32, at: u32) Error!round.OwnSound {
+    // subq.w #1,($FB50); bne.s +12; move.w #N,($FB50); moveq #S,d7; jmp (d16,pc)
+    if (at + 18 > rom.len or u16be(rom, at + 2) != 0xFB50 or u16be(rom, at + 4) != 0x660C or u16be(rom, at + 6) != 0x31FC or u16be(rom, at + 10) != 0xFB50 or rom[at + 12] != 0x7E or u16be(rom, at + 14) != 0x4EFA) return error.BadData;
+    const every = u16be(rom, at + 8);
+    const loads: u32 = 0x19C4C;
+    const load = loads + u16be(rom, loads + 2 * r);
+    // The set-up's `move.w #N,($FB50)` (0x19C62: three `move.b` first).
+    const first_at = load + 18;
+    if (first_at + 6 > rom.len or u16be(rom, first_at) != 0x31FC or u16be(rom, first_at + 4) != 0xFB50) return error.BadData;
+    const first = u16be(rom, first_at + 2);
+    if (first == 0 or every == 0) return error.BadData;
+    return .{
+        .provenance = try std.fmt.allocPrint(arena, "the round's own routine (0x112F2, ROM 0x{X:0>5}): its sound ROM 0x{X:0>5}, endlessly, every ROM 0x{X:0>5}'s ticks; its first ticks ROM 0x{X:0>5}, set at the round's load only (0x19C4C)", .{ at, at + 13, at + 8, first_at + 2 }),
+        .sound = try soundName(rom[at + 13]),
+        .times = null,
+        .per_section = false,
+        .first = first,
+        .every = every,
     };
 }
 
@@ -797,11 +826,23 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     };
     const first_wall: i32 = u16be(rom, limits + 6);
 
-    // The timer (0x195F6): moveq #$40 for the first sections, #$50 from the section of the
-    // compare; its pace (0x10C88).
-    const timer_first = try decimal(try immediate(rom, 0x195F8, &.{0x70}, 1));
-    const later_from = try immediate(rom, 0x1961C, &.{ 0x0C, 0x78 }, 2);
-    const timer_later = try decimal(try immediate(rom, 0x19624, &.{0x70}, 1));
+    // The timer (0x195F6) by the round (the `cmpi.w`s on $FF02): before the round of 0x195FA's,
+    // moveq #$40 for the first sections, #$50 from the section of 0x1961C's compare; from it,
+    // 0x19602's, and the same from the section of 0x19610's compare, but in the round of
+    // 0x19604's, 0x1960C's for all. Its pace (0x10C88).
+    if (u16be(rom, 0x195FE) != 0xFF02 or u16be(rom, 0x19608) != 0xFF02 or u16be(rom, 0x19614) != 0xFF04 or u16be(rom, 0x19620) != 0xFF04) return error.BadData;
+    const late_rounds = try immediate(rom, 0x195FA, &.{ 0x0C, 0x78 }, 2);
+    const own_timer_round = try immediate(rom, 0x19604, &.{ 0x0C, 0x78 }, 2);
+    const Timer = struct { first: u32, later: u32, from: u32 };
+    const timer_at: Timer = if (r < late_rounds)
+        .{ .first = 0x195F8, .later = 0x19624, .from = 0x1961C }
+    else if (r == own_timer_round)
+        .{ .first = 0x1960C, .later = 0x1960C, .from = 0x1961C }
+    else
+        .{ .first = 0x19602, .later = 0x19618, .from = 0x19610 };
+    const timer_first = try decimal(try immediate(rom, timer_at.first, &.{0x70}, 1));
+    const later_from = try immediate(rom, timer_at.from, &.{ 0x0C, 0x78 }, 2);
+    const timer_later = try decimal(try immediate(rom, timer_at.later, &.{0x70}, 1));
     const pace = try immediate(rom, 0x10C9A, &.{ 0x31, 0xFC }, 2);
 
     // A life starts at the camera's X, at depth $40 (player 2, $20 less) and height 0 (0x1E0E).
@@ -810,8 +851,13 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     const height = try immediate(rom, 0x1E64, &.{ 0x31, 0x7C }, 2);
 
     var l: Lists = .{ .bytes = lists, .at = list_start - 0xFF6800 };
-    // Rounds 1 to 4 (0x5F4): sections 0 to 3, then the boss's.
-    const section_count = 4;
+    // A section's opening (0x5F4) brings the boss's from the section of a `cmpi.w` on $FF04 by
+    // the round: before the round of 0x62E's, 0x67A's (sections 0 to 3, then the boss's); from
+    // it, 0x63E's (sections 0 to 5).
+    if (u16be(rom, 0x632) != 0xFF02 or u16be(rom, 0x642) != 0xFF04 or u16be(rom, 0x67E) != 0xFF04) return error.BadData;
+    const late_sections = try immediate(rom, 0x62E, &.{ 0x0C, 0x78 }, 2);
+    const boss_from = try immediate(rom, if (r < late_sections) 0x67A else 0x63E, &.{ 0x0C, 0x78 }, 2);
+    const section_count: u32 = @intCast(boss_from + 1);
     const sections = try arena.alloc(round.Section, section_count);
     for (sections, 0..) |*s, k| {
         const lists_from = l.at;
@@ -961,7 +1007,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
             .height = @intCast(height),
         },
         .timer = .{
-            .provenance = try std.fmt.allocPrint(arena, "a second every ROM 0x10C9C's ticks (0x10C88); {d} seconds at a section's start (ROM 0x195F9), {d} from section {d} (ROM 0x19625, 0x1961E)", .{ timer_first, timer_later, later_from }),
+            .provenance = try std.fmt.allocPrint(arena, "a second every ROM 0x10C9C's ticks (0x10C88); {d} seconds at a section's start (ROM 0x{X:0>5}), {d} from section {d} (ROM 0x{X:0>5}, 0x{X:0>5}), by the round (0x195F6: ROM 0x195FC, 0x19606)", .{ timer_first, timer_at.first + 1, timer_later, later_from, timer_at.later + 1, timer_at.from + 2 }),
             .pace = @intCast(pace),
         },
         .sections = sections,
