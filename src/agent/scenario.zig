@@ -621,7 +621,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
         const kind = str(o, "kind") orelse return error.BadTrace;
         // A breakable's pieces (its kind's, not in its first state) are its own, not the script's.
         const piece = std.mem.eql(u8, kind, "breakable") and !std.mem.eql(u8, str(o, "state") orelse "", "s0");
-        if (!scripted(kind) or piece) {
+        if (!(scripted(kind) or std.mem.eql(u8, kind, "go_arrow")) or piece) {
             try others.append(arena, .{ .t = @intCast(int(o, "t") orelse 0), .id = @intCast(int(o, "e") orelse continue), .kind = try arena.dupe(u8, kind) });
             continue;
         }
