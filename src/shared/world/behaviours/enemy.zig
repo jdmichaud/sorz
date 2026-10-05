@@ -1442,9 +1442,19 @@ pub fn Of(comptime M: type) type {
                     body(a).fresh = true;
                     // One that walks off as it was shows its walk then (an armed one's).
                     const as_it_was = @hasDecl(M, "walks_off_as_it_was") and M.walks_off_as_it_was;
-                    if (@hasField(M.State, "walk_off") and as_it_was and a.mind.state == .walk_off) {
+                    const walks_off = @hasField(M.State, "walk_off") and a.mind.state == .walk_off;
+                    if (walks_off and as_it_was) {
                         a.animate(walkOf(a));
                     } else if (a.entity.animation.index == null) a.animate(.walk);
+                    // Walking off since its first tick at least: set up then (its pace, its
+                    // side), at the speed it has.
+                    if (walks_off and elapsed >= 1) {
+                        const v = a.entity.velocity;
+                        body(a).waits = false;
+                        M.begin(a);
+                        a.entity.velocity = v;
+                        body(a).last_walk_off = a.tick.world.tick -% elapsed;
+                    }
                 },
             }
         }
@@ -1524,11 +1534,17 @@ pub fn Of(comptime M: type) type {
             a.pause(false);
             const t = a.tables();
             b.timer = 1;
-            if (draws.len < 2) return;
-            const k = draws[1] & 3;
-            if (t.pacing_speed[k] != @abs(a.entity.velocity.x.raw)) return;
-            b.timer = t.pacing[draws[0] & 3] -| @as(u8, @intCast(@min(ago, 255)));
-            a.pace(t.pacing_pace[k], 1);
+            const speed = @abs(a.entity.velocity.x.raw);
+            if (draws.len >= 2 and t.pacing_speed[draws[1] & 3] == speed) {
+                b.timer = t.pacing[draws[0] & 3] -| @as(u8, @intCast(@min(ago, 255)));
+                a.pace(t.pacing_pace[draws[1] & 3], 1);
+                return;
+            }
+            // Without its draws, its frames' pace is its speed's.
+            for (t.pacing_speed, 0..) |s, k| if (s == speed) {
+                a.pace(t.pacing_pace[k], 1);
+                return;
+            };
         }
 
         /// Taken up held: its holder's move under way was taken already; held since a tick at

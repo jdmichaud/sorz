@@ -279,6 +279,12 @@ pub const Tick = struct {
         dispatch(t, h, "takeUpStruck", void, {}, .{ ago, striking });
     }
 
+    /// Taken up, the entity (a player) got up `ago` ticks before: it blinks for the rest of its
+    /// blinking.
+    pub fn takeUpBlink(t: *Tick, h: Handle, ago: u32) void {
+        dispatch(t, h, "takeUpBlink", void, {}, .{ago});
+    }
+
     /// Taken up from a situation, the entity holds the weapon `weapon` (its holder set already).
     pub fn takeUpWeapon(t: *Tick, h: Handle, weapon: Handle) void {
         dispatch(t, h, "takeUpWeapon", void, {}, .{weapon});

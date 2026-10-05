@@ -406,6 +406,8 @@ pub const Situation = struct {
         course_draws: []const u16 = &.{},
         /// The tick its speed across became what it is.
         across_since: u64 = 0,
+        /// A player's: the tick it last got up (its blinking starts then).
+        got_up_at: ?u64 = null,
         bounces: u8 = 0,
     };
 };
@@ -504,6 +506,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
                 x.since = @intCast(int(o, "t") orelse 0);
                 x.presses = &.{};
                 x.bounces = 0;
+                if (x.player != null and std.mem.eql(u8, state, "recover")) x.got_up_at = x.since;
             }
             x.state = try arena.dupe(u8, state);
             if (str(o, "facing")) |f| x.left = std.mem.eql(u8, f, "left");
@@ -826,6 +829,10 @@ pub const Run = struct {
         r.round = extras.round;
         takeUpScript(&r, round, situation);
         var made: [world.entity.capacity]?struct { h: world.Handle, e: *const Situation.Seen } = @splat(null);
+        // A game of two players: the script's records for two players are its.
+        const two = for (situation.entities) |*e| {
+            if (e.player == 2) break true;
+        } else false;
         for (situation.entities) |*e| {
             var kind_name = e.kind;
             if (e.player) |p| switch (script.start) {
@@ -848,7 +855,7 @@ pub const Run = struct {
                 // The camera follows from where the situation's tick drew the player.
                 w.camera.drawn[p - 1] = x.position.x;
             }
-            if (x.team == .enemy) takeUpSpawn(kinds, x, e, extras.round, &r.used);
+            if (x.team == .enemy) takeUpSpawn(kinds, x, e, extras.round, two, &r.used);
             made[h.index] = .{ .h = h, .e = e };
         }
         // The animation the other program's probe names by the original's number, for the kinds
@@ -895,6 +902,7 @@ pub const Run = struct {
             t.takeUp(h, @intCast(situation.t -| e.since));
             t.takeUpSince(h, @intCast(situation.t -| e.across_since), @intCast(situation.t -| e.anim_since));
             if (e.came_from) |from| t.takeUpCameFrom(h, from);
+            if (e.got_up_at) |at| t.takeUpBlink(h, @intCast(situation.t -| at));
             t.takeUpPlayersThen(h, e.players_depth);
             if (e.taken != 0) t.takeUpTaken(h, e.taken);
             t.takeUpCourse(h, @intCast(situation.t -| e.course_since), e.course_draws);
@@ -1013,9 +1021,10 @@ pub const Run = struct {
 
     /// The place the round's script gave the enemy `x` (seen as `e`): the record of its kind
     /// that placed it where it appeared (placed ahead: at its place; brought in: at its depth),
-    /// not yet taken by another. One that has come in, waited or flanked has the way in and the
+    /// not yet taken by another, and not one for two players in a game of one (`two`). One that
+    /// has come in, waited or flanked has the way in and the
     /// place it has now; one that changed kind keeps its old blows' damage.
-    fn takeUpSpawn(kinds: *const world.Kinds, x: *world.Entity, e: *const Situation.Seen, round_script: ?*const sorz.content.round.Round, used: *[256]bool) void {
+    fn takeUpSpawn(kinds: *const world.Kinds, x: *world.Entity, e: *const Situation.Seen, round_script: ?*const sorz.content.round.Round, two: bool, used: *[256]bool) void {
         const Record = sorz.content.round.Spawn;
         var n: usize = 0;
         const kind = e.was_kind orelse e.kind;
@@ -1039,6 +1048,7 @@ pub const Run = struct {
                 for (list) |*rec| {
                     defer n += 1;
                     if (n >= used.len or used[n]) continue;
+                    if (rec.two_players and !two) continue;
                     if (!std.mem.eql(u8, rec.kind, kind) or rec.depth != e.spawned_at[1]) continue;
                     if (placed and rec.x != e.spawned_at[0]) continue;
                     used[n] = true;
@@ -1134,7 +1144,7 @@ pub const Run = struct {
             const h = spawnSeen(w, self.kinds, kind, e) catch return error.Full;
             const x = w.get(h).?;
             if (e.health) |hp| x.health = @intCast(hp);
-            if (x.team == .enemy) takeUpSpawn(self.kinds, x, e, self.round, &self.used);
+            if (x.team == .enemy) takeUpSpawn(self.kinds, x, e, self.round, w.players[1].entity != null, &self.used);
             self.ids[h.index] = e.id;
             self.generations[h.index] = h.generation;
             if (self.trace) |tw| tw.assignId(h.index, h.generation, e.id);

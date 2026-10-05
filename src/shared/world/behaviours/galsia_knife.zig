@@ -192,6 +192,11 @@ fn jumpIn(a: Actor) void {
     Common.enter(a, .size_up);
 }
 
+/// Its walk: its knife in hand, while it has one.
+pub fn walkAnimation(a: Actor) Animation {
+    return if (a.mind.body.weapon != null) .walk_knife else .walk;
+}
+
 /// It closes in to its place beside its target, its knife in hand: there it sizes it up.
 fn closeInSetUp(a: Actor) void {
     const n = a.numbers();

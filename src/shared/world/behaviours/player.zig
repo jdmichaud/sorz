@@ -358,6 +358,12 @@ pub fn takeUp(a: Actor, elapsed: u32) void {
     }
 }
 
+/// Taken up, it got up `ago` ticks before: its blinking, which started then, runs on.
+pub fn takeUpBlink(a: Actor, ago: u32) void {
+    const n = a.numbers();
+    if (ago < n.blink) a.mind.blink = n.blink - @as(u8, @intCast(ago));
+}
+
 /// Taken up, it bounced `times` times in its fall.
 pub fn takeUpBounces(a: Actor, times: u8) void {
     a.mind.bounces = times;

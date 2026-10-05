@@ -335,8 +335,23 @@ pub fn letOut(a: Actor) void {
     enemy.ShutterEntry(@This()).letOut(a);
 }
 
+/// Taken up following since `elapsed` ticks: its count gone down by them, its target's turns
+/// counted as its count's second bit has them, the target facing as it does now.
 pub fn takeUp(a: Actor, elapsed: u32) void {
     Common.takeUp(a, elapsed);
+    if (a.mind.state != .follow or elapsed == 0) return;
+    const t = Common.target(a) orelse return;
+    const m = a.mind;
+    for (0..@min(elapsed, 255)) |_| {
+        m.ticks -%= 1;
+        if (m.ticks <= 1) return;
+        if (a.entity.facing != t.facing) {
+            m.ticks |= 2;
+        } else if (m.ticks & 2 != 0) {
+            m.ticks &= ~@as(u8, 2);
+            if (m.turns > 1) m.turns -= 1;
+        }
+    }
 }
 
 pub fn takeUpHeld(a: Actor, elapsed: u32) void {
