@@ -155,6 +155,10 @@ fn enter(a: Actor, state: State) void {
     a.mind.state = state;
     a.mind.fresh = true;
     a.mind.back = false;
+    // A new state starts with no touch under way and not sent off yet (the original's state
+    // word clears them): a blow on a knife juggled again makes a new copy.
+    a.mind.contact = false;
+    a.mind.deflected = false;
     // Falling away, it strikes no more from then on.
     if (state == .caught) a.entity.missile = null;
 }
