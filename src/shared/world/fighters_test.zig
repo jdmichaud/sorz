@@ -502,7 +502,6 @@ const special_fire_fixture =
     \\"team": "neutral"}
 ;
 
-
 const waiting =
     \\{"family": "player", "team": "neutral", "behaviour": "player_waiting",
     \\ "numbers": {"cursor_blink": 8, "out_wait": 250},

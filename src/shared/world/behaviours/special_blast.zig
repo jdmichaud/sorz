@@ -178,7 +178,7 @@ fn blasting(a: Actor) void {
         return;
     }
     const frame = a.frame();
-    a.animate(@enumFromInt(size));
+    a.animate(@fromBackingInt(@intCast(size)));
     a.setFrame(frame);
     if (size == 5) if (special_knockdown.of(a.tick)) |k| {
         k.mind.line = @intCast(a.entity.position.depth.whole() - n.line_above);
