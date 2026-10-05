@@ -242,6 +242,10 @@ pub const Round = struct {
     outcome: flow.Exit = .cleared,
     trace_scene: TraceScene = .round_intro,
     trace_t: u32 = 0,
+    /// The places across of a drifting plane's bands (`Band.drift`), in its ring, and the ones
+    /// the picture shows (the tick before's).
+    drifted: [4]u16 = .{ 0, 0, 0, 0 },
+    shown_drifted: [4]u16 = .{ 0, 0, 0, 0 },
     /// What the picture shows is the tick before's (the console takes its sprite table, the
     /// status bar's image and the planes' scroll as a frame starts, like its colours): the phase,
     /// the banner's place, the status bar and the camera's place then (across, down, and down
@@ -444,6 +448,7 @@ pub const Round = struct {
         self.shown_bar = self.bar(a);
         self.shown_game_over = self.gameOver() != null;
         self.shown_animation = self.animation_shown;
+        self.shown_drifted = self.drifted;
         if (turn.world_out) |o| o.latch();
         self.logic_ran = false;
         self.split = false;
@@ -508,7 +513,12 @@ pub const Round = struct {
                 // The demo has no banner: its music with the fade in.
                 if (self.demo) turn.play(self.stage(a).music);
             },
-            .intro => if (self.ripple(a) and self.colours.stepFade()) {
+            .intro => {
+                // The camera rocks, and the drifting bands drift, from the fade in on, as the
+                // original's updates them then; the water ripples.
+                world.systems.wobble(&self.play.world.camera);
+                self.drift(self.stage(a).script, self.play.world.camera, self.play.world.camera);
+                if (!(self.ripple(a) and self.colours.stepFade())) return null;
                 self.phase = .play;
                 self.play.schedule = .{ .rate = .play };
                 // The first section's art, queued with the round's load, streams in from play's
@@ -672,9 +682,22 @@ pub const Round = struct {
         return self.art.next(self.stage(a).script);
     }
 
+    /// A tick of the camera's: the drifting bands move by their drift and the camera's move
+    /// across, at their ratios (toward zero, as the original's division), in their ring.
+    fn drift(self: *Round, r: *const content_round.Round, before: world.Camera, after: world.Camera) void {
+        const dx = after.x.whole() - before.x.whole();
+        for (r.camera.bands[1], 0..) |b, k| {
+            const d = b.drift orelse continue;
+            if (k >= self.drifted.len) break;
+            const step = @divTrunc((@as(i32, d) + dx) * b.times, b.per);
+            self.drifted[k] = @intCast(@mod(@as(i32, self.drifted[k]) + step, content_round.drift_ring));
+        }
+    }
+
     /// The columns and rows of blocks the camera's move from `before` to `after` brings into the
     /// planes (the round's bands: each band's place across crossing a column of blocks, the
-    /// camera's down crossing a row), due at the next picture.
+    /// camera's down crossing a row), due at the next picture. A drifting plane is drawn once,
+    /// and a rocking camera brings no rows (the original's round sets both).
     fn noteStrips(self: *Round, r: *const content_round.Round, before: world.Camera, after: world.Camera) void {
         const block = 16;
         const pb = r.camera.plane_b;
@@ -683,13 +706,14 @@ pub const Round = struct {
             .{ @divFloor(before.x.whole() * pb[0], pb[1]), @divFloor(after.x.whole() * pb[0], pb[1]) },
         };
         for (r.camera.bands, planes) |bands, x| for (bands) |b| {
+            if (b.drift != null) continue;
             const from = @divTrunc(x[0] * b.times, b.per);
             const to = @divTrunc(x[1] * b.times, b.per);
             if (@divFloor(from, block) == @divFloor(to, block)) continue;
             self.strips_due +|= 1;
             self.strip_blocks_due +|= b.rows;
         };
-        if (@divFloor(before.y.whole(), block) != @divFloor(after.y.whole(), block)) {
+        if (r.camera.wobble == null and @divFloor(before.y.whole(), block) != @divFloor(after.y.whole(), block)) {
             for (r.camera.bands) |bands| if (bands.len != 0) {
                 self.strip_rows_due +|= 1;
             };
@@ -910,6 +934,7 @@ pub const Round = struct {
         self.rank(turn.setup, a, out.rankings.slice());
         if (out.colours) self.colours_due = true;
         self.noteStrips(self.stage(a).script, camera_before, self.play.world.camera);
+        self.drift(self.stage(a).script, camera_before, self.play.world.camera);
         // The players' sounds are the logic tick's first half's (the original updates its players
         // before the wait in its middle), the others' its second's.
         for (out.sounds.slice()) |s| if (a.sounds.find(s.name)) |id| {
@@ -1247,7 +1272,7 @@ pub const Round = struct {
         v.screen.plane_a.x = c[0];
         v.screen.plane_a.y = c[1];
         v.screen.plane_b.x = @divFloor(c[0] * r.camera.plane_b[0], r.camera.plane_b[1]);
-        v.screen.plane_b.y = if (r.camera.plane_b_down) c[1] else c[2];
+        v.screen.plane_b.y = if (r.camera.plane_b_down) c[1] else r.camera.y;
         // A plane whose bands scroll at their own ratios scrolls by lines, each band's at its
         // place across.
         for ([_]view.Plane{ .a, .b }, r.camera.bands, [_]i32{ v.screen.plane_a.x, v.screen.plane_b.x }) |p, bands, x| {
@@ -1259,7 +1284,7 @@ pub const Round = struct {
                 continue;
             };
             if (!ownRatios(bands)) continue;
-            bandLines(bands, x, &left);
+            if (bands.len != 0 and bands[0].drift != null) driftLines(bands, self.shown_drifted, &left) else bandLines(bands, x, &left);
             v.lineScroll(p, &left);
         }
         // The bosses' bars make the status bar a row taller.
@@ -1310,6 +1335,20 @@ test "a plane's lines at their bands' ratios" {
     bandLines(&bands, 803, &left);
     try std.testing.expect(ownRatios(&bands));
     try std.testing.expectEqual([4]i16{ 200, 200, 401, 803 }, [4]i16{ left[0], left[95], left[96], left[223] });
+}
+
+/// The place across of each line of the screen in a drifting plane: its band's place in the
+/// ring (the plane's picture repeats within it), each band `rows` blocks of lines from the top;
+/// the lines past the last band, none (the original never scrolls them).
+fn driftLines(bands: []const content_round.Band, drifted: [4]u16, left: *[render.height]i16) void {
+    const block = 16;
+    var line: usize = 0;
+    for (bands, 0..) |b, k| {
+        const end = @min(line + @as(usize, b.rows) * block, left.len);
+        @memset(left[line..end], if (k < drifted.len) @intCast(drifted[k]) else 0);
+        line = end;
+    }
+    @memset(left[line..], 0);
 }
 
 /// Which enemies' colours (by number, a bit each) are a kind's own.

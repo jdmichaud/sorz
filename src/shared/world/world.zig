@@ -95,6 +95,23 @@ pub const Camera = struct {
     /// The ticks the round's water has rippled (`Water`, round 4's river), the round's start's
     /// own among them.
     ripple: u32 = 0,
+    /// Its rocking under way (`Rules.wobble`): the ticks to its next turn, its acceleration and
+    /// its speed down.
+    wobble: WobbleState = .{},
+
+    pub const WobbleState = struct {
+        ticks: u8 = 0,
+        accel: Fixed = .zero,
+        speed: Fixed = .zero,
+
+        /// From the start: no speed, its first ticks to its turn.
+        pub fn fresh(w: Wobble) WobbleState {
+            return .{ .ticks = w.ticks, .accel = w.accel };
+        }
+    };
+
+    /// The camera's rocking down and up by itself (the round's `Camera.wobble`).
+    pub const Wobble = struct { ticks: u8, period: u8, accel: Fixed };
 
     /// How it follows the players (the round's camera's, script.zig `cameraRules`): a player
     /// drawn left of `band[0]` or from `band[1]` on, across the screen, moves it by as much, at
@@ -108,6 +125,8 @@ pub const Camera = struct {
         kept_depth: [2]i16,
         shake_ticks: u8,
         shake_by: i16,
+        /// It rocks down and up by itself.
+        wobble: ?Wobble = null,
     };
 
     /// The special attack's run (behaviours/special_knockdown.zig): called, the camera follows for the

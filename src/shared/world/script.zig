@@ -253,6 +253,7 @@ pub fn cameraRules(r: *const Round) world_mod.Camera.Rules {
         .kept_depth = .{ @intCast(c.kept_depth[0]), @intCast(c.kept_depth[1]) },
         .shake_ticks = @intCast(c.shake[0]),
         .shake_by = @intCast(c.shake[1]),
+        .wobble = if (c.wobble) |wb| .{ .ticks = wb.ticks, .period = wb.period, .accel = .of(wb.accel) } else null,
     };
 }
 
@@ -270,6 +271,7 @@ pub fn start(w: anytype, plan: *const Plan) void {
     c.follows = cameraRules(r);
     // The round's start ripples its water by as many ticks as its lines show.
     if (r.camera.water) |wt| c.ripple = @as(u32, wt.half) + wt.whole;
+    if (c.follows.?.wobble) |wb| c.wobble = .fresh(wb);
     w.script = .{};
     ownSoundAgain(w, r);
     if (r.animation) |an| w.script.animation.ticks = an.every;
@@ -706,6 +708,8 @@ fn place(t: *Tick, rec: *const Spawn, x: i32) void {
         return;
     };
     t.world.get(h).?.spawn = how;
+    // The round may draw what its script brings in front of its layers' cells.
+    if (t.plan) |p| t.world.get(h).?.flags.in_front = p.round.in_front.script;
     // A breakable holds the item its record names.
     if (rec.holds) |name| {
         if (t.kinds.find(name)) |item| t.give(h, item) else std.log.warn("the round's script's {s} holds a {s}, which the content does not define yet: it holds none", .{ rec.kind, name });

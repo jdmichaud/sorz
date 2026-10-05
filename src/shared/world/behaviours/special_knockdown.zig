@@ -84,6 +84,11 @@ pub fn specialCalled(a: Actor) void {
     m.second = if (w.special_by) |by| if (w.players[1].entity) |p| p.eql(by) else false else false;
     m.from = c.x;
     c.run = .{ .from = c.x, .speed = n.run, .limit = c.x.sub(n.run_most).max(.zero) };
+    // A rocking camera is put back level, its rocking from its start.
+    if (c.follows) |rules| if (rules.wobble) |wb| {
+        c.y = .zero;
+        c.wobble = .fresh(wb);
+    };
     a.entity.flags.hidden = true;
     // The colours shown are kept, the police car's to lie over them.
     a.tick.out.colour_loads.append(.keep);

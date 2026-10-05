@@ -199,7 +199,7 @@ fn atPlaneX(arena: std.mem.Allocator, bands: []const round.Band) Error![]const r
 fn bandsInMode(arena: std.mem.Allocator, rom: []const u8, r: u32, p: u32, mode: u16) Error![]const round.Band {
     const bands = try bandsOf(arena, rom, r, p);
     return switch (mode) {
-        0 => bands,
+        0 => if (p == 1) try drifting(arena, rom, r, bands) else bands,
         1 => atPlaneX(arena, bands),
         2 => {
             if (p == 0 and u16be(rom, 0x18C36) != u16be(rom, 0x18C38)) return error.BadData;
@@ -252,6 +252,21 @@ fn waterOf(rom: []const u8, r: u32) Error!round.Water {
     if (try immediate(rom, 0x19CAA, &.{0x7E}, 1) + 1 != half + whole) return error.BadData;
     if (try immediate(rom, 0x191FC, &.{ 0x3E, 0x3C }, 2) + 2 != half + whole) return error.BadData;
     return .{ .from = @intCast(from), .half = @intCast(half), .whole = @intCast(whole), .start = start, .speed = speed, .turn = @intCast(turns >> 16) };
+}
+
+/// Plane B's bands in its mode 0 (0x190EA), which drift in the round of 0x190FE's `cmpi.w`
+/// (0x19138): each its drift of the table at 0x19196 (`d7`, the bands left, picks it: the last
+/// entry for the first band).
+fn drifting(arena: std.mem.Allocator, rom: []const u8, r: u32, bands: []const round.Band) Error![]const round.Band {
+    if (u16be(rom, 0x19102) != 0xFF02 or u16be(rom, 0x19104) != 0x6606 or u16be(rom, 0x19106) != 0xB2FC or u16be(rom, 0x19108) != 0xE100) return error.BadData;
+    if (try immediate(rom, 0x190FE, &.{ 0x0C, 0x78 }, 2) != r) return bands;
+    if (u16be(rom, 0x19146) != 0x343B or bands.len > 4) return error.BadData;
+    const out = try arena.dupe(round.Band, bands);
+    for (out, 0..) |*b, k| {
+        const left: u32 = @intCast(bands.len - 1 - k);
+        b.drift = @intCast(s16be(rom, 0x19196 + 2 * left));
+    }
+    return out;
 }
 
 /// How the frames of play copy the planes' scroll (0x196A4, by plane A's mode: its table at
@@ -747,9 +762,12 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     const mode_b = u16be(rom, h + 22);
     if (u32be(rom, 0x19372) != 0x4A78FF02 or u16be(rom, 0x19376) != 0x6702 or u16be(rom, 0x19378) & 0xF1FF != 0xE040) return error.BadData;
     const plane_b_shift: u3 = @intCast((u16be(rom, 0x19378) >> 9) & 7);
+    // In its mode 0 plane B takes plane A's place down (0x19360), but in the round of 0x19358's
+    // `cmpi.w`, where it keeps its own.
+    if (u16be(rom, 0x1935C) != 0xFF02 or u16be(rom, 0x1935E) != 0x6706) return error.BadData;
+    const own_plane_b = try immediate(rom, 0x19358, &.{ 0x0C, 0x78 }, 2);
     const plane_b: [2]u8 = switch (mode_b) {
-        // Round 5's plane B keeps its own place down and wobbles (0x1934A, 0x1916C): with round 5.
-        0 => if (r == 4) return error.BadData else .{ 1, 1 },
+        0 => .{ 1, 1 },
         1 => .{ 1, if (r == 0) 1 else @as(u8, 1) << plane_b_shift },
         // The water's: half the camera's (asr.w #1 at 0x19232).
         2 => .{ 1, 2 },
@@ -763,7 +781,8 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .y_min = u16be(rom, limits),
         .y_max = u16be(rom, limits + 2),
         .plane_b = plane_b,
-        .plane_b_down = mode_b == 0,
+        .plane_b_down = mode_b == 0 and r != own_plane_b,
+        .wobble = try wobbleOf(rom, r),
         .scroll = try scrollOf(rom, r, mode_a),
         .wall_within = @intCast(wall_within),
         .edges = .{ -8, @intCast(right_edge) },
@@ -952,6 +971,52 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .animation = try animation(arena, rom, r),
         .art_from = try artFrom(rom, r),
         .boss_art_full = @intCast(try immediate(rom, 0x9E8, &.{ 0x0C, 0x38, 0x00 }, 1)),
+        .in_front = try inFront(arena, rom, r),
+    };
+}
+
+/// The camera's rocking (0x1916E, after plane B's bands: its speed grows by its acceleration,
+/// which turns to its opposite at the end of its ticks, then every period; plane A's place down
+/// moves by the speed), set by the round's load entry of 0x19C4C: `move.l #N,($E1AA)` (its
+/// acceleration), `move.w #N,($E1A8)` (its first ticks, then its period), `move.l #0,($E1AE)`
+/// (its speed); the special attack's call sets it again (0x4086, for the round of its
+/// `cmpi.w`). None in a round whose entry does not.
+fn wobbleOf(rom: []const u8, r: u32) Error!?round.Wobble {
+    const loads: u32 = 0x19C4C;
+    const load = loads + u16be(rom, loads + 2 * r);
+    // The entry's moves, after its three `move.b #1,(N).w` and the own sound's `move.w`.
+    const at = load + 24;
+    if (u16be(rom, load) != 0x11FC or u16be(rom, at) != 0x21FC or u16be(rom, at + 6) != 0xE1AA) return null;
+    if (u16be(rom, at + 8) != 0x31FC or u16be(rom, at + 12) != 0xE1A8 or u16be(rom, at + 14) != 0x21FC or u32be(rom, at + 16) != 0 or u16be(rom, at + 20) != 0xE1AE) return error.BadData;
+    // The special attack's call sets it again in the same round, as the load does.
+    if (u16be(rom, 0x4086) != 0x0C78 or u16be(rom, 0x4088) != r or u32be(rom, 0x408E + 2) != u32be(rom, at + 2) or u16be(rom, 0x4096 + 2) != u16be(rom, at + 10)) return error.BadData;
+    const ticks = u16be(rom, at + 10);
+    return .{ .ticks = @intCast(ticks >> 8), .period = @intCast(ticks & 0xFF), .accel = @bitCast(u32be(rom, at + 2)) };
+}
+
+/// What the round draws in front of its planes' cells in front of the sprites (an object's
+/// flags' bit 4): the entities its script places (0xC80 for a wave's or a reserve's, 0xD10 for a
+/// group's: `bset #4,(1,a1)` in the round of their `cmpi.w`), the players at each life's start
+/// (0x1EDC: byte 7 of the round's entry at 0x1F2C or'ed into their flags), the things (0x6AA6:
+/// the round's byte of 0x6AB4).
+fn inFront(arena: std.mem.Allocator, rom: []const u8, r: u32) Error!round.InFront {
+    const placing = [_]u32{ 0xC80, 0xD10 };
+    var script = false;
+    for (placing) |at| {
+        if (u16be(rom, at) != 0x0C78 or u16be(rom, at + 4) != 0xFF02 or u16be(rom, at + 6) != 0x6606 or u32be(rom, at + 8) != 0x08E80004 or u16be(rom, at + 12) != 0x0001) return error.BadData;
+        const in_round = u16be(rom, at + 2) == r;
+        if (at != placing[0] and in_round != script) return error.BadData;
+        script = in_round;
+    }
+    if (u16be(rom, 0x1EDC) != 0x8128 or u16be(rom, 0x1EDE) != 0x0001) return error.BadData;
+    const lives_at: u32 = 0x1F2C + 10 * r;
+    const things_at: u32 = 0x6AB4 + r;
+    if (u16be(rom, 0x6AA6) != 0x3038 or u16be(rom, 0x6AA8) != 0xFF02 or u16be(rom, 0x6AAA) != 0x103B) return error.BadData;
+    return .{
+        .provenance = try std.fmt.allocPrint(arena, "the objects' flags' bit 4: the script's (0xC80, 0xD10: cmpi.w #N,($FF02)), the players' (0x1EDC: ROM 0x{X:0>5}), the things' (0x6AA6: ROM 0x{X:0>5})", .{ lives_at + 7, things_at }),
+        .script = script,
+        .players = rom[lives_at + 7] & 0x10 != 0,
+        .things = rom[things_at] & 0x10 != 0,
     };
 }
 

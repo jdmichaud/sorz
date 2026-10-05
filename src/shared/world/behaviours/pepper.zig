@@ -79,6 +79,7 @@ pub const Tables = struct {
 pub fn think(a: Actor) void {
     const m = a.mind;
     a.entity.flags.still = true;
+    if (m.state == .start) a.entity.flags.in_front = a.tick.thingsInFront();
     if (m.state == .start and m.part != .shaker) {
         start(a);
     } else switch (m.state) {

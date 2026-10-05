@@ -80,6 +80,7 @@ pub fn think(a: Actor) void {
     a.entity.flags.still = true;
     if (m.fresh) {
         m.fresh = false;
+        a.entity.flags.in_front = a.tick.thingsInFront();
         return;
     }
     switch (m.state) {

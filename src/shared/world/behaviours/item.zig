@@ -39,6 +39,7 @@ pub fn think(a: Actor) void {
     switch (a.mind.state) {
         .start => {
             a.animate(.lying);
+            e.flags.in_front = a.tick.thingsInFront();
             a.mind.state = .falling;
         },
         .falling => if (e.position.height.whole() >= a.tick.world.ground.whole()) {

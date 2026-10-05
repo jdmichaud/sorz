@@ -1534,6 +1534,9 @@ pub fn jugglerKnife(arena: std.mem.Allocator, rom: []const u8) Error!entity.Defi
     try d.number("maker_first", try moveByte(rom, 0xFC30, 81), "ROM 0x0FC30: move.b #N,(81,a0)");
     try d.number("maker_gap", try moveByte(rom, 0xFC5E, 81), "ROM 0x0FC5E: move.b #N,(81,a0)");
     try d.number("pace", (try moveWord(rom, 0xFC7C, 12)) >> 8, "ROM 0x0FC7C: move.w #N*$101,(12,a0)");
+    // Drawn in front in one round (0xFC9A: cmpi.w #N,($FF02), then bset #4,(1,a0)).
+    if (u16be(rom, 0xFC9E) != 0xFF02 or u32be(rom, 0xFCA2) != 0x08E80004 or u16be(rom, 0xFCA6) != 1) return error.BadData;
+    try d.number("front_round", (try immediate(rom, 0xFC9A, &.{ 0x0C, 0x78 }, 2)) + 1, "ROM 0x0FC9A: cmpi.w #N,($FF02) (the round's number less one)");
     try d.number("juggle_height", try moveWord(rom, 0xFCC4, 24), "ROM 0x0FCC4: move.w #N,(24,a0)");
     if (u16be(rom, 0xFCD0) != 36 or u16be(rom, 0xFCD8) != 28) return error.BadData;
     try d.number("juggle_up", try immediate(rom, 0xFCCA, &.{ 0x21, 0x7C }, 4), "ROM 0x0FCCA: move.l #N,(36,a0)");

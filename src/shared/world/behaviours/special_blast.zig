@@ -75,6 +75,7 @@ pub fn think(a: Actor) void {
     // It keeps its place on the screen.
     const c = a.tick.world.camera;
     e.position.x = e.position.x.add(c.x.sub(c.prev_x));
+    if (m.state == .start) e.flags.in_front = a.tick.thingsInFront();
     switch (m.state) {
         .start => if (m.arm == 0) {
             e.flags.hidden = true;

@@ -98,6 +98,7 @@ pub fn Of(comptime M: type) type {
             const s = a.mind.state;
             if (s == .start) {
                 pose(a, "lying");
+                a.entity.flags.in_front = a.tick.thingsInFront();
                 a.mind.state = .lying;
             } else if (s == .lying) {
                 lying(a);

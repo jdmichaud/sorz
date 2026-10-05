@@ -238,6 +238,10 @@ pub const Camera = struct {
     kept_depth: [2]i16,
     /// A heavy fall shakes the camera `shake[0]` ticks, `shake[1]` pixels down and up in turn.
     shake: [2]i16,
+    /// The camera rocks down and up by itself (round 5's ship), from the round's start and again
+    /// from each special attack's call: its speed down grows by `accel` (16.16 pixels) each tick
+    /// of the camera's, which turns to its opposite after `ticks` ticks, then every `period`.
+    wobble: ?Wobble = null,
     /// Each plane's bands (plane A's, then plane B's), from the top: as a band's place across
     /// (its plane's times `times` / `per`) crosses a column of blocks (16 pixels), the game
     /// writes the column of blocks coming in, `rows` blocks high; as the camera crosses a row of
@@ -296,7 +300,15 @@ pub const Water = struct {
     }
 };
 
-pub const Band = struct { rows: u8, times: u8, per: u8 };
+/// A plane's band: `rows` blocks high, its place across `times` / `per` of its plane's; or,
+/// drifting (round 5's sea), its place moved at each tick of the camera's by its `drift` and the
+/// camera's move across, at its ratio, the plane drawn once (a ring of `drift_ring` pixels).
+pub const Band = struct { rows: u8, times: u8, per: u8, drift: ?i8 = null };
+
+/// The width of the ring a drifting plane is drawn in once (the console's plane, 64 cells).
+pub const drift_ring = 512;
+
+pub const Wobble = struct { ticks: u8, period: u8, accel: i32 };
 
 pub const Scroll = enum { whole, cells, lines };
 
@@ -349,6 +361,18 @@ pub const Round = struct {
     /// The way its enemies walk off in depth, whatever their kind's and their target's (round
     /// 4's: up, away from the screen); null: theirs.
     walk_off: ?WalkOff = null,
+    /// What it draws in front of its layers' cells that are in front of the sprites.
+    in_front: InFront = .{},
+};
+
+/// What a round draws in front of its layers' cells that are in front of the sprites: the
+/// entities its script brings, the players from each life's start, the things the fights leave
+/// and throw (the items, the weapons, the pepper, the special attack's car, blast and fire).
+pub const InFront = struct {
+    provenance: []const u8 = "",
+    script: bool = false,
+    players: bool = false,
+    things: bool = false,
 };
 
 /// A round's way for its enemies' walk off: up (away from the screen) or down; with
@@ -422,7 +446,10 @@ fn bandsValue(arena: std.mem.Allocator, bands: [2][]const Band) !json.Value {
     const planes = try arena.alloc(json.Value, 2);
     for (planes, bands) |*o, list| {
         const items = try arena.alloc(json.Value, list.len);
-        for (items, list) |*v, b| v.* = .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(b.rows), json.Value.num(b.times), json.Value.num(b.per) }) };
+        for (items, list) |*v, b| v.* = .{ .array = if (b.drift) |d|
+            try arena.dupe(json.Value, &.{ json.Value.num(b.rows), json.Value.num(b.times), json.Value.num(b.per), json.Value.num(d) })
+        else
+            try arena.dupe(json.Value, &.{ json.Value.num(b.rows), json.Value.num(b.times), json.Value.num(b.per) }) };
         o.* = .{ .array = items };
     }
     return .{ .array = planes };
@@ -459,6 +486,7 @@ fn cameraValue(arena: std.mem.Allocator, c: *const Camera) !json.Value {
         .{ .key = "turn", .value = json.Value.num(w.turn) },
     }) });
     if (c.plane_b_down) try f.append(arena, .{ .key = "plane_b_down", .value = .{ .bool = true } });
+    if (c.wobble) |wb| try f.append(arena, .{ .key = "wobble", .value = .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(wb.ticks), json.Value.num(wb.period), json.Value.num(wb.accel) }) } });
     if (c.scroll != .whole) try f.append(arena, .{ .key = "scroll", .value = .{ .str = @tagName(c.scroll) } });
     return withProvenance(arena, c.provenance, f.items);
 }
@@ -626,6 +654,11 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         if (wo.down_before) |x| try wf.append(arena, .{ .key = "down_before", .value = json.Value.num(x) });
         try fields.append(arena, .{ .key = "walk_off", .value = .{ .object = wf.items } });
     }
+    if (r.in_front.script or r.in_front.players or r.in_front.things) try fields.append(arena, .{ .key = "in_front", .value = try withProvenance(arena, r.in_front.provenance, &.{
+        .{ .key = "script", .value = .{ .bool = r.in_front.script } },
+        .{ .key = "players", .value = .{ .bool = r.in_front.players } },
+        .{ .key = "things", .value = .{ .bool = r.in_front.things } },
+    }) });
     if (r.own_sound) |o| try fields.append(arena, .{ .key = "own_sound", .value = try withProvenance(arena, o.provenance, &.{
         .{ .key = "sound", .value = .{ .str = o.sound } },
         .{ .key = "first", .value = json.Value.num(o.first) },
@@ -663,8 +696,10 @@ fn readBands(arena: std.mem.Allocator, n: json.Node) Error![2][]const Band {
         const bands = try arena.alloc(Band, try list.len());
         for (bands, 0..) |*b, i| {
             const e = try list.at(i);
-            if (try e.len() != 3) return e.fail("not [rows, times, per]");
+            const fields = try e.len();
+            if (fields != 3 and fields != 4) return e.fail("not [rows, times, per] or [rows, times, per, drift]");
             b.* = .{ .rows = try (try e.at(0)).int(u8), .times = try (try e.at(1)).int(u8), .per = try (try e.at(2)).int(u8) };
+            if (fields == 4) b.drift = try (try e.at(3)).int(i8);
             if (b.per == 0 or b.rows == 0) return e.fail("a band of no rows or a ratio per 0");
         }
         o.* = bands;
@@ -750,7 +785,7 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off", "in_front" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
@@ -776,7 +811,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     } else return (try root.get("art")).fail("no art set of this name");
 
     const c = try root.get("camera");
-    try c.only(&.{ "provenance", "at", "x_min", "y", "plane_b", "plane_b_down", "scroll", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "bands", "water" });
+    try c.only(&.{ "provenance", "at", "x_min", "y", "plane_b", "plane_b_down", "scroll", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "wobble", "bands", "water" });
     const at = try readPair(try c.get("at"), i32);
     const y = try readPair(try c.get("y"), i32);
     r.camera = .{
@@ -799,6 +834,11 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         .shake = try readPair(try c.get("shake"), i16),
         .bands = try readBands(arena, try c.get("bands")),
     };
+    if (try c.opt("wobble")) |wb| {
+        if (try wb.len() != 3) return wb.fail("not [ticks, period, accel]");
+        r.camera.wobble = .{ .ticks = try (try wb.at(0)).int(u8), .period = try (try wb.at(1)).int(u8), .accel = try (try wb.at(2)).int(i32) };
+        if (r.camera.wobble.?.ticks == 0 or r.camera.wobble.?.period == 0) return wb.fail("a turn after no ticks");
+    }
     if (r.camera.shake[0] <= 0 or r.camera.shake[0] > 255) return (try c.get("shake")).fail("not 1 to 255 ticks");
     if (r.camera.follow[0] > r.camera.follow[1]) return (try c.get("follow")).fail("its first after its second");
     if (r.camera.follow_most <= 0) return (try c.get("follow_most")).fail("not 1 or more");
@@ -910,6 +950,15 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
             }
         }
         r.floor = .{ .provenance = try provenanceOf(fl), .cell = cell, .kinds = kinds, .rows = rows };
+    }
+    if (try root.opt("in_front")) |f| {
+        try f.only(&.{ "provenance", "script", "players", "things" });
+        r.in_front = .{
+            .provenance = try provenanceOf(f),
+            .script = try (try f.get("script")).boolean(),
+            .players = try (try f.get("players")).boolean(),
+            .things = try (try f.get("things")).boolean(),
+        };
     }
     if (try root.opt("own_sound")) |o| {
         try o.only(&.{ "provenance", "sound", "first", "every", "times", "per_section" });

@@ -354,6 +354,13 @@ pub const Tick = struct {
 
     /// Whether an enemy may set on the entity now: its behaviour's `attackable` says (a player
     /// struck down or blinking may not); by default, yes.
+    /// Whether the round draws the things the fights leave and throw in front of its layers'
+    /// cells in front of the sprites (`Round.in_front`).
+    pub fn thingsInFront(t: *const Tick) bool {
+        const p = t.plan orelse return false;
+        return p.round.in_front.things;
+    }
+
     pub fn attackable(t: *Tick, h: Handle) bool {
         return dispatch(t, h, "attackable", bool, true, .{});
     }

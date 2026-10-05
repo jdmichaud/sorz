@@ -627,6 +627,8 @@ fn pickups(t: *Tick) void {
 /// round's script's wall (script.zig).
 fn camera(t: *Tick) void {
     const c = &t.world.camera;
+    // After its moves across and its shake, it rocks, the special attack's run too.
+    defer wobble(c);
     c.prev_x = c.x;
     // The round's water ripples a tick on (round 4's river).
     if (t.plan) |p| if (p.round.camera.water != null) {
@@ -657,8 +659,24 @@ fn camera(t: *Tick) void {
         c.shake -= 1;
         const by: i32 = if (c.follows) |rules| rules.shake_by else 0;
         c.y = c.y.add(.pixels(if (c.shake & 1 != 0) by else -by));
-    } else c.y = c.y.clamp(c.y_min, c.y_max);
+    } else if (c.follows == null or c.follows.?.wobble == null) c.y = c.y.clamp(c.y_min, c.y_max);
     keepPlayers(t);
+}
+
+/// The camera's rocking (`Rules.wobble`): its speed down grows by its acceleration, which turns
+/// to its opposite after its ticks, then every period; its place down moves by its speed (no
+/// limit holds it). The round's fade in rocks it too (screens/round.zig).
+pub fn wobble(c: *world_mod.Camera) void {
+    const rules = c.follows orelse return;
+    const wb = rules.wobble orelse return;
+    const s = &c.wobble;
+    s.speed = s.speed.add(s.accel);
+    s.ticks -%= 1;
+    if (s.ticks == 0) {
+        s.ticks = wb.period;
+        s.accel = s.accel.neg();
+    }
+    c.y = c.y.add(s.speed);
 }
 
 /// The players kept inside the camera's view (by its rules, when it follows them): across, but

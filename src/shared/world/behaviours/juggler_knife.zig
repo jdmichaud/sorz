@@ -60,6 +60,8 @@ pub const Numbers = struct {
     maker_first: u8,
     maker_gap: u8,
     pace: u8,
+    /// The round it is drawn in front of its layers' cells in.
+    front_round: u8,
     /// Juggled: its height and speeds as it leaves the hand, its offset across from its juggler
     /// (facing left, the other), below its juggler's depth; its speed back to the hand.
     juggle_height: i16,
@@ -214,6 +216,7 @@ fn start(a: Actor) void {
     a.animate(if (b) .knife_b else .knife);
     a.pace(n.pace, n.pace);
     a.entity.flags.stays = true;
+    if (a.tick.plan) |p| a.entity.flags.in_front = p.round.number == n.front_round;
     if (m.thrown) return enter(a, .flying);
     enter(a, .juggled);
     juggledSetUp(a);
@@ -315,6 +318,7 @@ fn copy(a: Actor) void {
     c.animation.paused = true;
     c.facing = a.entity.facing;
     c.flags.stays = false;
+    c.flags.in_front = a.entity.flags.in_front;
     const k = &c.mind.juggler_knife;
     k.holder = a.mind.holder;
     k.state = .caught;

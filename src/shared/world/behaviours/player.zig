@@ -465,6 +465,8 @@ fn change(a: Actor, state: State) void {
 /// A life starts (the round's start, a new life): the player drops in from where it was put,
 /// at its drop's speed.
 pub fn startLife(a: Actor) void {
+    // The round may draw its players in front of its layers' cells from each life's start.
+    if (a.tick.plan) |p| a.entity.flags.in_front = p.round.in_front.players;
     enter(a, .fall);
     begin(a, .fall);
     a.entity.velocity = .{ .height = a.numbers().drop };
@@ -1197,6 +1199,8 @@ fn spark(a: Actor) void {
         .height = .pixels(e.position.height.whole() + s.height),
     }, .right) catch return;
     a.tick.world.get(h).?.mind.hit_spark.big = s.big;
+    // Drawn in front as its striker is.
+    a.tick.world.get(h).?.flags.in_front = e.flags.in_front;
 }
 
 /// In the air after its move: it lands once it comes down to the ground, on its whole pixels;
