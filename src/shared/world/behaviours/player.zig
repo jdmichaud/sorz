@@ -1000,6 +1000,13 @@ fn downOrHurt(state: State) bool {
 fn feelBlow(a: Actor) void {
     if (a.entity.health <= 0 and !downOrHurt(a.mind.state)) {
         a.mind.taken = null;
+        // It faces the place of the last that struck it, as the original's reads that object's
+        // place, whatever holds it now (an emptied place's across is 0).
+        if (a.entity.struck_by) |h| {
+            const o = &a.tick.world.entities[h.index];
+            const x: i32 = if (o.alive()) o.position.x.whole() else 0;
+            a.entity.facing = if (x < a.entity.position.x.whole()) .left else .right;
+        }
         return die(a, null);
     }
     const t = a.mind.taken orelse return;
