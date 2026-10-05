@@ -419,9 +419,9 @@ pub fn Of(comptime M: type) type {
 
         // Targets and places ------------------------------------------------------------------
 
-        /// It picks the player it goes after: with two players in play (not hidden, waiting to
-        /// come back), the nearer across (the second on a tie); with one, that one. With none, it
-        /// stands and waits for one. Returns whether it found one.
+        /// It picks the player it goes after: with two players in play (`Tick.fighting`), the
+        /// nearer across (the second on a tie); with one, that one. With none, it stands and
+        /// waits for one. Returns whether it found one.
         pub fn chooseTarget(a: A) bool {
             const w = a.tick.world;
             const found = inPlay(a);
@@ -444,8 +444,7 @@ pub fn Of(comptime M: type) type {
             return true;
         }
 
-        /// The players in play, by player: their entities, but those hidden (out of lives,
-        /// waiting to continue).
+        /// The players in play, by player (`Tick.fighting`).
         fn inPlay(a: A) [2]?Handle {
             return .{ a.tick.fighting(0), a.tick.fighting(1) };
         }
@@ -502,6 +501,12 @@ pub fn Of(comptime M: type) type {
                 enter(a, M.fights);
                 return false;
             };
+            // A target no longer a fighter (its lives gone, it waits) sends it back to the fight's
+            // start, as the original's does.
+            if (t.mind != .player) {
+                enter(a, M.fights);
+                return false;
+            }
             const n = a.numbers();
             const off: i32 = a.entity.spawn.offset_depth;
             var d = t.position.depth.whole() + off;

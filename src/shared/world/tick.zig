@@ -18,6 +18,7 @@ const output = @import("output.zig");
 const behaviours = @import("behaviours.zig");
 const systems = @import("systems.zig");
 const script = @import("script.zig");
+const lives = @import("lives.zig");
 
 const Fixed = fixed.Fixed;
 const Vec3 = fixed.Vec3;
@@ -456,12 +457,12 @@ pub const Tick = struct {
         return n;
     }
 
-    /// Player `k`'s entity while the enemies can go after it: in the world and shown (one out
-    /// of lives, waiting to continue, is hidden).
+    /// Player `k`'s entity while the enemies can go after it: while it is in play
+    /// (`lives.inPlay`: as a fighter, or out of lives at the tick its last life ended and at the
+    /// tick its name is entered).
     pub fn fighting(t: *const Tick, k: usize) ?Handle {
-        const h = t.world.players[k].entity orelse return null;
-        const e = t.world.getConst(h) orelse return null;
-        return if (e.flags.hidden) null else h;
+        if (!lives.inPlay(t.world, @intCast(k))) return null;
+        return t.world.players[k].entity;
     }
 
     /// Whether every player in play plays as a fighter (none waits to continue): the round's
