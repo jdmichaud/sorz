@@ -164,6 +164,14 @@ fn bandsOf(arena: std.mem.Allocator, rom: []const u8, r: u32, p: u32) Error![]co
     return out.items;
 }
 
+/// A plane's bands in its mode 1 (0x19368): each band's place across is the plane's (its layer's X
+/// set to the plane's, 0x1937E), its layout record's ratio unread.
+fn atPlaneX(arena: std.mem.Allocator, bands: []const round.Band) Error![]const round.Band {
+    const out = try arena.alloc(round.Band, bands.len);
+    for (out, bands) |*o, b| o.* = .{ .rows = b.rows, .times = 1, .per = 1 };
+    return out;
+}
+
 /// The pixels of a long immediate's whole part (its high word), after `opcode` at `at`; its low
 /// word, the fraction, is none.
 fn longPixels(rom: []const u8, at: u32, opcode: []const u8) Error!u32 {
@@ -513,14 +521,19 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     const shake_ticks = try immediate(rom, 0x4D52, &.{ 0x11, 0xFC }, 2);
     if (u16be(rom, 0x4D56) != 0xFA45) return error.BadData;
     const shake_by = try immediate(rom, 0x19292, &.{0x70}, 1);
+    // Plane B in its mode 1 (0x19368, the round header's plane B's mode word): at the camera's X
+    // in round 1, a quarter of it in the others (tst.w ($FF02) at 0x19372, then asr.w #2).
+    if (u16be(rom, h + 22) != 1) return error.BadData;
+    if (u32be(rom, 0x19372) != 0x4A78FF02 or u16be(rom, 0x19376) != 0x6702 or u16be(rom, 0x19378) & 0xF1FF != 0xE040) return error.BadData;
+    const plane_b_shift: u3 = @intCast((u16be(rom, 0x19378) >> 9) & 7);
     const camera: round.Camera = .{
-        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down; plane B in its mode 1 (0x19368): the camera's X in round 1; the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282); the planes' bands, their rows and ratios, from the layout records (0x199C6, the table at ROM 0x5F788), the strips the camera brings in (0x18B3C)", .{ h, limits_set / 8 }),
+        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down; plane B in its mode 1 (0x19368): the camera's X in round 1, a quarter of it in the others (ROM 0x19378: asr.w #2); the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282); the planes' bands, their rows and ratios, from the layout records (0x199C6, the table at ROM 0x5F788), the strips the camera brings in (0x18B3C)", .{ h, limits_set / 8 }),
         .x = u16be(rom, h + 6),
         .y = u16be(rom, h + 8),
         .x_min = u16be(rom, limits + 4),
         .y_min = u16be(rom, limits),
         .y_max = u16be(rom, limits + 2),
-        .plane_b = .{ 1, 1 },
+        .plane_b = .{ 1, if (r == 0) 1 else @as(u8, 1) << plane_b_shift },
         .wall_within = @intCast(wall_within),
         .edges = .{ -8, @intCast(right_edge) },
         .left_behind = .{ -@as(i32, @intCast(behind_x)), @intCast(behind_depth) },
@@ -529,7 +542,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .kept_x = .{ @intCast(kept_left), @intCast(kept_left + kept_width) },
         .kept_depth = .{ @intCast(depth_from), @intCast(if (r == own_round) depth_to_own else depth_to_common) },
         .shake = .{ @intCast(shake_ticks), @intCast(shake_by) },
-        .bands = .{ try bandsOf(arena, rom, r, 0), try bandsOf(arena, rom, r, 1) },
+        .bands = .{ try bandsOf(arena, rom, r, 0), try atPlaneX(arena, try bandsOf(arena, rom, r, 1)) },
     };
     const first_wall: i32 = u16be(rom, limits + 6);
 
