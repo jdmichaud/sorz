@@ -8,6 +8,7 @@ const platform = @import("platform.zig");
 const render = @import("render/root.zig");
 const art = @import("content/art.zig");
 const Text = @import("library.zig").Text;
+const world = @import("world/root.zig");
 
 pub const width = render.width;
 pub const height = render.height;
@@ -43,6 +44,9 @@ pub const View = struct {
     /// The scene whose drawing the boards hold (its number, `scene.Stack.serial`); null: none, the
     /// next scene draws whole.
     shows: ?u32 = null,
+    /// What the last logic tick of a round's world gave out (its draw list among it): the
+    /// presentation's, which the scene's tick fills and its drawing reads.
+    world_out: world.Output = .{},
 
     pub fn init(gpa: std.mem.Allocator) error{OutOfMemory}!View {
         const line_x = try gpa.create([2][height]i32);

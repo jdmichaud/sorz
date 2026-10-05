@@ -24,9 +24,12 @@ pub const Kind = enum {
     /// The attract demo: round 1 played by the game (PLAN items 11-13); a stand-in until then.
     demo,
     high_scores,
-    /// Play: round 1 and on (PLAN item 13); a stand-in until then, which says so and names the
-    /// characters chosen.
+    /// Play: a round, from its load to its end (round 1: PLAN item 13).
     round,
+    /// The round's clear and its bonuses.
+    round_clear,
+    /// The next round: round 2 and on are PLAN item 15, a stand-in until then, which says so.
+    next_round,
 };
 
 /// How a scene ends.
@@ -42,6 +45,10 @@ pub const Exit = enum {
     options,
     /// The characters are chosen.
     chosen,
+    /// The round is won.
+    cleared,
+    /// Every player is out of the game.
+    game_over,
 };
 
 /// One edge of the graph: scene `from`, ended by `exit`, goes to `to`, after a load of `load`
@@ -71,7 +78,8 @@ pub const Graph = struct {
 
 /// The cartridge's flow (sor-remaster's docs/workflows.md, G1 to G9): the Sega logo, the intro
 /// and its title, the attract demo and the high scores, around again; START on the title to the
-/// game menu, the options and back, the character select, play. The loads are the original's
+/// game menu, the options and back, the character select, play: a round won to its clear and the
+/// next round, the game over to the high scores. The loads are the original's
 /// measured waits (in display ticks, the picture dark).
 pub const original: Graph = .{
     .first = .sega_logo,
@@ -92,6 +100,9 @@ pub const original: Graph = .{
         .{ .from = .menu, .exit = .options, .to = .options },
         .{ .from = .options, .exit = .done, .to = .menu, .load = 3 },
         .{ .from = .select, .exit = .chosen, .to = .round, .load = 53 },
+        .{ .from = .round, .exit = .cleared, .to = .round_clear },
+        .{ .from = .round, .exit = .game_over, .to = .high_scores, .load = 4 },
+        .{ .from = .round_clear, .exit = .done, .to = .next_round },
     },
 };
 

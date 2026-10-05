@@ -10,6 +10,7 @@ const content = @import("content/root.zig");
 const json = @import("formats/json.zig");
 const audio = @import("audio/root.zig");
 const Character = @import("setup.zig").Character;
+const world = @import("world/root.zig");
 
 const art = content.art;
 const records = content.screens;
@@ -70,11 +71,17 @@ pub const Text = struct {
     sheet: *const art.TileSheet,
 };
 
+/// The sound content: the sounds by name (`find`), for a scene that plays those its world asks
+/// for by name.
+pub const Sounds = audio.content.Content;
+
 /// The content tree in memory, owned by its arena.
 pub const Content = struct {
     arena: std.heap.ArenaAllocator,
     tree: content.Content,
     sounds: audio.content.Content,
+    /// The kinds of entity, bound to their art and behaviours (world/kinds.zig).
+    kinds: world.Kinds = .{},
 
     pub fn destroy(self: *Content) void {
         var arena = self.arena;
@@ -116,8 +123,16 @@ pub fn load(gpa: std.mem.Allocator, assets: platform.AssetSource, diag: *json.Di
         error.OutOfMemory => error.OutOfMemory,
         else => error.BadContent,
     };
+    self.kinds = world.Kinds.bind(arena, self.tree.entities, &self.tree.art, diag) catch |e| return switch (e) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.BadAsset => error.BadContent,
+    };
+    self.kinds.shadow = self.tree.art.frame(shadow_frame);
     return self;
 }
+
+/// The frame of the shadows on the ground (play's art).
+const shadow_frame = "play/shadow_00";
 
 /// Fills `T`, a struct of assets and sounds, from the content by the names of `T.names`; a name
 /// the content lacks is written in `diag` and refuses the content.
@@ -147,6 +162,16 @@ fn findOne(comptime F: type, c: *const Content, name: []const u8, diag: *json.Di
         *const records.Intro => if (std.mem.eql(u8, name, "screens/intro")) if (c.tree.screens.intro) |*r| r else null else null,
         Text => if (a.font(name)) |f| if (a.sheet(f.sheet)) |s| Text{ .font = f, .sheet = s } else null else null,
         Sound => c.sounds.find(name),
+        // The sound content as a whole, the kinds of entity, a round's script, play's screen,
+        // an art set.
+        *const Sounds => if (std.mem.eql(u8, name, "sound")) &c.sounds else null,
+        *const world.Kinds => if (std.mem.eql(u8, name, "entities")) &c.kinds else null,
+        *const content.round.Round => for (c.tree.rounds) |*r| {
+            var buf: [16]u8 = undefined;
+            if (std.mem.startsWith(u8, name, "rounds/") and std.mem.eql(u8, name["rounds/".len..], content.round.nameOf(&buf, r.number))) break r;
+        } else null,
+        *const records.Round => if (std.mem.eql(u8, name, "screens/round")) if (c.tree.screens.round) |*r| r else null else null,
+        *const art.ArtSet => a.set(name),
         Poses => blk: {
             if (!std.mem.eql(u8, name, "screens/select")) break :blk null;
             const sel = if (c.tree.screens.select) |*r| r else break :blk null;

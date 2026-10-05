@@ -1,9 +1,10 @@
-//! A stand-in for a scene the game does not have yet: the attract demo and play need round 1
-//! (PLAN items 11 to 13). It says so on a dark screen, in the game's font, and keeps the flow's
-//! time and sound: the demo's stand-in plays round 1's music when the demo does, lasts as long as
-//! the original's demo and stops the music at its end, so that the high scores come at the
-//! original's tick; START on either pad leaves it as the demo's START does, after its fade. Play's
-//! stand-in names the characters chosen, and stays (the select stopped the music).
+//! A stand-in for a scene the game does not have yet: the attract demo (round 1 played by the
+//! game, PLAN item 13 and on), the round's clear and the next round (round 2, PLAN item 15). It says
+//! so on a dark screen, in the game's font, and keeps the flow's time and sound: the demo's
+//! stand-in plays round 1's music when the demo does, lasts as long as the original's demo and
+//! stops the music at its end, so that the high scores come at the original's tick; START on
+//! either pad leaves it as the demo's START does, after its fade. The next round's stand-in names
+//! the characters chosen, and stays.
 const std = @import("std");
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
@@ -58,17 +59,25 @@ pub const StandIn = struct {
                     return .done;
                 }
             },
-            .round => if (self.ticks == 1) turn.releasePads(),
+            .round_clear => {
+                if (self.ticks == 1) turn.releasePads();
+                if (self.ticks >= clear_ticks) return .done;
+            },
+            .next_round => if (self.ticks == 1) turn.releasePads(),
             else => {},
         }
         return null;
     }
 
+    /// The round's clear's stand-in's ticks (its bonuses come in a later commit).
+    const clear_ticks = 300;
+
     /// What it says, a line a row (`buf` holds the characters' names).
     fn lines(self: *const StandIn, buf: []u8) [3][]const u8 {
         return switch (self.what) {
             .demo => .{ "THE ATTRACT DEMO", "PLAYS ROUND 1:", "NOT IN SORZ YET" },
-            .round => .{ "ROUND 1 WITH", self.names(buf), "IS NOT IN SORZ YET" },
+            .round_clear => .{ "ROUND 1 CLEAR", "THE BONUSES ARE", "NOT IN SORZ YET" },
+            .next_round => .{ "ROUND 2 WITH", self.names(buf), "IS NOT IN SORZ YET" },
             else => .{ @tagName(self.what), "IS NOT IN SORZ YET", "" },
         };
     }

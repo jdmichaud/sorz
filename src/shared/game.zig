@@ -40,6 +40,7 @@ const net = @import("net/root.zig");
 const View = @import("view.zig").View;
 const transfers = @import("screens/transfers.zig");
 const Setup = @import("setup.zig").Setup;
+const world = @import("world/root.zig");
 
 pub const page_width = picture.width;
 pub const page_height = picture.height;
@@ -73,6 +74,8 @@ pub const State = struct {
     setup: Setup = .{},
     /// The pads at the last reading: a button held now and not then is pressed.
     held: input.Pads = .{},
+    /// The game's random generator, with the original's algorithm (world/random.zig).
+    random: world.Random = .{},
 
     /// The state at power-on of a game with its content: the flow's first scene, its set-up, and
     /// the original's wait after it.
@@ -85,11 +88,18 @@ pub const State = struct {
     /// One display tick, with the pads of that tick and whether a second pad is there. Returns
     /// what the tick asks of the sound. Every scene but the test pattern needs `assets`.
     pub fn step(self: *State, pads: input.Pads, second_pad: bool, assets: ?*const scene.Assets) scene.Turn {
+        return self.stepWith(pads, second_pad, assets, null);
+    }
+
+    /// `step`, a round's world giving out its tick into `world_out` (the picture's).
+    pub fn stepWith(self: *State, pads: input.Pads, second_pad: bool, assets: ?*const scene.Assets, world_out: ?*world.Output) scene.Turn {
         var turn: scene.Turn = .{
             .pads = pads,
             .pressed = .{ .pad1 = newly(pads.pad1, self.held.pad1), .pad2 = newly(pads.pad2, self.held.pad2) },
             .second_pad = second_pad,
             .setup = &self.setup,
+            .random = &self.random,
+            .world_out = world_out,
         };
         scene.tick(&self.scenes, &flow.original, &turn, assets);
         if (turn.release_pads) {
@@ -404,7 +414,7 @@ pub const Game = struct {
     fn runTick(self: *Game, p: *platform.Platform) bool {
         var pads = self.controls.pads();
         if (self.netplay) |np| pads = np.pads(p, pads.pad1) orelse return false;
-        const turn = self.state.step(pads, self.secondPad(), if (self.scene_assets) |*a| a else null);
+        const turn = self.state.stepWith(pads, self.secondPad(), if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
         self.redraw = true;
         // The frame that starts this tick holds the sound's processor for the last tick's picture
         // and the pads' reading, unless a load holds the frame's work and the sound together.

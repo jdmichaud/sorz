@@ -30,12 +30,14 @@ const json = @import("formats/json.zig");
 const View = @import("view.zig").View;
 const Setup = @import("setup.zig").Setup;
 const transfers = @import("screens/transfers.zig");
+const world = @import("world/root.zig");
 
 pub const Kind = flow.Kind;
 pub const Exit = flow.Exit;
 pub const TestPattern = @import("screens/test_pattern.zig").TestPattern;
 pub const Load = @import("screens/load.zig").Load;
 pub const StandIn = @import("screens/stand_in.zig").StandIn;
+pub const Round = @import("screens/round.zig").Round;
 pub const SegaLogo = @import("screens/sega_logo.zig").SegaLogo;
 pub const Menu = @import("screens/menu.zig").Menu;
 pub const Options = @import("screens/options.zig").Options;
@@ -56,7 +58,9 @@ pub const Scene = union(Kind) {
     select: Select,
     demo: StandIn,
     high_scores: HighScores,
-    round: StandIn,
+    round: Round,
+    round_clear: StandIn,
+    next_round: StandIn,
 
     /// The scene of kind `k` as it begins (a load is pushed by the flow, with its length).
     pub fn start(k: Kind, setup: *const Setup) Scene {
@@ -104,6 +108,12 @@ pub const Turn = struct {
     /// What this tick's picture transfers as the next frame starts (screens/transfers.zig);
     /// null for a tick that ends no frame (a load's, a tick split in two).
     frame: ?transfers.Frame = null,
+    /// The game's random generator (the canonical state's), which play draws from; null in the
+    /// tests of scenes that draw none.
+    random: ?*world.Random = null,
+    /// Where a round's world gives out its tick (the presentation's, the view's), when there is
+    /// a picture.
+    world_out: ?*world.Output = null,
 
     /// A set-up's release of the pads: no button is pressed at this tick, and every button counts
     /// as held at the next reading.
@@ -123,6 +133,7 @@ pub const Turn = struct {
 pub const Assets = struct {
     load: Load.Assets,
     stand_in: StandIn.Assets,
+    round: Round.Assets,
     sega_logo: SegaLogo.Assets,
     menu: Menu.Assets,
     options: Options.Assets,
@@ -303,7 +314,7 @@ test "the flow: a set-up, its load over the scene, the scene again; an exit, its
     const assets: Assets = undefined;
     // The stand-ins need no content.
     const graph: flow.Graph = .{ .first = .demo, .power_on = 3, .edges = &.{
-        .{ .from = .demo, .exit = .done, .to = .round, .load = 2 },
+        .{ .from = .demo, .exit = .done, .to = .next_round, .load = 2 },
     } };
     var s = powerOn(&graph, &setup);
     // The set-up's tick, then three ticks of the load, then the scene's own ticks.
@@ -321,7 +332,7 @@ test "the flow: a set-up, its load over the scene, the scene again; an exit, its
         tick(&s, &graph, &turn, &assets);
     }
     // The demo's last picture stays; the next scene's set-up at the next tick, then its load.
-    try testing.expect(s.top().* == .demo and s.next.?.kind == .round);
+    try testing.expect(s.top().* == .demo and s.next.?.kind == .next_round);
     tick(&s, &graph, &turn, &assets);
-    try testing.expect(s.top().* == .load and s.items[0] == .round);
+    try testing.expect(s.top().* == .load and s.items[0] == .next_round);
 }

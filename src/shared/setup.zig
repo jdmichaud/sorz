@@ -1,6 +1,7 @@
 //! What the screens before play decide for the game that follows, kept from power-on to power-on
 //! (the original keeps it in its memory; it has no saves, decision D2): the options' values, the
-//! players and their characters, the high-score table. It is part of the game's canonical state.
+//! players and their characters, the high-score table; and the game under way, which play keeps
+//! from one round to the next. It is part of the game's canonical state.
 const std = @import("std");
 
 pub const Players = enum(u8) { one, two };
@@ -21,6 +22,42 @@ pub const Score = struct {
 
 pub const high_scores = 10;
 
+/// A player's part of the game under way.
+pub const Gamer = struct {
+    /// Playing (the game menu's choice; not out of the game).
+    in_play: bool = false,
+    /// Points, as the original counts them.
+    score: u32 = 0,
+    /// The lives, the one under way counted, and the special attacks.
+    lives: u8 = 0,
+    specials: u8 = 0,
+    /// The continues left.
+    continues: u8 = 0,
+};
+
+/// The game under way, kept from one round to the next (the original keeps it in its memory):
+/// the round reached and each player's part. Round 0 is no game: the next round starts one.
+pub const Progress = struct {
+    round: u8 = 0,
+    players: [2]Gamer = .{ .{}, .{} },
+    /// The round's timer when its round was won, for the clear's time bonus.
+    timer: u8 = 0,
+
+    /// A new game: the players of the game menu's choice in play, each with the lives of the
+    /// options (1, 3, 5 or 7) and three continues (the original's, set as the character select
+    /// ends), the other player's lives set too, as the original's are. It starts at round 1
+    /// (TODO(PLAN item 15): the options' first round, once rounds 2 to 8 are there).
+    pub fn new(setup: *const Setup) Progress {
+        var p: Progress = .{ .round = 1 };
+        for (&p.players, 0..) |*g, k| g.* = .{
+            .in_play = k == 0 or setup.players == .two,
+            .lives = 2 * setup.lives + 1,
+            .continues = 3,
+        };
+        return p;
+    }
+};
+
 pub const Setup = struct {
     /// The game menu's choice: one or two players.
     players: Players = .one,
@@ -39,4 +76,6 @@ pub const Setup = struct {
     characters: [2]?Character = .{ null, null },
     /// The high-score table; null until a game changes it: the content's first one stands.
     high_scores: ?[high_scores]Score = null,
+    /// The game under way.
+    progress: Progress = .{},
 };
