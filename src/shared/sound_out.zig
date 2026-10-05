@@ -112,6 +112,32 @@ pub const SoundOut = struct {
     }
 };
 
+/// The longest a sound made alone plays, and the ticks it rings on after its effect ends.
+const alone_ticks = 180;
+const ring_ticks = 8;
+
+/// Sound `name` of `sounds` alone, as the game plays it, `frames_rate` frames a second, apart from the
+/// game's own sound (its sequencer and chips are its own): the stereo frames, interleaved, until it
+/// ends and rings out, owned by the caller; null when the content has no such sound. The game's
+/// pause jingle that the settings play over a held game, and the page's menu's sounds, are made so,
+/// once, before they are wanted.
+pub fn alone(gpa: std.mem.Allocator, sounds: *const audio.content.Content, name: []const u8, frames_rate: u32) !?[]i16 {
+    var s = try audio.Sound.init(gpa, sounds, frames_rate);
+    defer s.deinit(gpa);
+    const id = s.find(name) orelse return null;
+    s.play(id);
+    var out: std.ArrayList(i16) = .empty;
+    errdefer out.deinit(gpa);
+    var ringing: u32 = 0;
+    for (0..alone_ticks) |t| {
+        try out.appendSlice(gpa, s.tick());
+        // The effect's priority goes back to none when it ends.
+        if (t != 0 and s.sequencer.priority == 0) ringing += 1;
+        if (ringing == ring_ticks) break;
+    }
+    return try out.toOwnedSlice(gpa);
+}
+
 test "a tick's frames add up to the device's rate, exactly, and the stretch lengthens them" {
     var out = try SoundOut.init(std.testing.allocator, 48000, null);
     defer out.deinit(std.testing.allocator);

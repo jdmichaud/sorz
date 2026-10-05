@@ -9,6 +9,7 @@ pub const content = @import("content/root.zig");
 pub const render = @import("render/root.zig");
 pub const game = @import("game.zig");
 pub const Game = game.Game;
+pub const panel = @import("panel.zig");
 pub const canonical = @import("canonical.zig");
 pub const scene = @import("scene.zig");
 pub const flow = @import("flow.zig");
