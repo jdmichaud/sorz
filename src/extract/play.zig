@@ -47,6 +47,14 @@ const letter_list = 0x10F5C;
 const letter_tiles = 0x6EE52;
 /// The tile of the status bar's health bars the set-up copies to $DB20 (0x11564).
 const bar_tile = 0x1158C;
+/// The enemies' bars (0x11830): their entries (whether a second bar shows, the type), the label
+/// after the first bar; the bars' rectangle's cells in the RAM ($FFF510: a header of 8 bytes,
+/// then 40 cells a row from the window's row 3, its place).
+const enemy_entries = 0x11950;
+const enemy_label = 0x1197E;
+const enemy_rect_cells = 0xF518;
+const enemy_rect_row = 3;
+
 /// The fill rows of a player's partial cell (8, by the eighths) and of an enemy's.
 const health_fills = 0x4F2C;
 const enemy_fills = 0x11930;
@@ -444,6 +452,53 @@ fn continueQuestion(arena: std.mem.Allocator, rom: []const u8) !records.Continue
     };
 }
 
+/// The enemies' bars' over-full looks (0x11876): from the pixels compared (cmpi.w #N,d0), the
+/// cell's word the ten cells take (move.l #N,d1, the word twice).
+const Over = struct { from: [2]u16, tiles: [2]u16 };
+
+fn bossesOver(rom: []const u8) !Over {
+    var out: Over = undefined;
+    for ([_]u32{ 0x1188C, 0x11898 }, [_]u32{ 0x11892, 0x1189E }, 0..) |cmp, mov, k| {
+        out.from[k] = @intCast(try immediate(rom, cmp, &.{ 0x0C, 0x40 }, 2));
+        if (u16be(rom, mov) != 0x223C or u16be(rom, mov + 2) != u16be(rom, mov + 4)) return error.BadData;
+        out.tiles[k] = u16be(rom, mov + 2);
+    }
+    return out;
+}
+
+/// The bosses' bars' places and look (0x11830, 0x11876): each bar's first cell (lea $F51A and
+/// $F54E), the label 12 bytes past the first bar's ten cells (0x1196A: lea 12(a1)), the pixels
+/// a point (lsl.w #2,d0), the over-full looks' pixels, and the entries' second bars.
+fn bosses(arena: std.mem.Allocator, rom: []const u8, over: [2]u16) !records.Bosses {
+    var bars: [2]records.Cell = undefined;
+    for (&bars, [_]u32{ 0x1185E, 0x1184A }) |*b, at| {
+        if (u16be(rom, at) != 0x43F8) return error.BadData;
+        b.* = rectCell(u16be(rom, at + 2)) orelse return error.BadData;
+    }
+    if (u16be(rom, 0x1196A) != 0x43E9) return error.BadData;
+    const label_at = u16be(rom, 0x1185E + 2) + 20 + u16be(rom, 0x1196C);
+    if (u16be(rom, 0x1188A) != 0xE548) return error.BadData;
+    const n = (0x1196A - enemy_entries) / 2;
+    const second = try arena.alloc(bool, n);
+    for (second, 0..) |*s, i| s.* = rom[enemy_entries + 2 * i] != 0;
+    return .{
+        .provenance = "the enemies' bars (0x117FC, 0x11830, 0x11876), shown in a boss's section: their rectangle at RAM $FFF510 (word rectangle 9, the window's row 3); bar 1's cells at $FFF51A (lea at ROM 0x1185E), bar 2's at $FFF54E (ROM 0x1184A), the label 12 bytes past bar 1's ten (0x1196A); a point 4 pixels (lsl.w #2,d0 at ROM 0x1188A); the over-full looks from the pixels at ROM 0x1188E and 0x1189A; whether each entry has a second bar (the table at ROM 0x11950)",
+        .bars = bars,
+        .label = rectCell(@intCast(label_at)) orelse return error.BadData,
+        .points = 4,
+        .over = over,
+        .second = second,
+    };
+}
+
+/// The window's cell of a cell of the enemies' bars' rectangle in the RAM.
+fn rectCell(address: u16) ?records.Cell {
+    if (address < enemy_rect_cells or (address - enemy_rect_cells) % 2 != 0) return null;
+    const k = (address - enemy_rect_cells) / 2;
+    if (k >= 40) return null;
+    return .{ .x = @intCast(k), .y = enemy_rect_row };
+}
+
 fn romWords(arena: std.mem.Allocator, rom: []const u8, at: u32, n: usize) ![]u16 {
     const out = try arena.alloc(u16, n);
     for (out, 0..) |*w, k| w.* = u16be(rom, at + 2 * @as(u32, @intCast(k)));
@@ -542,6 +597,9 @@ pub fn extract(b: *Builder) !records.Round {
         try run.mapAt(name, try romWords(arena, rom, at, 21), 21, 1, null, why, .{ .rom_words = at });
     }
     try run.mapAt("play/police_icon", &.{ 0x6DC, 0x6DD, 0x6DE, 0x6DF }, 2, 2, null, "the special attack's mark beside a player's name (0x4CD0: $06DC06DD over $06DE06DF)", .code);
+    try run.mapAt("play/enemy_bar_label", try romWords(arena, rom, enemy_label, 10), 10, 1, null, "ROM 0x1197E: the label after the enemies' first bar (0x1196A: five longs)", .{ .rom_words = enemy_label });
+    const over = try bossesOver(rom);
+    try run.mapAt("play/enemy_bar_over", &over.tiles, 2, 1, null, "the enemies' bars' over-full looks (0x11876: move.l #N,d1 at ROM 0x11892 and 0x1189E, the bar's ten cells all of it)", .code);
     try run.finish();
     const clear = try roundClear(b, v);
 
@@ -621,6 +679,7 @@ pub fn extract(b: *Builder) !records.Round {
             .score_most = try scoreMost(rom),
             .image_rows = image[0],
             .image_cells = image[1],
+            .bosses = try bosses(arena, rom, over.from),
         },
         .continue_question = try continueQuestion(arena, rom),
         .clear = clear,

@@ -41,6 +41,10 @@ pub const Frame = struct {
     /// The status bar's rows written, `status_cells` cells each.
     status_rows: u8 = 0,
     status_cells: u8 = 0,
+    /// The bosses' bars' rectangle written whole while they show: its rows, then its cells one
+    /// by one.
+    bosses_rows: u8 = 0,
+    bosses_cells: u16 = 0,
     /// The planes' columns written as the camera moves, and their blocks in all; its rows (32
     /// blocks each).
     strips: u8 = 0,
@@ -184,6 +188,8 @@ pub fn work(f: ?Frame) i32 {
     }
     for (x.tiles.words[0..x.tiles.len]) |w| b.transfer_(w, false);
     for (0..x.status_rows) |_| b.writes(costs.row + costs.row_cell * @as(i32, x.status_cells), x.status_cells);
+    b.spend(costs.row * @as(i32, x.bosses_rows));
+    for (0..x.bosses_cells) |_| b.writes(costs.cell, 1);
     for (0..x.bar_parts) |_| b.writes(costs.bar_part, 16);
     return b.work;
 }
@@ -210,6 +216,8 @@ test "a frame's work before the sound's driver" {
     // Play: the frame, the sprites' list, the drawing, the status bar's three rows of 40.
     try std.testing.expectEqual(@as(i32, 2328), work(.{ .play = true, .status_rows = 3, .status_cells = 40 }));
     try std.testing.expectEqual(@as(i32, 2362), work(.{ .play = true, .colours = true, .status_rows = 3, .status_cells = 40 }));
+    // A boss's fight: the bosses' bars' rectangle (2 rows of 40) and its bar's partial cell.
+    try std.testing.expectEqual(@as(i32, 3441), work(.{ .play = true, .status_rows = 3, .status_cells = 40, .bosses_rows = 2, .bosses_cells = 80, .bar_parts = 1 }));
     // The Sega logo: play's way, its scroll by cells.
     try std.testing.expectEqual(@as(i32, 453), work(.{ .play = true, .colours = true, .cell_scroll = true }));
 }

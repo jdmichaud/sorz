@@ -101,6 +101,15 @@ pub const Bar = struct {
     players: [2]PlayerBar = .{ .none, .none },
     time: u8 = 0,
     join: bool = false,
+    /// The bosses' bars, from the tick after a boss's first in its section.
+    bosses: ?BossesBar = null,
+};
+
+/// The bosses' bars as the status bar shows them: whether a second shows (twins'), and the
+/// pixels each shows (none for a boss gone).
+pub const BossesBar = struct {
+    second: bool,
+    pixels: [2]u16,
 };
 
 /// A player out of the game: its game over's text on the status bar blinks. The logic ticks to
@@ -221,6 +230,11 @@ pub const Round = struct {
         time_digits: *const art.TileMap,
         health_1: *const art.TileMap,
         health_2: *const art.TileMap,
+        bosses_bars: *const art.TileMap,
+        boss_bar_1: *const art.TileMap,
+        boss_bar_2: *const art.TileMap,
+        bosses_label: *const art.TileMap,
+        boss_bar_over: *const art.TileMap,
         police_icon: *const art.TileMap,
         fills: *const art.TileSheet,
         text: library.Text,
@@ -243,6 +257,11 @@ pub const Round = struct {
             .time_digits = "play/time_digits",
             .health_1 = "play/health_1",
             .health_2 = "play/health_2",
+            .bosses_bars = "play/enemy_bar",
+            .boss_bar_1 = "play/enemy_bar_1",
+            .boss_bar_2 = "play/enemy_bar_2",
+            .bosses_label = "play/enemy_bar_label",
+            .boss_bar_over = "play/enemy_bar_over",
             .police_icon = "play/police_icon",
             .fills = "play/fills",
             .text = "fonts/main",
@@ -258,9 +277,10 @@ pub const Round = struct {
         };
     };
 
-    /// The boards: the round's planes' (none before its set-up), the status bar's.
+    /// The boards: the round's planes' (none before its set-up), the status bar's (with the
+    /// bosses' bars' row).
     pub fn layoutOf(self: *const Round) view.Layout {
-        return .{ .a = self.planes[0], .b = self.planes[1], .window = .{ .width = 40, .height = 4 } };
+        return .{ .a = self.planes[0], .b = self.planes[1], .window = .{ .width = 40, .height = 5 } };
     }
 
     /// The round played's content. The flow plays only a round the content has (round 1, then
@@ -273,6 +293,12 @@ pub const Round = struct {
     fn barLines(a: *const Assets) u16 {
         const top: u16 = if (a.status_bar.place) |p| @intCast(@max(p.y, 0)) else 0;
         return (top + a.status_bar.height) * art.tile_side;
+    }
+
+    /// The rows the bosses' bars' rectangle adds below the status bar's.
+    fn bossesRows(a: *const Assets) u16 {
+        const top: u16 = if (a.bosses_bars.place) |p| @intCast(@max(p.y, 0)) else 0;
+        return (top + a.bosses_bars.height) -| (barLines(a) / art.tile_side);
     }
 
     pub fn start(_: *const Setup) Round {
@@ -448,6 +474,16 @@ pub const Round = struct {
             for (due) |tiles| f.tiles.add(tiles * transfers.words_per_tile);
             due.* = .{ 0, 0 };
         }
+        // The bosses' bars' rectangle, written whole while they show; their partial cells built
+        // at every frame from a boss's first tick, but at a frame that builds player 2's (the
+        // original returns before them then).
+        if (self.shown_bar.bosses != null) {
+            f.bosses_rows = @intCast(a.bosses_bars.height);
+            f.bosses_cells = @intCast(@as(u32, a.bosses_bars.width) * a.bosses_bars.height);
+        }
+        if (!self.bar_due[1]) for (self.play.world.bosses) |h| {
+            if (h != null) f.bar_parts += 1;
+        };
         for (&self.bar_due) |*due| {
             if (due.*) f.bar_parts += 1;
             due.* = false;
@@ -749,6 +785,17 @@ pub const Round = struct {
                 else => .none,
             };
         }
+        // The bosses' bars: their entry, set at a boss's first tick in its section, shows them
+        // from the next tick, each its boss's health (none once the boss is gone).
+        if (w.boss_bar) |entry| {
+            const bs = &a.screen.status_bar.bosses;
+            var b: BossesBar = .{ .second = entry < bs.second.len and bs.second[entry], .pixels = .{ 0, 0 } };
+            for (w.bosses, &b.pixels) |h, *px| {
+                const e = w.getConst(h orelse continue) orelse continue;
+                px.* = @intCast(@min(@as(u32, @intCast(@max(e.health, 0))) * bs.points, std.math.maxInt(u16)));
+            }
+            out.bosses = b;
+        }
         return out;
     }
 
@@ -761,14 +808,17 @@ pub const Round = struct {
             try v.board(.window).drawMapAtPlace(a.status_bar);
             try drawBar(v, a, now, null);
         } else try drawBar(v, a, now, prev.?.shown_bar);
+        try drawBosses(v, a, now.bosses, if (prev) |p| p.shown_bar.bosses else null);
         const c = self.play.world.camera;
         const r = s.script;
         v.screen.plane_a.x = c.x.whole();
         v.screen.plane_a.y = c.y.whole();
         v.screen.plane_b.x = @divFloor(c.x.whole() * r.camera.plane_b[0], r.camera.plane_b[1]);
         v.screen.plane_b.y = c.y.whole();
-        v.screen.window.lines = .{ .top = 0, .bottom = barLines(a) };
-        v.screen.sprite_lines = .{ .top = barLines(a), .bottom = render.height };
+        // The bosses' bars make the status bar a row taller.
+        const lines = barLines(a) + if (now.bosses != null) bossesRows(a) * art.tile_side else 0;
+        v.screen.window.lines = .{ .top = 0, .bottom = lines };
+        v.screen.sprite_lines = .{ .top = lines, .bottom = render.height };
         v.screen.colours = self.colours.shown;
         try v.sprites.appendSlice(v.gpa, v.world_out.shown_sprites.slice());
         switch (self.shown_phase) {
@@ -812,6 +862,55 @@ pub fn drawBar(v: *view.View, a: anytype, now: Bar, was: ?Bar) !void {
         try bigDigit(board, a, .{ .x = a.screen.status_bar.time.x + 1, .y = a.screen.status_bar.time.y }, now.time % 10);
     }
     if ((was == null and now.join) or (was != null and was.?.join != now.join)) try drawJoin(v, a, now.join);
+}
+
+/// The bosses' bars that changed since `was`: shown, their rectangle and its label, then each
+/// bar; gone, the status bar's own row again.
+fn drawBosses(v: *view.View, a: *const Round.Assets, now: ?BossesBar, was: ?BossesBar) !void {
+    const board = v.board(.window);
+    const bs = &a.screen.status_bar.bosses;
+    const b = now orelse {
+        if (was == null) return;
+        // The status bar's rows the rectangle covered.
+        const place = a.bosses_bars.place orelse return;
+        for (0..a.bosses_bars.height) |r| {
+            const y: u8 = @intCast(@max(place.y, 0) + @as(i32, @intCast(r)));
+            restore(board, a, .{ .x = @intCast(@max(place.x, 0)), .y = y }, @intCast(a.bosses_bars.width));
+        }
+        return;
+    };
+    if (was == null) {
+        try board.drawMapAtPlace(a.bosses_bars);
+        try board.drawMap(a.bosses_label, bs.label.x, bs.label.y);
+    }
+    for (0..2) |k| {
+        if (k == 1 and !b.second) continue;
+        const before = if (was) |w| (if (k == 0 or w.second) w.pixels[k] else null) else null;
+        if (before != null and before.? == b.pixels[k]) continue;
+        try bossBar(board, a, if (k == 0) a.boss_bar_1 else a.boss_bar_2, bs.bars[k], b.pixels[k]);
+    }
+}
+
+/// A boss's bar at `at`: its pixels, eight a cell (`map`'s ten from the full ones on: the full,
+/// the partial, its fill the enemies' of `play/fills` by the pixels left, the empty); from the
+/// over-full pixels, its ten cells all of a look (`play/enemy_bar_over`'s).
+fn bossBar(board: *render.Board, a: *const Round.Assets, map: *const art.TileMap, at: records.Cell, pixels: u16) !void {
+    const bs = &a.screen.status_bar.bosses;
+    const cells = (map.width - 1) / 2;
+    if (pixels >= bs.over[0]) {
+        const look: usize = if (pixels >= bs.over[1]) 1 else 0;
+        for (0..cells) |i| try putCell(board, a.boss_bar_over, look, 0, at.x + @as(u8, @intCast(i)), at.y);
+        return;
+    }
+    const full = @min(pixels / art.tile_side, cells);
+    const rest = pixels % art.tile_side;
+    for (0..cells) |i| {
+        const m = cells - full + i;
+        if (m == cells) {
+            const c = map.cell(m, 0);
+            try board.put(at.x + @as(i32, @intCast(i)), at.y, &a.fills.tiles[art.tile_side + rest], .{ .palette = c.palette, .priority = c.priority });
+        } else try putCell(board, map, m, 0, at.x + @as(u8, @intCast(i)), at.y);
+    }
 }
 
 /// Player `k`'s part of the bar, the parts that changed since `was` (all when null).

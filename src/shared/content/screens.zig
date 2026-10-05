@@ -131,8 +131,26 @@ pub const BarPlayer = struct {
 /// shown and hidden in turn every `blink` logic ticks of play.
 pub const Join = struct { text: []const u8, at: Cell, blink: u8 };
 
+/// The bosses' bars (the original's enemies' bars: round 1's Antonio's, and those after), shown
+/// below the players' from the tick after a boss's first in its section: the fixed layer a row
+/// taller, the bars' rectangle (`play/enemy_bar`, at its place) and on it each bar's ten cells
+/// from its cell in `bars` (`play/enemy_bar_1` and `_2`: ten full, the partial one, ten empty;
+/// the partial cell's fill `play/fills`' second eight), the label after the first bar at `label`
+/// (`play/enemy_bar_label`). A bar shows its boss's health at `points` pixels a point, eight a
+/// cell; from `over[0]` pixels its ten cells all show the first over-full look
+/// (`play/enemy_bar_over`'s first cell), from `over[1]` the second. `second`, by the bars'
+/// entry (a boss's record's `bar`): whether the entry shows a second bar (twins').
+pub const Bosses = struct {
+    provenance: []const u8 = "",
+    bars: [2]Cell,
+    label: Cell,
+    points: u8,
+    over: [2]u16,
+    second: []const bool,
+};
+
 /// The status bar, on the fixed layer: each player's parts, the timer's, the invitation to join;
-/// the most a score holds (its digits the bar's).
+/// the most a score holds (its digits the bar's); the bosses' bars.
 pub const StatusBar = struct {
     provenance: []const u8 = "",
     players: [2]BarPlayer,
@@ -143,6 +161,7 @@ pub const StatusBar = struct {
     /// (from the bar's second), and the cells of a row.
     image_rows: u8,
     image_cells: u8,
+    bosses: Bosses,
 };
 
 /// A player's cells on the status bar for the continue's question and the game over.
@@ -280,6 +299,40 @@ fn steps(arena: std.mem.Allocator, xs: []const Step) !json.Value {
     return .{ .array = out };
 }
 
+fn bossesValue(arena: std.mem.Allocator, b: *const Bosses) !json.Value {
+    const second = try arena.alloc(json.Value, b.second.len);
+    for (second, b.second) |*o, s| o.* = .{ .bool = s };
+    return withProvenance(arena, b.provenance, &.{
+        .{ .key = "bars", .value = .{ .array = try arena.dupe(json.Value, &.{ try cellValue(arena, b.bars[0]), try cellValue(arena, b.bars[1]) }) } },
+        .{ .key = "label", .value = try cellValue(arena, b.label) },
+        .{ .key = "points", .value = json.Value.num(b.points) },
+        .{ .key = "over", .value = .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(b.over[0]), json.Value.num(b.over[1]) }) } },
+        .{ .key = "second", .value = .{ .array = second } },
+    });
+}
+
+fn readBosses(arena: std.mem.Allocator, n: json.Node) Error!Bosses {
+    try n.only(&.{ "provenance", "bars", "label", "points", "over", "second" });
+    const bars = try n.get("bars");
+    if (try bars.len() != 2) return bars.fail("not the two bars' cells");
+    const over = try n.get("over");
+    if (try over.len() != 2) return over.fail("not [first look, second look]");
+    const sn = try n.get("second");
+    const second = try arena.alloc(bool, try sn.len());
+    for (second, 0..) |*o, i| o.* = try (try sn.at(i)).boolean();
+    const b: Bosses = .{
+        .provenance = if (try n.opt("provenance")) |x| try x.string() else "",
+        .bars = .{ try readCell(try bars.at(0)), try readCell(try bars.at(1)) },
+        .label = try readCell(try n.get("label")),
+        .points = try (try n.get("points")).int(u8),
+        .over = .{ try (try over.at(0)).int(u16), try (try over.at(1)).int(u16) },
+        .second = second,
+    };
+    if (b.points == 0) return (try n.get("points")).fail("not 1 or more");
+    if (b.over[0] > b.over[1]) return over.fail("the second look before the first");
+    return b;
+}
+
 fn cellValue(arena: std.mem.Allocator, c: Cell) !json.Value {
     return .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(c.x), json.Value.num(c.y) }) };
 }
@@ -397,6 +450,7 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
             .{ .key = "time", .value = try cellValue(arena, r.status_bar.time) },
             .{ .key = "score_most", .value = json.Value.num(r.status_bar.score_most) },
             .{ .key = "image", .value = .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(r.status_bar.image_rows), json.Value.num(r.status_bar.image_cells) }) } },
+            .{ .key = "bosses", .value = try bossesValue(arena, &r.status_bar.bosses) },
             .{ .key = "join", .value = try obj(arena, &.{
                 .{ .key = "text", .value = .{ .str = r.status_bar.join.text } },
                 .{ .key = "at", .value = try cellValue(arena, r.status_bar.join.at) },
@@ -555,7 +609,7 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
     const t = try n.get("time_over");
     try t.only(&.{ "provenance", "frame", "ticks", "health", "seconds" });
     const s = try n.get("status_bar");
-    try s.only(&.{ "provenance", "players", "time", "join", "score_most", "image" });
+    try s.only(&.{ "provenance", "players", "time", "join", "score_most", "image", "bosses" });
     const image = try s.get("image");
     if (try image.len() != 2) return image.fail("not [rows, cells]");
     const j = try s.get("join");
@@ -641,6 +695,7 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
             .score_most = try (try s.get("score_most")).int(u32),
             .image_rows = try (try image.at(0)).int(u8),
             .image_cells = try (try image.at(1)).int(u8),
+            .bosses = try readBosses(arena, try s.get("bosses")),
         },
     };
     if (r.status_bar.join.blink == 0) return (try j.get("blink")).fail("not 1 or more");
@@ -786,6 +841,7 @@ test "the screens' records write and read back the same" {
                 .score_most = 999_900,
                 .image_rows = 3,
                 .image_cells = 40,
+                .bosses = .{ .bars = .{ .{ .x = 1, .y = 3 }, .{ .x = 27, .y = 3 } }, .label = .{ .x = 17, .y = 3 }, .points = 4, .over = .{ 81, 97 }, .second = &.{ false, true } },
             },
             .continue_question = .{
                 .question = "CONTINUE",

@@ -273,7 +273,15 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   play: its `text` (`fonts/main`, its words only: a space leaves the bar's cell) `at` its cell,
   shown and hidden in turn every `blink` logic ticks of play; `score_most`, the most a score
   holds (points past it are lost), its digits the bar's score's; `image`, the bar's rows and
-  cells the game writes at every frame of play (their time comes before the sound's driver, A4).
+  cells the game writes at every frame of play (their time comes before the sound's driver, A4);
+  `bosses`, the bosses' bars, shown from the tick after a boss's first in its section (its
+  record's `bar` their entry): the fixed layer a row taller, the bars' rectangle
+  (`play/enemy_bar`, at its place, written whole at every frame) and on it each bar's ten cells
+  from its cell of `bars` (the first bar its boss's, the second a twin's when the entry's
+  `second` says so: `second` by entry), the label after the first bar (`play/enemy_bar_label`)
+  at `label`; a bar shows its boss's health `points` pixels a point (none once the boss is
+  gone), and from `over`'s first pixels its ten cells are all `play/enemy_bar_over`'s first
+  cell, from its second the second.
   The status bar shows each tick
   what the tick before left (the original copies its image as a frame starts, as the sprites).
   `continue`, the continue's question that a player out of lives answers on the bar: the
@@ -295,8 +303,9 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   under them, `play/time_digits` (the big digits, a column of two cells each), `play/health_1`
   and `_2` and `play/enemy_bar_1` and `_2` (a bar's full cells, its partial cell, its empty
   ones, as many: a bar of n full cells shows its cells from the (cells - n)th, a health point a
-  pixel, and its partial cell is the tile of `play/fills` of its pixels, the players' from 0, the
-  enemies' from 8; a player's health shows up to its kind's `health`), `play/police_icon`.
+  pixel (a boss's `bosses.points`), and its partial cell is the tile of `play/fills` of its
+  pixels, the players' from 0, the enemies' from 8; a player's health shows up to its kind's
+  `health`), `play/police_icon`.
 
 ```json
 {"first": {"provenance": "…", "entries": [{"score": 100000, "round": 1, "name": "AAA", "level": 1}]}}
