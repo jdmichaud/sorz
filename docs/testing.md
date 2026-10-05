@@ -178,7 +178,8 @@ events and conditions by logic tick. The catalogue's scenarios of each character
 - `zig build round-check -Drom=ROM -Dremaster=DIR|AGENT` (src/tools/round_check.zig), the gate of
   PLAN item 13: round 1's scenarios (`tests/scenarios/round1`: a walk to the first wall, standing
   through three time overs, the continue's YES and NO, two pauses, player 2's PRESS 2UP START
-  mid-round as Adam, Blaze chosen at the select, two players) run from power-on in both
+  mid-round as Adam, alone and with the first Galsias on the screen, Blaze chosen at the select,
+  two players) run from power-on in both
   programs, and their round scenes' traces are compared event by event (the camera and its stops,
   the timer, play's phases, the players' places, states, health, lives and deaths, the continue,
   the game over, the placed enemies coming out, the sounds asked for), the hit sparks left out;

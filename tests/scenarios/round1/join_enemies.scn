@@ -1,0 +1,9 @@
+# round 1: Axel walks to the first Galsias, then player 2 joins (PRESS 2UP START) while they are on
+# the screen: its drop-in, as the character after Axel (Adam), knocks them back.
+start axel
+until state 1 ready
+right 70
+wait 5
+pad 2
++start 12
+wait 100

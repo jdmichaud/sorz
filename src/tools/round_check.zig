@@ -51,6 +51,7 @@ pub const scenarios = [_]Scenario{
     .{ .name = "gameover", .what = "the continue's NO: the game over's count, the fade out, the high scores" },
     .{ .name = "pause", .what = "two pauses: the pause's sounds, its ticks on the game's clock, play after it" },
     .{ .name = "join", .what = "player 2's PRESS 2UP START mid-round, the timer down: its drop-in as Adam, the timer again" },
+    .{ .name = "join_enemies", .what = "player 2's PRESS 2UP START with the first Galsias on the screen: its drop-in as Adam knocks them back" },
     .{ .name = "blaze", .what = "Blaze chosen at the select: her walk to the first Galsia, her blows, her jump kick" },
     .{ .name = "two", .what = "two players, Axel and Blaze, chosen at the select: their walk and a jump, the Galsias coming" },
 };
