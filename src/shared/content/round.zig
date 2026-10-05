@@ -386,6 +386,8 @@ pub const Round = struct {
     in_front: InFront = .{},
     /// Its lift (round 7's): the camera stays, plane B rides by.
     lift: ?Lift = null,
+    /// Its walls stop the players' moves in depth (all but round 7's), as they stop those across.
+    depth_walls: bool = true,
     /// How it ends without a boss (round 7's): the players walk out.
     exit: ?Exit = null,
 };
@@ -733,6 +735,7 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
             .{ .key = "wait", .value = json.Value.num(lf.wait) },
         }) });
     }
+    if (!r.depth_walls) try fields.append(arena, .{ .key = "depth_walls", .value = .{ .bool = false } });
     if (r.exit) |ex| try fields.append(arena, .{ .key = "exit", .value = try withProvenance(arena, ex.provenance, &.{
         .{ .key = "x", .value = json.Value.num(ex.x) },
         .{ .key = "depth", .value = try pair(arena, ex.depth[0], ex.depth[1]) },
@@ -875,7 +878,7 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off", "in_front", "lift", "exit" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off", "in_front", "lift", "exit", "depth_walls" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
@@ -1064,6 +1067,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         if (r.lift.?.period == 0) return (try lf.get("period")).fail("not 1 or more");
         if (r.lift.?.wait == 0) return (try lf.get("wait")).fail("not 1 or more");
     }
+    if (try root.opt("depth_walls")) |dw| r.depth_walls = try dw.boolean();
     if (try root.opt("exit")) |ex| {
         try ex.only(&.{ "provenance", "x", "depth", "ticks" });
         r.exit = .{

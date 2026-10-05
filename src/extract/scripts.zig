@@ -1110,6 +1110,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .in_front = try inFront(arena, rom, r),
         .lift = lift,
         .exit = exit,
+        .depth_walls = try depthWalls(rom, r),
     };
 }
 
@@ -1161,6 +1162,13 @@ fn liftOf(arena: std.mem.Allocator, rom: []const u8, r: u32, mode_a: u16, mode_b
         .period = @intCast(period & 0xFF),
         .wait = @intCast(u16be(rom, 0x752)),
     };
+}
+
+/// Whether round `r`'s walls stop the players' moves in depth (0x3B4E): not in the round of its
+/// `cmpi.w` (round 7's).
+fn depthWalls(rom: []const u8, r: u32) Error!bool {
+    if (u16be(rom, 0x3B54) != 0x0C78 or u16be(rom, 0x3B58) != 0xFF02 or u16be(rom, 0x3B5A) != 0x672C) return error.BadData;
+    return u16be(rom, 0x3B56) != r;
 }
 
 /// How round `r` ends without a boss (0x646: the round of its `cmpi.w`, round 7's): its last

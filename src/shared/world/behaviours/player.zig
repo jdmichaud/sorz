@@ -1260,11 +1260,13 @@ pub fn fall(a: Actor) void {
 /// stops; a cell with a floor that high `wall_ahead` ahead across (the way it moves, right when
 /// it does not) stops it: back where its turn started when that cell has no height, else its
 /// move undone. Fallen deeper into the ground than its floor, the ground's cells are walls too.
+/// A round without walls in depth (`depth_walls`, round 7's) has only those across.
 pub fn walls(a: Actor) void {
     const n = a.numbers();
     const e = a.entity;
     const looked_at = e.position.height.whole() - n.wall_above;
-    if (e.velocity.depth.raw != 0) if (a.tick.floorUnder(e.position)) |under| if (looked_at > under.whole() and a.tick.carryUnder(e.position) == 0) {
+    const depth_walls = if (a.tick.plan) |p| p.round.depth_walls else true;
+    if (depth_walls and e.velocity.depth.raw != 0) if (a.tick.floorUnder(e.position)) |under| if (looked_at > under.whole() and a.tick.carryUnder(e.position) == 0) {
         e.position.depth = e.position.depth.sub(e.velocity.depth);
         e.velocity.depth = .zero;
     };
