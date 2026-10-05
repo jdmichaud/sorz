@@ -343,6 +343,9 @@ pub const Situation = struct {
     /// the scene's tick of that count.
     timer: ?Count = null,
     entities: []const Seen,
+    /// The round scene's events that the round's script follows, to the situation: the camera,
+    /// its walls, play's phases, the sections, the entities that came and went.
+    history: []const Step = &.{},
     /// The players' places across (whole pixels) from the round scene's start, by tick: when a
     /// shutter opened (it opens as its player comes near) is read from them.
     players_x: []const PlayerX = &.{},
@@ -354,6 +357,17 @@ pub const Situation = struct {
     others: []const Other = &.{},
 
     pub const Later = struct { t: u64, seen: Seen };
+    pub const Step = struct {
+        t: u64,
+        what: union(enum) {
+            camera: i32,
+            wall: i32,
+            special: bool,
+            section: u8,
+            spawn: struct { id: u32, kind: []const u8, x: i32, depth: i32 },
+            remove: u32,
+        },
+    };
     pub const Other = struct { t: u64, id: u32, kind: []const u8 };
     pub const Count = struct { seconds: u8, t: u64 };
     pub const PlayerX = struct { t: u64, x: i32 };
@@ -430,6 +444,9 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
     var players_depth: [2]?i32 = .{ null, null };
     // The last tick's random draws.
     var draws_t: u64 = 0;
+    // The round scene's steps for the round's script (and its intro's, as the round's start).
+    var history: std.ArrayList(Situation.Step) = .empty;
+    var intro = false;
     var draws_values: []const u16 = &.{};
     var lines = std.mem.splitScalar(u8, trace_text, '\n');
     // The first line after the situation, which the spawns after it start from.
@@ -467,11 +484,17 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             };
             continue;
         }
+        const ev_t: u64 = @intCast(int(o, "t") orelse 0);
         if (std.mem.eql(u8, ev, "scene")) {
             in_round = std.mem.eql(u8, str(o, "scene") orelse "", "round");
             if (in_round) s.round = @intCast(int(o, "round") orelse 1);
+            // The round's intro brings the first section's placed: the round's start.
+            if (!in_round) history.clearRetainingCapacity();
+            intro = std.mem.eql(u8, str(o, "scene") orelse "", "round_intro");
             playing = false;
             s.timer = null;
+        } else if (std.mem.eql(u8, ev, "section")) {
+            if (in_round) try history.append(arena, .{ .t = ev_t, .what = .{ .section = @intCast(int(o, "section") orelse 0) } });
         } else if (std.mem.eql(u8, ev, "spawn")) {
             const e: u32 = @intCast(int(o, "e") orelse return error.BadTrace);
             const x: i32 = @intCast(int(o, "x") orelse 0);
@@ -493,8 +516,12 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
                 .slot = if (int(o, "_slot")) |sl| @intCast(sl) else null,
             });
             s.next_id = @max(s.next_id, e + 1);
+            const own = scripted(seen.get(e).?.kind) and !(std.mem.eql(u8, seen.get(e).?.kind, "breakable") and !std.mem.eql(u8, state orelse "", "s0"));
+            if ((in_round or intro) and own) try history.append(arena, .{ .t = if (intro) 0 else ev_t, .what = .{ .spawn = .{ .id = e, .kind = seen.get(e).?.kind, .x = x >> 16, .depth = d >> 16 } } });
         } else if (std.mem.eql(u8, ev, "remove")) {
-            _ = seen.orderedRemove(@intCast(int(o, "e") orelse return error.BadTrace));
+            const e: u32 = @intCast(int(o, "e") orelse return error.BadTrace);
+            _ = seen.orderedRemove(e);
+            if (in_round) try history.append(arena, .{ .t = ev_t, .what = .{ .remove = e } });
         } else if (std.mem.eql(u8, ev, "morph")) {
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             x.was_kind = x.kind;
@@ -554,8 +581,10 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             x.health = @intCast(int(o, "health") orelse 0);
         } else if (std.mem.eql(u8, ev, "camera")) {
             s.camera = .{ @intCast(int(o, "x") orelse 0), @intCast(int(o, "y") orelse 0) };
+            if (in_round) try history.append(arena, .{ .t = ev_t, .what = .{ .camera = s.camera[0] } });
         } else if (std.mem.eql(u8, ev, "camera_stop")) {
             s.camera_stop = .{ @intCast(int(o, "x") orelse 0), @intCast(int(o, "y_min") orelse 0), @intCast(int(o, "y_max") orelse 0) };
+            if (in_round) try history.append(arena, .{ .t = ev_t, .what = .{ .wall = s.camera_stop[0] } });
         } else if (std.mem.eql(u8, ev, "pad")) {
             // A press read at a tick is seen by its player's think at the next.
             const p: usize = @intCast((int(o, "pad") orelse 1) - 1);
@@ -580,11 +609,13 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             if (in_round) {
                 playing = std.mem.eql(u8, phase, "play") or std.mem.eql(u8, phase, "special");
                 s.special = std.mem.eql(u8, phase, "special");
+                try history.append(arena, .{ .t = ev_t, .what = .{ .special = s.special } });
             }
             if (at == null and in_round and std.mem.eql(u8, phase, "play")) {
                 s.v = @intCast(int(o, "v") orelse 0);
                 s.t = @intCast(int(o, "t") orelse 0);
                 s.entities = try arena.dupe(Situation.Seen, seen.values());
+                s.history = history.items;
                 return s;
             }
         }
@@ -596,6 +627,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
     const entities = try arena.dupe(Situation.Seen, seen.values());
     s.entities = entities;
     s.players_x = players_x.items;
+    s.history = history.items;
     // The round's script's spawns after the situation, in the same round scene; the other
     // things' made then.
     var later: std.ArrayList(Situation.Later) = .empty;
@@ -704,6 +736,109 @@ fn padOf(letters: []const u8) sorz.input.Pad {
     return pad;
 }
 
+/// The round's script's place at the situation: the world's own script run from the round's
+/// start, tick by tick, over a world whose script entities come and go as the other program's
+/// trace says (each of the script's spawns matched to one of the trace's, by tick, kind and
+/// place; the trace's removals followed), its camera where the trace has it, and play's phase
+/// the trace's. Null when the script's spawns or sections part from the trace's (the stand-in
+/// then brings what the trace brought).
+fn replayScript(gpa: std.mem.Allocator, kinds: *const world.Kinds, plan: *const world.script.Plan, situation: *const Situation, two: bool) !?world.script.State {
+    const Replay = struct {
+        w: *world.World,
+        kinds: *const world.Kinds,
+        steps: []const Situation.Step,
+        ids: std.AutoHashMapUnmanaged(u32, world.Handle) = .empty,
+        known: [world.entity.capacity]u16 = @splat(0),
+        alive: [world.entity.capacity]bool = @splat(false),
+
+        /// The script's new entities matched to the trace's spawns of ticks `from` to `to`;
+        /// false when one has no match.
+        fn match(self: *@This(), alloc: std.mem.Allocator, from: u64, to: u64) !bool {
+            for (&self.w.entities, 0..) |*e, i| {
+                if (!e.alive()) {
+                    self.alive[i] = false;
+                    continue;
+                }
+                if (self.alive[i] and self.known[i] == e.generation) continue;
+                self.alive[i] = true;
+                self.known[i] = e.generation;
+                const h = self.w.handleAt(i).?;
+                const name = self.kinds.get(e.kind.?).name();
+                // Not the trace's entities that matter (the GO arrow): gone at once.
+                if (!scripted(name)) {
+                    self.w.remove(h);
+                    self.alive[i] = false;
+                    continue;
+                }
+                const id = for (self.steps) |st| {
+                    if (st.t < from or st.t > to or st.what != .spawn) continue;
+                    const sp = st.what.spawn;
+                    if (self.ids.contains(sp.id)) continue;
+                    if (!std.mem.eql(u8, sp.kind, name) or sp.x != e.position.x.whole() or sp.depth != e.position.depth.whole()) continue;
+                    break sp.id;
+                } else {
+                    std.log.warn("the round's script, taken up, brings a {s} at ({d}, {d}) at tick {d} the trace has not: its stand-in takes over", .{ name, e.position.x.whole(), e.position.depth.whole(), to });
+                    return false;
+                };
+                try self.ids.put(alloc, id, h);
+            }
+            return true;
+        }
+    };
+    const w = try gpa.create(world.World);
+    defer gpa.destroy(w);
+    w.* = .{};
+    var out: world.Output = .{};
+    var random: world.Random = .{};
+    var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &random, .out = &out, .plan = plan };
+    world.script.start(w, plan);
+    w.ground = .pixels(plan.round.ground);
+    w.script.two_players = two;
+    var r: Replay = .{ .w = w, .kinds = kinds, .steps = situation.history };
+    defer r.ids.deinit(gpa);
+    // The round's start: the first section's placed, the trace's at its first ticks.
+    world.script.placeFirst(&t, plan);
+    if (!try r.match(gpa, 0, 1)) return null;
+    const steps = situation.history;
+    var k: usize = 0;
+    var camera: i32 = w.camera.x.raw;
+    var tick: u64 = 1;
+    while (tick <= situation.t) : (tick += 1) {
+        var to = k;
+        while (to < steps.len and steps[to].t <= tick) to += 1;
+        // What the trace says before the script's turn: the removals, the phase.
+        for (steps[k..to]) |st| switch (st.what) {
+            .remove => |id| if (r.ids.fetchRemove(id)) |kv| w.remove(kv.value),
+            .special => |on| w.special = on,
+            else => {},
+        };
+        w.camera.x = .{ .raw = camera };
+        if (!w.special) w.camera.x_min = w.camera.x;
+        world.script.opening(&t);
+        for (steps[k..to]) |st| switch (st.what) {
+            .camera => |x| camera = x,
+            else => {},
+        };
+        w.camera.x = .{ .raw = camera };
+        world.script.run(&t);
+        if (!try r.match(gpa, tick, tick)) return null;
+        // The trace's spawns of the tick all the script's, its section the script's.
+        for (steps[k..to]) |st| switch (st.what) {
+            .spawn => |sp| if (!r.ids.contains(sp.id)) {
+                std.log.warn("the round's script, taken up, does not bring the trace's {s} at ({d}, {d}) at tick {d}: its stand-in takes over", .{ sp.kind, sp.x, sp.depth, tick });
+                return null;
+            },
+            .section => |sec| if (sec != w.script.section) {
+                std.log.warn("the round's script, taken up, is at section {d} at tick {d}, the trace's at {d}: its stand-in takes over", .{ w.script.section, tick, sec });
+                return null;
+            },
+            else => {},
+        };
+        k = to;
+    }
+    return w.script;
+}
+
 /// The kinds the round's script places: its enemies, its boss, its breakables.
 fn scripted(kind: []const u8) bool {
     for ([_][]const u8{ "galsia", "galsia_stalker", "galsia_knife", "galsia_pipe", "signal", "acrobat", "brawler", "antonio", "breakable" }) |k| {
@@ -791,12 +926,15 @@ pub const Run = struct {
     next_other: usize = 0,
     round: ?*const sorz.content.round.Round = null,
     used: [256]bool = @splat(false),
-    /// The round's plan, its records left to the stand-in: the timer and the new lives follow
-    /// it.
+    /// The round's plan: the round's script (taken up where it was), or, its records left to the
+    /// stand-in, the timer and the new lives follow it.
     plan: ?world.script.Plan = null,
     /// The art the world queues (the special attack's car's), streamed in as the round's
     /// picture streams it: a share a display tick.
     art: world.script.ArtQueue = .{},
+    /// The round's script was taken up where it was (`replayScript`): it brings its records
+    /// itself, and the stand-in does not.
+    scripted: bool = false,
 
     /// What the run takes up besides the situation: the round's clock (the other program's tick
     /// counter at the script's start, when known) and the round's spawn records.
@@ -837,7 +975,7 @@ pub const Run = struct {
         r.later = situation.later;
         r.others = situation.others;
         r.round = extras.round;
-        takeUpScript(&r, round, situation);
+        try takeUpScript(&r, round, situation);
         var made: [world.entity.capacity]?struct { h: world.Handle, e: *const Situation.Seen } = @splat(null);
         // A game of two players: the script's records for two players are its.
         const two = for (situation.entities) |*e| {
@@ -1061,10 +1199,17 @@ pub const Run = struct {
 
     /// The round's script, its records left to the stand-in: the section the camera stops at
     /// the wall of, and the timer as it last counted (the ticks of its second since).
-    fn takeUpScript(r: *Run, round: *const sorz.content.round.Round, situation: *const Situation) void {
+    fn takeUpScript(r: *Run, round: *const sorz.content.round.Round, situation: *const Situation) !void {
         const w = &r.play.world;
         r.plan = .{ .round = round };
         w.script.stage = .stand_in;
+        const two = for (situation.entities) |*e| {
+            if (e.player == 2) break true;
+        } else false;
+        if (try replayScript(r.gpa, r.kinds, &r.plan.?, situation, two)) |state| {
+            w.script = state;
+            r.scripted = true;
+        }
         for (round.sections, 0..) |sec, k| if (sec.wall == situation.camera_stop[0] >> 16) {
             w.script.section = @intCast(k);
         };
@@ -1161,6 +1306,7 @@ pub const Run = struct {
     /// The round's script's stand-in: what the other program's script brought at the end of this
     /// tick comes now, with its id and the record that placed it (its first tick is the next).
     fn bringLater(self: *Run) !void {
+        if (self.scripted) return;
         const w = &self.play.world;
         while (self.next_later < self.later.len and self.later[self.next_later].t <= self.t) : (self.next_later += 1) {
             const l = &self.later[self.next_later];
