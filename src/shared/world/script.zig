@@ -353,8 +353,10 @@ pub fn opening(t: *Tick) void {
     t.world.camera.x_max = .pixels(p.round.sections[s.part].wall);
     ownSoundAgain(t.world, p.round);
     restartTimer(t.world, p);
+    // The GO arrow, in a free place of the effects' (0x19646).
     if (t.kinds.find(go_arrow)) |kind| {
-        _ = t.world.spawn(t.kinds, kind, .zero, .right) catch return;
+        const places = World.effect_places;
+        _ = t.world.spawnWithin(t.kinds, kind, places.from, places.to, .zero, .right) catch return;
     }
 }
 
