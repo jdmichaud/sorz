@@ -614,7 +614,8 @@ pub const Tick = struct {
 
     /// The boss of the boss's section beaten (the last of twins): the players held are freed,
     /// and every enemy shown, but those knocked out, is knocked down, its health gone (the
-    /// original's end of the fight; the traces see a blow by no one).
+    /// original's end of the fight; the traces credit the blow to the one it last met, none for
+    /// one that met none).
     pub fn bossBeaten(t: *Tick) void {
         for (t.world.players) |p| {
             const ph = p.entity orelse continue;
@@ -631,7 +632,7 @@ pub const Tick = struct {
             const lost = e.health + 1;
             if (!t.specialKnockDown(h, null, .beaten)) continue;
             e.health = -1;
-            t.out.hits.append(.{ .attacker = null, .target = h, .damage = lost });
+            t.out.hits.append(.{ .attacker = e.struck_by, .target = h, .damage = lost });
         }
     }
 

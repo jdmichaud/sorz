@@ -1861,8 +1861,15 @@ pub fn Of(comptime M: type) type {
                 .any, .beaten => {},
             }
             a.endMove();
+            // The end of a boss's fight knocks it down as it is: the one it last met stays the
+            // one its fall turns from, and the one the original credits (its record's).
+            if (how == .beaten) {
+                a.entity.struck_by = body(a).other;
+                enter(a, .knocked_down);
+                return true;
+            }
             body(a).other = by;
-            if (how == .beaten) enter(a, .knocked_down) else enterAtBlow(a, .knocked_down);
+            enterAtBlow(a, .knocked_down);
             return true;
         }
 
