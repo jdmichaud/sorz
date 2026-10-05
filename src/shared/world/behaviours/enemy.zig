@@ -1448,16 +1448,22 @@ pub fn Of(comptime M: type) type {
             b.slowing = true;
             b.cried = a.entity.health < 0;
             a.animate(.down);
-            if (a.atGround() and a.entity.velocity.height.raw >= 0) {
-                b.down = .lying;
-                b.bounces = 3;
-                a.entity.missile = null;
-                a.pace(n.lying, n.lying);
-                a.pause(false);
-                return;
-            }
+            _ = n;
+            if (a.atGround() and a.entity.velocity.height.raw >= 0) return takeUpLying(a);
             b.down = .flying;
             a.entity.flags.airborne = true;
+        }
+
+        /// Taken up lying after its last bounce.
+        fn takeUpLying(a: A) void {
+            const n = a.numbers();
+            const b = body(a);
+            b.down = .lying;
+            b.bounces = 3;
+            a.entity.missile = null;
+            a.entity.flags.airborne = false;
+            a.pace(n.lying, n.lying);
+            a.pause(false);
         }
 
         /// Taken up showing its frame `shown` ticks, its speed what it is since `ago` ticks with
@@ -1495,6 +1501,9 @@ pub fn Of(comptime M: type) type {
         /// came, its length by the first of the draws then when the second gives that speed
         /// (they were its own), on the side its speed leaves.
         pub fn takeUpCourse(a: A, ago: u32, draws: []const u16) void {
+            // Knocked down, on the ground, its speed unchanged a tick at least (in the air its
+            // gravity changes it every tick): it lies (its speeds as its last landing left them).
+            if (a.mind.state == .knocked_down and body(a).down == .flying and ago >= 1 and a.atGround()) return takeUpLying(a);
             if (a.mind.state != .walk_off or a.entity.velocity.x.raw == 0) return;
             const b = body(a);
             b.fresh = false;
