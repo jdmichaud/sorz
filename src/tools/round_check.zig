@@ -312,14 +312,17 @@ fn firstV(d: compare.Difference) i64 {
     return @min(a, b);
 }
 
-/// A trace's events in its round scenes.
+/// A trace's events in its round scenes, with the entities their loads (`round_intro`) place:
+/// a round's script places its first section's there.
 const Rounds = struct {
     trace: *const compare.Trace,
 
     fn of(self: Rounds, arena: std.mem.Allocator) !compare.Trace {
         var events: std.ArrayList(compare.Event) = .empty;
         for (self.trace.events) |e| {
-            if (std.mem.eql(u8, self.trace.scenes[e.scene - 1], "round")) try events.append(arena, e);
+            const name = self.trace.scenes[e.scene - 1];
+            const placed = std.mem.eql(u8, name, "round_intro") and std.mem.eql(u8, e.ev, "spawn");
+            if (placed or std.mem.eql(u8, name, "round")) try events.append(arena, e);
         }
         var t = self.trace.*;
         t.events = events.items;
