@@ -746,16 +746,20 @@ pub fn Of(comptime M: type) type {
                 return false;
             }
             // The original reads the striker's state.
-            if (b.other) |o| if (a.other(o)) |s| if (s.move) |m| {
-                if (std.mem.eql(u8, a.tick.kindOf(s).definition.moves[m].name, "attack3")) {
-                    b.settling = true;
-                    return true;
-                }
+            if (b.other) |o| if (a.other(o)) |s| if (thirdBlow(a, s)) {
+                b.settling = true;
+                return true;
             };
             const back: i32 = if (a.entity.facingLeft()) 1 else -1;
             a.entity.position.x = a.entity.position.x.add(Fixed.pixels(n.reel_nudge).times(back));
             b.timer = n.reel;
             return false;
+        }
+
+        /// Whether `s` (its striker) is in its combo's third blow.
+        fn thirdBlow(a: A, s: *const Entity) bool {
+            const m = s.move orelse return false;
+            return std.mem.eql(u8, a.tick.kindOf(s).definition.moves[m].name, "attack3");
         }
 
         pub fn reel(a: A) void {
@@ -767,6 +771,14 @@ pub fn Of(comptime M: type) type {
                 a.animate(.reel);
                 a.pause(true);
                 const s = if (b.other) |o| a.other(o) else null;
+                // Struck by a combo's third blow, it settles first, in its pose, the blow not
+                // taken: while the blow touches it still at its next tick, it is taken then.
+                if (s) |x| if (thirdBlow(a, x)) {
+                    b.touch_taken = false;
+                    a.setFrame(2);
+                    b.timer = a.numbers().reel;
+                    return;
+                };
                 const damage = if (s) |x| a.tick.power(x) else 0;
                 if (takeReelBlow(a, damage, b.finishing, false)) return;
                 if (a.mind.state != .reel) return;
