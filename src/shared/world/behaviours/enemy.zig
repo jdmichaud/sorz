@@ -1635,6 +1635,9 @@ pub fn Of(comptime M: type) type {
             }
             a.pause(false);
             a.pace(n.walk_off_pace, 1);
+            // A blow under way still lands as it walks off (a rush's look kept), but no longer
+            // knocks down.
+            a.entity.flags.plain_blows = true;
             b.right_side = !a.entity.position.x.lessThan(t.position.x);
             b.pacing = false;
             a.entity.velocity.x = .zero;

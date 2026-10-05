@@ -50,7 +50,7 @@ pub const Handle = struct {
 };
 
 /// How the world treats an entity.
-pub const Flags = packed struct(u16) {
+pub const Flags = packed struct(u32) {
     /// Not drawn, and kept off the ground's depths rule.
     hidden: bool = false,
     /// Drawn at its place on the screen, which the camera does not move.
@@ -89,6 +89,11 @@ pub const Flags = packed struct(u16) {
     harmless: bool = false,
     /// A shadow holds a place for it (world/shadows.zig).
     has_shadow: bool = false,
+    /// Its blow under way makes the one it lands on reel, whatever its move's reaction (an
+    /// enemy walking off in a rush's look: the original's walk off writes no reaction); until
+    /// its next move.
+    plain_blows: bool = false,
+    _: u15 = 0,
 };
 
 /// The animation an entity plays: one of its kind's, the frame it is on, and the logic ticks

@@ -105,6 +105,7 @@ pub const Tick = struct {
     pub fn startMove(t: *Tick, h: Handle, e: *Entity, index: u8) void {
         const m = t.kindOf(e).definition.moves[index];
         e.move = index;
+        e.flags.plain_blows = false;
         t.startAnimation(h, e, m.animation);
         if (m.sound) |s| t.sound(s, h);
     }

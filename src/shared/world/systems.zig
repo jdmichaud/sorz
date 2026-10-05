@@ -498,7 +498,7 @@ fn dealtOn(t: *Tick, xh: Handle, th: Handle, d: Dealt) bool {
 /// brawler's whip). (A blow dealt otherwise, a stalker's from behind, does not clear it.)
 fn freedByBlow(t: *Tick, xh: Handle, th: Handle) void {
     const x = t.world.get(xh) orelse return;
-    if (x.move) |m| if (t.kindOf(x).definition.moves[m].reaction == .knock_down) return;
+    if (x.move != null and reactionOf(t, x) == .knock_down) return;
     const p = t.world.get(th) orelse return;
     const held = p.holding orelse return;
     if (t.isPlayer(held) or held.index < xh.index) return;
@@ -518,8 +518,15 @@ fn heldInFront(t: *Tick, xh: Handle, th: Handle) void {
 
 /// Whether `a`'s move under way knocks down.
 fn knocksDown(t: *Tick, a: *const Entity) bool {
-    const m = a.move orelse return false;
-    return t.kindOf(a).definition.moves[m].reaction == .knock_down;
+    if (a.move == null) return false;
+    return reactionOf(t, a) == .knock_down;
+}
+
+/// The reaction of `a`'s blow under way: its move's, but a plain reel once its behaviour says so
+/// (`Flags.plain_blows`).
+fn reactionOf(t: *Tick, a: *const Entity) content_entity.Reaction {
+    if (a.flags.plain_blows) return .reel;
+    return t.kindOf(a).definition.moves[a.move.?].reaction;
 }
 
 /// Whether the attack box of player entity `ph` (a blow's or a reach) meets `x`'s body.
@@ -563,7 +570,7 @@ fn strike(t: *Tick, ah: Handle, th: Handle) bool {
     const b: tick_mod.Blow = .{
         .attacker = ah,
         .damage = damage,
-        .reaction = m.reaction,
+        .reaction = reactionOf(t, a),
         .push = .{ .x = Fixed.of(m.push_x).times(away), .height = .of(m.push_height) },
     };
     if (!t.struck(th, b)) return false;
