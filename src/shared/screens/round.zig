@@ -919,6 +919,7 @@ pub const Round = struct {
             if (t.actor(world.behaviours.player, h)) |act| world.behaviours.player.startLife(act);
         }
         world.script.placeFirst(&t, &p);
+        world.systems.loadTurns(&t);
         const first_colours = out.colour_loads;
         world.systems.picture(&t);
         self.noteTransfers(a.kinds, out);

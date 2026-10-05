@@ -65,6 +65,13 @@ pub fn run(world: *World, kinds: *const Kinds, rng: *random.Random, in: Input, o
     runRound(world, kinds, rng, in, out, null);
 }
 
+/// The round's load: the entities its script placed take a turn (`turns`), as the original's
+/// objects run once at the end of its round's load, their first states setting them up (a
+/// breakable standing solid at its height), before play.
+pub fn loadTurns(t: *Tick) void {
+    turns(t);
+}
+
 /// The draw list of the world as it stands, with no tick: each entity on the frame it is on
 /// (a round's set-up, whose picture shows its entities before they first move). No shadows: they
 /// come with play (the original makes them in its play's mode only).
