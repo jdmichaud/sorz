@@ -197,6 +197,9 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
 - `health` (0 to 32767); `palette` (0 to 3), added to its frames' palettes; `gravity`, added to
   its height's speed every logic tick in the air; `shadow`, whether a shadow follows it on the
   ground. Each is optional: 0, or false.
+- `traced_as` (optional): the name sor-remaster's traces give the kind when it differs (the
+  `pepper` shaker is their `bottle`). The traces use it, and a kind is found by it as by its name
+  (a scenario's `near bottle`, a situation taken up).
 - `numbers`: the behaviour's numbers by name, integers in the units the behaviour gives them.
   A behaviour may read a number only when the definition gives it (a character's move played
   its own way: Adam's back attack that jumps, `back_attack_up`; Blaze's blows that leap,
@@ -229,10 +232,11 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
   `reaction` of the one it strikes, `reel`, `knock_down` or `lift` (reeling, it is lifted: it
   rises and falls again, and reels on; a blow that knocks down while it is up knocks it off,
   flying across: Adam's third blow), and of one held, `thrown` (it flies off where the hold lets
-  it go) or `slammed` (it is slammed down there, and knocked down a moment later); the speed it
-  gives that one, `push` (`x` away from the striker, `height` negative upward: a throw's, which
-  Blaze's makes faster); the `sound` asked for when it starts and the `hit_sound` when its blow
-  lands.
+  it go) or `slammed` (it is slammed down there, and knocked down a moment later); `sneeze` (it
+  stops a while, unharmed) is the pepper's, which its behaviour gives its things thrown; the
+  speed it gives that one, `push` (`x` away from the striker, `height` negative upward: a
+  throw's, which Blaze's makes faster); the `sound` asked for when it starts and the `hit_sound`
+  when its blow lands.
 - `partners` (the players'): in a hold between the two players, where this kind goes from the
   other at each frame of what it does then, by the other's kind: under the behaviour's name of
   that role (`held`, `held_behind`, `slammed`, `thrown`, `lifted`, `lift_over`, `throw_back`,

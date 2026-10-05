@@ -378,20 +378,21 @@ const apple =
     \\ }}
 ;
 
-/// A bottle: thrown by the plain blow, never stabbing; it breaks into its splash and 8 shards.
-const bottle_fixture =
-    \\{"family": "weapon", "team": "neutral", "behaviour": "bottle", "gravity": 34816,
+/// A pepper shaker: thrown by the plain blow, never stabbing; it bursts into its cloud and 8
+/// pinches.
+const pepper_fixture =
+    \\{"family": "weapon", "team": "neutral", "behaviour": "pepper", "gravity": 34816,
     \\ "numbers": {"power": 2, "uses": 3, "blink": 16, "drop": 131072, "left_behind": 96,
     \\   "throw_speed": 393216, "throw_up": -196608, "throw_ahead": 48, "throw_below": 16,
-    \\   "fall_gravity": 43008, "first_shard": 1, "shard_gap": 2, "splash_ticks": 4, "shards": 8,
-    \\   "shard_last_frame": 4, "long": 0, "swung": 0, "thrown": 1, "stabs": 0, "hand_lying": 1,
+    \\   "fall_gravity": 43008, "first_grain": 1, "grain_gap": 2, "cloud_ticks": 4, "grains": 8,
+    \\   "grain_last_frame": 4, "long": 0, "swung": 0, "thrown": 1, "stabs": 0, "hand_lying": 1,
     \\   "rethrown": 1},
-    \\ "tables": {"shard_x": [24, -16, 0, -24, 16, -8, 8, -16],
-    \\   "shard_height": [-12, -12, -20, -16, -12, -16, -24, -12]},
+    \\ "tables": {"grain_x": [24, -16, 0, -24, 16, -8, 8, -16],
+    \\   "grain_height": [-12, -12, -20, -16, -12, -16, -24, -12]},
     \\ "boxes": {"glass": {"x": [-4, 4], "depth": [-8, 8], "height": [-8, 0]}},
     \\ "animations": {
 ++ anim("lying", "{\"frame\": \"t/f1\", \"ticks\": 1, \"attack\": \"glass\"}") ++ "," ++ anim("blinking", bare("1", "") ++ "," ++ bare("1", "")) ++ "," ++
-    anim("splash", bare("1", "")) ++ "," ++ anim("shard", bare("2", "") ++ "," ++ bare("2", "") ++ "," ++ bare("2", "") ++ "," ++ bare("2", "") ++ "," ++ bare("2", "")) ++
+    anim("cloud", bare("1", "")) ++ "," ++ anim("grain", bare("2", "") ++ "," ++ bare("2", "") ++ "," ++ bare("2", "") ++ "," ++ bare("2", "") ++ "," ++ bare("2", "")) ++
     \\ }}
 ;
 
@@ -767,7 +768,7 @@ const Fixture = struct {
             .{ .name = "special_blast", .text = special_blast_fixture },
             .{ .name = "special_fire", .text = special_fire_fixture },
             .{ .name = "player_waiting", .text = waiting },
-            .{ .name = "bottle", .text = bottle_fixture },
+            .{ .name = "pepper", .text = pepper_fixture },
             .{ .name = "knockable", .text = knockable_fixture },
             .{ .name = "drip", .text = drip_fixture },
             .{ .name = "flight", .text = flight_fixture },
@@ -2142,39 +2143,39 @@ test "a player picks up a pipe: hidden in the pick-up, then in hand; B swings it
     try testing.expectEqual(before - 4, r.w.get(g).?.health);
 }
 
-test "a bottle is thrown by the plain blow, a thing ahead or not; on the ground it breaks: its splash, then its 8 shards two ticks apart" {
+test "a pepper shaker is thrown by the plain blow, a thing ahead or not; on the ground it bursts: its cloud, then its 8 pinches two ticks apart" {
     var r = try Round.init();
     defer r.deinit();
-    const b = try r.w.spawnItem(&r.f.kinds, r.f.kinds.find("bottle").?, .pixels(810, 64, 160));
+    const b = try r.w.spawnItem(&r.f.kinds, r.f.kinds.find("pepper").?, .pixels(810, 64, 160));
     r.step(.{});
     r.step(b_pad);
     for (0..7) |_| r.step(.{});
     try testing.expectEqualStrings("armed_stand", r.state());
-    // A punk ahead, within a stab's reach: the bottle is thrown all the same.
+    // A punk ahead, within a stab's reach: the shaker is thrown all the same.
     const p = try r.punk(1000);
     r.w.get(p).?.mind.galsia.state = .stand;
     r.w.get(p).?.position.x = .pixels(860);
     r.step(b_pad);
     try testing.expectEqualStrings("armed_attack", r.state());
     var ticks: usize = 0;
-    while (r.w.get(b).?.mind.bottle.state != .breaking) : (ticks += 1) {
+    while (r.w.get(b).?.mind.pepper.state != .bursting) : (ticks += 1) {
         try testing.expect(ticks < 40);
         r.step(.{});
     }
     try testing.expect(r.w.get(b).?.flags.hidden);
     try testing.expect(r.w.get(b).?.missile == null);
-    // Its splash in the weapons' places, then 8 shards from the last of the items' places down.
-    const splash = r.w.handleAt(World.weapon_places.from).?;
-    try testing.expect(r.w.get(splash).?.mind.bottle.part == .splash);
-    var shards: usize = 0;
+    // Its cloud in the weapons' places, then 8 pinches from the last of the items' places down.
+    const cloud = r.w.handleAt(World.weapon_places.from).?;
+    try testing.expect(r.w.get(cloud).?.mind.pepper.part == .cloud);
+    var grains: usize = 0;
     var last_seen: [entity.capacity]bool = @splat(false);
     for (0..20) |_| {
         r.step(.{});
         for (World.enemy_places.from..World.item_places.to) |i| {
             const h = r.w.handleAt(i) orelse continue;
             const e = r.w.get(h).?;
-            if (e.kind.? != r.f.kinds.find("bottle").? or e.mind.bottle.part != .shard) continue;
-            if (!last_seen[i]) shards += 1;
+            if (e.kind.? != r.f.kinds.find("pepper").? or e.mind.pepper.part != .grain) continue;
+            if (!last_seen[i]) grains += 1;
             last_seen[i] = true;
         }
         for (World.enemy_places.from..World.item_places.to) |i| {
@@ -2182,7 +2183,7 @@ test "a bottle is thrown by the plain blow, a thing ahead or not; on the ground 
         }
     }
     try testing.expect(r.w.get(b) == null);
-    try testing.expectEqual(@as(usize, 8), shards);
+    try testing.expectEqual(@as(usize, 8), grains);
 }
 
 test "an armed player struck lets its weapon fall; a knife held is thrown by the plain blow when nothing is ahead" {

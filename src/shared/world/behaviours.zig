@@ -52,7 +52,7 @@
 //! and his `boomerang`, and the `hit_spark` a player's blow makes (PLAN item 12); round 2's
 //! scenery (PLAN item 15): the oil drums a blow knocks away (`knockable`), the `drip`s, the
 //! `flight`s across the screen, their `flier`s and the posters' corners they stir
-//! (`flight_scenery`), the `bottle` a drum holds, and round 2's `juggler` with its knives
+//! (`flight_scenery`), the `pepper` a drum holds, and round 2's `juggler` with its knives
 //! (`juggler_knife`); round 3's: the `lamp`s, the `crate`s, the `drifter`s, the `rain`.
 const std = @import("std");
 
@@ -74,7 +74,7 @@ pub const knife = @import("behaviours/knife.zig");
 pub const bat = @import("behaviours/bat.zig");
 pub const bat_splinter = @import("behaviours/bat_splinter.zig");
 pub const hit_spark = @import("behaviours/hit_spark.zig");
-pub const bottle = @import("behaviours/bottle.zig");
+pub const pepper = @import("behaviours/pepper.zig");
 pub const juggler = @import("behaviours/juggler.zig");
 pub const juggler_knife = @import("behaviours/juggler_knife.zig");
 pub const breakable = @import("behaviours/breakable.zig");
@@ -116,7 +116,7 @@ pub const Mind = union(enum) {
     bat: bat.Mind,
     bat_splinter: bat_splinter.Mind,
     hit_spark: hit_spark.Mind,
-    bottle: bottle.Mind,
+    pepper: pepper.Mind,
     juggler: juggler.Mind,
     juggler_knife: juggler_knife.Mind,
     breakable: breakable.Mind,

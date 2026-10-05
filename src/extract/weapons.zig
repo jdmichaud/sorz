@@ -71,7 +71,9 @@ const Weapon = struct {
     kind: u8,
     /// Its own numbers besides the weapons' (the knife's flight).
     own: ?*const fn (d: *Def) Error!void = null,
-    /// The poses its set holds (the bottle's set holds its splash and shards where the others
+    /// The name the other program's traces give it, when they name it otherwise.
+    traced_as: ?[]const u8 = null,
+    /// The poses its set holds (the pepper's set holds its cloud and pinches where the others
     /// hold their level pose).
     poses: []const []const u8 = &poses,
 };
@@ -104,7 +106,7 @@ fn weapon(arena: std.mem.Allocator, rom: []const u8, w: Weapon) Error!entity.Def
     const thrown = w.kind == try immediate(rom, 0x2204, &.{ 0x0C, 0x29, 0x00 }, 1) or w.kind == try immediate(rom, 0x220C, &.{ 0x0C, 0x29, 0x00 }, 1);
     try d.number("thrown", @intFromBool(thrown), "ROM 0x02204, 0x0220C: cmpi.b #N,(0,a1) (the types the plain blow throws)");
     // B stabs at a thing ahead with the types B tests for none of its own blows (0x30C4): the
-    // swung ones swing, the bottle and the bat strike plainly.
+    // swung ones swing, the pepper and the bat strike plainly.
     var own_blow = swung;
     for ([_]u32{ 0x30AA, 0x30B0 }) |at| own_blow = own_blow or w.kind == try immediate(rom, at, &.{ 0x0C, 0x01, 0x00 }, 1);
     try d.number("stabs", @intFromBool(!own_blow), "ROM 0x030C4: the types B tests for none of its blows (0x0309C, 0x030A2, 0x030AA, 0x030B0: cmpi.b #N,d1) stab at a thing ahead");
@@ -114,6 +116,7 @@ fn weapon(arena: std.mem.Allocator, rom: []const u8, w: Weapon) Error!entity.Def
     if (w.own) |own| try own(&d);
     return .{
         .name = w.name,
+        .traced_as = w.traced_as,
         .provenance = try std.fmt.allocPrint(arena, "{s}: the animation set at ROM 0x{X:0>5} (its poses by entry pair), the boxes (0x1A68E, 0x1AB8E); gravity ROM 0x05CE8: addi.l #N,(36,a0){s}", .{ w.what, w.set, d.number_notes.items }),
         .family = .weapon,
         .team = .neutral,
@@ -191,16 +194,17 @@ fn splinter(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
     };
 }
 
-/// The bottle's breaking (0x6256): thrown (0x62DA: its speed across and up, how far ahead of its
-/// hand and below it starts), it falls (0x6312: its gravity) until a hit it gave or took or the
-/// floor breaks it; then it hides (0x6328), its splash (its set's entry 2) shows a while in the
-/// weapons' places, and its shards (entry 3, five frames, each with a blow) come two ticks apart
-/// at their places around it (0x63C4) in the last free place below the effects' (0x7E92), each
-/// going at its last frame (0x63E4).
-fn bottleBreaking(d: *Def) Error!void {
+/// The pepper shaker's burst (0x6256): thrown (0x62DA: its speed across and up, how far ahead of
+/// its hand and below it starts), it falls (0x6312: its gravity) until a hit it gave or took or
+/// the floor bursts it; then it hides (0x6328), its cloud (its set's entry 2) shows a while in the
+/// weapons' places, and its pinches of pepper (entry 3, five frames, each with a blow) come two
+/// ticks apart at their places around it (0x63C4) in the last free place below the effects'
+/// (0x7E92), each going at its last frame (0x63E4). What it or a pinch meets sneezes: the enemies'
+/// blow test (0xA9BA) and reel (0x9C1E) send one struck by a type $0C to their state 4.
+fn pepperBurst(d: *Def) Error!void {
     const rom = d.rom;
-    try d.animations.append(d.arena, .{ .name = "splash", .loop = true, .frames = try entryOf(d, "splash", 2) });
-    try d.animations.append(d.arena, .{ .name = "shard", .loop = true, .frames = try entryOf(d, "shard", 3) });
+    try d.animations.append(d.arena, .{ .name = "cloud", .loop = true, .frames = try entryOf(d, "cloud", 2) });
+    try d.animations.append(d.arena, .{ .name = "grain", .loop = true, .frames = try entryOf(d, "grain", 3) });
     try d.number("throw_speed", (try moveq(rom, 0x62E4, 0)) << 16, "ROM 0x062E4: moveq #N,d0, its speed's whole pixels");
     try d.number("throw_ahead", try moveq(rom, 0x62E6, 1), "ROM 0x062E6: moveq #N,d1");
     if (u16be(rom, 0x62FC) != 24) return error.BadData;
@@ -208,15 +212,15 @@ fn bottleBreaking(d: *Def) Error!void {
     if (u16be(rom, 0x6306) != 36) return error.BadData;
     try d.number("throw_up", (try immediate(rom, 0x6302, &.{ 0x31, 0x7C }, 2)) << 16, "ROM 0x06302: move.w #N,(36,a0), whole pixels");
     try d.number("fall_gravity", try immediate(rom, 0x6318, &.{ 0x06, 0xA8 }, 4), "ROM 0x06318: addi.l #N,(36,a0)");
-    try d.number("first_shard", try moveByte(rom, 0x6334, 86), "ROM 0x06334: move.b #N,(86,a0) (the ticks to the first shard)");
+    try d.number("first_grain", try moveByte(rom, 0x6334, 86), "ROM 0x06334: move.b #N,(86,a0) (the ticks to the first pinch)");
     if (u16be(rom, 0x635E) != 0x1D7C or rom[0x6360] != 0 or u16be(rom, 0x6362) != 86) return error.BadData;
-    try d.number("splash_ticks", rom[0x6361], "ROM 0x0635E: move.b #N,(86,a6)");
-    try d.number("shard_gap", try moveByte(rom, 0x6378, 86), "ROM 0x06378: move.b #N,(86,a0)");
+    try d.number("cloud_ticks", rom[0x6361], "ROM 0x0635E: move.b #N,(86,a6)");
+    try d.number("grain_gap", try moveByte(rom, 0x6378, 86), "ROM 0x06378: move.b #N,(86,a0)");
     if (u16be(rom, 0x63B8) != 88) return error.BadData;
-    const shards = try immediate(rom, 0x63B4, &.{ 0x0C, 0x68 }, 2) + 1;
-    if (shards != 8) return error.BadData;
-    try d.number("shards", shards, "ROM 0x063B4: cmpi.w #N-1,(88,a0)");
-    try d.number("shard_last_frame", try entities.frameCompared(rom, 0x63E4), "ROM 0x063E4: cmpi.b #N,(10,a0)");
+    const grains = try immediate(rom, 0x63B4, &.{ 0x0C, 0x68 }, 2) + 1;
+    if (grains != 8) return error.BadData;
+    try d.number("grains", grains, "ROM 0x063B4: cmpi.w #N-1,(88,a0)");
+    try d.number("grain_last_frame", try entities.frameCompared(rom, 0x63E4), "ROM 0x063E4: cmpi.b #N,(10,a0)");
     // Thrown, it keeps its mark of being thrown ($51), which the knife's throw clears (0x5DCE):
     // its holder's throwing frame throws it again at each tick (0x221C), with the throw's sound.
     if (u32be(rom, 0x5DCE) != 0x42280051) return error.BadData;
@@ -230,11 +234,11 @@ fn bottleBreaking(d: *Def) Error!void {
         x[k] = rom_mod.s16be(rom, 0x63C4 + 4 * @as(u32, @intCast(k)));
         h[k] = rom_mod.s16be(rom, 0x63C6 + 4 * @as(u32, @intCast(k)));
     }
-    try d.table("shard_x", &x, "ROM 0x063C4: each shard's first word, across from the bottle");
-    try d.table("shard_height", &h, "ROM 0x063C4: each shard's second word, in height from the bottle");
+    try d.table("grain_x", &x, "ROM 0x063C4: each pinch's first word, across from the shaker");
+    try d.table("grain_height", &h, "ROM 0x063C4: each pinch's second word, in height from the shaker");
 }
 
-/// The frames of entry `entry` of `d`'s set, facing right only (the bottle's splash and shards),
+/// The frames of entry `entry` of `d`'s set, facing right only (the pepper's cloud and pinches),
 /// with their blows (the right-facing boxes: they never face left).
 fn entryOf(d: *Def, name: []const u8, entry: u32) Error![]entity.Frame {
     const raw = try readAnimation(d.arena, d.rom, d.set, entry);
@@ -276,7 +280,7 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity
     try out.append(arena, try weapon(arena, rom, .{ .name = "pipe", .behaviour = "weapon", .set = 0x6FA9A, .prefix = "pipe", .power_at = 0x6214, .what = "the pipe, type $0A (handler 0x61F6)", .kind = 0x0A }));
     try out.append(arena, try weapon(arena, rom, .{ .name = "pipe_b", .behaviour = "weapon", .set = 0x6FB5A, .prefix = "pipe_2", .power_at = 0x6244, .what = "the second pipe, type $0B (handler 0x6226)", .kind = 0x0B }));
     try out.append(arena, try weapon(arena, rom, .{ .name = "bat", .behaviour = "bat", .set = 0x6FC1A, .prefix = "bat", .power_at = 0x613C, .what = "the baseball bat, type $09 (handler 0x6114)", .kind = 0x09, .own = batSplinters }));
-    try out.append(arena, try weapon(arena, rom, .{ .name = "bottle", .behaviour = "bottle", .set = @bitCast(try immediate(rom, 0x6280, &.{ 0x22, 0x7C }, 4)), .prefix = "splinters", .power_at = 0x627A, .what = "the bottle, type $0C (handler 0x6256; its set, ROM 0x06280: movea.l #N,a1)", .kind = 0x0C, .own = bottleBreaking, .poses = &.{ "lying", "blinking" } }));
+    try out.append(arena, try weapon(arena, rom, .{ .name = "pepper", .behaviour = "pepper", .set = @bitCast(try immediate(rom, 0x6280, &.{ 0x22, 0x7C }, 4)), .prefix = "splinters", .power_at = 0x627A, .what = "the pepper shaker, type $0C (handler 0x6256; its set, ROM 0x06280: movea.l #N,a1; sor-remaster's bottle)", .kind = 0x0C, .own = pepperBurst, .traced_as = "bottle", .poses = &.{ "lying", "blinking" } }));
     try out.append(arena, try splinter(arena, rom));
 }
 

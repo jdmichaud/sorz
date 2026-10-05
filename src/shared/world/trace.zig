@@ -379,7 +379,7 @@ pub const Writer = struct {
             fn less(c: Ctx, a: u8, b: u8) bool {
                 const ea = c.now[a];
                 const eb = c.now[b];
-                switch (std.mem.order(u8, c.kinds.get(ea.kind).name(), c.kinds.get(eb.kind).name())) {
+                switch (std.mem.order(u8, c.kinds.get(ea.kind).tracedName(), c.kinds.get(eb.kind).tracedName())) {
                     .lt => return true,
                     .gt => return false,
                     .eq => {},
@@ -399,14 +399,14 @@ pub const Writer = struct {
         for (byId(&ids, &removed, &self.seen)) |i| {
             var l = try self.line("remove");
             try l.int("e", self.seen[i].id);
-            try l.str("kind", kinds.get(self.seen[i].kind).name());
+            try l.str("kind", kinds.get(self.seen[i].kind).tracedName());
             try l.close();
         }
         for (byId(&ids, &spawned, &now)) |i| {
             const e = now[i];
             var l = try self.line("spawn");
             try l.int("e", e.id);
-            try l.str("kind", kinds.get(e.kind).name());
+            try l.str("kind", kinds.get(e.kind).tracedName());
             if (world.playerOf(.{ .index = @intCast(i), .generation = e.generation })) |p| try l.int("player", @as(u32, p) + 1);
             try l.int("x", e.position.x.raw);
             try l.int("d", e.position.depth.raw);
@@ -424,8 +424,8 @@ pub const Writer = struct {
         for (byId(&ids, &morphed, &now)) |i| {
             var l = try self.line("morph");
             try l.int("e", now[i].id);
-            try l.str("kind", kinds.get(now[i].kind).name());
-            try l.str("from", kinds.get(self.seen[i].kind).name());
+            try l.str("kind", kinds.get(now[i].kind).tracedName());
+            try l.str("from", kinds.get(self.seen[i].kind).tracedName());
             try l.close();
         }
         var going: [capacity]bool = undefined;
@@ -455,7 +455,7 @@ pub const Writer = struct {
         for (out.pickups.slice()) |p| {
             var l = try self.line("pickup");
             try self.idField(&l, "e", p.item, &now);
-            try l.str("kind", kinds.get(p.kind).name());
+            try l.str("kind", kinds.get(p.kind).tracedName());
             try self.idField(&l, "by", p.by, &now);
             try l.close();
         }

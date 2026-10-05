@@ -87,14 +87,15 @@ const measured_loads = [_]u16{ 53, 49 };
 /// whose last sections differ, to come).
 pub const extracted = [_]u8{ 1, 2, 3 };
 
-/// The trace's names of the original's object types (sor-remaster's docs/traces.md).
+/// The kinds' names of the original's object types: the traces' (sor-remaster's docs/traces.md),
+/// but the pepper's (type $0C, the traces' bottle).
 fn kindName(t: u8) ?[]const u8 {
     return switch (t) {
         0x08 => "knife",
         0x09 => "bat",
         0x0A => "pipe",
         0x0B => "pipe_b",
-        0x0C => "bottle",
+        0x0C => "pepper",
         0x11 => "breakable",
         0x13 => "flight_scenery",
         0x14 => "drip",

@@ -227,7 +227,7 @@ pub fn Of(comptime M: type) type {
                 .depth = .parts(@intCast(at.depth.whole() + depth), e.position.depth.frac()),
                 .height = .parts(@intCast(at.height.whole() + h.height), e.position.height.frac()),
             };
-            // A weapon whose definition says so (the bottle) shows its lying pose in a player's
+            // A weapon whose definition says so (the pepper) shows its lying pose in a player's
             // hand, its holder's way, whatever the hand's.
             const laid = by_player and (a.kind.definition.number("hand_lying") orelse 0) != 0;
             e.facing = if (h.turned and !laid) holder.facing.turned() else holder.facing;

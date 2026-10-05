@@ -38,6 +38,11 @@ pub const Kind = struct {
         return k.definition.name;
     }
 
+    /// The name the traces give it: the other program's for the kind, when it has its own.
+    pub fn tracedName(k: *const Kind) []const u8 {
+        return k.definition.traced_as orelse k.definition.name;
+    }
+
     pub fn family(k: *const Kind) content_entity.Family {
         return k.definition.family;
     }
@@ -54,8 +59,10 @@ pub const Kinds = struct {
         return &self.list[id];
     }
 
+    /// The kind named `kind_name`, by its own name or else by the name the traces give it.
     pub fn find(self: *const Kinds, kind_name: []const u8) ?KindId {
         for (self.list, 0..) |*k, i| if (std.mem.eql(u8, k.name(), kind_name)) return @intCast(i);
+        for (self.list, 0..) |*k, i| if (k.definition.traced_as) |t| if (std.mem.eql(u8, t, kind_name)) return @intCast(i);
         return null;
     }
 

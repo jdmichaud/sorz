@@ -755,6 +755,11 @@ pub fn Of(comptime M: type) type {
             if (blow.missile) {
                 a.endMove();
                 b.other = blow.attacker;
+                // The pepper's makes it sneeze, unharmed; another knocks it down.
+                if (blow.reaction == .sneeze) {
+                    enterAtBlow(a, .stand);
+                    return true;
+                }
                 a.takeDamage(blow.attacker, blow.damage);
                 enterAtBlow(a, .knocked_down);
                 return true;
@@ -796,9 +801,10 @@ pub fn Of(comptime M: type) type {
             }
             b.touch_taken = true;
             b.other = blow.attacker;
-            // A missile knocks a reeling one down, its health spared.
+            // A missile knocks a reeling one down, its health spared (the pepper's makes it
+            // sneeze).
             if (blow.missile) {
-                enterAtBlow(a, .knocked_down);
+                enterAtBlow(a, if (blow.reaction == .sneeze) .stand else .knocked_down);
                 shake(a);
                 return true;
             }
@@ -1377,10 +1383,11 @@ pub fn Of(comptime M: type) type {
 
         // Standing ---------------------------------------------------------------------------
 
-        /// It stands, facing its target, a while (with no player in play, until one comes).
-        /// During the special attack it is held still in a pose by its place across: turning
-        /// about now and then, lying, or shaking on its feet; in the air (an acrobat's leap), it
-        /// first falls to the ground, in height alone, and takes its pose as it lands.
+        /// It stands, facing its target, a while (with no player in play, until one comes): the
+        /// pepper's sneeze, its `stand` animation. During the special attack it is held still in
+        /// a pose by its place across: turning about now and then, lying, or shaking on its feet;
+        /// in the air (an acrobat's leap), it first falls to the ground, in height alone, and
+        /// takes its pose as it lands.
         pub fn standSetUp(a: A) void {
             const n = a.numbers();
             const b = body(a);

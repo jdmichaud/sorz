@@ -40,7 +40,7 @@ pub const entries = [_]Entry{
     .{ .request = 0xA5, .name = "stab", .file = "stab", .note = "sound test SE 6; a knife's stab, a profile picture's arrival" },
     .{ .request = 0xA6, .name = "swing", .file = "swing", .note = "sound test SE 7; a punch or kick's swing" },
     .{ .request = 0xA7, .name = "pipe swing", .file = "pipe_swing", .note = "sound test SE 8" },
-    .{ .request = 0xA8, .name = "throw weapon", .file = "throw_weapon", .note = "sound test SE 9; a knife or bottle thrown" },
+    .{ .request = 0xA8, .name = "throw weapon", .file = "throw_weapon", .note = "sound test SE 9; a knife or pepper thrown" },
     .{ .request = 0xA9, .name = "police bazooka", .file = "police_bazooka", .note = "sound test SE 10; player 1's special attack" },
     .{ .request = 0xAA, .name = "bazooka shell", .file = "bazooka_shell", .note = "sound test SE 11" },
     .{ .request = 0xAB, .name = "title flash", .file = "title_flash", .note = "sound test SE 12; the title's logo" },

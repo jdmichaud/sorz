@@ -1903,7 +1903,7 @@ fn thingAhead(a: Actor) bool {
 
 /// A blow with the weapon: its frames run; the plain blow's frame that holds a knife out throws
 /// it (else it sounds the blow); at the blow's last frame (`ends`) the actions are open again.
-/// A weapon whose definition says it is thrown again (`rethrown`, the bottle: the original's
+/// A weapon whose definition says it is thrown again (`rethrown`, the pepper: the original's
 /// keeps its mark of being thrown) is thrown at each tick of that frame while it lasts, the
 /// throw's sound with it, to no further effect.
 fn weaponBlow(a: Actor, c: Command, ends: u8) void {

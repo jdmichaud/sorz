@@ -142,6 +142,8 @@ pub const Reaction = enum {
     /// Reeling, it is lifted: it rises and falls again, and reels on; a blow that knocks down
     /// while it is up knocks it off, flying across.
     lift,
+    /// It sneezes: it stops where it stands a while, unharmed (the pepper's).
+    sneeze,
 };
 
 /// A blow or an action: an animation, and what its blow does when it lands.
@@ -202,6 +204,9 @@ pub const ColourMap = struct { name: []const u8, map: [art.palette_size]u8 };
 pub const Definition = struct {
     /// The kind's name: the file's (`entities/galsia.json` is `galsia`), which the traces use.
     name: []const u8,
+    /// The name the other program's traces give the kind, when they name it otherwise (sorz's
+    /// `pepper` is sor-remaster's `bottle`): sorz's traces use it, and the kinds are found by it.
+    traced_as: ?[]const u8 = null,
     provenance: []const u8 = "",
     family: Family,
     team: Team,
@@ -287,7 +292,7 @@ pub const max_items = 255;
 /// Reads definition `name` from its file's parsed `root`, checking every value; the frames must
 /// be `a`'s. A refusal names the field in the diagnostic.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *const art.Art) json.Error!Definition {
-    try root.only(&.{ "provenance", "family", "team", "behaviour", "health", "palette", "gravity", "shadow", "numbers", "tables", "choices", "sounds", "boxes", "animations", "moves", "partners", "colour_maps", "colours" });
+    try root.only(&.{ "provenance", "traced_as", "family", "team", "behaviour", "health", "palette", "gravity", "shadow", "numbers", "tables", "choices", "sounds", "boxes", "animations", "moves", "partners", "colour_maps", "colours" });
     var d: Definition = .{
         .name = name,
         .provenance = if (try root.opt("provenance")) |p| try p.string() else "",
@@ -300,6 +305,10 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *con
     if (try root.opt("palette")) |n| d.palette = std.math.cast(u2, try n.int(i64)) orelse return n.fail("not 0 to 3");
     if (try root.opt("gravity")) |n| d.gravity = try n.int(i32);
     if (try root.opt("shadow")) |n| d.shadow = try n.boolean();
+    if (try root.opt("traced_as")) |n| {
+        d.traced_as = try n.string();
+        if (!art.validName(d.traced_as.?)) return n.fail("not a kind's name (a-z, 0-9, _)");
+    }
 
     if (try root.opt("numbers")) |node| {
         var it = try listed(node);
@@ -589,6 +598,7 @@ pub fn value(arena: std.mem.Allocator, d: *const Definition) error{OutOfMemory}!
     if (d.palette != 0) try top.append(arena, .{ .key = "palette", .value = json.Value.num(d.palette) });
     if (d.gravity != 0) try top.append(arena, .{ .key = "gravity", .value = json.Value.num(d.gravity) });
     if (d.shadow) try top.append(arena, .{ .key = "shadow", .value = .{ .bool = true } });
+    if (d.traced_as) |t| try top.append(arena, .{ .key = "traced_as", .value = .{ .str = t } });
 
     if (d.numbers.len != 0) {
         const out = try arena.alloc(json.Field, d.numbers.len);

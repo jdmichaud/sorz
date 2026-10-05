@@ -168,12 +168,14 @@ pub const Traits = packed struct(u16) {
 };
 
 /// A thing flying or swung as a blow: a body thrown, a weapon in the hand or thrown. What its
-/// attack box meets takes `damage`, as a blow of `by` (the one who threw or swings it), and is
-/// knocked down; it lands on the enemies of `by` (and, `on_players`, on the players but `by`).
+/// attack box meets takes `damage`, as a blow of `by` (the one who threw or swings it), and
+/// reacts as `reaction` says (knocked down; the pepper's, sneezing); it lands on the enemies of
+/// `by` (and, `on_players`, on the players but `by`).
 pub const Missile = struct {
     by: Handle,
     damage: u8,
     on_players: bool = false,
+    reaction: content_entity.Reaction = .knock_down,
 };
 
 /// How the round's script placed an enemy: its way in, its traits, its place beside its target

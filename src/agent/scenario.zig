@@ -1495,7 +1495,8 @@ pub const Run = struct {
     fn is(self: *const Run, i: usize, e: *const world.Entity, who: Who) bool {
         return switch (who) {
             .id => |id| self.ids[i] == id,
-            .kind => |k| std.mem.eql(u8, self.kinds.get(e.kind.?).name(), k),
+            // By its name, or the traces' (the scripts run in both programs).
+            .kind => |k| std.mem.eql(u8, self.kinds.get(e.kind.?).name(), k) or std.mem.eql(u8, self.kinds.get(e.kind.?).tracedName(), k),
         };
     }
 };

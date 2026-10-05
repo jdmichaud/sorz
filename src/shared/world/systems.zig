@@ -476,8 +476,8 @@ fn strike(t: *Tick, ah: Handle, th: Handle) bool {
 /// A missile (`Missile`: a body thrown, a weapon swung or thrown) strikes with its attack box
 /// `target` when it meets its body and is of a team the blows of the one who threw or swings it
 /// land on (a player's on the enemies and the breakables; with `on_players`, the players but its
-/// thrower too): the struck one's behaviour takes the blow, its damage the missile's, knocking
-/// down.
+/// thrower too): the struck one's behaviour takes the blow, its damage and its reaction the
+/// missile's (knocking down, or the pepper's sneeze).
 fn missileOn(t: *Tick, ah: Handle, th: Handle) void {
     const a = t.world.get(ah) orelse return;
     const m = a.missile orelse return;
@@ -492,7 +492,7 @@ fn missileOn(t: *Tick, ah: Handle, th: Handle) void {
     };
     if (!lands) return;
     if (!meet(a, &t.kindOf(a).definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return;
-    const b: tick_mod.Blow = .{ .attacker = ah, .damage = m.damage, .reaction = .knock_down, .push = .zero, .missile = true };
+    const b: tick_mod.Blow = .{ .attacker = ah, .damage = m.damage, .reaction = m.reaction, .push = .zero, .missile = true };
     if (!t.struck(th, b)) return;
     t.blowLanded(ah, th);
 }
