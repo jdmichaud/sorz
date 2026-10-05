@@ -9,12 +9,16 @@
 //! other answer (with its sound), the cursor blinks, A, B, C or START answers at the next tick.
 //! YES spends a continue and its player plays again
 //! (lives.zig); NO, or no continue left, puts it out of the game: while the other player is still
-//! in the game it goes; else it counts the game over down (the game over's music; the round
-//! shows its text), and the game is over.
+//! in the game it goes; else it counts the game over down (the game over's music, once for both
+//! players; the round shows its text), and the game is over. In a game of two players (the other
+//! still in it, playing or waiting, as its wait begins) the answer is the first player's or the
+//! second's, and a NO leaves it waiting, its part of the bar cleared, until both are out; then
+//! both count the game over down.
 //!
 //! Its states, the semantic traces' names: `begin` (its first tick: the name entry, the
 //! question, or out; and the tick its name is entered), `name_entry`, `continue_choose`,
-//! `continue_chosen`, `countdown`, `game_over`.
+//! `continue_chosen` (in a game of two, `join_first` or `join_second`), `both_out`, `countdown`,
+//! `game_over`.
 //!
 //! As it is made it takes a shadow (its definition's `shadow`: the original's record cleared,
 //! with no mark against a shadow, world/shadows.zig), shown though it is hidden, on the floor at
@@ -26,7 +30,7 @@ const lives = @import("../lives.zig");
 
 const Actor = tick.Actor(@This());
 
-pub const State = enum { begin, name_entry, continue_choose, continue_chosen, countdown, game_over };
+pub const State = enum { begin, name_entry, continue_choose, continue_chosen, join_first, join_second, both_out, countdown, game_over };
 
 /// The letters of a name (the high-score table's).
 pub const places = 3;
@@ -60,6 +64,10 @@ pub const Mind = struct {
     name: [places]?u8 = @splat(null),
     /// Its name was entered: the status bar shows it until the question.
     named: bool = false,
+    /// The other player was in the game as its wait began: a game of two. Out after its NO there,
+    /// its name shows from the tick after.
+    both: bool = false,
+    named_out: bool = false,
 };
 
 pub const Sound = enum { cursor, game_over };
@@ -94,7 +102,10 @@ pub fn control(a: Actor, c: Command) void {
                 a.mind.phase = !a.mind.phase;
             }
             a.mind.shown = !a.mind.phase;
-            if (p.special or p.attack or p.jump or p.start) a.mind.state = .continue_chosen;
+            if (p.special or p.attack or p.jump or p.start) {
+                const k = a.tick.world.playerOf(a.handle) orelse return;
+                a.mind.state = if (!a.mind.both) .continue_chosen else if (k == 0) .join_first else .join_second;
+            }
         },
         .continue_chosen => {
             const k = a.tick.world.playerOf(a.handle) orelse return;
@@ -104,10 +115,26 @@ pub fn control(a: Actor, c: Command) void {
             a.mind.answered_no = true;
             a.mind.state = .begin;
         },
+        .join_first, .join_second => {
+            const k = a.tick.world.playerOf(a.handle) orelse return;
+            if (a.mind.cursor == .yes) return lives.continueGame(a.tick, k);
+            a.tick.world.players[k].continues = 0;
+            a.tick.world.players[k].out = true;
+            a.mind.answered_no = true;
+            a.mind.state = .both_out;
+        },
+        .both_out => {
+            a.mind.named_out = true;
+            const w = a.tick.world;
+            if (!w.players[0].out or !w.players[1].out) return;
+            a.mind.state = .countdown;
+            a.mind.ticks = n.out_wait;
+        },
         .countdown => {
             if (!a.mind.music) {
                 a.mind.music = true;
-                a.sound(.game_over);
+                // Once for both players.
+                if (!otherHeard(a)) a.sound(.game_over);
             }
             a.mind.ticks -%= 1;
             if (a.mind.ticks == 0) a.mind.state = .game_over;
@@ -127,6 +154,7 @@ fn begin(a: Actor) void {
     const k = w.playerOf(a.handle) orelse return a.remove();
     const p = &w.players[k];
     if (p.continues != 0) {
+        a.mind.both = w.players[1 - @as(u2, k)].entity != null;
         a.mind.state = .continue_choose;
         a.mind.count = p.continues;
         a.mind.cursor = .yes;
@@ -143,6 +171,18 @@ fn begin(a: Actor) void {
     }
     a.mind.state = .countdown;
     a.mind.ticks = if (a.mind.answered_no) 0 else n.out_wait;
+}
+
+/// Whether the other player, waiting too, has asked for the game over's music already.
+fn otherHeard(a: Actor) bool {
+    const w = a.tick.world;
+    const k = w.playerOf(a.handle) orelse return false;
+    const h = w.players[1 - @as(u2, k)].entity orelse return false;
+    const e = w.getConst(h) orelse return false;
+    return switch (e.mind) {
+        .player_waiting => |m| m.music,
+        else => false,
+    };
 }
 
 /// The name entry's start: the cursor at the first place on the first letter, every place's

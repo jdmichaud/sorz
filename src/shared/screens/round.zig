@@ -1292,9 +1292,9 @@ pub const Round = struct {
                         .{ .asking = .{ .continues = m.count, .new_game = new_game, .cursor = if (m.shown) m.cursor else null } }
                     else if (m.named) naming(p, &m) else playing,
                     .name_entry => naming(p, &m),
-                    .continue_choose, .continue_chosen => .{ .asking = .{ .continues = m.count, .new_game = new_game, .cursor = if (m.shown) m.cursor else null } },
+                    .continue_choose, .continue_chosen, .join_first, .join_second => .{ .asking = .{ .continues = m.count, .new_game = new_game, .cursor = if (m.shown) m.cursor else null } },
                     // The tick it went out its part is cleared: its name comes at the next.
-                    .countdown, .game_over => .{ .out = .{ .name = m.state != .countdown or m.music, .score = p.score, .game_over = ob.shown } },
+                    .both_out, .countdown, .game_over => .{ .out = .{ .name = m.named_out or m.state == .game_over or m.music, .score = p.score, .game_over = ob.shown } },
                 },
                 else => .none,
             };

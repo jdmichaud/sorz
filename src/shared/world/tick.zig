@@ -581,14 +581,21 @@ pub const Tick = struct {
         return t.world.players[k].entity;
     }
 
-    /// Whether every player in play plays as a fighter (none waits to continue): the round's
-    /// timer runs only then.
+    /// Whether some player is in play (`lives.inPlay`: one waiting to continue is not, but at
+    /// its wait's first tick) and every one in play plays as a fighter: the round's timer runs
+    /// only then (in a game of two, while the other player waits, the one who plays has it run;
+    /// a world without players has it run too).
     pub fn playersPlay(t: *const Tick) bool {
-        for (t.world.players) |p| {
+        var any = false;
+        var none = true;
+        for (t.world.players, 0..) |p, k| {
             const e = t.world.getConst(p.entity orelse continue) orelse continue;
+            none = false;
+            if (!lives.inPlay(t.world, @intCast(k))) continue;
+            any = true;
             if (e.mind != .player) return false;
         }
-        return true;
+        return any or none;
     }
 
     /// An enemy left behind the camera was brought back to its edge by the round's script: its
