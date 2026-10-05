@@ -353,7 +353,7 @@ pub fn opening(t: *Tick) void {
     t.world.camera.x_max = .pixels(p.round.sections[s.part].wall);
     ownSoundAgain(t.world, p.round);
     restartTimer(t.world, p);
-    // The GO arrow, in a free place of the effects' (0x19646).
+    // The GO arrow, in a free place of the effects'.
     if (t.kinds.find(go_arrow)) |kind| {
         const places = World.effect_places;
         _ = t.world.spawnWithin(t.kinds, kind, places.from, places.to, .zero, .right) catch return;
@@ -543,8 +543,8 @@ fn coloursSlot(w: anytype, p: *const Plan, rec: *const Spawn) ?ColoursSlot {
     return .{ .slot = s.held.take(c, own) orelse return null };
 }
 
-/// An enemy knocked out while the reserve runs is counted off its art's slot and its colours'
-/// (0x9DC0): its art's among the slots a waiting record may take (none: the last of them), its
+/// An enemy knocked out while the reserve runs is counted off its art's slot and its colours':
+/// its art's among the slots a waiting record may take (none: the last of them), its
 /// colours' where they are held.
 pub fn countOff(t: *Tick, e: *const entity.Entity) void {
     const p = t.plan orelse return;
