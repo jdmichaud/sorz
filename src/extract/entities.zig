@@ -535,6 +535,8 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     try d.number("special_beyond", try immediate(rom, 0x40C2, &.{ 0x06, 0x41 }, 2), "ROM 0x040C2: addi.w #N,d1 (from the camera's place across, 0x40A6)");
     try d.number("hurry_first", try moveByte(rom, 0x2060, 13), "ROM 0x02060: move.b #N,(13,a0)");
     try d.number("hurry_later", try moveByte(rom, 0x206E, 13), "ROM 0x0206E: move.b #N,(13,a0)");
+    try d.number("jab_walk_frame", try moveByte(rom, 0x3040, 0x5A), "ROM 0x03040: move.b #N,($5A,a0)");
+    try d.number("jab_walk_ticks", try moveByte(rom, 0x3046, 0x5B), "ROM 0x03046: move.b #N,($5B,a0)");
     try d.number("idle_ends", try moveq(rom, 0x1F96, 0), "ROM 0x01F96: moveq #N,d0");
     try d.number("blow_ends", try moveq(rom, 0x2078, 0), "ROM 0x02078: moveq #N,d0");
     try d.number("last_blow_ends", rom[last_blow_ends + @as(u32, character)], "ROM 0x020E8, by character");

@@ -60,7 +60,7 @@ const hero =
     \\ "numbers": {"back_attack_ends": 3, "blink": 48, "blow_ends": 3, "combo_window": 10,
     \\   "diagonal_depth": 131072, "diagonal_x": 147456, "down": 10, "drop": 98304,
     \\   "fall_most": 786432, "getting_up_ends": 4, "grab_blow_ends": 2, "hit_pause": 4,
-    \\   "hurry_first": 1, "hurry_later": 2, "hurt": 10, "idle_ends": 2, "jump": -491520,
+    \\   "hurry_first": 1, "hurry_later": 2, "jab_walk_frame": 1, "jab_walk_ticks": 2, "hurt": 10, "idle_ends": 2, "jump": -491520,
     \\   "jump_x": 196608, "kick_falling_gravity": 34816, "knee_last_ends": 2,
     \\   "knocked_down_up": -327680, "knocked_down_x": -147456, "last_blow_ends": 4, "let_go": 3, "special_beyond": 352,
     \\   "pick_depth": 16, "pick_height": 8, "pick_x": 20, "recover_ends": 2, "steer": 24576,
@@ -696,6 +696,32 @@ test "the jab: pressed at tick 0, its blow at ticks 1 to 5, back in control at t
     try testing.expectEqualSlices(i16, &.{ 0, 1, 1, 1, 1, 1, 0, 0 }, &power);
     try testing.expectEqualStrings("attack1", states[6]);
     try testing.expectEqualStrings("ready", states[7]);
+}
+
+test "a walk after a jab gone on into another starts at the walk's second frame, for 2 ticks" {
+    var r = try Round.init();
+    defer r.deinit();
+    const down: input.Pads = .{ .pad1 = .{ .down = true } };
+    r.step(b_pad);
+    r.step(.{});
+    // Pressed again in the first blow: it goes on into another.
+    r.step(b_pad);
+    var ticks: u32 = 0;
+    while (!std.mem.eql(u8, r.state(), "walk")) : (ticks += 1) {
+        try testing.expect(ticks < 40);
+        r.step(down);
+    }
+    try testing.expectEqual(@as(u8, 1), r.player().animation.frame);
+    r.step(down);
+    try testing.expectEqual(@as(u8, 1), r.player().animation.frame);
+    r.step(down);
+    try testing.expectEqual(@as(u8, 2), r.player().animation.frame);
+    // Standing, the frame is forgotten: a walk starts at its first frame.
+    r.step(.{});
+    try testing.expectEqualStrings("ready", r.state());
+    r.step(down);
+    try testing.expectEqualStrings("walk", r.state());
+    try testing.expectEqual(@as(u8, 0), r.player().animation.frame);
 }
 
 test "the jump: a crouch of 5 ticks, the arc with gravity before the move, the landing" {

@@ -133,6 +133,10 @@ pub const Mind = struct {
     window: u8 = 0,
     /// B was pressed during the first blow: it goes on into another.
     queued: bool = false,
+    /// A jab went on into another (outside the combo's window): a walk that comes next starts
+    /// at `jab_walk_frame` (the original keeps the frame for the jab's start again, which its
+    /// unchanged state skips, until a walk takes it up or another state forgets it).
+    jab_walk: bool = false,
     /// The knees in this hold, and the pushes away left before it lets go.
     knees: u8 = 0,
     let_go: i8 = 0,
@@ -238,6 +242,10 @@ pub const Numbers = struct {
     /// A hurried jab: the ticks of its frame at the press (its blow's frame, or another).
     hurry_first: u8,
     hurry_later: u8,
+    /// A jab gone on into another by a queued press: the frame the next walk starts at, and
+    /// its ticks.
+    jab_walk_frame: u8,
+    jab_walk_ticks: u8,
     /// The frames at which states end.
     idle_ends: u8,
     blow_ends: u8,
@@ -371,7 +379,10 @@ fn begin(a: Actor, state: State) void {
         .fall, .jump => a.animate(.jump),
         .ready => a.animate(.ready),
         .idle => a.animate(.idle),
-        .walk => a.animate(.walk),
+        .walk => {
+            a.animate(.walk);
+            if (a.mind.jab_walk) a.showFrame(n.jab_walk_frame, n.jab_walk_ticks);
+        },
         .jump_crouch, .land => a.animate(.jump_crouch),
         .jump_kick => a.startMove(.jump_kick),
         .attack1 => a.startMove(.attack1),
@@ -414,6 +425,7 @@ fn begin(a: Actor, state: State) void {
     a.entity.velocity.depth = .zero;
     if (state != .knee and state != .grab and state != .knee_last) a.mind.knees = 0;
     a.mind.placed_frame = null;
+    a.mind.jab_walk = false;
 }
 
 pub fn control(a: Actor, c: Command) void {
@@ -594,9 +606,11 @@ fn attack(a: Actor, c: Command) bool {
     const queued = a.mind.queued;
     a.mind.queued = false;
     if (!queued and !c.pressed.b) return false;
+    if (queued) a.mind.jab_walk = true;
     if (pickUp(a)) return true;
     var next: State = .attack1;
     if (a.mind.window != 0) {
+        a.mind.jab_walk = false;
         next = switch (a.mind.chain) {
             .attack1 => .attack2,
             .attack2 => .attack3,
