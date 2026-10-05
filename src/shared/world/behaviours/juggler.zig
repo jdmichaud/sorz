@@ -1,17 +1,27 @@
-//! The juggler of round 2. Out of hiding it takes up the fight (`choose`) the way the round's
-//! script placed it: it heads for its place a way off its target, on its own side (`approach`),
-//! juggling two knives (juggler_knife.zig: a maker it leaves makes them, once a juggling begins);
-//! there it closes in at a depth by its target's, steps once toward it (`close_in`), then backs
-//! off (`lunge`) while its target is near, or sidesteps to its target's depth (`sidestep`) when
-//! it is far; level with it, on the screen, it raises its knives (`raise`): when one comes back
-//! caught it throws, its knives one after the other from its hand, its throw's frame sending
-//! each. Struck or held in these, it stops juggling (its knives fall away as they come back).
-//! Its common states (a reel, a knock-down, a hold, its knockout, a stand, a walk off) are every
-//! enemy's (enemy.zig). It has no blow of its own. Its numbers, animations and sounds are its
-//! definition's (`entities/juggler.json`).
+//! The juggler. Out of hiding it takes up the fight (`choose`) the way the round's script
+//! placed it (`Entity.spawn.entrance`):
 //!
-//! TODO(PLAN item 15): its other ways in (keeping away and throwing, leaping and crouching,
-//! circling) come with the rounds that place them (4 to 8).
+//! - It approaches: it heads for its place a way off its target, on its own side (`approach`),
+//!   juggling two knives (juggler_knife.zig: a maker it leaves makes them, once a juggling
+//!   begins); there it closes in at a depth by its target's, steps once toward it (`close_in`),
+//!   then backs off (`lunge`) while its target is near, or sidesteps to its target's depth
+//!   (`sidestep`) when it is far; level with it, on the screen, it raises its knives (`raise`):
+//!   when one comes back caught it throws, its knives one after the other from its hand, its
+//!   throw's frame sending each. Struck or held in these, it stops juggling (its knives fall away
+//!   as they come back).
+//! - It keeps away: legs across the screen to its far side, at drawn depths and speeds
+//!   (`keep_away`), then it throws knives it takes out, one at each turn of its throw's frames
+//!   (`throw_knives`).
+//! - It leaps: to a drawn point about its place by its target, held in its leap's pose; down, it
+//!   lands a few ticks, then by its place crouches (`crouch`: a while, turning about when its
+//!   ticks are odd), throws knives, or leaps again. A blow in a leap knocks it down at once.
+//! - It circles: juggling, toward a drawn point about its place, a stretch of its walk; then by
+//!   the tick it circles again or throws knives.
+//!
+//! Its target near across while it keeps away or throws, it walks off. Its common states (a
+//! reel, a knock-down, a hold, its knockout, a stand, a walk off) are every enemy's (enemy.zig).
+//! It has no blow of its own. Its numbers, animations and sounds are its definition's
+//! (`entities/juggler.json`).
 const std = @import("std");
 const tick = @import("../tick.zig");
 const fixed = @import("../fixed.zig");
@@ -38,6 +48,11 @@ pub const State = enum {
     sidestep,
     raise,
     approach,
+    keep_away,
+    throw_knives,
+    leap,
+    crouch,
+    circle,
 };
 
 pub const fights: State = .choose;
@@ -65,9 +80,17 @@ pub const Memory = struct {
     tossed_first: bool = false,
     caught: bool = false,
     in_hand: bool = false,
+    /// A stretch of its state under way: a leg of its keeping away, a turn of its circle's walk;
+    /// its throw armed for the next knife; down from its leap; turning about as it crouches,
+    /// and the ticks to its next turn.
+    leg: bool = false,
+    armed: bool = false,
+    landed: bool = false,
+    turns: bool = false,
+    turn_ticks: u8 = 0,
 };
 
-pub const Animation = enum { walk, down, reel, stand, thrown, slammed, throw };
+pub const Animation = enum { walk, down, reel, stand, thrown, slammed, throw, leap };
 pub const Sound = enum { hurt, thud, cry, cry_odd };
 
 pub const Numbers = enemy.Numbers(struct {
@@ -100,16 +123,51 @@ pub const Numbers = enemy.Numbers(struct {
     raise_ticks: u8,
     raise_wait: u8,
     throw_frame: u8,
+    /// Keeping away: its legs, the place of a leg's end from the camera (facing left, right).
+    keep_away_legs: u8,
+    keep_away_left: i16,
+    keep_away_right: i16,
+    /// Throwing knives: its target nearer across than `throw_near` (and while it keeps away),
+    /// it walks off; its frames' pace, its count (counted down before its test), the frame that
+    /// arms the next knife.
+    throw_near: i16,
+    throw_pace: u8,
+    throw_count: u8,
+    throw_rearm: u8,
+    /// Down from a leap: its ticks (the landing's counted), its frame.
+    leap_land_ticks: u8,
+    leap_land_frame: u8,
+    /// Crouching: its least ticks (a draw's low three bits added), the ticks between turns.
+    crouch_least: u8,
+    crouch_flip: u8,
 });
 
-pub const Tables = enemy.Tables(struct {});
+pub const Tables = enemy.Tables(struct {
+    /// A leap's or a circle's point about its place, by a draw.
+    point_x: [16]i8,
+    point_depth: [16]i8,
+    /// A leap's speed by its depth, its speed up (whole pixels) by the tick.
+    leap_speed: [4]i32,
+    leap_up: [4]i8,
+    /// A leg's depth while it keeps away, by a draw.
+    keep_away_depth: [8]u8,
+    /// Its circle's speed and frames' pace by its place across.
+    circle_speed: [4]i32,
+    circle_pace: [4]u8,
+});
+
+pub const Choices = struct {
+    /// The state after a leap, by its place across; after a circle, by the tick.
+    after_leap: [4]State,
+    after_circle: [8]State,
+};
 
 /// The kind of its knives.
 pub const knife_kind = "juggler_knife";
 
 pub fn hurtable(state: State) bool {
     return switch (state) {
-        .choose => false,
+        .choose, .crouch => false,
         else => true,
     };
 }
@@ -125,6 +183,11 @@ pub fn begin(a: Actor) void {
         .lunge => lungeSetUp(a),
         .sidestep => sidestepSetUp(a),
         .raise => raiseSetUp(a),
+        .keep_away => keepAwaySetUp(a),
+        .throw_knives => throwKnivesSetUp(a),
+        .leap => leapSetUp(a),
+        .crouch => crouchSetUp(a),
+        .circle => circleSetUp(a),
         else => Common.setUp(a),
     }
     _ = Common.leftAt(a, was);
@@ -141,6 +204,11 @@ pub fn think(a: Actor) void {
         .lunge => lunge(a),
         .sidestep => sidestep(a),
         .raise => raise(a),
+        .keep_away => keepAway(a),
+        .throw_knives => throwKnives(a),
+        .leap => leap(a),
+        .crouch => crouch(a),
+        .circle => circle(a),
         else => {},
     }
 }
@@ -148,7 +216,12 @@ pub fn think(a: Actor) void {
 /// It takes up the fight the way it was placed.
 fn choose(a: Actor) void {
     if (!Common.chooseTarget(a)) return;
-    enter(a, .approach);
+    enter(a, switch (a.entity.spawn.entrance) {
+        .keep_away => .keep_away,
+        .leap => .leap,
+        .circle => .circle,
+        else => .approach,
+    });
 }
 
 /// Enters `state`: a raise starts with its knives' marks cleared (the original's state word
@@ -188,6 +261,37 @@ fn makeKnives(a: Actor) void {
     k.mind.juggler_knife.holder = a.handle;
 }
 
+/// It juggles, its knives made when it did not.
+fn juggle(a: Actor) void {
+    if (a.mind.juggler.juggling) return;
+    a.mind.juggler.juggling = true;
+    makeKnives(a);
+}
+
+/// A knife it takes out and throws at once, in the first of the enemies' free places (none: the
+/// weapons' first, as the original's); a new object of the original's, at no place.
+fn throwKnife(a: Actor) void {
+    const kind = a.tick.kinds.find(knife_kind) orelse return;
+    const w = a.tick.world;
+    const enemies = world_mod.World.enemy_places;
+    const weapons = world_mod.World.weapon_places;
+    const h = w.spawnWithin(a.tick.kinds, kind, enemies.from, enemies.to, .zero, .right) catch
+        w.spawnWithin(a.tick.kinds, kind, weapons.from, weapons.from + 1, .zero, .right) catch return;
+    const k = w.get(h).?;
+    k.flags.still = true;
+    k.flags.stays = true;
+    k.mind.juggler_knife.holder = a.handle;
+    k.mind.juggler_knife.thrown = true;
+}
+
+/// Its target nearer across than `throw_near`, it walks off (true).
+fn nearWalksOff(a: Actor) bool {
+    const t = Common.target(a) orelse return false;
+    if (@abs(t.position.x.whole() - a.entity.position.x.whole()) >= a.numbers().throw_near) return false;
+    enter(a, .walk_off);
+    return true;
+}
+
 // Approaching, closing in -------------------------------------------------------------------
 
 /// It heads for its place `approach_beside` from its target on its own side, at its depth,
@@ -197,10 +301,7 @@ fn approachSetUp(a: Actor) void {
     const n = a.numbers();
     const b = &a.mind.body;
     if (!Common.chooseTarget(a)) return;
-    if (!a.mind.juggler.juggling) {
-        a.mind.juggler.juggling = true;
-        makeKnives(a);
-    }
+    juggle(a);
     if (Common.offScreen(a)) return;
     Common.faceTarget(a);
     a.animate(.walk);
@@ -336,10 +437,178 @@ fn raise(a: Actor) void {
     if (a.mind.body.timer == 0) endJuggling(a);
 }
 
+// Keeping away, throwing knives -------------------------------------------------------------------
+
+/// It legs across the screen to its far side: each leg's end at a drawn depth, at a drawn speed
+/// and pace; its legs done, it throws knives.
+fn keepAwaySetUp(a: Actor) void {
+    Common.faceTarget(a);
+    a.animate(.walk);
+    a.pause(false);
+    a.mind.body.timer = a.numbers().keep_away_legs;
+    a.mind.juggler.leg = false;
+}
+
+fn keepAway(a: Actor) void {
+    const n = a.numbers();
+    const t = a.tables();
+    const b = &a.mind.body;
+    const m = &a.mind.juggler;
+    if (nearWalksOff(a)) return;
+    if (!m.leg) {
+        m.leg = true;
+        const from: i32 = if (a.entity.facingLeft()) n.keep_away_left else n.keep_away_right;
+        b.dest_x = .pixels(a.tick.world.camera.x.whole() + from);
+        b.dest_depth = .pixels(t.keep_away_depth[a.pick(.keep_away_depth, 8)]);
+        const k = a.pick(.keep_away_speed, 4);
+        b.speed = .of(t.pacing_speed[k]);
+        a.pace(t.pacing_pace[k], 1);
+    }
+    if (Common.headForPoint(a)) {
+        b.timer -%= 1;
+        if (b.timer == 0) return enter(a, .throw_knives);
+        m.leg = false;
+    }
+    _ = Common.walk(a);
+}
+
+/// It throws knives it takes out, facing its target, its throw's frames running: at each first
+/// frame armed, one more (its count counted down first: one fewer than its count); then it takes
+/// up the fight again. It stops juggling.
+fn throwKnivesSetUp(a: Actor) void {
+    const n = a.numbers();
+    Common.faceTarget(a);
+    a.animate(.throw);
+    a.pace(n.throw_pace, n.throw_pace);
+    a.pause(false);
+    a.mind.body.timer = n.throw_count;
+    a.mind.juggler.juggling = false;
+    a.mind.juggler.armed = false;
+}
+
+fn throwKnives(a: Actor) void {
+    const n = a.numbers();
+    const m = &a.mind.juggler;
+    if (nearWalksOff(a)) return;
+    if (a.frame() == n.throw_rearm) {
+        m.armed = false;
+        return;
+    }
+    if (a.frame() != 0 or m.armed) return;
+    m.armed = true;
+    a.mind.body.timer -%= 1;
+    if (a.mind.body.timer == 0) return enter(a, .choose);
+    throwKnife(a);
+}
+
+// Leaping, crouching --------------------------------------------------------------------------
+
+/// It leaps toward a drawn point about its place by its target, facing it, held in its leap's
+/// first pose: at a speed by its depth, up by the tick (whole pixels, its speed's fraction kept;
+/// its height up as much at once).
+fn leapSetUp(a: Actor) void {
+    const t = a.tables();
+    const e = a.entity;
+    const b = &a.mind.body;
+    Common.faceTarget(a);
+    a.animate(.leap);
+    a.pause(true);
+    a.mind.juggler.landed = false;
+    const r = a.pick(.leap_point, 16);
+    if (!Common.pointByOffsets(a)) return;
+    b.dest_x = b.dest_x.add(.pixels(t.point_x[r]));
+    b.dest_depth = b.dest_depth.add(.pixels(t.point_depth[r]));
+    b.speed = .of(t.leap_speed[@intCast(e.position.depth.whole() & 3)]);
+    const up: i16 = t.leap_up[a.tick.world.tick & 3];
+    e.velocity.height = .parts(up, e.velocity.height.frac());
+    e.position.height = e.position.height.add(.pixels(up));
+    _ = Common.headForPoint(a);
+}
+
+/// In the air it walks and falls; down, it lands a few ticks in its second pose (no body), then
+/// by its place across it crouches, throws knives or leaps again.
+fn leap(a: Actor) void {
+    const n = a.numbers();
+    const m = &a.mind.juggler;
+    if (!m.landed) {
+        if (!Common.walk(a)) return;
+        if (!Common.falls(a)) return;
+        m.landed = true;
+        a.mind.body.timer = n.leap_land_ticks;
+        a.setFrame(n.leap_land_frame);
+    }
+    a.mind.body.timer -%= 1;
+    if (a.mind.body.timer != 0) return;
+    enter(a, a.choices().after_leap[@intCast(a.entity.position.x.whole() & 3)]);
+}
+
+/// It crouches a drawn while (on the ground), turning about every few ticks when its ticks are
+/// odd; then it leaps again.
+fn crouchSetUp(a: Actor) void {
+    const n = a.numbers();
+    const m = &a.mind.juggler;
+    const ticks: u8 = @intCast(a.pick(.crouch_ticks, 8));
+    a.mind.body.timer = ticks +% n.crouch_least;
+    m.turns = a.mind.body.timer & 1 != 0;
+    if (m.turns) m.turn_ticks = n.crouch_flip;
+}
+
+fn crouch(a: Actor) void {
+    const m = &a.mind.juggler;
+    if (!Common.falls(a)) return;
+    if (m.turns) {
+        m.turn_ticks -%= 1;
+        if (m.turn_ticks == 0) {
+            m.turn_ticks = a.numbers().crouch_flip;
+            a.entity.facing = if (a.entity.facingLeft()) .right else .left;
+        }
+    }
+    a.mind.body.timer -%= 1;
+    if (a.mind.body.timer == 0) enter(a, .leap);
+}
+
+// Circling --------------------------------------------------------------------------------------
+
+/// Juggling (its knives made when it did not), it circles: toward a drawn point about its place
+/// by its target, a stretch of its walk at a speed and pace by its place across; when its walk's
+/// second frame comes back, the tick says what follows.
+fn circleSetUp(a: Actor) void {
+    const t = a.tables();
+    const b = &a.mind.body;
+    juggle(a);
+    Common.faceTarget(a);
+    a.animate(.walk);
+    a.pause(false);
+    a.setFrame(1);
+    a.mind.juggler.leg = false;
+    const r = a.pick(.circle_point, 16);
+    if (!Common.pointByOffsets(a)) return;
+    b.dest_x = b.dest_x.add(.pixels(t.point_x[r]));
+    b.dest_depth = b.dest_depth.add(.pixels(t.point_depth[r]));
+    const k: usize = @intCast(a.entity.position.x.whole() & 3);
+    b.speed = .of(t.circle_speed[k]);
+    a.pace(t.circle_pace[k], 1);
+    _ = Common.headForPoint(a);
+}
+
+fn circle(a: Actor) void {
+    const m = &a.mind.juggler;
+    if (a.frame() != 1) {
+        m.leg = true;
+        _ = Common.walk(a);
+        return;
+    }
+    if (!m.leg) {
+        _ = Common.walk(a);
+        return;
+    }
+    enter(a, a.choices().after_circle[a.tick.world.tick & 7]);
+}
+
 // The hooks ---------------------------------------------------------------------------------------
 
 /// The states whose test of the blows and the grabs stops its juggling when one takes it (the
-/// original's own test, in its ways' states); its walk off's, at a blow.
+/// original's own test, in its ways' states); its walk off's and its circle's, at a blow.
 fn stopsJuggling(state: State) bool {
     return switch (state) {
         .approach, .close_in, .lunge, .sidestep, .raise => true,
@@ -347,12 +616,16 @@ fn stopsJuggling(state: State) bool {
     };
 }
 
-/// A blow it takes in its ways' states or its walk off, or one that knocks it down, stops its
-/// juggling.
+/// A blow it takes in its ways' states, its walk off or its circle, or one that knocks it down,
+/// stops its juggling. A player's blow in a leap knocks it down at once, its damage taken then.
 pub fn struck(a: Actor, blow: tick.Blow) bool {
     const was = a.mind.state;
     if (!Common.struck(a, blow)) return false;
-    if (stopsJuggling(was) or was == .walk_off or a.mind.state == .knocked_down) a.mind.juggler.juggling = false;
+    if (was == .leap and a.mind.state == .reel) {
+        a.takeDamage(blow.attacker, blow.damage);
+        Common.enterAtBlow(a, .knocked_down);
+    }
+    if (stopsJuggling(was) or was == .walk_off or was == .circle or a.mind.state == .knocked_down) a.mind.juggler.juggling = false;
     return true;
 }
 

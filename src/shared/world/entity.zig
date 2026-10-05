@@ -135,6 +135,10 @@ pub const Entrance = enum(u8) {
     enter,
     /// It circles its target first.
     circle,
+    /// It keeps away from its target first, crossing the screen.
+    keep_away,
+    /// It leaps about its target first.
+    leap,
 };
 
 /// What else the round's script says of an enemy or a piece of scenery it places, each by its

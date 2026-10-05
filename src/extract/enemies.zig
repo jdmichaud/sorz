@@ -1487,12 +1487,21 @@ fn moveLong(rom: []const u8, at: u32, register: u3) Error!i32 {
     return immediate(rom, at, &.{ 0x20 | (@as(u8, register) << 1), 0x3C }, 4);
 }
 
+/// The juggler's states by the original's number (type $27's table at 0x1037C), as the traces
+/// name them (its state 3 a way into its knock-down, $11).
+const juggler_states = [_][]const u8{ "appear", "choose", "reel", "knocked_down", "stand", "held", "knocked_out", "walk_off", "close_in", "lunge", "sidestep", "raise", "approach", "keep_away", "throw_knives", "leap", "crouch", "knocked_down", "circle" };
+
 /// The juggler (type $27, its handler 0xF27E, sor-remaster's obj/juggler.zig): it heads for its
 /// place a way off its target, juggling two knives (its walk paced), closes in at a depth by its
 /// target's, steps in and backs off (`lunge`), sidesteps to its target's depth, and raises its
-/// knives to throw them (its animation $14). Its own blows are its knives' (`juggler_knife`).
+/// knives to throw them (its animation $14); or it keeps away, crossing the screen, then throws
+/// knives it takes out; or it leaps about its target (its animation $20), crouching between
+/// leaps; or it circles its place. Its own blows are its knives' (`juggler_knife`).
 pub fn juggler(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
-    var d = try begin(arena, rom, 0x27, "juggler", &.{.{ .name = "throw", .entry = try animEntryWord(rom, 0xF770) }});
+    var d = try begin(arena, rom, 0x27, "juggler", &.{
+        .{ .name = "throw", .entry = try animEntryWord(rom, 0xF770) },
+        .{ .name = "leap", .entry = try animEntry(rom, 0xF2EE) },
+    });
     if (try animEntry(rom, 0xF418) != try animEntryWord(rom, 0xF770)) return error.BadData;
     try d.number("approach_speed", (try moveWord(rom, 0xF5A4, 100)) << 8, "ROM 0x0F5A4: move.w #N,(100,a0) (8.8)");
     try d.number("approach_beside", try immediate(rom, 0xF5AA, &.{ 0x30, 0x3C }, 2), "ROM 0x0F5AA: move.w #N,d0 (on its own side of its target)");
@@ -1515,6 +1524,58 @@ pub fn juggler(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definitio
     try d.number("raise_ticks", try moveByte(rom, 0xF742, 80), "ROM 0x0F742: move.b #N,(80,a0) (its throw's wait for a knife in hand)");
     try d.number("raise_wait", try moveByte(rom, 0xF748, 84), "ROM 0x0F748: move.b #N,(84,a0) (its wait for a knife caught)");
     try d.number("throw_frame", try frameCompared(rom, 0xF78C), "ROM 0x0F78C: cmpi.b #N,(10,a0)");
+    // Keeping away (0xF4A6), throwing knives (0xF410), their test of the target's nearness
+    // (0xF482).
+    try d.number("keep_away_legs", try moveByte(rom, 0xF4BA, 80), "ROM 0x0F4BA: move.b #N,(80,a0)");
+    try d.number("keep_away_left", try immediate(rom, 0xF4D6, &.{ 0x32, 0x3C }, 2), "ROM 0x0F4D6: move.w #N,d1 (from the camera, facing left)");
+    try d.number("keep_away_right", try moveq(rom, 0xF4E2, 1), "ROM 0x0F4E2: moveq #N,d1 (from the camera, facing right)");
+    try d.number("throw_near", try immediate(rom, 0xF492, &.{ 0x0C, 0x40 }, 2), "ROM 0x0F492: cmpi.w #N,d0 (its target nearer across: it walks off)");
+    try d.number("throw_pace", (try moveWord(rom, 0xF41E, 12)) >> 8, "ROM 0x0F41E: move.w #N*$101,(12,a0)");
+    try d.number("throw_count", try moveByte(rom, 0xF42A, 80), "ROM 0x0F42A: move.b #N,(80,a0) (counted down before its test: one knife fewer)");
+    try d.number("throw_rearm", try frameCompared(rom, 0xF43E), "ROM 0x0F43E: cmpi.b #N,(10,a0)");
+    // Leaping (0xF2E6) and crouching (0xF3B6).
+    try d.number("leap_land_ticks", try moveByte(rom, 0xF364, 80), "ROM 0x0F364: move.b #N,(80,a0) (the landing's tick counted)");
+    try d.number("leap_land_frame", try moveByte(rom, 0xF36A, 10), "ROM 0x0F36A: move.b #N,(10,a0)");
+    try d.number("crouch_least", try immediate(rom, 0xF3C6, &.{ 0x06, 0x00 }, 2), "ROM 0x0F3C6: addi.b #N,d0 (a draw's low three bits added)");
+    if (try moveByte(rom, 0xF3F6, 81) != try moveByte(rom, 0xF3DC, 81)) return error.BadData;
+    try d.number("crouch_flip", try moveByte(rom, 0xF3DC, 81), "ROM 0x0F3DC: move.b #N,(81,a0) (the ticks between two turns, its ticks odd)");
+    {
+        var xs: [16]i32 = undefined;
+        var ds: [16]i32 = undefined;
+        for (&xs, &ds, 0..) |*x, *y, j| {
+            x.* = entities.s8(rom, 0x1031A + 2 * @as(u32, @intCast(j)));
+            y.* = entities.s8(rom, 0x1031A + 2 * @as(u32, @intCast(j)) + 1);
+        }
+        try d.table("point_x", &xs, "ROM 0x1031A: a leap's or a circle's point around its place, by a draw's low four bits (0xF304, 0xE254)");
+        try d.table("point_depth", &ds, "ROM 0x1031B");
+        var speeds: [4]i32 = undefined;
+        var ups: [4]i32 = undefined;
+        var after_leap: [4][]const u8 = undefined;
+        for (&speeds, &ups, &after_leap, 0..) |*sp, *up, *af, j| {
+            const jj: u32 = @intCast(j);
+            sp.* = @as(i32, u16be(rom, 0xF3AA + 2 * jj)) << 8;
+            up.* = entities.s8(rom, 0xF3B2 + jj);
+            af.* = try stateName(&juggler_states, u16be(rom, 0xF3A2 + 2 * jj));
+        }
+        try d.table("leap_speed", &speeds, "ROM 0x0F3AA: a leap's speed (8.8) by its depth's low two bits");
+        try d.table("leap_up", &ups, "ROM 0x0F3B2: a leap's speed up (whole pixels; its fraction kept) by the tick's low two bits");
+        try d.choice("after_leap", &after_leap, "ROM 0x0F3A2: the state after a leap, by its place across's low two bits");
+        var depths: [8]i32 = undefined;
+        for (&depths, 0..) |*y, j| y.* = rom[0xF53C + j];
+        try d.table("keep_away_depth", &depths, "ROM 0x0F53C: a leg's depth by a draw's low three bits");
+        var circle_speeds: [4]i32 = undefined;
+        var paces: [4]i32 = undefined;
+        for (&circle_speeds, &paces, 0..) |*sp, *pc, j| {
+            const at: u32 = 0x102FA + 4 * @as(u32, @intCast(j));
+            sp.* = @as(i32, u16be(rom, at)) << 8;
+            pc.* = rom[at + 2];
+        }
+        try d.table("circle_speed", &circle_speeds, "ROM 0x102FA: its circle's speed (8.8) by its place across's low two bits (0xE248)");
+        try d.table("circle_pace", &paces, "ROM 0x102FC: its frames' ticks");
+        var after: [8][]const u8 = undefined;
+        for (&after, 0..) |*a, j| a.* = try stateName(&juggler_states, u16be(rom, 0x1030A + 2 * @as(u32, @intCast(j))));
+        try d.choice("after_circle", &after, "ROM 0x1030A: the state after a circle, by the tick's low three bits (0xE2C6)");
+    }
     return finish(&d, "juggler", 0x27, "juggler", "the juggler (handler 0xF27E)");
 }
 

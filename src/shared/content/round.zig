@@ -27,7 +27,7 @@ pub const Error = json.Error;
 pub const Side = enum { right, left };
 
 /// How an enemy comes in (its behaviour's way of approaching first), by its record.
-pub const Entrance = enum { approach, close_in, edge, wait, shutter, square_up, jump_in, size_up, follow, enter, circle };
+pub const Entrance = enum { approach, close_in, edge, wait, shutter, square_up, jump_in, size_up, follow, enter, circle, keep_away, leap };
 
 /// What an enemy's record says of it besides its entrance, or a piece of scenery's of it, each
 /// written only when true.
