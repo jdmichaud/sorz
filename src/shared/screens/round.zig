@@ -65,6 +65,18 @@ const Lamps = struct {
         for (self.items) |item| if (item) |l| if (l.x == x and l.y == y) return l;
         return null;
     }
+
+    /// Lamp (`x`, `y`) shows `lit` from now (a place taken for it the first time).
+    fn set(self: *Lamps, x: i32, y: i32, lit: bool) void {
+        for (&self.items) |*item| if (item.*) |*l| if (l.x == x and l.y == y) {
+            l.lit = lit;
+            return;
+        };
+        for (&self.items) |*item| if (item.* == null) {
+            item.* = .{ .x = x, .y = y, .lit = lit };
+            return;
+        };
+    }
 };
 
 /// The palette cycles of a round's colours at most.
@@ -1240,20 +1252,22 @@ pub const Round = struct {
         self.animation_rows_due = @intCast(@as(u32, m.height) * (plane_cells / m.width));
     }
 
-    /// The presses' lamps as the world left them: each press's cells of the plane (the
-    /// original's video memory's column nearest the press across the round), lit or not.
+    /// The presses' lamps as the world left them: the original's presses write their cells into
+    /// one buffer, which the next frame draws, so the last press (in the world's order) to write
+    /// at a tick is the one seen; its cells of the plane are the original's video memory's column
+    /// nearest the press across the round. The others keep their look.
     fn noteLamps(self: *Round, a: *const Assets) void {
-        self.lamps = .{};
-        var n: usize = 0;
+        var patch: ?Lamps.Lamp = null;
         for (&self.play.world.entities) |*e| {
             const kind = e.kind orelse continue;
             const l = world.behaviours.press.lampOf(a.kinds.get(kind), e) orelse continue;
-            if (n == self.lamps.items.len) break;
+            if (!l.wrote) continue;
             const at = @divFloor(e.position.x.whole(), art.tile_side);
             const x = at + @mod(@as(i32, l.x) - at + plane_cells / 2, plane_cells) - plane_cells / 2;
-            self.lamps.items[n] = .{ .x = x, .y = l.y, .lit = l.lit };
-            n += 1;
+            patch = .{ .x = x, .y = l.y, .lit = l.lit };
         }
+        const p = patch orelse return;
+        self.lamps.set(p.x, p.y, p.lit);
     }
 
     /// What the status bar shows.

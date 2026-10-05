@@ -42,8 +42,10 @@ pub const Mind = struct {
     bounces: u8 = 0,
     /// The next height of its table that leaves a link.
     link: u8 = 0,
-    /// Its lamp is lit (its cells of the plane in their first look), as it shakes.
+    /// Its lamp is lit (its cells of the plane in their first look), as it shakes; it wrote its
+    /// cells at this tick.
     shaken: bool = false,
+    wrote: bool = false,
 };
 
 pub const Animation = enum { hang };
@@ -92,8 +94,8 @@ pub const Tables = struct {
 };
 
 /// A press's lamp: its cells' column (of the plane's cells as the original's video memory holds
-/// them) and row, and whether it is lit.
-pub const Lamp = struct { x: u8, y: u8, lit: bool };
+/// them) and row, whether it is lit, and whether the press wrote it at this tick.
+pub const Lamp = struct { x: u8, y: u8, lit: bool, wrote: bool };
 
 /// The lamp of entity `e`, a press of kind `k`, by its place (none: no lamp; not a press).
 pub fn lampOf(k: *const kinds_mod.Kind, e: *const entity.Entity) ?Lamp {
@@ -104,12 +106,13 @@ pub fn lampOf(k: *const kinds_mod.Kind, e: *const entity.Entity) ?Lamp {
     const p = e.spawn.place orelse return null;
     const t: *const Tables = @ptrCast(@alignCast(k.tables orelse return null));
     if (p >= t.lamp_x.len) return null;
-    return .{ .x = t.lamp_x[p], .y = kinds_mod.numbersOf(@This(), k).lamp_y, .lit = m.shaken };
+    return .{ .x = t.lamp_x[p], .y = kinds_mod.numbersOf(@This(), k).lamp_y, .lit = m.shaken, .wrote = m.wrote };
 }
 
 pub fn think(a: Actor) void {
     const e = a.entity;
     e.flags.still = true;
+    a.mind.wrote = false;
     if (a.tick.world.special) return;
     const n = a.numbers();
     const m = a.mind;
@@ -130,7 +133,10 @@ pub fn think(a: Actor) void {
                 e.velocity.height = .parts(@intCast(n.drop_speed.whole()), e.velocity.height.frac());
                 m.link = 0;
                 e.missile = .{ .by = a.handle, .damage = n.enemy_damage, .on_enemies = true };
-            } else m.shaken = !m.shaken;
+            } else {
+                m.shaken = !m.shaken;
+                m.wrote = true;
+            }
         },
         .drop => drop(a),
         .bounce => {
