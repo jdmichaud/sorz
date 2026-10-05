@@ -388,6 +388,8 @@ pub const Round = struct {
     lift: ?Lift = null,
     /// Its walls stop the players' moves in depth (all but round 7's), as they stop those across.
     depth_walls: bool = true,
+    /// How its enemies walk on its own floor (round 7's lift), whatever their kinds'.
+    enemy_walk: ?EnemyWalk = null,
     /// A new life knocks the enemies on the screen back to the left, facing right (rounds 7's
     /// and 8's); else to the right, facing left.
     knocked_back_left: bool = false,
@@ -410,6 +412,26 @@ pub const Lift = struct {
     jolts: []const i8,
     period: u8,
     wait: u8,
+};
+
+/// How a round's enemies walk on its own floor (round 7's lift), whatever their kinds': across
+/// only past `x_least` (and short of their kinds' end), in depth short of `depth_most` (from their
+/// kinds' least); walking but left and up, they look `ahead` pixels to the right at their place
+/// and stop short of a cell deeper than `deep` (the shaft beside the lift); left and up, they
+/// look `back` behind them (across, in depth) and stop short of the level's top (a cell of height
+/// 0). They look for no floor a step ahead as elsewhere. Knocked away as low as `flight_low` or
+/// lower, they fly on across while the cell under them is deeper than `deep`, else while the cell
+/// `flight_ahead` ahead of them is neither the level's top nor deeper than `deep`; higher, as
+/// elsewhere.
+pub const EnemyWalk = struct {
+    provenance: []const u8 = "",
+    x_least: i32,
+    depth_most: i32,
+    ahead: i32,
+    deep: i32,
+    back: [2]i32,
+    flight_low: i32,
+    flight_ahead: i32,
 };
 
 /// How a round without a boss ends (round 7's): once its last section is cleared, its timer stops
@@ -740,6 +762,15 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
     }
     if (!r.depth_walls) try fields.append(arena, .{ .key = "depth_walls", .value = .{ .bool = false } });
     if (r.knocked_back_left) try fields.append(arena, .{ .key = "knocked_back_left", .value = .{ .bool = true } });
+    if (r.enemy_walk) |ew| try fields.append(arena, .{ .key = "enemy_walk", .value = try withProvenance(arena, ew.provenance, &.{
+        .{ .key = "x_least", .value = json.Value.num(ew.x_least) },
+        .{ .key = "depth_most", .value = json.Value.num(ew.depth_most) },
+        .{ .key = "ahead", .value = json.Value.num(ew.ahead) },
+        .{ .key = "deep", .value = json.Value.num(ew.deep) },
+        .{ .key = "back", .value = try pair(arena, ew.back[0], ew.back[1]) },
+        .{ .key = "flight_low", .value = json.Value.num(ew.flight_low) },
+        .{ .key = "flight_ahead", .value = json.Value.num(ew.flight_ahead) },
+    }) });
     if (r.exit) |ex| try fields.append(arena, .{ .key = "exit", .value = try withProvenance(arena, ex.provenance, &.{
         .{ .key = "x", .value = json.Value.num(ex.x) },
         .{ .key = "depth", .value = try pair(arena, ex.depth[0], ex.depth[1]) },
@@ -882,7 +913,7 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off", "in_front", "lift", "exit", "depth_walls", "knocked_back_left" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off", "in_front", "lift", "exit", "depth_walls", "enemy_walk", "knocked_back_left" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
@@ -1073,6 +1104,19 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     }
     if (try root.opt("depth_walls")) |dw| r.depth_walls = try dw.boolean();
     if (try root.opt("knocked_back_left")) |kb| r.knocked_back_left = try kb.boolean();
+    if (try root.opt("enemy_walk")) |ew| {
+        try ew.only(&.{ "provenance", "x_least", "depth_most", "ahead", "deep", "back", "flight_low", "flight_ahead" });
+        r.enemy_walk = .{
+            .provenance = try provenanceOf(ew),
+            .x_least = try (try ew.get("x_least")).int(i32),
+            .depth_most = try (try ew.get("depth_most")).int(i32),
+            .ahead = try (try ew.get("ahead")).int(i32),
+            .deep = try (try ew.get("deep")).int(i32),
+            .back = try readPair(try ew.get("back"), i32),
+            .flight_low = try (try ew.get("flight_low")).int(i32),
+            .flight_ahead = try (try ew.get("flight_ahead")).int(i32),
+        };
+    }
     if (try root.opt("exit")) |ex| {
         try ex.only(&.{ "provenance", "x", "depth", "ticks" });
         r.exit = .{

@@ -1112,6 +1112,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .exit = exit,
         .depth_walls = try depthWalls(rom, r),
         .knocked_back_left = try knockedBackLeft(rom, r),
+        .enemy_walk = try enemyWalkOf(arena, rom, r),
     };
 }
 
@@ -1162,6 +1163,36 @@ fn liftOf(arena: std.mem.Allocator, rom: []const u8, r: u32, mode_a: u16, mode_b
         .jolts = jolts,
         .period = @intCast(period & 0xFF),
         .wait = @intCast(u16be(rom, 0x752)),
+    };
+}
+
+/// How round `r`'s enemies walk on its own floor (the round of 0x9E96's `cmpi.w`, round 7's; the
+/// same at 0x9FA2 and 0xA020): across past `cmpi.l #N,d1` at 0x9FB0 (0x9F96), in depth short of
+/// 0xA038's (0xA00E); their walk (0x9ED4) looks `moveq #N,d1` at 0x9ED4 across for a cell deeper
+/// than 0x9EE8's `cmpi.w #N,d6`, and back by 0x9EFA's and 0x9EFC's `moveq`s for the level's top.
+fn enemyWalkOf(arena: std.mem.Allocator, rom: []const u8, r: u32) Error!?round.EnemyWalk {
+    for ([_]u32{ 0x9E96, 0x9FA2, 0xA020 }) |at| {
+        if (u16be(rom, at) != 0x0C78 or u16be(rom, at + 4) != 0xFF02 or u16be(rom, at + 2) != u16be(rom, 0x9E98)) return error.BadData;
+    }
+    if (u16be(rom, 0x9E98) != r) return null;
+    if (u16be(rom, 0x9EE4) != 0x4EBA or u16be(rom, 0x9F00) != 0x4EBA) return error.BadData;
+    const x_least = try longPixels(rom, 0x9FB0, &.{ 0x0C, 0x81 });
+    const depth_most = try longPixels(rom, 0xA038, &.{ 0x0C, 0x81 });
+    const back_x = try entities.moveq(rom, 0x9EFA, 1);
+    const back_depth = try entities.moveq(rom, 0x9EFC, 2);
+    if (back_x > 0 or back_depth > 0) return error.BadData;
+    // Knocked away (0x9F22, the same round): as low as `cmpi.w #N,(24,a0)` at 0x9F2A, the cell
+    // under it deeper than 0x9F36's, else the one 0x9F3C's `moveq` ahead; higher, the one 0x9F56's.
+    if (u16be(rom, 0x9F22) != 0x0C78 or u16be(rom, 0x9F24) != r or u16be(rom, 0x9F2E) != 24 or u16be(rom, 0x9F36) != 0x0C46 or u16be(rom, 0x9F38) != u16be(rom, 0x9EEA) or u16be(rom, 0x9F4E) != 0x0C46 or u16be(rom, 0x9F50) != u16be(rom, 0x9EEA)) return error.BadData;
+    return .{
+        .provenance = try std.fmt.allocPrint(arena, "the enemies' walk in round {d} (0x9E96, 0x9FA2, 0xA020): past ROM 0x09FB2's place across, short of ROM 0x0A03A's depth; looking ROM 0x09ED5's pixels across for a cell deeper than ROM 0x09EEA's, back ROM 0x09EFB's and ROM 0x09EFD's for the level's top", .{r + 1}),
+        .x_least = @intCast(x_least),
+        .depth_most = @intCast(depth_most),
+        .ahead = try entities.moveq(rom, 0x9ED4, 1),
+        .deep = @intCast(try immediate(rom, 0x9EE8, &.{ 0x0C, 0x46 }, 2)),
+        .back = .{ -back_x, -back_depth },
+        .flight_low = @intCast(try immediate(rom, 0x9F2A, &.{ 0x0C, 0x68 }, 2)),
+        .flight_ahead = try entities.moveq(rom, 0x9F3C, 1),
     };
 }
 
