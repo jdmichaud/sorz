@@ -53,7 +53,8 @@ pub const Mind = struct {
     turns: u8 = 0,
     stops: u8 = 0,
     ticks: u8 = 0,
-    /// Its punch is under way; it punches more than once (after a shrug).
+    /// Its punch is under way; it punches more than once (after a shrug: the original's mark is
+    /// part of its state, gone with any other it enters, a knock-down's).
     punching: bool = false,
     again: bool = false,
 };
@@ -98,6 +99,7 @@ pub fn hurtable(state: State) bool {
 }
 
 pub fn begin(a: Actor) void {
+    if (a.mind.state != .close_in) a.mind.again = false;
     if (a.mind.state == .hit and !a.mind.body.waits) return hitTurns(a);
     if (!Common.setUpDue(a)) return;
     const was = a.mind.state;
