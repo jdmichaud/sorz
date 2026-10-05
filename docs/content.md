@@ -220,7 +220,10 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
   ahead, `height` downward), with the `pose` it shows (a frame of its own `thrown` animation) or
   `lets_go` (the hold ends there, the one held placed so); `place` puts the holder itself from
   the one held (`x` toward the side the holder faces, `height` downward), as it vaults around
-  it. With `loop` the first frame follows the last; without, the last stays.
+  it. A player's `spark` is the spark its blow makes when it landed in that frame: `x` ahead and
+  `height` downward from its place, `big`, and `either_side` (made whatever side the one struck
+  is on); without, a small one at its place. With `loop` the first frame follows the last;
+  without, the last stays.
 - `moves`: a blow or an action: its `animation` (by name); the `damage` its blow does; the
   `reaction` of the one it strikes, `reel`, `knock_down` or `lift` (reeling, it is lifted: it
   rises and falls again, and reels on; a blow that knocks down while it is up knocks it off,

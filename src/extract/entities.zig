@@ -469,6 +469,7 @@ fn framesOf(d: *Def, name: []const u8, entry: u32, timing: u8, character: u8, sh
             .body = try d.box(0, r.body, l.body, name, "body"),
             .attack = try d.box(1, r.attack, l.attack, name, if (power == 0) "reach" else "blow"),
             .blow = power != 0,
+            .spark = try sparkOf(d.rom, entry, character, j),
         };
     }
     return out;
@@ -514,6 +515,29 @@ fn playerPartners(d: *Def, character: u8) Error!void {
         try d.partners.append(d.arena, .{ .name = u.name, .moves_partner = w & 1 != 0, .depth = u.depth, .by = by });
     }
     try d.number_notes.print(d.arena, "; the places in a hold between the two players: ROM 0x{X:0>5} (0x479C)", .{table});
+}
+
+/// The spark a player's blow makes when it landed in frame `j` of the animation pair whose
+/// right-facing entry is `entry` (0x4650, at the player's turn after the landing): from the
+/// player's place, across (the other way facing left) and in height, by the pair and the
+/// character (the table 0x46D6 points at: a word a pair, bit 15 set when it gives places, then
+/// two bytes a character); big when the frame's attack byte's high nibble is set (0x46A8); made
+/// whatever side the one struck is on for the pair 0x4670 names. Null: small, at its place.
+fn sparkOf(rom: []const u8, entry: u32, character: u8, j: usize) Error!?entity.Spark {
+    const big = attackByte(rom, entry, character, j) >> 4 != 0;
+    const either_side = (entry & 0xFE) == try immediate(rom, 0x4670, &.{ 0x0C, 0x01 }, 2);
+    if (u16be(rom, 0x46D6) != 0x43FA) return error.BadData;
+    const table: u32 = @intCast(0x46D8 + @as(i32, s16be(rom, 0x46D8)));
+    const w = u16be(rom, table + (entry & 0xFE));
+    var x: i16 = 0;
+    var height: i16 = 0;
+    if (w & 0x8000 != 0) {
+        const at = table + (w & 0x7FFF) + 2 * @as(u32, character);
+        x = s8(rom, at);
+        height = s8(rom, at + 1);
+    }
+    if (!big and !either_side and x == 0 and height == 0) return null;
+    return .{ .x = x, .height = height, .big = big, .either_side = either_side };
 }
 
 /// What the one held does in state `state` (the table at 0x32F2), as the move's reaction.
@@ -1005,6 +1029,29 @@ pub fn goArrow(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definitio
     };
 }
 
+/// The hit spark (type $49, 0x6862) a player's landed blow makes (player.zig): the first frame
+/// of the set 0x686E names (move.l #N,a1) small, its second big (0x6882), shown for the
+/// animation's timing; then it goes (0x688A).
+pub fn hitSpark(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set: u32 = @bitCast(try immediate(rom, 0x686E, &.{ 0x22, 0x7C }, 4));
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "play", .prefix = "spark", .set = set, .box_table = object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
+    const raw = try readAnimation(arena, rom, set, 0);
+    if (raw.frames.len < 2) return error.BadData;
+    for ([_][]const u8{ "small", "big" }, 0..) |name, k| {
+        const frames = try arena.alloc(entity.Frame, 1);
+        frames[0] = .{ .frame = try d.frameName(raw.frames[k].address), .ticks = @max(raw.timing, 1), .flip = raw.frames[k].mirrored };
+        try d.animations.append(arena, .{ .name = name, .frames = frames });
+    }
+    return .{
+        .name = "hit_spark",
+        .provenance = try std.fmt.allocPrint(arena, "the hit spark (type $49, 0x6862): the first frame of the animation set at ROM 0x{X:0>5} (0x686E: move.l #N,a1) small, the second big (0x6882), each shown for the animation's timing", .{set}),
+        .family = .effect,
+        .team = .neutral,
+        .behaviour = "hit_spark",
+        .animations = d.animations.items,
+    };
+}
+
 /// A player out of lives (type $F, 0x5218): hidden, it asks the continue's question on the
 /// status bar, or counts down the game over.
 pub fn playerWaiting(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
@@ -1043,5 +1090,6 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8) Error![]const entity.Defin
     try special.all(arena, rom, &out);
     try out.append(arena, try goArrow(arena, rom));
     try out.append(arena, try playerWaiting(arena, rom));
+    try out.append(arena, try hitSpark(arena, rom));
     return out.items;
 }

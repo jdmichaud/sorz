@@ -254,6 +254,10 @@ pub const World = struct {
     /// original's objects 43 to 50).
     pub const item_places: struct { from: usize, to: usize } = .{ .from = 42, .to = 50 };
 
+    /// The places the effects take, after the items' (the original's objects 51 to 68): the
+    /// blows' sparks.
+    pub const effect_places: struct { from: usize, to: usize } = .{ .from = 50, .to = 68 };
+
     /// An item a breakable leaves: in the first free place of the items', else in the last free
     /// one below them, down to the enemies' first (as the original's).
     pub fn spawnItem(self: *World, kinds: *const Kinds, kind: KindId, position: Vec3) Full!Handle {

@@ -173,8 +173,16 @@ pub const Mind = struct {
     blink: u8 = 0,
     /// A blow it took at the last tick, which it feels now.
     taken: ?Taken = null,
-    /// Its blow landed at the last tick.
+    /// Its blow landed at the last tick, and the last one it landed on then.
     landed_blow: bool = false,
+    landed_on: ?Handle = null,
+    /// Its knee's spark is made (once a knee), or due after its move.
+    knee_sparked: bool = false,
+    knee_spark_due: bool = false,
+    /// The enemy it holds or held, drawn behind the others at its depth, and the state it held
+    /// it in (`drawnBehind`).
+    marked: ?Handle = null,
+    marked_in: State = .fall,
     /// Its reach caught one at the last tick, which it now holds or lets go.
     caught: bool = false,
     /// The combo: the last blow of the chain, and the ticks of the window in which B continues
@@ -615,6 +623,7 @@ fn beginWith(a: Actor, state: State, own: ?Move) void {
     if (state != .knee and state != .grab and state != .knee_last) a.mind.knees = 0;
     a.mind.placed_frame = null;
     a.mind.jab_walk = false;
+    a.mind.knee_sparked = false;
 }
 
 pub fn control(a: Actor, c: Command) void {
@@ -634,6 +643,7 @@ pub fn control(a: Actor, c: Command) void {
     feelBlow(a);
     feelCatch(a);
     if (a.mind.blink != 0) a.mind.blink -= 1;
+    if (a.mind.landed_blow) spark(a);
     act(a, c);
     if (a.entity.velocity.height.order(n.fall_most) == .gt) a.entity.velocity.height = n.fall_most;
     if (partnerOf(a) == null) {
@@ -641,8 +651,24 @@ pub fn control(a: Actor, c: Command) void {
         placeHeld(a);
     }
     showBoxes(a);
+    drawnBehind(a);
     a.mind.landed_blow = false;
     a.mind.caught = false;
+}
+
+/// The one held is drawn behind the others at its depth (a spark there shows over it): holding
+/// an enemy, the player marks it, and goes on marking it in the state it held it in once it is
+/// let go (a last knee's); held, it marks itself (the original's table by the player's state:
+/// in the holding states the one held is marked unless a player, and kept until a state that
+/// holds none; in the held ones the player itself).
+fn drawnBehind(a: Actor) void {
+    if (a.entity.holder != null) a.entity.flags.behind = true;
+    if (a.entity.holding) |h| {
+        a.mind.marked = if (a.tick.isPlayer(h)) null else h;
+        a.mind.marked_in = a.mind.state;
+    } else if (a.mind.state != a.mind.marked_in) a.mind.marked = null;
+    const h = a.mind.marked orelse return;
+    if (a.tick.world.get(h)) |e| e.flags.behind = true;
 }
 
 /// The boxes of its frame, its body withheld while it blinks; a walk's reach grabs what it meets
@@ -776,6 +802,7 @@ fn act(a: Actor, c: Command) void {
         .knee_last => {
             ask(a, .last_knee);
             _ = a.step();
+            kneeSpark(a);
             if (n.knee_last_leap) |from| {
                 if (a.frame() < from) return;
                 // The other player held lets go itself, when its knee strikes it.
@@ -1039,13 +1066,52 @@ pub fn struck(a: Actor, blow: tick.Blow) bool {
 }
 
 pub fn blowLanded(a: Actor, target: Handle) void {
-    _ = target;
     a.mind.landed_blow = true;
+    a.mind.landed_on = target;
 }
 
 /// Its blows' landing at this tick is forgotten: no combo window, no hit pause from them.
 pub fn landingCleared(a: Actor) void {
     a.mind.landed_blow = false;
+    a.mind.landed_on = null;
+}
+
+/// The kind of the spark its blows make.
+pub const spark_kind = "hit_spark";
+
+/// A knee lands on the one held at its first frame with a blow (the last knee's flips it then),
+/// and the one held takes it at this tick: the knee's spark at this tick, once, made after its
+/// move (`moved`: the original's hold moves the holder before its spark is made).
+fn kneeSpark(a: Actor) void {
+    if (a.mind.knee_sparked) return;
+    const f = a.currentFrame() orelse return;
+    if (!f.blow) return;
+    a.mind.knee_sparked = true;
+    a.mind.knee_spark_due = true;
+    a.mind.landed_on = a.entity.holding;
+}
+
+/// Its blow landed at the last tick: a spark at its place, by the frame it shows (its frame's
+/// `spark`: small or big, ahead of it and down from its place), in the effects' first free
+/// place (none free: none), never mirrored (the original's spark takes none of its facing). Facing right, a blow on one behind it makes none, but in a move
+/// whose sparks go either side; facing left every one does (the original compares another
+/// number than the place of the one struck then).
+fn spark(a: Actor) void {
+    const e = a.entity;
+    const f = a.currentFrame() orelse return;
+    const s: content_entity.Spark = f.spark orelse .{};
+    if (!s.either_side and !e.facingLeft()) if (a.mind.landed_on) |h| if (a.other(h)) |t| {
+        if (t.position.x.whole() < e.position.x.whole()) return;
+    };
+    const kind = a.tick.kinds.find(spark_kind) orelse return;
+    const way: i32 = if (e.facingLeft()) -1 else 1;
+    const places = @import("../world.zig").World.effect_places;
+    const h = a.tick.world.spawnWithin(a.tick.kinds, kind, places.from, places.to, .{
+        .x = .pixels(e.position.x.whole() + s.x * way),
+        .depth = .pixels(e.position.depth.whole()),
+        .height = .pixels(e.position.height.whole() + s.height),
+    }, .right) catch return;
+    a.tick.world.get(h).?.mind.hit_spark.big = s.big;
 }
 
 /// In the air after its move: it lands once it comes down to the ground, on its whole pixels;
@@ -1204,6 +1270,7 @@ fn hold(a: Actor, c: Command) void {
         ask(a, if (knees >= 3) .last_knee else .knee);
         change(a, if (knees >= 3) .knee_last else .knee);
         a.mind.knees = knees;
+        kneeSpark(a);
         return;
     }
     // Pushing away lets go, turned away from it.
@@ -1617,12 +1684,16 @@ fn onGround(a: Actor) void {
     if (e.position.height.whole() > a.tick.world.ground.whole()) e.position.height = a.tick.world.ground;
 }
 
-/// After its move, in a hold with the other player: at a new frame of the hold (slammed, at each
-/// tick while held), it takes its place from the other, by its definition's `partners` for the
-/// other's kind: across from the other's place toward the side it faces (or the other goes the
-/// other way from it), its height from the other's, and in the holds its depth (whole pixels,
-/// its fractions kept).
+/// After its move: its knee's spark, if due (`kneeSpark`). In a hold with the other player: at a
+/// new frame of the hold (slammed, at each tick while held), it takes its place from the other,
+/// by its definition's `partners` for the other's kind: across from the other's place toward the
+/// side it faces (or the other goes the other way from it), its height from the other's, and in
+/// the holds its depth (whole pixels, its fractions kept).
 pub fn moved(a: Actor) void {
+    if (a.mind.knee_spark_due) {
+        a.mind.knee_spark_due = false;
+        spark(a);
+    }
     const o = partnerOf(a) orelse return;
     const name: []const u8 = switch (a.mind.state) {
         .held => "held",

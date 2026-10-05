@@ -84,6 +84,18 @@ pub const Frame = struct {
     /// Holding a weapon: where the weapon is, from the holder, and how it shows; without, the
     /// weapon is not seen.
     hand: ?Hand = null,
+    /// A player's: the spark its blow makes when it landed in this frame (seen at the next tick);
+    /// without, a small one at its place, not on one behind it.
+    spark: ?Spark = null,
+};
+
+/// A blow's spark: `x` ahead of the striker, `height` downward from its place; `big`; and
+/// `either_side`: made whatever side of the striker the one struck is on.
+pub const Spark = struct {
+    x: i16 = 0,
+    height: i16 = 0,
+    big: bool = false,
+    either_side: bool = false,
 };
 
 /// A weapon in the hand: `x` ahead of the holder, `height` downward, a pixel in front of it in
@@ -476,7 +488,7 @@ fn span(node: json.Node) json.Error!Span {
 }
 
 fn frame(node: json.Node, d: *const Definition, a: *const art.Art) json.Error!Frame {
-    try node.only(&.{ "frame", "ticks", "flip", "body", "attack", "blow", "sound", "held", "place", "hand" });
+    try node.only(&.{ "frame", "ticks", "flip", "body", "attack", "blow", "sound", "held", "place", "hand", "spark" });
     const name_node = try node.get("frame");
     const name = try name_node.string();
     if (a.frame(name) == null) return name_node.fail("no sprite frame of this name");
@@ -494,6 +506,17 @@ fn frame(node: json.Node, d: *const Definition, a: *const art.Art) json.Error!Fr
         .held = if (try node.opt("held")) |h| try held(h) else null,
         .place = if (try node.opt("place")) |p| try place(p) else null,
         .hand = if (try node.opt("hand")) |h| try hand(h) else null,
+        .spark = if (try node.opt("spark")) |x| try spark(x) else null,
+    };
+}
+
+fn spark(node: json.Node) json.Error!Spark {
+    try node.only(&.{ "x", "height", "big", "either_side" });
+    return .{
+        .x = if (try node.opt("x")) |n| try n.int(i16) else 0,
+        .height = if (try node.opt("height")) |n| try n.int(i16) else 0,
+        .big = if (try node.opt("big")) |n| try n.boolean() else false,
+        .either_side = if (try node.opt("either_side")) |n| try n.boolean() else false,
     };
 }
 
@@ -624,6 +647,14 @@ pub fn value(arena: std.mem.Allocator, d: *const Definition) error{OutOfMemory}!
                     if (h.turned) try hs.append(arena, .{ .key = "turned", .value = .{ .bool = true } });
                     if (h.strikes) try hs.append(arena, .{ .key = "strikes", .value = .{ .bool = true } });
                     try fs.append(arena, .{ .key = "hand", .value = .{ .object = hs.items } });
+                }
+                if (f.spark) |x| {
+                    var ss: std.ArrayList(json.Field) = .empty;
+                    if (x.x != 0) try ss.append(arena, .{ .key = "x", .value = json.Value.num(x.x) });
+                    if (x.height != 0) try ss.append(arena, .{ .key = "height", .value = json.Value.num(x.height) });
+                    if (x.big) try ss.append(arena, .{ .key = "big", .value = .{ .bool = true } });
+                    if (x.either_side) try ss.append(arena, .{ .key = "either_side", .value = .{ .bool = true } });
+                    try fs.append(arena, .{ .key = "spark", .value = .{ .object = ss.items } });
                 }
                 v.* = .{ .object = fs.items };
             }
