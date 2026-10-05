@@ -411,12 +411,20 @@ fn specialArt(arena: std.mem.Allocator, rom: []const u8) Error!round.Special {
 /// A section's art again after the special attack (0x18E3C, as the camera comes back): the boss's
 /// load ($FFFA63, art slot 3's kind), else art slot 1's kind's own load ((kind - 1) * 3 + $C:
 /// muls.w #3 and addi.w #$C at 0x18E8C), else none; queued by the camera, streamed from its
-/// tick's end. (TODO(PLAN item 15): round 5's twins' case, 0x18E96; an arrival that takes art
-/// slot 1 before the special attack, 0x9CA.)
+/// tick's end. (TODO(PLAN item 15): an arrival that takes art slot 1 before the special attack,
+/// 0x9CA.)
 fn againStream(arena: std.mem.Allocator, rom: []const u8, kinds: [4]u8) Error![]const round.Streamed {
     if (u32be(rom, 0x18E8C) != 0xC1FC0003 or u16be(rom, 0x18E90) != 0x0640 or u16be(rom, 0x18E92) != first_art_load + 1) return error.BadData;
     const load: u16 = if (kinds[3] != 0) kinds[3] else if (kinds[1] != 0) @as(u16, kinds[1] - 1) * 3 + first_art_load + 1 else return &.{};
     return stream.schedule(arena, &.{.{ .after = 0, .blocks = try loadStream(arena, rom, load), .before_head = true }});
+}
+
+/// Whether round `r`'s (from 0) boss's art is not loaded again after the special attack: the
+/// boss's section's branch (0x18E96) compares the round with the twins' (cmpi.w at 0x18EB0), whose
+/// art is copied from the players' again (0x18EC2), not loaded.
+fn copiesBossArt(rom: []const u8, r: u32) Error!bool {
+    if (u16be(rom, 0x18EB0) != 0x0C40 or u16be(rom, 0x18EB4) != 0x670C) return error.BadData;
+    return u16be(rom, 0x18EB2) == r;
 }
 
 /// A waiting entry's kind's art streamed from its call: a tick, then its load (0xB76).
@@ -928,7 +936,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .music_after = @intCast(music_after),
         .wave_after = @intCast(wave_after),
         .streamed = try stream.schedule(arena, boss_loads.items),
-        .again = try againStream(arena, rom, kinds),
+        .again = if (try copiesBossArt(rom, r)) &.{} else try againStream(arena, rom, kinds),
         .section_colours = try sectionColours(rom, entryAt(rom, part, section_count)),
         .colours = try palettes.bossColoursName(arena, rom, u32be(rom, round_bosses + 6 * r)) orelse return error.BadData,
         // The section's art kinds, the boss's in the last slot (0x59C: its art load).
