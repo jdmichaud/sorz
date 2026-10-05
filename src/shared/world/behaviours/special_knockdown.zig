@@ -102,13 +102,18 @@ pub fn think(a: Actor) void {
     a.entity.flags.hidden = true;
     a.entity.flags.still = true;
     // The camera has run back far enough: the car comes, at the left, unseen until its art is in.
-    if (!m.car) if (c.run) |r| if (r.state == .back and c.x.whole() <= m.from.whole() - n.comes.whole()) {
+    // On a lift the run is plane B's: its car comes at the lift's place, lower by the drop.
+    const lift = if (a.tick.plan) |p| p.round.lift else null;
+    const at = if (c.lift.special) |s| s.x else c.x;
+    if (!m.car) if (c.run) |r| if (r.state == .back and at.whole() <= m.from.whole() - n.comes.whole()) {
         m.car = true;
-        if (spawn(a, car_kind, .{ .x = .pixels(m.from.whole() + n.arrives), .depth = .zero, .height = .zero })) |h| {
+        const x = if (lift) |lf| lf.special_car_x else m.from.whole() + n.arrives;
+        if (spawn(a, car_kind, .{ .x = .pixels(x), .depth = .zero, .height = .zero })) |h| {
             if (a.tick.actor(police_car, h)) |car| {
                 const cn = car.numbers();
+                const lower = if (lift) |lf| if (c.lift.special) |s| lf.special_drop - s.y_from else 0 else 0;
                 car.entity.position.depth = .pixels(cn.depth);
-                car.entity.position.height = .pixels(cn.height);
+                car.entity.position.height = .pixels(cn.height + lower);
                 police_car.arrive(car, m.second);
             }
         }
@@ -119,7 +124,7 @@ pub fn think(a: Actor) void {
         const loading = if (a.tick.plan) |p| p.art_loading[0] else false;
         if (!loading) {
             a.tick.out.colours = true;
-            if (c.x.whole() >= m.from.whole() - n.again_within) {
+            if (at.whole() >= m.from.whole() - n.again_within) {
                 m.again = true;
                 a.tick.out.colour_loads.append(.back);
                 a.tick.out.streamed = .{ .part = w.script.part, .again = true };

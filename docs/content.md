@@ -479,6 +479,11 @@ play).
   `speed` pixels a tick to the section's entry of `heights`, where the lift stops. As it starts
   and as it stops, the camera jolts down by each of `jolts` in turn, one every `period` ticks. A
   section's wave waits `wait` ticks from its opening, then for the lift's next jolt.
+  - `holds_special`: no special attack is called while the lift is called, jolts or rides.
+  - The special attack runs plane B, and the camera follows its moves a tick late. Plane B drops
+    to `special_drop`, runs back to the level's start, then ahead to where it was, and rises
+    back. The camera is level again once within `special_settle` of its top. The police car
+    comes at `special_car_x` across, as much lower as the camera dropped.
 - `exit`, optional: how a round without a boss ends (round 7's, which has no `boss`). Once its
   last section is cleared, the timer stops, the enemies' `colours` are loaded (as a section's
   `colours`), and the players walk out by themselves: each goes left until it is before `x`, then

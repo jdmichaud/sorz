@@ -702,6 +702,8 @@ fn camera(t: *Tick) void {
     if (t.plan) |p| if (p.round.camera.water != null) {
         c.ripple +%= 1;
     };
+    // On a lift, plane B runs the special attack.
+    if (t.plan) |p| if (p.round.lift) |lf| if (c.run != null or c.lift.special != null) return liftSpecial(c, &lf);
     if (c.run) |*r| switch (r.state) {
         // At the call's tick it follows as before, but its limit is already the run's.
         .called => {
@@ -771,6 +773,72 @@ fn liftSteps(t: *Tick, lf: *const content_round.Lift) void {
     l.ticks = lf.period;
     l.rode = false;
     script.restartTimer(t.world, t.plan.?);
+}
+
+/// The special attack on the lift (`Lift`): at the call the camera's limit down drops and plane
+/// B takes the run; then at each tick the camera follows plane B's moves of the tick before
+/// (rising with it, its limit down its place, until within `special_settle` of its top: level
+/// there), and plane B moves by the run's speed: down to `special_drop`, back to the level's start
+/// (the run back), ahead to the camera's place at the call (the run ahead: the camera put there),
+/// up to the lift's place (the camera's limit and place down as at the call: the run ends).
+fn liftSpecial(c: *world_mod.Camera, lf: *const content_round.Lift) void {
+    const l = &c.lift;
+    if (c.run) |*r| if (r.state == .called) {
+        r.state = .back;
+        c.y_max = .pixels(lf.special_drop - l.y);
+        c.x_min = .zero;
+        l.special = .{ .x = c.x, .y_from = l.y, .camera_y_max = c.y_max, .camera_y = c.y };
+        return;
+    };
+    const s = &(l.special orelse return);
+    c.x = c.x.add(s.dx).clamp(c.x_min, c.x_max);
+    c.y = c.y.add(s.dy).clamp(c.y_min, c.y_max);
+    if (s.rising) {
+        c.y_max = c.y;
+        if (c.y.whole() < lf.special_settle) {
+            c.y = .zero;
+            c.y_max = .zero;
+            l.special = null;
+            return;
+        }
+    }
+    const speed = if (c.run) |r| r.speed else Fixed.zero;
+    const x = s.x;
+    const y = l.y;
+    switch (s.phase) {
+        .drop => {
+            l.y = @min(l.y + speed.whole(), lf.special_drop);
+            if (l.y >= lf.special_drop) s.phase = .back;
+        },
+        .back => {
+            s.x = s.x.sub(speed).max(.zero);
+            if (c.run) |r| if (r.state == .ahead) {
+                s.x = x.add(speed).min(c.x_max);
+                s.phase = .ahead;
+            };
+        },
+        .ahead => s.x = s.x.add(speed).min(c.x_max),
+        .rise => {
+            l.y = @max(l.y - speed.whole(), s.y_from);
+            if (l.y <= s.y_from) {
+                c.y_max = s.camera_y_max;
+                c.y = s.camera_y;
+                c.run = null;
+                s.phase = .done;
+            }
+        },
+        .done => {},
+    }
+    if (s.phase == .ahead) if (c.run) |r| if (!s.x.lessThan(r.from)) {
+        s.x = r.from;
+        c.x = r.from;
+        c.x_min = r.from;
+        c.x_max = r.from;
+        s.phase = .rise;
+        s.rising = true;
+    };
+    s.dx = s.x.sub(x);
+    s.dy = .pixels(l.y - y);
 }
 
 /// Plane B's ride: up by the lift's speed to its height; there the lift stops, its jolts again.

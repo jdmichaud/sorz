@@ -403,7 +403,15 @@ pub const Round = struct {
 /// `heights` (the first section's first), where the lift stops. As it starts and as it stops the
 /// camera jolts: it moves down by each of `jolts` in turn, one every `period` ticks, the first a
 /// period after; the ride begins a period after the last. A section's wave waits `wait` ticks from
-/// its opening, then for the lift's next jolt (its stop's).
+/// its opening, then for the lift's next jolt (its stop's). When `holds_special`, no special
+/// attack is called while the lift is called, jolts or rides.
+///
+/// The special attack runs plane B instead of the camera, which follows plane B's moves a tick
+/// late: plane B drops to `special_drop` (the camera's lowest then as far below its place), runs
+/// back to the level's start, then (the car gone) ahead to the camera's place, and rises back,
+/// the camera's lowest following it; plane B back, the shot comes, and once the camera is within
+/// `special_settle` of its top it is back there. The police car comes at `special_car_x` across,
+/// as much lower as the camera dropped.
 pub const Lift = struct {
     provenance: []const u8 = "",
     from: i32,
@@ -412,6 +420,10 @@ pub const Lift = struct {
     jolts: []const i8,
     period: u8,
     wait: u8,
+    holds_special: bool = false,
+    special_drop: i32,
+    special_settle: i32,
+    special_car_x: i32,
 };
 
 /// How a round's enemies walk on its own floor (round 7's lift), whatever their kinds': across
@@ -759,6 +771,10 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
             .{ .key = "jolts", .value = .{ .array = jolts } },
             .{ .key = "period", .value = json.Value.num(lf.period) },
             .{ .key = "wait", .value = json.Value.num(lf.wait) },
+            .{ .key = "holds_special", .value = .{ .bool = lf.holds_special } },
+            .{ .key = "special_drop", .value = json.Value.num(lf.special_drop) },
+            .{ .key = "special_settle", .value = json.Value.num(lf.special_settle) },
+            .{ .key = "special_car_x", .value = json.Value.num(lf.special_car_x) },
         }) });
     }
     if (!r.depth_walls) try fields.append(arena, .{ .key = "depth_walls", .value = .{ .bool = false } });
@@ -1083,7 +1099,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         r.floor = .{ .provenance = try provenanceOf(fl), .cell = cell, .kinds = kinds, .rows = rows };
     }
     if (try root.opt("lift")) |lf| {
-        try lf.only(&.{ "provenance", "from", "heights", "speed", "jolts", "period", "wait" });
+        try lf.only(&.{ "provenance", "from", "heights", "speed", "jolts", "period", "wait", "holds_special", "special_drop", "special_settle", "special_car_x" });
         const hn = try lf.get("heights");
         const heights = try arena.alloc(i32, try hn.len());
         for (heights, 0..) |*x, i| x.* = try (try hn.at(i)).int(i32);
@@ -1098,6 +1114,10 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
             .jolts = jolts,
             .period = try (try lf.get("period")).int(u8),
             .wait = try (try lf.get("wait")).int(u8),
+            .holds_special = if (try lf.opt("holds_special")) |x| try x.boolean() else false,
+            .special_drop = try (try lf.get("special_drop")).int(i32),
+            .special_settle = try (try lf.get("special_settle")).int(i32),
+            .special_car_x = try (try lf.get("special_car_x")).int(i32),
         };
         if (heights.len < r.sections.len) return hn.fail("not a height for each section");
         if (r.lift.?.speed <= 0) return (try lf.get("speed")).fail("not 1 or more");

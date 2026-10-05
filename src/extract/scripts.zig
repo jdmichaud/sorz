@@ -966,7 +966,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     // (0x656, `exitOf`).
     var exit = try exitOf(arena, rom, r);
     const section_count: u32 = @intCast(if (exit != null) boss_from else boss_from + 1);
-    const lift = try liftOf(arena, rom, r, mode_a, mode_b, u16be(rom, h + 12 + 8), section_count);
+    const lift = try liftOf(arena, rom, r, mode_a, mode_b, u16be(rom, h + 6), u16be(rom, h + 12 + 8), section_count);
     // The walk out's opening loads the enemies' colours of the next entry, as a section's does.
     if (exit) |*ex| ex.colours = try sectionColours(rom, entryAt(rom, part, if (lift != null) section_count + 1 else section_count));
     const sections = try arena.alloc(round.Section, section_count);
@@ -1128,7 +1128,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
 /// the ticks to the first and the period, the same); the wave's wait (0x750: `move.w #N,($FB16)`)
 /// in the round whose sections go to it from their art (0xE0A's `cmpi.w`), then the next jolt
 /// (`$FA27`, 0x18EE8).
-fn liftOf(arena: std.mem.Allocator, rom: []const u8, r: u32, mode_a: u16, mode_b: u16, plane_b_y: u16, sections: u32) Error!?round.Lift {
+fn liftOf(arena: std.mem.Allocator, rom: []const u8, r: u32, mode_a: u16, mode_b: u16, camera_x: u16, plane_b_y: u16, sections: u32) Error!?round.Lift {
     if (mode_a != 3 and mode_b != 3) return null;
     if (mode_a != 3 or mode_b != 3) return error.BadData;
     const at = struct {
@@ -1157,14 +1157,40 @@ fn liftOf(arena: std.mem.Allocator, rom: []const u8, r: u32, mode_a: u16, mode_b
     const period = u16be(rom, 0x18F46);
     if (period >> 8 != period & 0xFF or period & 0xFF == 0) return error.BadData;
     if (u16be(rom, 0x750) != 0x31FC or u16be(rom, 0x754) != 0xFB16) return error.BadData;
+    // The special attack's call (0x3FCC) in the round of 0x3FF0's `cmpi.w`: refused while the lift
+    // is called ($FA0D), jolts ($FA14) or rides ($FA15).
+    if (u16be(rom, 0x3FF0) != 0x0C78 or u16be(rom, 0x3FF4) != 0xFF02) return error.BadData;
+    for ([_]u32{ 0x3FF8, 0x4000, 0x4008 }, [_]u16{ 0xFA0D, 0xFA14, 0xFA15 }) |a, flag| {
+        if (u16be(rom, a) != 0x4A38 or u16be(rom, a + 2) != flag or u16be(rom, a + 4) != 0x6600) return error.BadData;
+    }
+    // The special attack on the lift (0x192A4: the round of 0x192D8's `cmpi.w`, 0x192F4): plane B
+    // a mode on, its lowest `move.l #N<<16,(34,a1)` at 0x192F8 (the camera's that less plane B's
+    // place, 0x19304), plane A in mode 7 (0x18D62: plane B's moves; level again from 0x18DA6's
+    // `cmpi.w`); plane B's modes 4 to 7 (0x193E4 down to the lowest, 0x1940E back, 0x1942E ahead
+    // to the camera's place, 0x19484 up), each by 16 pixels a tick; the police car (0x18D2A, the
+    // same round) at 0x18D3E's `moveq` across, as much lower (0x18D32).
+    if (u16be(rom, 0x192D8) != 0x0C78 or u16be(rom, 0x192DA) != r or u16be(rom, 0x192DC) != 0xFF02) return error.BadData;
+    if (u16be(rom, 0x192F8) != 0x237C or u16be(rom, 0x192FC) != 0 or u16be(rom, 0x192FE) != 34) return error.BadData;
+    const drop = u16be(rom, 0x192FA);
+    if (u16be(rom, 0x19304) != 0x303C or u16be(rom, 0x19306) != drop or u16be(rom, 0x19400) != 0x0C69 or u16be(rom, 0x19402) != drop) return error.BadData;
+    if (u16be(rom, 0x18D2A) != 0x0C78 or u16be(rom, 0x18D2C) != r or u16be(rom, 0x18D32) != 0x323C or u16be(rom, 0x18D34) != drop) return error.BadData;
+    if (u16be(rom, 0x19454) != 0x0C69 or u16be(rom, 0x19456) != camera_x) return error.BadData;
+    if (u16be(rom, 0x18DA6) != 0x0C69 or u16be(rom, 0x18DAA) != 14 or u16be(rom, 0x18DBA) != 0x31FC or u16be(rom, 0x18DBC) != 3) return error.BadData;
+    for ([_]u32{ 0x193E4, 0x1940E, 0x1942E, 0x19484 }, [_]u32{ 0x00100000, 0xFFF00000, 0x00100000, 0xFFF00000 }) |a, v| {
+        if (u16be(rom, a) != 0x237C or u32be(rom, a + 2) != v) return error.BadData;
+    }
     return .{
-        .provenance = try std.fmt.allocPrint(arena, "the lift's camera (plane A's mode 3, 0x18C92; plane B's, 0x1938E): plane B from its header's place down, up to each section's height (ROM 0x{X:0>5}, a word a section from the second), by ROM 0x193B2's pixels a tick (negated); the jolts of the lift's start and stop (0x18ECA: ROM 0x18F2E, a word each, to the step of ROM 0x18EE2), a step every ROM 0x18F46's ticks (0x18F32); the wave's wait (0x748: ROM 0x00752's ticks), then the next jolt", .{heights_at}),
+        .provenance = try std.fmt.allocPrint(arena, "the lift's camera (plane A's mode 3, 0x18C92; plane B's, 0x1938E): plane B from its header's place down, up to each section's height (ROM 0x{X:0>5}, a word a section from the second), by ROM 0x193B2's pixels a tick (negated); the jolts of the lift's start and stop (0x18ECA: ROM 0x18F2E, a word each, to the step of ROM 0x18EE2), a step every ROM 0x18F46's ticks (0x18F32); the wave's wait (0x748: ROM 0x00752's ticks), then the next jolt; no special attack while it is called, jolts or rides in the round of ROM 0x03FF2 (0x3FCC); the special attack's run by plane B (0x192F4): down to ROM 0x192FA's, back, ahead, up, the camera level again within ROM 0x18DA8's (0x18D62), the police car at ROM 0x18D3E's moveq (0x18CD4)", .{heights_at}),
         .from = plane_b_y,
         .heights = heights,
         .speed = speed,
         .jolts = jolts,
         .period = @intCast(period & 0xFF),
         .wait = @intCast(u16be(rom, 0x752)),
+        .holds_special = u16be(rom, 0x3FF2) == r,
+        .special_drop = drop,
+        .special_settle = u16be(rom, 0x18DA8),
+        .special_car_x = try entities.moveq(rom, 0x18D3E, 0),
     };
 }
 

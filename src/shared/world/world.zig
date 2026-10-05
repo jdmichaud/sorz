@@ -116,6 +116,24 @@ pub const Camera = struct {
         rode: bool = false,
         jolted: bool = false,
         called: bool = false,
+        /// The special attack's run on the lift (`Lift`'s special attack), until the camera is
+        /// level again.
+        special: ?Special = null,
+
+        /// Plane B runs: its phase (down, back, ahead, up) and its place across, its moves of
+        /// the last tick (the camera follows them), its place down at the call (the lift's,
+        /// where it rises back to), the camera's limit down and place down then, and whether
+        /// the camera rises with it.
+        pub const Special = struct {
+            phase: enum { drop, back, ahead, rise, done } = .drop,
+            x: Fixed,
+            dx: Fixed = .zero,
+            dy: Fixed = .zero,
+            y_from: i32,
+            camera_y_max: Fixed,
+            camera_y: Fixed,
+            rising: bool = false,
+        };
     };
 
     pub const WobbleState = struct {

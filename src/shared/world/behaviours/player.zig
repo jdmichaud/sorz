@@ -2116,9 +2116,14 @@ fn leftBySpecial(a: Actor) void {
 }
 
 /// A (the special attack): standing in play (not dropping in), with health and a special left,
-/// it calls the police car.
+/// it calls the police car; on a lift that holds it (`Lift.holds_special`), not while the lift is
+/// called, jolts or rides.
 fn callSpecial(a: Actor) void {
     if (a.entity.health <= 0 or a.mind.state == .fall) return;
+    if (a.tick.plan) |p| if (p.round.lift) |lf| if (lf.holds_special) {
+        const l = a.tick.world.camera.lift;
+        if (l.called or l.jolt != null or l.rides) return;
+    };
     const k = a.tick.world.playerOf(a.handle) orelse return;
     const p = &a.tick.world.players[k];
     if (p.specials == 0) return;

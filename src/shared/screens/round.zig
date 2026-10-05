@@ -270,8 +270,10 @@ pub const Round = struct {
     shown_camera: [3]i32 = .{ 0, 0, 0 },
     /// The ticks the round's water had rippled then.
     shown_ripple: u32 = 0,
-    /// Plane B's place down on a lift (the camera's `Lift`), as shown.
+    /// Plane B's place down on a lift (the camera's `Lift`), and across in its special attack's
+    /// run, as shown.
     shown_lift: i32 = 0,
+    shown_lift_x: ?i32 = null,
     shown_banner: i16 = 0,
     shown_bar: Bar = .{},
     shown_game_over: bool = false,
@@ -460,6 +462,7 @@ pub const Round = struct {
         self.shown_camera = .{ cam.x.whole(), cam.y.whole(), cam.y.whole() - shaken };
         self.shown_ripple = cam.ripple;
         self.shown_lift = cam.lift.y;
+        self.shown_lift_x = if (cam.lift.special) |s| s.x.whole() else null;
         if (self.logic_ran) {
             self.bosses_before = self.bosses_last;
             self.bosses_last = self.bossesBar(a);
@@ -724,10 +727,9 @@ pub const Round = struct {
     fn noteStrips(self: *Round, r: *const content_round.Round, before: world.Camera, after: world.Camera) void {
         const block = 16;
         const pb = r.camera.plane_b;
-        const planes = [2][2]i32{
-            .{ before.x.whole(), after.x.whole() },
-            .{ @divFloor(before.x.whole() * pb[0], pb[1]), @divFloor(after.x.whole() * pb[0], pb[1]) },
-        };
+        const b_before = if (before.lift.special) |s| s.x.whole() else @divFloor(before.x.whole() * pb[0], pb[1]);
+        const b_after = if (after.lift.special) |s| s.x.whole() else @divFloor(after.x.whole() * pb[0], pb[1]);
+        const planes = [2][2]i32{ .{ before.x.whole(), after.x.whole() }, .{ b_before, b_after } };
         for (r.camera.bands, planes) |bands, x| for (bands) |b| {
             if (b.drift != null) continue;
             const from = @divTrunc(x[0] * b.times, b.per);
@@ -1324,7 +1326,7 @@ pub const Round = struct {
         const r = s.script;
         v.screen.plane_a.x = c[0];
         v.screen.plane_a.y = c[1];
-        v.screen.plane_b.x = @divFloor(c[0] * r.camera.plane_b[0], r.camera.plane_b[1]);
+        v.screen.plane_b.x = self.shown_lift_x orelse @divFloor(c[0] * r.camera.plane_b[0], r.camera.plane_b[1]);
         v.screen.plane_b.y = if (r.lift != null) self.shown_lift else if (r.camera.plane_b_down) c[1] else r.camera.y;
         // A plane whose bands scroll at their own ratios scrolls by lines, each band's at its
         // place across.
