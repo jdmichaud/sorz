@@ -134,8 +134,8 @@ pub const Entrance = enum(u8) {
     circle,
 };
 
-/// What else the round's script says of an enemy it places, each by its meaning (the kinds read
-/// those they have).
+/// What else the round's script says of an enemy or a piece of scenery it places, each by its
+/// meaning (the kinds read those they have).
 pub const Traits = packed struct(u16) {
     /// It stays hidden until the camera reaches its place across (else, until its place is on
     /// the screen).
@@ -160,7 +160,9 @@ pub const Traits = packed struct(u16) {
     walks_off: bool = false,
     /// A boss is the second of twins.
     twin: bool = false,
-    _: u5 = 0,
+    /// A piece of scenery stirs while a flight passes (`World.flight`).
+    stirs: bool = false,
+    _: u4 = 0,
 };
 
 /// A thing flying or swung as a blow: a body thrown, a weapon in the hand or thrown. What its
@@ -186,6 +188,8 @@ pub const Spawn = struct {
     /// An enemy's colours, by their number (play's `enemy_colours`), whose line it takes as it
     /// appears (script.zig); null: its kind's own.
     colours: ?u8 = null,
+    /// A piece of scenery's height, which it takes as it starts (on a wall); null: the ground.
+    height: ?i16 = null,
 };
 
 /// The boxes in use (DESIGN.md W2): those of the frame the entity last showed, or of the first
@@ -224,7 +228,7 @@ pub const Entity = struct {
     holding: ?Handle = null,
     /// The last entity whose blow landed on it.
     struck_by: ?Handle = null,
-    /// How the round's script placed it (an enemy).
+    /// How the round's script placed it (an enemy, a piece of scenery).
     spawn: Spawn = .{},
     /// It flies or is swung as a blow.
     missile: ?Missile = null,

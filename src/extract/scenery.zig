@@ -7,6 +7,9 @@
 //!   (0x7E54), flies off to the side the one that struck it faces, bouncing, and goes.
 //! - The drip (type $14, 0x6D40, obj/drip.zig): it hangs, swells, falls to the floor, splashes,
 //!   and hangs again.
+//! - The flight (type $4D, 0x6E9E, obj/flight.zig): unseen, it waits for the camera to pass each
+//!   of its marks, then sends its waves of fliers (type $12, 0x6E2A) across the screen; while a
+//!   flight passes, the posters' corners (type $13, 0x6DDC) that stir with it flap.
 const std = @import("std");
 const sorz = @import("sorz");
 const entity = sorz.content.entity;
@@ -23,6 +26,10 @@ const immediate = entities.immediate;
 const moveByte = entities.moveByte;
 const moveq = entities.moveq;
 const entryFrames = items.entryFrames;
+
+/// The heights the posters' corners take by their list entry's byte $49 (0x6DEE: a word each).
+pub const corner_heights = 0x6E06;
+pub const corner_height_count = 4;
 
 /// `move.w #N,(D,a0)` at `at`: N, the displacement checked.
 fn moveWord(rom: []const u8, at: u32, displacement: u16) Error!i32 {
@@ -106,8 +113,101 @@ fn drip(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
     };
 }
 
+/// The posters' corners (type $13): their flapping (entry 0); their heights are the round's
+/// script's (`corner_heights`).
+fn corner(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set: u32 = @bitCast(try immediate(rom, 0x6DFC, &.{ 0x43, 0xF9 }, 4));
+    var d = try def(arena, rom, "scenery", set);
+    try d.animations.append(arena, .{ .name = "flap", .loop = true, .frames = try entryFrames(&d, "flap", 0, null, true) });
+    return .{
+        .name = "flight_scenery",
+        .provenance = try std.fmt.allocPrint(arena, "round 2's posters' corners, type $13 (handler 0x6DDC): the animation set at ROM 0x{X:0>5}", .{set}),
+        .family = .scenery,
+        .team = .neutral,
+        .behaviour = "flight_scenery",
+        .animations = d.animations.items,
+    };
+}
+
+/// The flier (type $12): its two sizes (entries 0 and 1, 0x6E54), its speeds, where it goes.
+fn flier(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set: u32 = @bitCast(try immediate(rom, 0x6E4C, &.{ 0x43, 0xF9 }, 4));
+    var d = try def(arena, rom, "flight", set);
+    try d.animations.append(arena, .{ .name = "large", .loop = true, .frames = try entryFrames(&d, "large", 0, null, true) });
+    try d.animations.append(arena, .{ .name = "small", .loop = true, .frames = try entryFrames(&d, "small", 1, null, true) });
+    try d.number("down", (try moveWord(rom, 0x6E60, 36)) << 16, "ROM 0x06E60: move.w #N,(36,a0), whole pixels");
+    try d.number("across", (try moveWord(rom, 0x6E66, 28)) << 16, "ROM 0x06E66: move.w #N,(28,a0), whole pixels");
+    try d.number("depth", (try moveWord(rom, 0x6E6C, 32)) << 16, "ROM 0x06E6C: move.w #N,(32,a0), whole pixels");
+    try d.number("lift", try immediate(rom, 0x6E88, &.{ 0x06, 0xA8 }, 4), "ROM 0x06E88: addi.l #N,(36,a0)");
+    try d.number("drawn_offset", try items.drawnOffset(rom), "ROM 0x0AF6E: addi.w #N,d2 (its place across on the screen as the drawing keeps it)");
+    try d.number("gone_drawn", try immediate(rom, 0x6E7E, &.{ 0x0C, 0x68 }, 2), "ROM 0x06E7E: cmpi.w #N,(40,a0) (unsigned)");
+    try d.number("middle_from", try immediate(rom, 0x97E8, &.{ 0x0C, 0x68 }, 2), "ROM 0x097E8: cmpi.w #N,(40,a0) (during the special attack, 0x6E94)");
+    try d.number("middle_to", try immediate(rom, 0x97F0, &.{ 0x0C, 0x68 }, 2), "ROM 0x097F0: cmpi.w #N,(40,a0) (excluded)");
+    return .{
+        .name = "flier",
+        .provenance = try std.fmt.allocPrint(arena, "round 2's fliers, type $12 (handler 0x6E2A): the animation set at ROM 0x{X:0>5}{s}", .{ set, d.number_notes.items }),
+        .family = .scenery,
+        .team = .neutral,
+        .behaviour = "flier",
+        .numbers = d.numbers.items,
+        .animations = d.animations.items,
+    };
+}
+
+/// The marks the camera passes (0x6F3E: words, $FFFF at the end) and a wave's fliers (0x6F1E: 8
+/// bytes each, X from the camera's limit on the left plus the screen's width, Y, Z, a byte not
+/// read, the size).
+const marks = 0x6F3E;
+const mark_count = 5;
+const wave = 0x6F1E;
+
+/// The flight (type $4D): unseen, no art of its own; its marks, its waves, their timing.
+fn flight(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "round2", .prefix = "flight", .set = 0, .box_table = entities.object_boxes, .frame_addresses = &.{} };
+    try d.number("screen_width", try immediate(rom, 0x6ED4, &.{ 0x06, 0x41 }, 2), "ROM 0x06ED4: addi.w #N,d1 (to the camera's limit on the left, $FFE01E)");
+    if (try immediate(rom, 0x6F54, &.{ 0x06, 0x41 }, 2) != try immediate(rom, 0x6ED4, &.{ 0x06, 0x41 }, 2)) return error.BadData;
+    try d.number("gap", try moveWord(rom, 0x6EEA, 98), "ROM 0x06EEA: move.w #N,(98,a0) (the ticks to the next wave)");
+    try d.number("tail", try moveWord(rom, 0x6F62, 98), "ROM 0x06F62: move.w #N,(98,a0) (from the last wave to the flight's end)");
+    var at: [mark_count]i32 = undefined;
+    for (&at, 0..) |*m, k| {
+        m.* = u16be(rom, marks + 2 * @as(u32, @intCast(k)));
+        if (m.* & 0x8000 != 0) return error.BadData;
+    }
+    if (u16be(rom, marks + 2 * mark_count) != 0xFFFF) return error.BadData;
+    try d.table("marks", &at, "ROM 0x06F3E: words, up to $FFFF");
+    const fliers: usize = @intCast(try moveq(rom, 0x6EF4, 6) + 1);
+    if (fliers != 4) return error.BadData;
+    var x: [4]i32 = undefined;
+    var y: [4]i32 = undefined;
+    var z: [4]i32 = undefined;
+    var small: [4]i32 = undefined;
+    for (0..fliers) |k| {
+        const e = wave + 8 * @as(u32, @intCast(k));
+        x[k] = s16be(rom, e);
+        y[k] = s16be(rom, e + 2);
+        z[k] = s16be(rom, e + 4);
+        small[k] = @intFromBool(rom[e + 7] != 0);
+    }
+    try d.table("flier_x", &x, "ROM 0x06F1E: each flier's first word (4 fliers, ROM 0x06EF4: moveq #N-1,d6)");
+    try d.table("flier_depth", &y, "ROM 0x06F1E: each flier's second word");
+    try d.table("flier_height", &z, "ROM 0x06F1E: each flier's third word");
+    try d.table("flier_small", &small, "ROM 0x06F1E: each flier's eighth byte (not 0: the small one, 0x6E54)");
+    return .{
+        .name = "flight",
+        .provenance = try std.fmt.allocPrint(arena, "round 2's flights, type $4D (handler 0x6E9E): three waves (its states 1 to 3, 0x6EA6){s}", .{d.number_notes.items}),
+        .family = .scenery,
+        .team = .neutral,
+        .behaviour = "flight",
+        .numbers = d.numbers.items,
+        .tables = d.tables.items,
+    };
+}
+
 /// The definitions this module writes, appended to `out`.
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
     try out.append(arena, try knockable(arena, rom));
     try out.append(arena, try drip(arena, rom));
+    try out.append(arena, try corner(arena, rom));
+    try out.append(arena, try flier(arena, rom));
+    try out.append(arena, try flight(arena, rom));
 }

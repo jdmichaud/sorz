@@ -49,7 +49,9 @@
 //! `knife`, and the `bat` a breakable holds, with its `bat_splinter`s), the rolling `shutter`,
 //! `breakable` and `item` the street's breakables and what they leave, round 1's boss `antonio`
 //! and his `boomerang`, and the `hit_spark` a player's blow makes (PLAN item 12); round 2's
-//! scenery (PLAN item 15): the oil drums a blow knocks away (`knockable`), the `drip`s.
+//! scenery (PLAN item 15): the oil drums a blow knocks away (`knockable`), the `drip`s, the
+//! `flight`s across the screen, their `flier`s and the posters' corners they stir
+//! (`flight_scenery`).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -82,6 +84,9 @@ pub const go_arrow = @import("behaviours/go_arrow.zig");
 pub const player_waiting = @import("behaviours/player_waiting.zig");
 pub const knockable = @import("behaviours/knockable.zig");
 pub const drip = @import("behaviours/drip.zig");
+pub const flight = @import("behaviours/flight.zig");
+pub const flier = @import("behaviours/flier.zig");
+pub const flight_scenery = @import("behaviours/flight_scenery.zig");
 
 /// An entity's behaviour and its memory: one line a behaviour module.
 pub const Mind = union(enum) {
@@ -114,6 +119,9 @@ pub const Mind = union(enum) {
     player_waiting: player_waiting.Mind,
     knockable: knockable.Mind,
     drip: drip.Mind,
+    flight: flight.Mind,
+    flier: flier.Mind,
+    flight_scenery: flight_scenery.Mind,
 };
 
 pub const Behaviour = std.meta.Tag(Mind);

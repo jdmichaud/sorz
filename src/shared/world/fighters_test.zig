@@ -401,6 +401,32 @@ const drip_fixture =
     \\ }}
 ;
 
+/// A flight: its marks across, its waves of four fliers.
+const flight_fixture =
+    \\{"family": "scenery", "team": "neutral", "behaviour": "flight",
+    \\ "numbers": {"screen_width": 320, "gap": 8, "tail": 64},
+    \\ "tables": {"marks": [1024, 1536, 2048, 2304, 2816], "flier_x": [16, 96, 64, 32],
+    \\   "flier_depth": [16, 8, 0, 48], "flier_height": [48, 64, 32, 96],
+    \\   "flier_small": [0, 0, 1, 1]}}
+;
+
+const flier_fixture =
+    \\{"family": "scenery", "team": "neutral", "behaviour": "flier",
+    \\ "numbers": {"down": 262144, "across": -655360, "depth": 131072, "lift": -6144,
+    \\   "drawn_offset": 128, "gone_drawn": 96, "middle_from": 112, "middle_to": 464},
+    \\ "animations": {
+++ anim("large", bare("15", "") ++ "," ++ bare("15", "")) ++ "," ++ anim("small", bare("5", "") ++ "," ++ bare("5", "")) ++
+    \\ }}
+;
+
+/// A poster's corner, which a flight stirs.
+const corner_fixture =
+    \\{"family": "scenery", "team": "neutral", "behaviour": "flight_scenery",
+    \\ "animations": {
+++ anim("flap", bare("3", "") ++ "," ++ bare("3", "") ++ "," ++ bare("3", "") ++ "," ++ bare("3", "")) ++
+    \\ }}
+;
+
 /// A gold bar: 5000 points.
 const gold =
     \\{"family": "item", "team": "neutral", "behaviour": "item",
@@ -725,6 +751,9 @@ const Fixture = struct {
             .{ .name = "player_waiting", .text = waiting },
             .{ .name = "knockable", .text = knockable_fixture },
             .{ .name = "drip", .text = drip_fixture },
+            .{ .name = "flight", .text = flight_fixture },
+            .{ .name = "flier", .text = flier_fixture },
+            .{ .name = "flight_scenery", .text = corner_fixture },
         };
         var defs: [sources.len]content_entity.Definition = undefined;
         var diag: json.Diagnostic = .{};
@@ -1801,6 +1830,50 @@ test "an oil drum stands solid; a blow knocks it away the way the striker faces,
     try testing.expectEqual(@as(i32, 870 + 23 * 4), r.w.get(d).?.position.x.whole());
     r.step(.{});
     try testing.expect(r.w.get(d) == null);
+}
+
+test "a flight passing its mark sends its waves of fliers to the items' places, the corners that stir flapping while it passes" {
+    var r = try Round.init();
+    defer r.deinit();
+    const fl = try r.w.spawnWithin(&r.f.kinds, r.f.kinds.find("flight").?, 2, 34, .pixels(1032, 56, 160), .right);
+    const corner = try r.w.spawnWithin(&r.f.kinds, r.f.kinds.find("flight_scenery").?, 2, 34, .pixels(900, 0, 160), .right);
+    r.w.get(corner).?.spawn.height = 72;
+    r.w.get(corner).?.spawn.traits.stirs = true;
+    const still = try r.w.spawnWithin(&r.f.kinds, r.f.kinds.find("flight_scenery").?, 2, 34, .pixels(940, 0, 160), .right);
+    r.step(.{});
+    try testing.expect(r.w.get(fl).?.flags.hidden);
+    try testing.expectEqual(@as(i32, 72), r.w.get(corner).?.position.height.whole());
+    try testing.expect(r.w.get(corner).?.animation.paused);
+    // The camera's limit on the left plus the screen's width, 1088, is past the first mark: the
+    // first wave, from 1088 on, its fliers set off at once.
+    r.step(.{});
+    try testing.expect(r.w.flight);
+    const xs = [_]i32{ 1104, 1184, 1152, 1120 };
+    for (xs, 0..) |x, k| {
+        const h = r.w.handleAt(World.item_places.from + k).?;
+        const e = r.w.get(h).?;
+        try testing.expectEqualStrings("flier", r.f.kinds.get(e.kind.?).name());
+        try testing.expectEqual(x, e.position.x.whole());
+        try testing.expectEqual(k >= 2, e.mind.flier.small);
+        try testing.expectEqualStrings("s1", behaviours.traceName(&e.mind).?);
+    }
+    r.step(.{});
+    try testing.expect(!r.w.get(corner).?.animation.paused);
+    try testing.expect(r.w.get(still).?.animation.paused);
+    // The second wave 8 ticks after the first; the third finds no place left.
+    for (0..8) |_| r.step(.{});
+    for (0..8) |k| try testing.expect(r.w.handleAt(World.item_places.from + k) != null);
+    for (0..8) |_| r.step(.{});
+    // The fliers fly left and go once drawn left of the screen; the flight ends 64 ticks after
+    // its last wave.
+    for (0..60) |_| r.step(.{});
+    for (0..8) |k| try testing.expect(r.w.handleAt(World.item_places.from + k) == null);
+    try testing.expect(r.w.flight);
+    for (0..5) |_| r.step(.{});
+    try testing.expect(!r.w.flight);
+    r.step(.{});
+    try testing.expect(r.w.get(corner).?.animation.paused);
+    try testing.expectEqualStrings("s1", behaviours.traceName(&r.w.get(fl).?.mind).?);
 }
 
 test "a drip hangs, swells, falls until the ground is below it, splashes, and hangs again" {

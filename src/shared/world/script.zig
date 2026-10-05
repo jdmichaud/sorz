@@ -533,8 +533,8 @@ fn bring(t: *Tick, p: *const Plan, rec: *const Spawn) void {
     place(t, rec, at);
 }
 
-/// The entity of a record at `x` and its depth, on the ground; an enemy placed as its record
-/// says (`placing`). A kind the content does not define yet is skipped, with a warning.
+/// The entity of a record at `x` and its depth, on the ground; placed as its record says
+/// (`placing`). A kind the content does not define yet is skipped, with a warning.
 fn place(t: *Tick, rec: *const Spawn, x: i32) void {
     const kind = t.kinds.find(rec.kind) orelse {
         std.log.warn("the round's script brings a {s}, which the content does not define yet: skipped", .{rec.kind});
@@ -543,14 +543,16 @@ fn place(t: *Tick, rec: *const Spawn, x: i32) void {
     const position: fixed.Vec3 = .{ .x = .pixels(x), .depth = .pixels(rec.depth), .height = t.world.ground };
     // In the enemies' places, as the original's script takes its objects' (0xE46).
     const places = World.enemy_places;
+    const how = placing(rec);
     const made = switch (t.kinds.get(kind).family()) {
-        .enemy, .boss => t.world.spawnEnemy(t.kinds, kind, position, placing(rec)),
+        .enemy, .boss => t.world.spawnEnemy(t.kinds, kind, position, how),
         else => t.world.spawnWithin(t.kinds, kind, places.from, places.to, position, .right),
     };
     const h = made catch {
         std.log.warn("the world is full: the round's script's {s} is skipped", .{rec.kind});
         return;
     };
+    t.world.get(h).?.spawn = how;
     // A breakable holds the item its record names.
     if (rec.holds) |name| {
         if (t.kinds.find(name)) |item| t.give(h, item) else std.log.warn("the round's script's {s} holds a {s}, which the content does not define yet: it holds none", .{ rec.kind, name });
@@ -567,8 +569,8 @@ fn place(t: *Tick, rec: *const Spawn, x: i32) void {
     }
 }
 
-/// How an enemy's record places it, in the world's terms: its way in, its traits, its place
-/// beside its target, its strength.
+/// How a record places its entity, in the world's terms: an enemy's way in, its traits (a piece
+/// of scenery's too), its place beside its target, its strength; a piece of scenery's height.
 pub fn placing(rec: *const Spawn) entity.Spawn {
     var sp: entity.Spawn = .{ .strength = @intCast(@min(rec.strength, 3)) };
     if (rec.entrance) |way| sp.entrance = switch (way) {
@@ -583,6 +585,7 @@ pub fn placing(rec: *const Spawn) entity.Spawn {
     }
     sp.bar = rec.bar;
     sp.colours = rec.colours;
+    if (rec.height) |h| sp.height = @intCast(h);
     return sp;
 }
 

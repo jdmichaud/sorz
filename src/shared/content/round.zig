@@ -29,7 +29,8 @@ pub const Side = enum { right, left };
 /// How an enemy comes in (its behaviour's way of approaching first), by its record.
 pub const Entrance = enum { approach, close_in, edge, wait, shutter, square_up, jump_in, size_up, follow, enter, circle };
 
-/// What an enemy's record says of it besides its entrance, each written only when true.
+/// What an enemy's record says of it besides its entrance, or a piece of scenery's of it, each
+/// written only when true.
 pub const Trait = enum {
     /// It waits hidden until the camera has reached its place, not only until its place is on
     /// the screen.
@@ -44,6 +45,8 @@ pub const Trait = enum {
     unflinching,
     walks_off,
     twin,
+    /// A piece of scenery stirs while a flight passes (round 2's posters' corners).
+    stirs,
 };
 
 pub const Traits = std.EnumSet(Trait);
@@ -117,6 +120,8 @@ pub const Spawn = struct {
     strength: u8 = 0,
     /// A breakable's: the kind of item it holds.
     holds: ?[]const u8 = null,
+    /// Placed: the height a piece of scenery takes as it starts (on a wall), placed on the ground.
+    height: ?i32 = null,
     /// A boss's: its entry in the status bar's names and bars.
     bar: ?u8 = null,
     /// A reserve's: its kind's art streamed in from its call.
@@ -300,6 +305,7 @@ fn spawnValue(arena: std.mem.Allocator, s: *const Spawn, where: Where) !json.Val
         .wave, .reserve => try f.append(arena, .{ .key = "side", .value = .{ .str = @tagName(s.side) } }),
     }
     try f.append(arena, .{ .key = "depth", .value = json.Value.num(s.depth) });
+    if (s.height) |h| try f.append(arena, .{ .key = "height", .value = json.Value.num(h) });
     if (where == .wave) try f.append(arena, .{ .key = "after", .value = json.Value.num(s.after) });
     if (where == .reserve) try f.append(arena, .{ .key = "arrives_after", .value = json.Value.num(s.arrives_after) });
     if (s.level != 0) try f.append(arena, .{ .key = "level", .value = json.Value.num(s.level) });
@@ -455,7 +461,7 @@ fn readPair(n: json.Node, comptime T: type) Error![2]T {
 fn spawnFields(comptime where: Where) []const []const u8 {
     const common = [_][]const u8{ "kind", "depth", "level", "two_players", "entrance", "offset", "strength", "holds", "bar", "colours" };
     const own: []const []const u8 = switch (where) {
-        .placed => &.{"x"},
+        .placed => &.{ "x", "height" },
         .wave => &.{ "side", "after" },
         .reserve => &.{ "side", "arrives_after", "streamed" },
     };
@@ -479,7 +485,10 @@ fn readSpawn(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Erro
     var s: Spawn = .{ .kind = try (try n.get("kind")).string(), .depth = try (try n.get("depth")).int(i32) };
     if (!art.validName(s.kind)) return (try n.get("kind")).fail("not a kind's name (lower case letters, digits and _)");
     switch (where) {
-        .placed => s.x = try (try n.get("x")).int(i32),
+        .placed => {
+            s.x = try (try n.get("x")).int(i32);
+            if (try n.opt("height")) |h| s.height = try h.int(i16);
+        },
         .wave, .reserve => {
             const side = try n.get("side");
             s.side = std.meta.stringToEnum(Side, try side.string()) orelse return side.fail("not right or left");

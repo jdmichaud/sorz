@@ -36,6 +36,7 @@ const spawns = @import("spawns.zig");
 const palettes = @import("palettes.zig");
 const rounds = @import("rounds.zig");
 const stream = @import("stream.zig");
+const scenery = @import("scenery.zig");
 
 const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
@@ -381,8 +382,16 @@ fn entry(rom: []const u8, type_byte: u8, bytes: [3]u8, y: u8) Error!round.Spawn 
             }
             return s;
         },
-        // A drip: its code reads none of the bytes.
-        0x14 => {
+        0x13 => {
+            // A poster's corner: its height by its byte $49 (0x6DEE), and whether it stirs with
+            // a flight by its byte $40 (0x6E0E).
+            if (bytes[2] >= scenery.corner_height_count or bytes[1] != 0) return error.BadData;
+            s.height = s16be(rom, scenery.corner_heights + 2 * @as(u32, bytes[2]));
+            if (bytes[0] != 0) s.traits.insert(.stirs);
+            return s;
+        },
+        // A drip, a flight: their code reads none of the bytes.
+        0x14, 0x4D => {
             if (!std.mem.allEqual(u8, &bytes, 0)) return error.BadData;
             return s;
         },
