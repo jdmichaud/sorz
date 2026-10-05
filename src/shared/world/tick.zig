@@ -484,8 +484,9 @@ pub const Tick = struct {
         return false;
     }
 
-    /// The kind of entity of a special attack's call: the police car.
-    pub const special_kind = "police_car";
+    /// The kind of entity of a special attack's call: the special attack's own (it brings the
+    /// police car and the shot, and knocks the enemies down).
+    pub const special_kind = "special_knockdown";
 
     /// A player calls the special attack: unless one is under way, the police car comes (its
     /// behaviour runs the attack) and every entity on the screen is told (`specialCalled`).
@@ -495,7 +496,8 @@ pub const Tick = struct {
         const kind = t.kinds.find(special_kind) orelse return false;
         t.world.special_by = by;
         const c = t.world.camera;
-        const car = t.world.spawn(t.kinds, kind, .{ .x = c.x, .depth = .zero, .height = t.world.ground }, .right) catch return false;
+        const places = behaviours.special_knockdown.places;
+        const car = t.world.spawnWithin(t.kinds, kind, places.from, places.to, .{ .x = c.x, .depth = .zero, .height = t.world.ground }, .right) catch return false;
         if (t.world.get(car)) |e| e.flags.on_screen = false;
         t.world.special = true;
         dispatch(t, car, "specialCalled", void, {}, .{});
@@ -509,13 +511,15 @@ pub const Tick = struct {
         return true;
     }
 
-    /// The special attack's blast: every entity it caught is told (`specialBlast`).
-    pub fn specialBlast(t: *Tick) void {
-        var buf: [capacity_]u8 = undefined;
-        for (t.world.updateOrder(&buf)) |i| {
-            const h = t.world.handleAt(i) orelse continue;
-            dispatch(t, h, "specialBlast", void, {}, .{});
-        }
+    /// How the special attack knocks an enemy down: below its line in depth (player 1's, but
+    /// one in its knock-down's pose), the rest (but one in that pose short of its frame `rest`),
+    /// any (player 2's).
+    pub const SpecialFall = union(enum) { line: i16, rest: u8, any };
+
+    /// The special attack knocks `h` down, as `how` says, its blow `by`'s (its caller's): whether
+    /// it fell (its behaviour's `specialKnockedDown`; by default, not).
+    pub fn specialKnockDown(t: *Tick, h: Handle, by: ?Handle, how: SpecialFall) bool {
+        return dispatch(t, h, "specialKnockedDown", bool, false, .{ by, how });
     }
 
     /// The first solid thing (in the world's order) other than `h` whose `solid` box holds

@@ -68,6 +68,8 @@ pub const Camera = struct {
     drawn: [2]?Fixed = .{ null, null },
     /// The special attack's run, while it lasts: the camera neither follows nor holds the players.
     run: ?Run = null,
+    /// Its place across at the last tick (what moved with it moves by the difference).
+    prev_x: Fixed = .zero,
     /// A shake under way (`Tick.shake`): its ticks left.
     shake: u8 = 0,
 
@@ -85,7 +87,7 @@ pub const Camera = struct {
         shake_by: i16,
     };
 
-    /// The special attack's run (behaviours/police_car.zig): called, the camera follows for the
+    /// The special attack's run (behaviours/special_knockdown.zig): called, the camera follows for the
     /// tick of the call; then it runs back across at `speed` to `limit`; then (its effect over) it
     /// runs ahead at that speed until it is back where it was at the call.
     pub const Run = struct {

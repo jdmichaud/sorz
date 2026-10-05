@@ -437,15 +437,71 @@ const brawler =
     \\ "moves": {"punch": {"animation": "punch", "damage": 8, "reaction": "knock_down"}}}
 ;
 
-const car =
-    \\{"family": "effect", "team": "neutral", "behaviour": "police_car",
-    \\ "numbers": {"run": 1048576, "run_most": 50331648, "comes": 33554432, "siren": 29,
-    \\   "brakes": 44, "bazooka": 82, "shell": 148, "explosion": 201, "blast": 245, "run_ahead": 100,
-    \\   "ends": 286},
-    \\ "sounds": {"siren": "police siren", "brakes": "police car brakes", "bazooka": "police bazooka",
-    \\   "shell": "bazooka shell", "explosion": "explosion"},
-    \\ "animations": {"car": {"loop": true, "frames": [{"frame": "t/f4", "ticks": 1}]}}}
+/// The special attack's own, its police car, player 1's blast and player 2's fire, as the
+/// extractor writes them (their frames on the test art).
+const police_car_fixture =
+    \\{"animations": {"bazooka": {"frames": [{"frame": "t/f0", "ticks": 3}, {"frame": "t/f0",
+    \\"ticks": 3}, {"frame": "t/f0", "ticks": 3}], "loop": true},
+    \\"car": {"frames": [{"frame": "t/f0", "ticks": 1}], "loop": true},
+    \\"flash": {"frames": [{"frame": "t/f0", "ticks": 4}, {"frame": "t/f0", "ticks": 4},
+    \\{"frame": "t/f0", "ticks": 4}, {"frame": "t/f0", "ticks": 4}], "loop": true},
+    \\"gun": {"frames": [{"frame": "t/f0", "ticks": 2}, {"frame": "t/f0", "ticks": 2}],
+    \\"loop": true}, "gunfire": {"frames": [{"frame": "t/f0", "ticks": 2}, {"frame": "t/f0",
+    \\"ticks": 2}, {"frame": "t/f0", "ticks": 2}, {"frame": "t/f0", "ticks": 2},
+    \\{"frame": "t/f0", "ticks": 2}, {"frame": "t/f0", "ticks": 2}, {"frame": "t/f0",
+    \\"ticks": 2}, {"frame": "t/f0", "ticks": 2}, {"frame": "t/f0", "ticks": 2},
+    \\{"frame": "t/f0", "ticks": 2}, {"frame": "t/f0", "ticks": 2}, {"frame": "t/f0",
+    \\"ticks": 2}], "loop": true}, "officer": {"frames": [{"frame": "t/f0", "ticks": 3},
+    \\{"frame": "t/f0", "ticks": 3}], "loop": true}, "smoke": {"frames": [{"frame": "t/f0",
+    \\"ticks": 4}, {"frame": "t/f0", "ticks": 4}, {"frame": "t/f0", "ticks": 4},
+    \\{"frame": "t/f0", "ticks": 4}], "loop": true}}, "behaviour": "police_car",
+    \\"family": "effect", "numbers": {"aim": 12, "aim_ends": 2, "art": 29, "bazooka_depth": 4,
+    \\"bazooka_top": 32, "bazooka_up": 16, "brakes_ahead": 128, "depth": 64, "drive": 1572864,
+    \\"gone_behind": -256, "gunfire": 60, "height": 168, "officer_depth": 4, "parked": 20,
+    \\"puff_ends": 3, "rise": -196608, "slowing": -90112, "smoke_after": 6},
+    \\"sounds": {"bazooka": "police bazooka", "brakes": "police car brakes",
+    \\"gun": "police fire", "siren": "police siren"}, "team": "neutral"}
 ;
+
+const special_knockdown_fixture =
+    \\{"behaviour": "special_knockdown", "family": "effect", "numbers": {"arrives": -832,
+    \\"comes": 33554432, "rest_frame": 3, "run": 1048576, "run_most": 50331648,
+    \\"second_every": 4, "second_first": 48}, "team": "neutral"}
+;
+
+const special_blast_fixture =
+    \\{"animations": {"blast_1": {"frames": [{"frame": "t/f0", "ticks": 1}, {"flip": true,
+    \\"frame": "t/f0", "ticks": 1}], "loop": true}, "blast_2": {"frames": [{"frame": "t/f0",
+    \\"ticks": 1}, {"flip": true, "frame": "t/f0", "ticks": 1}], "loop": true},
+    \\"blast_3": {"frames": [{"frame": "t/f0", "ticks": 1}, {"flip": true, "frame": "t/f0",
+    \\"ticks": 1}], "loop": true}, "blast_4": {"frames": [{"frame": "t/f0", "ticks": 1},
+    \\{"flip": true, "frame": "t/f0", "ticks": 1}], "loop": true},
+    \\"blast_5": {"frames": [{"frame": "t/f0", "ticks": 1}, {"flip": true, "frame": "t/f0",
+    \\"ticks": 1}], "loop": true}, "rocket": {"frames": [{"frame": "t/f0", "ticks": 1},
+    \\{"flip": true, "frame": "t/f0", "ticks": 1}], "loop": true}}, "behaviour": "special_blast",
+    \\"family": "effect", "numbers": {"ahead": 128, "depth": 96, "drift": 196608,
+    \\"fall": 1048576, "fuse": 3, "generations": 15, "height": 0, "hidden": 40, "last_wait": 24,
+    \\"line_above": 12, "rest_generation": 11, "ring_fuse": 2, "size_ticks": 2},
+    \\"sounds": {"explosion": "explosion", "launch": "bazooka shell"},
+    \\"tables": {"ring_across": [0, 17, 17, 17, 17, 17, 17, 12, 6, -12, -17, -17, -17, -17, -17,
+    \\-17], "ring_depth": [0, 0, 0, 0, 0, 0, -8, -16, -16, -16, -8, 0, 0, 0, 0, 0], "sizes": [1,
+    \\1, 1, 2, 3, 4, 5, 4, 3, 2, 1, 0]}, "team": "neutral"}
+;
+
+const special_fire_fixture =
+    \\{"animations": {"falling": {"frames": [{"frame": "t/f0", "ticks": 2}, {"frame": "t/f0",
+    \\"ticks": 2}], "loop": true}, "impact": {"frames": [{"frame": "t/f0", "ticks": 3},
+    \\{"frame": "t/f0", "ticks": 3}, {"frame": "t/f0", "ticks": 3}, {"frame": "t/f0",
+    \\"ticks": 3}, {"frame": "t/f0", "ticks": 3}, {"frame": "t/f0", "ticks": 3},
+    \\{"frame": "t/f0", "ticks": 3}, {"frame": "t/f0", "ticks": 3}], "loop": true}},
+    \\"behaviour": "special_fire", "family": "effect", "numbers": {"behind": 48, "bullets": 48,
+    \\"drift": 524288, "every": 2, "fall": 917504, "gravity": 34944, "hidden": 40,
+    \\"impact_ends": 7, "last_wait": 56, "shake": 116}, "sounds": {"fire": "fire rain"},
+    \\"tables": {"across": [48, 120, 192, 32, 16, 136, 152, 16, 80, 128, 208, 256, 72, 168, 24,
+    \\248], "depth": [32, 96, 16, 64, 16, 32, 96, 32, 24, 64, 16, 80, 64, 32, 88, 32]},
+    \\"team": "neutral"}
+;
+
 
 const waiting =
     \\{"family": "player", "team": "neutral", "behaviour": "player_waiting",
@@ -606,7 +662,10 @@ const Fixture = struct {
             .{ .name = "gold", .text = gold },
             .{ .name = "antonio", .text = antonio_fixture },
             .{ .name = "boomerang", .text = boomerang_fixture },
-            .{ .name = "police_car", .text = car },
+            .{ .name = "police_car", .text = police_car_fixture },
+            .{ .name = "special_knockdown", .text = special_knockdown_fixture },
+            .{ .name = "special_blast", .text = special_blast_fixture },
+            .{ .name = "special_fire", .text = special_fire_fixture },
             .{ .name = "player_waiting", .text = waiting },
         };
         var defs: [sources.len]content_entity.Definition = undefined;
@@ -846,10 +905,15 @@ test "a grab: the walk's reach catches the punk; two knees, and the last knocks 
     try testing.expect(r.player().holding == null);
 }
 
-test "the special attack: the camera runs back, the car comes, the punk stands without health, the blast, the end" {
+test "the special attack: the camera runs back, the car comes, the punk stands without health, the blast's line, the end" {
     var r = try Round.init();
     defer r.deinit();
-    const p = try r.punk(900);
+    // The punk in the enemies' places, where the special attack looks for them, at a place
+    // across where it shakes on its feet as it waits (lying, it would wait for the last pass).
+    const p = try r.w.spawnEnemy(&r.f.kinds, r.f.kinds.find("punk").?, .pixels(899, 64, 160), .{});
+    r.w.get(p).?.mind.galsia.state = .close_in;
+    r.w.get(p).?.mind.galsia.body.target = r.hero;
+    r.w.get(p).?.health = 12;
     r.step(.{});
     r.step(.{ .pad1 = .{ .a = true } });
     try testing.expect(r.w.special);
@@ -873,6 +937,8 @@ test "the special attack: the camera runs back, the car comes, the punk stands w
         if (returned_at == null and ahead_at != null and r.w.camera.run == null) returned_at = i;
         if (knocked_at == null) if (r.w.get(p)) |e| if (e.mind.galsia.state == .knocked_down) {
             knocked_at = i;
+            // Knocked out, it has not scored yet.
+            try testing.expectEqual(@as(u32, 0), r.w.players[0].score);
         };
         if (ended_at == null and !r.w.special) ended_at = i;
         if (ended_at == null) try testing.expect(r.player().position.x.eql(x));
@@ -882,17 +948,14 @@ test "the special attack: the camera runs back, the car comes, the punk stands w
     try testing.expectEqual(@as(?usize, 32 + 100 + 1), ahead_at);
     try testing.expectEqual(@as(?usize, 32 + 100 + 48), returned_at);
     try testing.expectEqual(@as(i32, 768), r.w.camera.x.whole());
-    try testing.expectEqual(@as(?usize, 32 + 245), knocked_at);
+    // The blast: the rocket comes as the camera is back; its line passes the punk's depth (64) as
+    // the explosion of generation 7 is at its largest (the line 60).
+    try testing.expectEqual(@as(?usize, 180 + 81), knocked_at);
     try testing.expectEqual(@as(?usize, 32 + 286), ended_at);
     // A second call needs a special left.
     r.step(.{ .pad1 = .{ .a = true } });
     try testing.expect(!r.w.special);
-    // Knocked out, the punk blinks and goes, and the player it went after scores its points.
-    try testing.expectEqual(@as(u32, 0), r.w.players[0].score);
-    for (0..200) |_| {
-        if (r.w.get(p) == null) break;
-        r.step(.{});
-    }
+    // Knocked out, the punk blinked and went, and the player it went after scored its points.
     try testing.expect(r.w.get(p) == null);
     try testing.expectEqual(@as(u32, 500), r.w.players[0].score);
 }

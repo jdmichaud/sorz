@@ -345,8 +345,8 @@ pub fn specialCalled(a: Actor) void {
     Common.specialCalled(a);
 }
 
-pub fn specialBlast(a: Actor) void {
-    Common.specialBlast(a);
+pub fn specialKnockedDown(a: Actor, by: ?Handle, how: tick.Tick.SpecialFall) bool {
+    return Common.specialKnockedDown(a, by, how);
 }
 
 pub fn takeUp(a: Actor, elapsed: u32) void {

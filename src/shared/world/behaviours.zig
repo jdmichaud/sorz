@@ -26,8 +26,9 @@
 //!     (the hold ended, its holder still at the frame that let go);
 //!   - `picks(a, item)`, `pickedUp(a, by) bool` (whether the item stays in the world; by
 //!     default it goes);
-//!   - `specialCalled(a)`, `specialBlast(a)`: a player called the special attack, on the
-//!     screen; its blast came (`Tick.callSpecial`);
+//!   - `specialCalled(a)`, `specialKnockedDown(a, by, how) bool`: a player called the special
+//!     attack, on the screen (`Tick.callSpecial`); it knocks the entity down
+//!     (`Tick.specialKnockDown`);
 //!   - `leftBehind(a)`: an enemy left behind the camera was brought back to its edge by the
 //!     round's script (script.zig);
 //!   - `knockedBack(a)`: an enemy on the screen as a player's new life drops in (lives.zig);
@@ -41,7 +42,8 @@
 //! `sparring` and `pawn` are synthetic: the enemy and the player of the world's tests. `player`
 //! is the original's players' (PLAN item 11); `galsia` round 1's Galsias', on the enemies' common
 //! body (behaviours/enemy.zig, not a behaviour of its own: the states every enemy shares);
-//! `police_car` the special attack's, `go_arrow` the arrow a section's opening shows,
+//! `special_knockdown` the special attack's own, which brings its `police_car`, then player 1's
+//! `special_blast` or player 2's `special_fire`; `go_arrow` the arrow a section's opening shows,
 //! `player_waiting` a player out of lives (PLAN item 13); round 1's other enemies, `stalker`,
 //! `signal`, `galsia_pipe`, `galsia_knife`, `acrobat`, `brawler`, their weapons (`weapon`,
 //! `knife`), the rolling `shutter`, `breakable` and `item` the street's breakables and what they
@@ -68,6 +70,9 @@ pub const item = @import("behaviours/item.zig");
 pub const antonio = @import("behaviours/antonio.zig");
 pub const boomerang = @import("behaviours/boomerang.zig");
 pub const police_car = @import("behaviours/police_car.zig");
+pub const special_knockdown = @import("behaviours/special_knockdown.zig");
+pub const special_blast = @import("behaviours/special_blast.zig");
+pub const special_fire = @import("behaviours/special_fire.zig");
 pub const go_arrow = @import("behaviours/go_arrow.zig");
 pub const player_waiting = @import("behaviours/player_waiting.zig");
 
@@ -92,6 +97,9 @@ pub const Mind = union(enum) {
     antonio: antonio.Mind,
     boomerang: boomerang.Mind,
     police_car: police_car.Mind,
+    special_knockdown: special_knockdown.Mind,
+    special_blast: special_blast.Mind,
+    special_fire: special_fire.Mind,
     go_arrow: go_arrow.Mind,
     player_waiting: player_waiting.Mind,
 };

@@ -18,6 +18,7 @@ const sound_names = @import("sound_names.zig");
 const enemies = @import("enemies.zig");
 const weapons = @import("weapons.zig");
 const items = @import("items.zig");
+const special = @import("special.zig");
 
 const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
@@ -685,52 +686,7 @@ test "an immediate is read only from its instruction" {
     try std.testing.expectError(error.BadData, moveByte(&rom, 8, 0x40));
 }
 
-// --- The special attack's police car --------------------------------------------------------------
-
-/// The police car of the special attack, a stand-in (sorz's `police_car` behaviour): its frame
-/// from its animation set (0x70A78), its sounds the requests its parts make (sor-remaster's
-/// obj/police.zig, obj/special_blast.zig), and its times the ones sor-remaster measures from the
-/// call to each (the catalogue's `player-special-axel.scn`), which the original's car, officer,
-/// shells and camera make together (PLAN item 13 brings them).
-pub fn policeCar(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
-    const set = 0x70A78;
-    var d: Def = .{ .arena = arena, .rom = rom, .dir = "police", .set = set, .box_table = object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
-    const car = try readAnimation(arena, rom, set, 0);
-    const frames = try arena.alloc(entity.Frame, 1);
-    frames[0] = .{ .frame = try d.frameName(car.frames[0].address), .ticks = 1 };
-    try d.animations.append(arena, .{ .name = "car", .loop = true, .frames = frames });
-    // The camera's run (its plane's special attack modes): back at 0x18CC4, ahead at 0x18DC2,
-    // at the same speed; its limit at 0x192E4; the car comes at 0x18CDE.
-    const back = try immediate(rom, 0x18CC4, &.{ 0x23, 0x7C }, 4);
-    if (try immediate(rom, 0x18DC2, &.{ 0x23, 0x7C }, 4) != -back) return error.BadData;
-    try d.number("run", -back, "ROM 0x18CC4 (move.l to the camera's speed; 0x18DC2 the same ahead)");
-    try d.number("run_most", -(try immediate(rom, 0x192E4, &.{ 0x06, 0x80 }, 4)), "ROM 0x192E4 (addi.l to the camera's place)");
-    try d.number("comes", (try immediate(rom, 0x18CDE, &.{ 0x04, 0x40 }, 2)) << 16, "ROM 0x18CDE (subi.w from the camera's place at the call)");
-    const measured = "measured: the ticks from the car's coming in sor-remaster's special attack (catalogue player-special-axel.scn, player-special-enemies-axel.scn)";
-    try d.number("siren", 29, measured);
-    try d.number("brakes", 44, measured);
-    try d.number("bazooka", 82, measured);
-    try d.number("shell", 148, measured);
-    try d.number("explosion", 201, measured);
-    try d.number("blast", 245, measured);
-    try d.number("run_ahead", 100, measured);
-    try d.number("ends", 286, measured);
-    try d.sound("siren", 0xCE);
-    try d.sound("brakes", 0xAE);
-    try d.sound("bazooka", 0xA9);
-    try d.sound("shell", 0xAA);
-    try d.sound("explosion", 0xAD);
-    return .{
-        .name = "police_car",
-        .provenance = try std.fmt.allocPrint(arena, "the special attack's police car (type 5, 0x597C), a stand-in: its frame from the animation set at ROM 0x{X:0>5}{s}", .{ set, d.number_notes.items }),
-        .family = .effect,
-        .team = .neutral,
-        .behaviour = "police_car",
-        .numbers = d.numbers.items,
-        .sounds = d.sounds.items,
-        .animations = d.animations.items,
-    };
-}
+// --- The GO arrow ---------------------------------------------------------------------------------
 
 /// The GO arrow (type $48, 0x67A4), which a section's opening shows (sorz's `go_arrow`
 /// behaviour): its frame (animation 0 of the set at 0x6F06E, the effects' art), its place on the
@@ -792,7 +748,7 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8) Error![]const entity.Defin
     try enemies.all(arena, rom, &out);
     try weapons.all(arena, rom, &out);
     try items.all(arena, rom, &out);
-    try out.append(arena, try policeCar(arena, rom));
+    try special.all(arena, rom, &out);
     try out.append(arena, try goArrow(arena, rom));
     try out.append(arena, try playerWaiting(arena, rom));
     return out.items;

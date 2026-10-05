@@ -420,6 +420,7 @@ fn pickups(t: *Tick) void {
 /// round's script's wall (script.zig).
 fn camera(t: *Tick) void {
     const c = &t.world.camera;
+    c.prev_x = c.x;
     if (c.run) |*r| switch (r.state) {
         // At the call's tick it follows as before, but its limit is already the run's.
         .called => {

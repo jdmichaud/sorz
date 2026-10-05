@@ -1349,10 +1349,20 @@ pub fn Of(comptime M: type) type {
             enter(a, .stand);
         }
 
-        /// The special attack's blast: standing still for it, it is knocked down.
-        pub fn specialBlast(a: A) void {
-            if (a.mind.state != .stand or !a.tick.world.special) return;
+        /// The special attack knocks it down, as `how` says (tick.zig's `SpecialFall`), its blow
+        /// `by`'s: one in its knock-down's pose only at the frame its pose stays on, and only
+        /// in the last pass; below the line only.
+        pub fn specialKnockedDown(a: A, by: ?Handle, how: tick.Tick.SpecialFall) bool {
+            const falling = a.plays(.down);
+            switch (how) {
+                .line => |line| if (falling or a.entity.position.depth.whole() <= line) return false,
+                .rest => |frame| if (falling and a.frame() != frame) return false,
+                .any => {},
+            }
+            a.endMove();
+            body(a).other = by;
             enterAtBlow(a, .knocked_down);
+            return true;
         }
 
         // Taken up from a situation -----------------------------------------------------------
