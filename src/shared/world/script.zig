@@ -399,8 +399,14 @@ pub fn opening(t: *Tick) void {
 /// wall, the wave, the reserve, the clear, the boss.
 pub fn run(t: *Tick) void {
     const p = t.plan orelse return;
-    if (t.world.special) return;
     const s = &t.world.script;
+    if (t.world.special) {
+        // A reserve's enemy called before it, its colours loaded, has its art streamed in
+        // meanwhile (the original's event machine waits, its art loads): it comes at the special
+        // attack's end at the soonest.
+        if (s.stage == .reserve and s.arriving > 1 and s.arriving < arrivalTicks(s, &reserveOf(p.round, s.part)[s.chosen])) s.arriving -= 1;
+        return;
+    }
     const now = countEnemies(t);
     const went = s.enemies -| now;
     s.enemies = now;
