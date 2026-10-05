@@ -1,8 +1,8 @@
 //! similar-check's enemies and items (PLAN item 12): the catalogue's ai-* and item-* families
-//! (sorz's copies in tests/scenarios/enemies, with item-knife, sorz's own: the knife in a
-//! player's hand): round 1's recorded play (`start pads`, the file the check is given, which the
-//! repository does not hold) to a wave, then the player stands, presses B every other tick, or
-//! goes for an item. Each run, sor-remaster plays it from power-on (its runs kept in
+//! (sorz's copies in tests/scenarios/enemies, with item-knife and item-bat, sorz's own: the knife
+//! and the bat in a player's hand): round 1's recorded play (`start pads`, the file the check is
+//! given, which the repository does not hold) to a wave, then the player stands, presses B every
+//! other tick, or goes for an item. Each run, sor-remaster plays it from power-on (its runs kept in
 //! OUT_DIR/enemies while its agent and the scenario stay the same, several at once) and sorz
 //! takes it up from the reference's situation at the script's start, as the moves' runs do.
 //! Then:
@@ -64,6 +64,8 @@ pub const families = [_]Family{
     .{ .name = "item-pipe", .what = "the pipe: dropped by its Galsia, picked up and swung", .item = true },
     // Not the catalogue's: the knife in a player's hand, its stab and its throw.
     .{ .name = "item-knife", .what = "the knife: dropped by its Galsia, picked up, stabbed and thrown", .item = true },
+    // Not the catalogue's: the bat out of its breakable, swung until it splinters.
+    .{ .name = "item-bat", .what = "the bat: out of its breakable, picked up, swung until it splinters", .item = true },
 };
 
 /// The kinds measured: the enemies, and the things they throw (and the players pick up).
