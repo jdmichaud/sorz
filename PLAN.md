@@ -139,9 +139,17 @@
     settings key; the extended ADVANCED SETTINGS and START opening the settings; the network
     page's menu, settings and START; a guest's OPTIONS), `screens-check` on the original,
     `browser-check -Drom` (part `flow`). The user's play is pending.
-- [ ] **20 — An extension** — Depends: 19, 14.
+- [x] **20 — An extension** — Depends: 19, 14.
   - The same character twice in two players, its palette from data.
   - Gate: it plays, and nothing outside the policy and the content changed.
+  - [x] Checked 2026-10-05: the extended variant's policies let both players choose a character
+    (`characterTaken`) and draw the second with its definition's `duplicate` colour map
+    (`duplicate_colours`); the colours are content, the port's choice. The four palettes are all
+    in use in play, so the map recolours within the players' palette. Beside the policy and the
+    content: a sprite's colour map (the renderer's, generic), a player's map carried to its
+    sprites (the world's), and the rule's two readers (the round's players; the select, where
+    two cursors may share a portrait). Played with the agent host (two Axels, the select's
+    labels taking turns); variants-check and round-check's `two` equal.
 
 ## F7 — Platforms and exactness
 
