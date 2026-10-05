@@ -557,8 +557,9 @@ fn crouchSetUp(a: Actor) void {
 /// gives way under it or carries it (round 6's holes and conveyors).
 fn crouch(a: Actor) void {
     const m = &a.mind.juggler;
-    if (!Common.falls(a)) return;
-    Common.conveyed(a);
+    if (a.tick.floorUnder(a.entity.position) == null) {
+        if (!Common.falls(a)) return;
+    } else Common.conveyed(a);
     if (m.turns) {
         m.turn_ticks -%= 1;
         if (m.turn_ticks == 0) {
