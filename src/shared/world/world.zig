@@ -264,14 +264,19 @@ pub const World = struct {
     /// An item a breakable leaves: in the first free place of the items', else in the last free
     /// one below them, down to the enemies' first (as the original's).
     pub fn spawnItem(self: *World, kinds: *const Kinds, kind: KindId, position: Vec3) Full!Handle {
-        return self.spawnWithin(kinds, kind, item_places.from, item_places.to, position, .right) catch {
-            var i = item_places.to;
-            while (i > enemy_places.from) {
-                i -= 1;
-                if (!self.entities[i].alive()) return self.spawnIn(kinds, kind, i, position, .right);
-            }
-            return error.Full;
-        };
+        return self.spawnWithin(kinds, kind, item_places.from, item_places.to, position, .right) catch
+            self.spawnLast(kinds, kind, position);
+    }
+
+    /// `spawn` in the last free place of the items' and below, down to the enemies' first (the
+    /// original's search for a place for a piece, from its 50th object down to its 3rd).
+    pub fn spawnLast(self: *World, kinds: *const Kinds, kind: KindId, position: Vec3) Full!Handle {
+        var i = item_places.to;
+        while (i > enemy_places.from) {
+            i -= 1;
+            if (!self.entities[i].alive()) return self.spawnIn(kinds, kind, i, position, .right);
+        }
+        return error.Full;
     }
 
     /// `spawn` in the first free place from `from` to `to` (excluded).

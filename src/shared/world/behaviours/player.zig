@@ -210,6 +210,9 @@ pub const Mind = struct {
     placed_frame: ?u8 = null,
     /// The weapon in its hand.
     weapon: ?Handle = null,
+    /// The weapon its plain blow threw, while its throwing frame shows, when it is thrown again
+    /// (`weaponBlow`).
+    rethrown: ?Handle = null,
     /// In a hold with the other player: what the holder asked of it, which it answers at its
     /// next turn (its own tick's end forgets it); its holder's counter threw it (felt at its
     /// next tick); it lifts itself over the one it holds (not lifted by its throw); the steps
@@ -1828,8 +1831,8 @@ fn dropWeapon(a: Actor) void {
 
 /// The actions open armed (standing, walking, at a blow's end): a grab its reach caught, the back
 /// attack, a jump, B (a pick-up first; a swing with a weapon swung, a stab at a thing ahead with
-/// one thrown, else the plain blow, which throws one thrown), else the walk by the pad; its weapon
-/// no longer in its hand, it is unarmed.
+/// one that stabs, else the plain blow, which throws one thrown), else the walk by the pad; its
+/// weapon no longer in its hand, it is unarmed.
 fn armedChoose(a: Actor, c: Command) void {
     if (caught(a)) return;
     if ((c.held.attack and c.pressed.jump) or (c.held.jump and c.pressed.attack)) return change(a, if (a.numbers().back_attack_up != null) .armed_back_attack_crouch else .armed_back_attack);
@@ -1845,7 +1848,7 @@ fn armedChoose(a: Actor, c: Command) void {
             a.sound(.swing_weapon);
             return change(a, .armed_swing);
         }
-        if ((def.number("thrown") orelse 0) != 0 and thingAhead(a)) return change(a, .armed_stab);
+        if ((def.number("stabs") orelse 0) != 0 and thingAhead(a)) return change(a, .armed_stab);
         return change(a, .armed_attack);
     }
     if (weaponHeld(a) == null) {
@@ -1892,18 +1895,28 @@ fn thingAhead(a: Actor) bool {
 
 /// A blow with the weapon: its frames run; the plain blow's frame that holds a knife out throws
 /// it (else it sounds the blow); at the blow's last frame (`ends`) the actions are open again.
+/// A weapon whose definition says it is thrown again (`rethrown`, the bottle: the original's
+/// keeps its mark of being thrown) is thrown at each tick of that frame while it lasts, the
+/// throw's sound with it, to no further effect.
 fn weaponBlow(a: Actor, c: Command, ends: u8) void {
     const n = a.numbers();
     const was = a.frame();
     _ = a.step();
-    if (a.mind.state == .armed_attack and a.frame() == n.throw_frame and a.frame() != was) {
-        const w = weaponHeld(a);
-        const throws = if (w) |x| (a.tick.kindOf(x).definition.number("thrown") orelse 0) != 0 else false;
-        if (throws) {
-            a.tick.throwWeapon(a.mind.weapon.?);
-            a.mind.weapon = null;
-            a.sound(.throw_weapon);
-        } else a.sound(.armed_blow);
-    }
+    if (a.mind.state == .armed_attack and a.frame() == n.throw_frame) {
+        if (a.frame() != was) {
+            a.mind.rethrown = null;
+            const w = weaponHeld(a);
+            const def = if (w) |x| a.tick.kindOf(x).definition else null;
+            const throws = if (def) |d| (d.number("thrown") orelse 0) != 0 else false;
+            if (throws) {
+                a.tick.throwWeapon(a.mind.weapon.?);
+                if ((def.?.number("rethrown") orelse 0) != 0) a.mind.rethrown = a.mind.weapon;
+                a.mind.weapon = null;
+                a.sound(.throw_weapon);
+            } else a.sound(.armed_blow);
+        } else if (a.mind.rethrown) |w| {
+            if (a.tick.world.get(w) != null) a.sound(.throw_weapon);
+        }
+    } else a.mind.rethrown = null;
     if (a.frame() == ends) choose(a, c);
 }
