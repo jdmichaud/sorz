@@ -177,6 +177,12 @@ pub const Partner = struct {
 
 pub const PartnerPlaces = struct { partner: []const u8, places: []const Place };
 
+/// Other colours for its frames within their palette: each colour index of a frame's pixels
+/// (`map[i]`) drawn as another of the same palette, 0 (transparent) kept so. Its name is the
+/// rule's that asks for it (a variant's policy: `duplicate`, a second player playing the
+/// first's character).
+pub const ColourMap = struct { name: []const u8, map: [art.palette_size]u8 };
+
 pub const Definition = struct {
     /// The kind's name: the file's (`entities/galsia.json` is `galsia`), which the traces use.
     name: []const u8,
@@ -200,6 +206,7 @@ pub const Definition = struct {
     animations: []const Animation = &.{},
     moves: []const Move = &.{},
     partners: []const Partner = &.{},
+    colour_maps: []const ColourMap = &.{},
 
     pub fn animation(d: *const Definition, name: []const u8) ?u8 {
         return indexOf(Animation, d.animations, name);
@@ -225,6 +232,9 @@ pub const Definition = struct {
     pub fn choice(d: *const Definition, name: []const u8) ?[]const []const u8 {
         for (d.choices) |c| if (std.mem.eql(u8, c.name, name)) return c.states;
         return null;
+    }
+    pub fn colourMap(d: *const Definition, name: []const u8) ?u8 {
+        return indexOf(ColourMap, d.colour_maps, name);
     }
     /// The places of `name` from a partner of kind `partner`.
     pub fn partnerPlaces(d: *const Definition, name: []const u8, partner: []const u8) ?struct { partner: *const Partner, places: []const Place } {
@@ -256,7 +266,7 @@ pub const max_items = 255;
 /// Reads definition `name` from its file's parsed `root`, checking every value; the frames must
 /// be `a`'s. A refusal names the field in the diagnostic.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *const art.Art) json.Error!Definition {
-    try root.only(&.{ "provenance", "family", "team", "behaviour", "health", "palette", "gravity", "shadow", "numbers", "tables", "choices", "sounds", "boxes", "animations", "moves", "partners" });
+    try root.only(&.{ "provenance", "family", "team", "behaviour", "health", "palette", "gravity", "shadow", "numbers", "tables", "choices", "sounds", "boxes", "animations", "moves", "partners", "colour_maps" });
     var d: Definition = .{
         .name = name,
         .provenance = if (try root.opt("provenance")) |p| try p.string() else "",
@@ -411,6 +421,22 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *con
             };
         }
         d.partners = out;
+    }
+    if (try root.opt("colour_maps")) |node| {
+        var it = try listed(node);
+        const out = try arena.alloc(ColourMap, it.count());
+        for (out) |*x| {
+            const e = (try it.next()).?;
+            if (try e.value.len() != art.palette_size) return e.value.fail("not 16 colour indices");
+            x.* = .{ .name = try checkedName(e.value, e.key), .map = undefined };
+            for (&x.map, 0..) |*m, i| {
+                const at = try e.value.at(i);
+                m.* = try at.int(u8);
+                if (m.* >= art.palette_size) return at.fail("not a colour index (0 to 15)");
+                if ((i == 0) != (m.* == 0)) return at.fail("transparent (0) is not kept so");
+            }
+        }
+        d.colour_maps = out;
     }
     return d;
 }
@@ -650,6 +676,15 @@ pub fn value(arena: std.mem.Allocator, d: *const Definition) error{OutOfMemory}!
         }
         try top.append(arena, .{ .key = "partners", .value = .{ .object = out } });
     }
+    if (d.colour_maps.len != 0) {
+        const out = try arena.alloc(json.Field, d.colour_maps.len);
+        for (out, d.colour_maps) |*o, c| {
+            const values = try arena.alloc(json.Value, c.map.len);
+            for (values, c.map) |*v, x| v.* = json.Value.num(x);
+            o.* = .{ .key = c.name, .value = .{ .array = values } };
+        }
+        try top.append(arena, .{ .key = "colour_maps", .value = .{ .object = out } });
+    }
     return .{ .object = top.items };
 }
 
@@ -746,6 +781,9 @@ const sample =
     \\  "choices": {
     \\    "next": ["stand", "punch"]
     \\  },
+    \\  "colour_maps": {
+    \\    "duplicate": [0, 1, 2, 3, 4, 5, 6, 7, 8, 15, 6, 7, 12, 13, 8, 12]
+    \\  },
     \\  "family": "enemy",
     \\  "gravity": 24576,
     \\  "health": 32,
@@ -828,6 +866,9 @@ test "a definition reads, names its parts, and writes the same bytes again" {
     const body = d.boxes[d.box("body").?];
     try testing.expectEqual(Span{ .from = -8, .to = 8 }, body.across(true));
     try testing.expect(d.animations[d.animation("stand").?].loop);
+    const dup = d.colour_maps[d.colourMap("duplicate").?].map;
+    try testing.expectEqual(@as(u8, 15), dup[9]);
+    try testing.expectEqual(@as(u8, 0), dup[0]);
     const by_other = d.partnerPlaces("held", "other").?;
     try testing.expect(by_other.partner.moves_partner and by_other.partner.depth);
     try testing.expectEqual(Place{ .x = -46, .height = 2 }, by_other.places[0]);

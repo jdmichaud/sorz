@@ -241,6 +241,11 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
   "partners": {"held": {"by": {"axel": [[-51, 0]], "blaze": [[-50, 0]]}, "depth": true,
                         "moves_partner": true}}
   ```
+- `colour_maps`: other colours for its frames within their palette, each by the name of the rule
+  that asks for it: 16 colour indices, index `i` of a frame's pixels drawn as the map's `i`th (0,
+  transparent, kept so). The players' `duplicate`, which the extended variant gives a second
+  player playing the first's character, is the port's choice (the ROM has none): Axel's jeans
+  red and his hair grey, Adam's top blue, Blaze's clothes blue, in the players' palette.
 
 The optional fields are written only when they are not their defaults, so a file read and
 written again keeps its bytes. The extractor writes the players (`axel`, `adam`, `blaze`, each
