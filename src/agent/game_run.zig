@@ -157,6 +157,8 @@ pub const Run = struct {
     /// Sounds the trace writes with the next scene.
     deferred: [8]library.Sound = undefined,
     deferred_len: u8 = 0,
+    /// The load the script counted its one tick of (its serial).
+    load_counted: u32 = 0,
     /// The other program's situation at the script's tick 0, which the round's world is taken
     /// up from there (`takeUp`), and the allocator its take-up uses.
     take_up: ?TakeUp = null,
@@ -232,10 +234,14 @@ pub const Run = struct {
             const in = self.startStep() orelse return if (self.stage == .done) null else self.next();
             return in;
         }
-        // A logic tick starts at the next display tick (a screen's: each; a load's: none): the
+        // A logic tick starts at the next display tick (a screen's: each; a load's: one, its
+        // scene's set-up's, as sor-remaster's runner counts the original's step that loads): the
         // script's commands, then its pads.
         const starts = switch (self.state.scenes.top()) {
-            .overlay => false,
+            .overlay => if (self.state.scenes.topSerial() != self.load_counted) blk: {
+                self.load_counted = self.state.scenes.topSerial();
+                break :blk true;
+            } else false,
             .scene => if (self.round()) |r| r.phase != .play or r.play.schedule.into == 0 else true,
         };
         if (!starts) return self.current;
@@ -535,7 +541,7 @@ pub const Run = struct {
 
     fn holds(self: *Run, c: scenario.Condition) bool {
         const r = self.round() orelse return switch (c) {
-            .scene => |name| std.mem.eql(u8, name, traceName(self.state.scenes.topKind())),
+            .scene => |name| std.mem.eql(u8, name, self.sceneName()),
             else => false,
         };
         const w = &r.play.world;
@@ -567,6 +573,15 @@ pub const Run = struct {
                 return false;
             },
         }
+    }
+
+    /// The scene as the traces name it, a load's the one it holds (sor-remaster's runner sees the
+    /// original's mode, which the load's set-up set).
+    fn sceneName(self: *const Run) []const u8 {
+        return switch (self.state.scenes.base) {
+            .round, .demo => |*r| @tagName(r.trace_scene),
+            else => |k| traceName(std.meta.activeTag(k)),
+        };
     }
 
     fn is(self: *const Run, i: usize, e: *const world.Entity, who: scenario.Who) bool {
