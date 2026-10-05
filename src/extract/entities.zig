@@ -81,6 +81,8 @@ const State = struct {
     pub const back_attack = 0x20;
     pub const pick_up = 0x28;
     pub const down = 0x54;
+    pub const dying = 0x56;
+    pub const lying_dead = 0x58;
     pub const hurt = 0x5A;
     pub const knocked_down = 0x5C;
     pub const getting_up = 0x5E;
@@ -292,6 +294,8 @@ const player_animations = [_]PlayerAnimation{
     // Lying down, and the knock-down's bounce.
     .{ .name = "down", .state = State.down },
     .{ .name = "getting_up", .state = State.getting_up },
+    // Dead on the ground (dying plays the knock-down's animation).
+    .{ .name = "lying_dead", .state = State.lying_dead },
     .{ .name = "recover", .state = State.recover },
     .{ .name = "grab", .state = State.grab },
     .{ .name = "grab_blow", .state = State.grab_blow },
@@ -470,6 +474,7 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     try d.number("diagonal_x", sp.x(rom, speeds, State.walk_up_side) * sixteenth, speed_place);
     try d.number("diagonal_depth", -sp.y(rom, speeds, State.walk_up_side) * sixteenth, speed_place);
     try d.number("knocked_down_x", sp.x(rom, speeds, State.knocked_down) * sixteenth, speed_place);
+    try d.number("dying_x", sp.x(rom, speeds, State.dying) * sixteenth, speed_place);
     try d.number("jump", @bitCast(u32be(rom, jump_speeds + 4 * @as(u32, character))), "ROM 0x03842, by character");
     try d.number("jump_x", try immediate(rom, 0x384E, &.{ 0x20, 0x3C }, 4), "ROM 0x0384E: move.l #N,d0");
     try d.number("steer", try immediate(rom, 0x38F0, &.{ 0x20, 0x3C }, 4), "ROM 0x038F0: move.l #N,d0");
@@ -478,6 +483,8 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     try d.number("fall_most", try immediate(rom, 0x3886, &.{ 0x0C, 0xA8 }, 4), "ROM 0x03886: cmpi.l #N,(36,a0)");
     try d.number("drop", try immediate(rom, 0x3E20, &.{ 0x21, 0x7C }, 4), "ROM 0x03E20: move.l #N,(36,a0)");
     try d.number("knocked_down_up", try immediate(rom, 0x34DA, &.{ 0x21, 0x7C }, 4), "ROM 0x034DA: move.l #N,(36,a0)");
+    try d.number("dying_up", try immediate(rom, 0x3440, &.{ 0x21, 0x7C }, 4), "ROM 0x03440: move.l #N,(36,a0)");
+    try d.number("dead", try moveByte(rom, 0x3F18, 0x41), "ROM 0x03F18: move.b #N,($41,a0)");
     try d.number("hurt", try moveByte(rom, 0x348C, 0x41), "ROM 0x0348C: move.b #N,($41,a0)");
     try d.number("down", try moveByte(rom, 0x3F66, 0x41), "ROM 0x03F66: move.b #N,($41,a0)");
     try d.number("blink", try moveByte(rom, 0x4F6A, 0x49), "ROM 0x04F6A: move.b #N,($49,a0)");
@@ -833,12 +840,35 @@ pub fn goArrow(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definitio
     };
 }
 
+/// A player out of lives (type $F, 0x5218): hidden, it asks the continue's question on the
+/// status bar, or counts down the game over.
+pub fn playerWaiting(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "play", .set = 0, .box_table = object_boxes, .frame_addresses = &.{} };
+    const blink = try immediate(rom, 0x54B6, &.{ 0x31, 0x7C }, 2);
+    if (blink >> 8 != blink & 0xFF) return error.BadData;
+    try d.number("cursor_blink", blink & 0xFF, "ROM 0x054B6 (move.w #N,($60,a0): the cursor's ticks shown and hidden)");
+    try d.number("out_wait", try immediate(rom, 0x5488, &.{ 0x11, 0x7C }, 2), "ROM 0x05488 (move.b #N,($60,a0): the game over's ticks when no continue is left)");
+    if (rom[0x52CA] != 0x7E or rom[0x5288] != 0x7E) return error.BadData;
+    try d.sound("cursor", rom[0x52CB]);
+    try d.sound("game_over", rom[0x5289]);
+    return .{
+        .name = "player_waiting",
+        .provenance = try std.fmt.allocPrint(arena, "the waiting player (type $F, 0x5218): the continue's question (0x52AE), the game over's count (0x5278); its sounds ROM 0x052CA and 0x05288 (moveq #N,d7); the count after a NO, 256 ticks (its timer cleared, 0x5256){s}", .{d.number_notes.items}),
+        .family = .player,
+        .team = .neutral,
+        .behaviour = "player_waiting",
+        .numbers = d.numbers.items,
+        .sounds = d.sounds.items,
+    };
+}
+
 /// The definitions the extractor writes, in the manifest's order.
 pub fn all(arena: std.mem.Allocator, rom: []const u8) Error![]const entity.Definition {
-    const out = try arena.alloc(entity.Definition, 4);
+    const out = try arena.alloc(entity.Definition, 5);
     out[0] = try player(arena, rom, "axel", 0);
     out[1] = try galsia(arena, rom);
     out[2] = try policeCar(arena, rom);
     out[3] = try goArrow(arena, rom);
+    out[4] = try playerWaiting(arena, rom);
     return out;
 }

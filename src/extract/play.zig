@@ -148,6 +148,8 @@ const pause_list = 0x109F6;
 const pause_entries = 5;
 const time_over_list = 0x10A6E;
 const time_over_entries = 8;
+const game_over_list = 0x10BB8;
+const game_over_entries = 8;
 
 /// The frame of `count` entries of the list at `list`, its origin at the screen's top-left: the
 /// entries' places on the screen (less 128), their tiles from play's video memory, the first on
@@ -261,12 +263,13 @@ const join_blink = 0x11638;
 /// it is an offset of the image.
 const image_ram = 0x6000;
 
-/// The join's text, its rows one space apart.
-fn joinText(arena: std.mem.Allocator, rom: []const u8) ![]const u8 {
-    if (u16be(rom, join_rows) != 0x47FA) return error.BadData;
-    var row: u32 = join_rows + 2 + @as(u32, u16be(rom, join_rows + 2));
+/// The text of `count` rows of the font from `at` (0x11708: each a count less one, the font's
+/// base tile, a byte per tile, a byte $FF ending it early), a cell between them: their words one
+/// space apart.
+fn rowsText(arena: std.mem.Allocator, rom: []const u8, at: u32, count: usize) ![]const u8 {
+    var row = at;
     var out: std.ArrayList(u8) = .empty;
-    for (0..3) |r| {
+    for (0..count) |r| {
         if (r > 0) try out.append(arena, ' ');
         const n = u16be(rom, row) + 1;
         if (u16be(rom, row + 2) != font_base) return error.BadData;
@@ -281,6 +284,83 @@ fn joinText(arena: std.mem.Allocator, rom: []const u8) ![]const u8 {
         row += 4 + n;
     }
     return out.items;
+}
+
+/// The target of `lea (d16,pc),a3` at `at`.
+fn leaPc(rom: []const u8, at: u32) !u32 {
+    if (u16be(rom, at) != 0x47FA) return error.BadData;
+    const d: i16 = @bitCast(u16be(rom, at + 2));
+    return @intCast(@as(i64, at + 2) + d);
+}
+
+/// The status bar's cell of `lea $FF60xx,aN` at `at` (`opcode` its first word): an offset of the
+/// bar's image in the game's memory.
+fn leaCell(rom: []const u8, at: u32, opcode: u16) !records.Cell {
+    if (u16be(rom, at) != opcode or u16be(rom, at + 2) != 0xFF or u16be(rom, at + 4) -% image_ram >= 0x100) return error.BadData;
+    return cellAt(u16be(rom, at + 4) - image_ram);
+}
+
+/// The join's text, its rows one space apart.
+fn joinText(arena: std.mem.Allocator, rom: []const u8) ![]const u8 {
+    return rowsText(arena, rom, try leaPc(rom, join_rows), 3);
+}
+
+/// The continue's question (0x5432): player 1's and player 2's places, from the instructions that
+/// write them (0x54B0, 0x5590: the question and its answers; 0x5456, 0x5526: the game over's
+/// text; 0x5620, 0x563E: the cells cleared, 0x103FE clearing a row's 18), and the answers' places
+/// (the longs at 0x5324); the texts' rows (0x54E8: with NEW GAME; 0x550A: with GAME OVER).
+fn continueQuestion(arena: std.mem.Allocator, rom: []const u8) !records.Continue {
+    const lea_a2 = 0x45F9;
+    const lea_a1 = 0x43F9;
+    var cleared: u8 = 0;
+    var at: u32 = 0x103FE;
+    while (u16be(rom, at) == 0x22C1) : (at += 2) cleared += 2;
+    if (u16be(rom, at) != 0x4E75) return error.BadData;
+    // The count's digit: the font's digits from tile $7DB (addi.w #$7DB,d0), at the question's
+    // place plus $12 (move.w d0,($12,a2)).
+    if (u16be(rom, 0x54C6) != 0x0640 or u16be(rom, 0x54C8) != font_base + 27 or u32be(rom, 0x54CA) != 0x35400012) return error.BadData;
+    const with_new_game = try leaPc(rom, 0x54AC);
+    const with_game_over = try leaPc(rom, 0x559A);
+    const new_game = try rowsText(arena, rom, with_new_game, 3);
+    const game_over = try rowsText(arena, rom, with_game_over, 3);
+    const question = "CONTINUE";
+    if (!std.mem.startsWith(u8, new_game, question ++ " ") or !std.mem.startsWith(u8, game_over, question ++ " ")) return error.BadData;
+    var places: [2]records.ContinuePlaces = undefined;
+    for (&places, 0..) |*p, k| {
+        const answers: u32 = 0x5324 + 8 * @as(u32, @intCast(k));
+        const yes = u32be(rom, answers);
+        const no = u32be(rom, answers + 4);
+        if (yes >> 8 != 0xFF60 or no >> 8 != 0xFF60) return error.BadData;
+        p.* = .{
+            .cleared = .{ try leaCell(rom, if (k == 0) 0x5626 else 0x5644, lea_a1), try leaCell(rom, if (k == 0) 0x5632 else 0x5650, lea_a1) },
+            .question = try leaCell(rom, if (k == 0) 0x54C0 else 0x559E, lea_a2),
+            .answer = try leaCell(rom, if (k == 0) 0x54D4 else 0x55B2, lea_a2),
+            .yes = cellAt(@intCast(yes & 0xFF)),
+            .no = cellAt(@intCast(no & 0xFF)),
+            .out = try leaCell(rom, if (k == 0) 0x5498 else 0x5570, lea_a2),
+        };
+    }
+    // The game over's text in the bar: the rows at 0x11754 (lea at 0x5482).
+    if (u16be(rom, 0x5482) != 0x47F9 or u32be(rom, 0x5484) != 0x11754) return error.BadData;
+    const out_text = try rowsText(arena, rom, 0x11754, 2);
+    if (!std.mem.eql(u8, out_text, game_over[question.len + 1 ..])) return error.BadData;
+    // The cursor: tile $7E7 (move.w #$7E7,d0 at 0x52E2), a glyph of the font.
+    if (u16be(rom, 0x52E2) != 0x303C) return error.BadData;
+    const cursor_tile = u16be(rom, 0x52E4) - font_base;
+    const cursor = for (fonts.main_glyphs) |g| {
+        if (g.tile == cursor_tile) break g.text;
+    } else return error.BadData;
+    return .{
+        .provenance = "the waiting player's status bar (0x5432): the question and its answers' rows (ROM 0x054E8 with NEW GAME, 0x0550A with GAME OVER; lea at 0x054AC, 0x0559A), the continues left a digit (0x054C6: addi.w #$7DB,d0; move.w d0,($12,a2)), the places (lea $FF60xx at 0x054C0, 0x054D4, 0x0559E, 0x055B2; the answers' at 0x05324), the cursor's tile (0x052E2), the game over's rows (0x11754, at 0x05498 and 0x05570), the cells cleared (0x05620, 0x0563E, 0x103FE); the game over's text over the picture, a fixed sprite list (0x10B70, ROM 0x10BB8)",
+        .question = question,
+        .count = 9,
+        .new_game = new_game[question.len + 1 ..],
+        .game_over = game_over[question.len + 1 ..],
+        .cursor = cursor,
+        .cleared = cleared,
+        .players = places,
+        .frame = "play/game_over",
+    };
 }
 
 fn romWords(arena: std.mem.Allocator, rom: []const u8, at: u32, n: usize) ![]u16 {
@@ -323,6 +403,7 @@ pub fn extract(b: *Builder) !records.Round {
     try textFrame(b, v, "play/banner_right", banner_list + 8 * (banner_left + 1), banner_left, "the round's banner, its right part (0x10780)");
     try textFrame(b, v, "play/pause", pause_list, pause_entries, "the pause's text (0x10948)");
     try textFrame(b, v, "play/time_over", time_over_list, time_over_entries, "the time over's text (0x10976)");
+    try textFrame(b, v, "play/game_over", game_over_list, game_over_entries, "the game over's text (0x10B70)");
 
     const screen: screens.Screen = .{ .name = "play", .what = "", .steps = &.{} };
     var run: screens.Run = .{ .b = b, .v = v, .screen = &screen };
@@ -418,5 +499,6 @@ pub fn extract(b: *Builder) !records.Round {
                 .blink = @intCast(try immediate(rom, join_blink, &.{ 0x11, 0xFC }, 2)),
             },
         },
+        .continue_question = try continueQuestion(arena, rom),
     };
 }

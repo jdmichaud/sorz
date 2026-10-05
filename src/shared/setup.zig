@@ -51,10 +51,15 @@ pub const Progress = struct {
         var p: Progress = .{ .round = 1 };
         for (&p.players, 0..) |*g, k| g.* = .{
             .in_play = k == 0 or setup.players == .two,
-            .lives = 2 * setup.lives + 1,
+            .lives = livesOf(setup),
             .continues = 3,
         };
         return p;
+    }
+
+    /// The lives a new game, or a continue, gives: those of the options.
+    pub fn livesOf(setup: *const Setup) u8 {
+        return 2 * setup.lives + 1;
     }
 };
 

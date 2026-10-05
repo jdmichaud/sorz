@@ -1,5 +1,6 @@
 //! The fighters' tests on synthetic content (DESIGN.md V1): a player (`player` behaviour), a punk
-//! (`galsia`) and the special attack's car (`police_car`), whose definitions here take the
+//! (`galsia`), the special attack's car (`police_car`) and a player out of lives
+//! (`player_waiting`), whose definitions here take the
 //! extractor's numbers for Axel and round 1's Galsias, so that the timings checked are the ones
 //! sor-remaster measures (the catalogue's), on frames and boxes of the tests' own.
 const std = @import("std");
@@ -17,6 +18,8 @@ const output = @import("output.zig");
 const systems = @import("systems.zig");
 const tick_mod = @import("tick.zig");
 const behaviours = @import("behaviours.zig");
+const script = @import("script.zig");
+const content_round = @import("../content/round.zig");
 
 const Fixed = fixed.Fixed;
 const World = world_mod.World;
@@ -62,8 +65,9 @@ const hero =
     \\   "knocked_down_up": -327680, "knocked_down_x": -147456, "last_blow_ends": 4, "let_go": 3,
     \\   "pick_depth": 16, "pick_height": 8, "pick_x": 20, "recover_ends": 2, "steer": 24576,
     \\   "steer_most": 229376, "throw_ends": 6, "vault_ends": 4, "walk_depth": 155648,
-    \\   "walk_x": 196608},
-    \\ "sounds": {"jump": "jump", "land": "landing", "hurt": "player hit", "thud": "heavy fall"},
+    \\   "walk_x": 196608, "dying_x": -262144, "dying_up": -589824, "dead": 38},
+    \\ "sounds": {"jump": "jump", "land": "landing", "hurt": "player hit", "thud": "heavy fall",
+    \\   "death": "axel death cry"},
     \\ "boxes": {"body": {"x": [0, 13], "depth": [-8, 8], "height": [-51, 0]},
     \\   "reach": {"x": [0, 16], "depth": [-8, 8], "height": [-57, 0]},
     \\   "fist": {"x": [16, 57], "depth": [-8, 8], "height": [-64, -32]}},
@@ -84,6 +88,7 @@ const hero =
     anim("knocked_down", bare("100", "")) ++ "," ++
     anim("down", bare("6", "")) ++ "," ++
     anim("getting_up", bare("6", "") ++ "," ++ bare("6", "") ++ "," ++ bare("6", "") ++ "," ++ bare("6", "") ++ "," ++ bare("6", "")) ++ "," ++
+    anim("lying_dead", bare("8", "") ++ "," ++ bare("8", "")) ++ "," ++
     anim("recover", bare("6", "") ++ "," ++ bare("6", "") ++ "," ++ bare("4", "")) ++ "," ++
     anim("grab", fr("100", ", \"held\": {\"x\": 32}")) ++ "," ++
     anim("grab_behind", fr("100", ", \"held\": {\"x\": 28}")) ++ "," ++
@@ -167,6 +172,12 @@ const car =
     \\ "animations": {"car": {"loop": true, "frames": [{"frame": "t/f4", "ticks": 1}]}}}
 ;
 
+const waiting =
+    \\{"family": "player", "team": "neutral", "behaviour": "player_waiting",
+    \\ "numbers": {"cursor_blink": 8, "out_wait": 250},
+    \\ "sounds": {"cursor": "menu move", "game_over": "game over music"}}
+;
+
 const Fixture = struct {
     arena: std.heap.ArenaAllocator,
     kinds: Kinds,
@@ -179,6 +190,7 @@ const Fixture = struct {
             .{ .name = "hero", .text = hero },
             .{ .name = "punk", .text = punk },
             .{ .name = "police_car", .text = car },
+            .{ .name = "player_waiting", .text = waiting },
         };
         var defs: [sources.len]content_entity.Definition = undefined;
         var diag: json.Diagnostic = .{};
@@ -215,7 +227,7 @@ const Round = struct {
         r.w.ground = .pixels(160);
         r.w.camera = .{ .x = .pixels(768), .x_min = .pixels(768), .x_max = .pixels(1216), .y_max = .zero, .follows = true };
         r.hero = try r.w.spawn(&r.f.kinds, r.f.kinds.find("hero").?, .pixels(800, 64, 160), .right);
-        r.w.players[0] = .{ .entity = r.hero, .lives = 3, .specials = 1 };
+        r.w.players[0] = .{ .entity = r.hero, .character = r.f.kinds.find("hero").?, .lives = 3, .specials = 1, .continues = 3 };
         const e = r.w.get(r.hero).?;
         e.mind.player.state = .ready;
         e.mind.player.started = true;
@@ -229,6 +241,11 @@ const Round = struct {
 
     fn step(r: *Round, pads: input.Pads) void {
         systems.run(&r.w, &r.f.kinds, &r.rng, tick_mod.Input.steady(pads), &r.out);
+    }
+
+    /// A tick of the round's world following `plan` (its script, its timer, its lives).
+    fn stepPlan(r: *Round, pads: input.Pads, plan: *const script.Plan) void {
+        systems.runRound(&r.w, &r.f.kinds, &r.rng, tick_mod.Input.steady(pads), &r.out, plan);
     }
 
     fn player(r: *Round) *entity.Entity {
@@ -421,4 +438,118 @@ test "the special attack: the camera runs back, the car comes, the punk stands w
     }
     try testing.expect(r.w.get(p) == null);
     try testing.expectEqual(@as(u32, 500), r.w.players[0].score);
+}
+
+/// A round with a single section and no enemies, for the lives' tests.
+const lives_round: content_round.Round = blk: {
+    var r = content_round.example;
+    r.sections = &.{.{ .wall = 1216, .timer = 40, .opens_after = 61 }};
+    r.boss = .{ .fade = "fade out", .music = "boss music", .music_after = 86, .wave_after = 59 };
+    break :blk r;
+};
+
+/// The states the player's entity goes through in `ticks` ticks, each named once in a row.
+fn statesOf(r: *Round, plan: *const script.Plan, ticks: usize, pads: input.Pads) ![]const u8 {
+    var seen: std.ArrayList(u8) = .empty;
+    var last: []const u8 = "";
+    for (0..ticks) |_| {
+        r.stepPlan(pads, plan);
+        const s = r.state();
+        if (std.mem.eql(u8, s, last)) continue;
+        if (seen.items.len != 0) try seen.append(r.f.arena.allocator(), ' ');
+        try seen.appendSlice(r.f.arena.allocator(), s);
+        last = s;
+    }
+    return seen.items;
+}
+
+test "a death: no health left (the time over's), it dies at the next tick; one bounce, lying dead, the next life" {
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &lives_round, .lives = 3 };
+    script.start(&r.w, &plan);
+    r.player().health = 0;
+    r.stepPlan(.{}, &plan);
+    try testing.expectEqualStrings("dying", r.state());
+    try testing.expectEqual(@as(u8, 2), r.w.players[0].lives);
+    var lying: usize = 0;
+    var bounces: usize = 0;
+    for (0..200) |_| {
+        const was = r.player().velocity.height.raw;
+        r.stepPlan(.{}, &plan);
+        if (std.mem.eql(u8, r.state(), "lying_dead")) lying += 1;
+        if (std.mem.eql(u8, r.state(), "dying") and was > 0 and r.player().velocity.height.raw < 0) bounces += 1;
+        if (std.mem.eql(u8, r.state(), "fall")) break;
+    }
+    try testing.expectEqual(@as(usize, 1), bounces);
+    // Its 38 ticks from the landing; the next life starts at the 39th.
+    try testing.expectEqual(@as(usize, 38), lying);
+    try testing.expectEqualStrings("fall", r.state());
+    const e = r.player();
+    try testing.expectEqual(@as(i16, 80), e.health);
+    try testing.expect(e.position.height.lessThan(r.w.ground));
+    try testing.expectEqual(@as(u8, 1), r.w.players[0].specials);
+    try testing.expectEqual(@as(u8, 40), r.w.timer.seconds);
+}
+
+test "out of lives: the continue's question; YES spends a continue for the lives of a new game" {
+    const level = testing.log_level;
+    testing.log_level = .err;
+    defer testing.log_level = level;
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &lives_round, .lives = 3 };
+    script.start(&r.w, &plan);
+    r.w.players[0].lives = 1;
+    r.w.players[0].score = 5000;
+    r.player().health = 0;
+    const states = try statesOf(&r, &plan, 80, .{});
+    try testing.expectEqualStrings("dying lying_dead begin continue_choose", states);
+    try testing.expect(r.player().flags.hidden);
+    try testing.expect(r.w.get(r.hero).?.mind == .player_waiting);
+    // The timer stops while it waits.
+    const seconds = r.w.timer.seconds;
+    for (0..200) |_| r.stepPlan(.{}, &plan);
+    try testing.expectEqual(seconds, r.w.timer.seconds);
+    // B answers YES (the cursor's first place): the next tick, its next life.
+    r.stepPlan(b_pad, &plan);
+    try testing.expectEqualStrings("continue_chosen", r.state());
+    r.stepPlan(.{}, &plan);
+    try testing.expectEqualStrings("fall", r.state());
+    try testing.expectEqual(@as(u8, 3), r.w.players[0].lives);
+    try testing.expectEqual(@as(u8, 2), r.w.players[0].continues);
+    try testing.expectEqual(@as(u32, 0), r.w.players[0].score);
+}
+
+test "the continue's NO, or none left: out of the game, the game over's count" {
+    const level = testing.log_level;
+    testing.log_level = .err;
+    defer testing.log_level = level;
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &lives_round, .lives = 3 };
+    script.start(&r.w, &plan);
+    r.w.players[0].lives = 1;
+    r.player().health = 0;
+    _ = try statesOf(&r, &plan, 80, .{});
+    try testing.expectEqualStrings("continue_choose", r.state());
+    // Down moves the cursor to NO; B answers.
+    r.stepPlan(.{ .pad1 = .{ .down = true } }, &plan);
+    r.stepPlan(.{}, &plan);
+    const states = try statesOf(&r, &plan, 260, b_pad);
+    try testing.expectEqualStrings("continue_chosen begin countdown game_over", states);
+    try testing.expect(r.w.players[0].out);
+    try testing.expectEqual(@as(u8, 0), r.w.players[0].continues);
+
+    // No continue left: out at once, the shorter count.
+    var r2 = try Round.init();
+    defer r2.deinit();
+    script.start(&r2.w, &plan);
+    r2.w.players[0].lives = 1;
+    r2.w.players[0].continues = 0;
+    r2.player().health = 0;
+    while (!std.mem.eql(u8, r2.state(), "countdown")) r2.stepPlan(.{}, &plan);
+    var ticks: usize = 0;
+    while (!std.mem.eql(u8, r2.state(), "game_over")) : (ticks += 1) r2.stepPlan(.{}, &plan);
+    try testing.expectEqual(@as(usize, 250), ticks);
 }

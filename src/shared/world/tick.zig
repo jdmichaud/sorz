@@ -271,6 +271,19 @@ pub const Tick = struct {
         dispatch(t, h, "leftBehind", void, {}, .{});
     }
 
+    /// A player's new life drops in: the enemies on the screen (out of hiding, not held by a
+    /// player) are knocked back (their behaviour's `knockedBack`).
+    pub fn knockBack(t: *Tick) void {
+        for (&t.world.entities, 0..) |*e, i| {
+            if (!e.alive() or e.flags.hidden or e.holder != null) continue;
+            switch (t.kindOf(e).family()) {
+                .enemy, .boss => {},
+                else => continue,
+            }
+            dispatch(t, t.world.handleAt(i).?, "knockedBack", void, {}, .{});
+        }
+    }
+
     /// A beaten boss ends the round: the round is won (script.zig).
     pub fn roundWon(t: *Tick) void {
         script.won(t.world);

@@ -27,16 +27,24 @@ pub const capacity = entity.capacity;
 pub const Command = struct {
     held: input.Pad = .{},
     pressed: input.Pad = .{},
+    /// The presses of the logic tick's first display tick alone (those a player waiting to
+    /// continue reads, as the original's reads its pad there).
+    first: input.Pad = .{},
 };
 
 /// The most a player's score holds (six digits, the last two always 0).
 pub const score_most = 999_900;
 
 pub const Player = struct {
-    /// The entity the player plays, if any.
+    /// The entity the player plays, if any: its fighter, or, out of lives, its wait to continue.
     entity: ?Handle = null,
+    /// The kind of its fighter (its character's).
+    character: ?KindId = null,
     lives: u8 = 0,
     specials: u8 = 0,
+    /// The continues left; out of the game (it answered no, or had none left).
+    continues: u8 = 0,
+    out: bool = false,
     /// Points, as the original counts them: they hold at `score_most`.
     score: u32 = 0,
     /// The command of this tick.
@@ -134,6 +142,27 @@ pub const World = struct {
         };
         if (k.definition.animations.len != 0) kinds.startAnimation(e, 0);
         return .{ .index = @intCast(index), .generation = e.generation };
+    }
+
+    /// The entity `h` becomes a new entity of `kind` in its place, as the original's objects
+    /// change their type, their record cleared: its handle still finds it, at its place, facing
+    /// its way; the rest as `spawn` gives it.
+    pub fn morph(self: *World, kinds: *const Kinds, h: Handle, kind: KindId) void {
+        const e = self.get(h) orelse return;
+        const position = e.position;
+        const facing = e.facing;
+        const k = kinds.get(kind);
+        e.* = .{
+            .generation = e.generation,
+            .kind = kind,
+            .team = k.definition.team,
+            .position = position,
+            .facing = facing,
+            .health = k.definition.health,
+            .palette = k.definition.palette,
+            .mind = behaviours.initial(k.behaviour),
+        };
+        if (k.definition.animations.len != 0) kinds.startAnimation(e, 0);
     }
 
     /// The entity goes: its place is freed, its handles find nothing, and a grab it was in ends.

@@ -34,6 +34,8 @@ pub const Plan = struct {
     round: *const Round,
     /// The options' LEVEL (0, the easiest, to 3): a record comes from its `level` on.
     level: u2 = 1,
+    /// The lives a continue gives (the options' lives).
+    lives: u8 = 3,
 };
 
 pub const Stage = enum {
@@ -81,8 +83,11 @@ pub const State = struct {
 
 /// The round's timer, part of the world.
 pub const Timer = struct {
-    /// The seconds it shows.
+    /// The seconds it counts.
     seconds: u8 = 0,
+    /// The seconds the status bar shows: those of its last count or start (the time over's
+    /// seconds are not shown until it counts or starts again).
+    shown: u8 = 0,
     /// The ticks left of the second under way.
     ticks: u8 = 0,
     /// It ran out at this tick: the round's time is up.
@@ -102,7 +107,7 @@ pub fn start(w: anytype, plan: *const Plan) void {
     c.y_max = .pixels(r.camera.y_max);
     c.follows = true;
     w.script = .{};
-    w.timer = .{ .seconds = r.sections[0].timer, .ticks = r.timer.pace };
+    w.timer = .{ .seconds = r.sections[0].timer, .shown = r.sections[0].timer, .ticks = r.timer.pace };
 }
 
 /// The first section starts, its placed at their places: at the round's start.
@@ -122,6 +127,7 @@ pub fn timer(t: *Tick) void {
     tm.ticks = p.round.timer.pace;
     if (!t.playersPlay() or tm.seconds == 0) return;
     tm.seconds -= 1;
+    tm.shown = tm.seconds;
     if (tm.seconds == 0) tm.up = true;
 }
 
@@ -129,7 +135,7 @@ pub fn timer(t: *Tick) void {
 pub fn restartTimer(w: anytype, plan: *const Plan) void {
     const r = plan.round;
     const k = @min(w.script.section, r.sections.len - 1);
-    w.timer = .{ .seconds = r.sections[k].timer, .ticks = r.timer.pace };
+    w.timer = .{ .seconds = r.sections[k].timer, .shown = r.sections[k].timer, .ticks = r.timer.pace };
 }
 
 /// The GO arrow's kind.

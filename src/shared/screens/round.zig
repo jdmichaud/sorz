@@ -15,9 +15,13 @@
 //!   a logic tick's start pauses, and at any tick of the pause resumes (each time the pause's
 //!   sound; the pause's text while it lasts). The time running out is the time over: its sound
 //!   and text for its ticks, then the round's music again, and each player in play loses its
-//!   health;
+//!   health. A player dies, and its next life drops in (world/lives.zig); out of lives, it asks
+//!   the continue's question on its part of the status bar; out of the game, its part shows its
+//!   name, its score and a blinking GAME OVER; the last one out counts the game over down, its
+//!   text over the picture;
 //! - the end: the round won (its boss beaten), the screen fades out, and the round's clear
-//!   follows.
+//!   follows, the game under way kept; or the game over, the screen fades out, and the high
+//!   scores follow.
 //!
 //! The semantic traces see two scenes: `round_intro` (the set-up to the banner's end) and
 //! `round` (from the fade in), whose ticks are display ticks but in play, where a tick is a
@@ -67,33 +71,86 @@ pub const TraceScene = enum(u8) { round_intro, round };
 /// A palette cycle's place: the ticks to its next step, and the step shown.
 pub const Cycle = struct { countdown: u16 = 0, step: u16 = 0 };
 
-/// What the status bar shows, by part: a part not shown is null.
+const Answer = world.behaviours.player_waiting.Answer;
+
+/// What the status bar shows of a player.
+pub const PlayerBar = union(enum) {
+    /// Not in the game: the bar's own cells.
+    none,
+    playing: Playing,
+    /// Out of lives: the continue's question.
+    asking: Asking,
+    /// Out of the game.
+    out: Out,
+
+    pub const Playing = struct { score: u32, lives: u8, specials: u8, health: u8 };
+    /// The continues left, the second answer (NEW GAME, or GAME OVER), the cursor (null: hidden
+    /// by its blink).
+    pub const Asking = struct { continues: u8, new_game: bool, cursor: ?Answer };
+    /// Its name and score (not at the tick its part is cleared), and the game over's text,
+    /// which blinks.
+    pub const Out = struct { name: bool, score: u32, game_over: bool };
+};
+
+/// What the status bar shows.
 pub const Bar = struct {
-    names: [2]bool = .{ false, false },
-    scores: [2]?u32 = .{ null, null },
-    lives: [2]?u8 = .{ null, null },
-    specials: [2]?u8 = .{ null, null },
-    health: [2]?u8 = .{ null, null },
+    players: [2]PlayerBar = .{ .none, .none },
     time: u8 = 0,
     join: bool = false,
 };
 
-/// Player 2's invitation to join, while it does not play: the logic ticks to its next blink,
-/// and whether it shows.
-pub const Join = struct {
-    ticks: u8 = 0,
+/// A player out of the game: its game over's text on the status bar blinks. The logic ticks to
+/// the next blink, its phase, and whether the text shows.
+pub const OutBlink = struct {
+    /// It counts from the tick after the player went out.
+    counting: bool = false,
+    ticks: u8 = first_out_blink,
+    phase: bool = false,
     shown: bool = false,
 
-    /// A logic tick: while player 2 is `out`, the text shows or hides every `every` ticks.
-    pub fn blink(self: *Join, out: bool, every: u8) void {
+    /// The ticks to the first blink (the original's count, left as the round starts).
+    const first_out_blink = 8;
+
+    /// A logic tick of a player out of the game (`out`), the text shown first (`shown_first`:
+    /// none after a NO); every `every` ticks the text, then its blanks, in turn.
+    pub fn blink(self: *OutBlink, out: bool, shown_first: bool, every: u8) void {
         if (!out) {
+            self.* = .{};
+            return;
+        }
+        if (!self.counting) {
+            self.counting = true;
+            self.shown = shown_first;
+            return;
+        }
+        self.ticks -%= 1;
+        if (self.ticks != 0) return;
+        self.ticks = every;
+        self.shown = !self.phase;
+        self.phase = !self.phase;
+    }
+};
+
+/// Player 2's invitation to join, while it does not play: the logic ticks to its next blink,
+/// the blink's phase, and whether the bar shows it.
+pub const Join = struct {
+    ticks: u8 = 0,
+    phase: bool = false,
+    shown: bool = false,
+
+    /// A logic tick: while player 2 is `out`, the text shows or hides every `every` ticks; while
+    /// player 1 waits to continue (`held`), the bar's cells there are cleared and the blink
+    /// holds.
+    pub fn blink(self: *Join, out: bool, held: bool, every: u8) void {
+        if (!out or held) {
             self.shown = false;
             return;
         }
         self.ticks -|= 1;
         if (self.ticks != 0) return;
         self.ticks = every;
-        self.shown = !self.shown;
+        self.phase = !self.phase;
+        self.shown = self.phase;
     }
 };
 
@@ -120,7 +177,11 @@ pub const Round = struct {
     shown_phase: Phase = .setup,
     shown_banner: i16 = 0,
     shown_bar: Bar = .{},
+    shown_game_over: bool = false,
     join: Join = .{},
+    out_blinks: [2]OutBlink = .{ .{}, .{} },
+    /// The last player out of the game is at its game over: the round ends at the next tick.
+    over: bool = false,
 
     pub const Assets = struct {
         kinds: *const world.Kinds,
@@ -144,6 +205,7 @@ pub const Round = struct {
         banner_right: *const art.Frame,
         pause_text: *const art.Frame,
         time_over_text: *const art.Frame,
+        game_over_text: *const art.Frame,
         sounds: *const library.Sounds,
         music: library.Sound,
         stop: library.Sound,
@@ -171,6 +233,7 @@ pub const Round = struct {
             .banner_right = "play/banner_right",
             .pause_text = "play/pause",
             .time_over_text = "play/time_over",
+            .game_over_text = "play/game_over",
             .sounds = "sound",
             .music = "round 1 music",
             .stop = "stop",
@@ -192,9 +255,10 @@ pub const Round = struct {
         return .{};
     }
 
-    /// The plan of the round's script the world follows: the script, the options' level.
+    /// The plan of the round's script the world follows: the script, the options' level, the
+    /// lives a continue gives (the options').
     fn plan(setup: *const Setup, a: *const Assets) world.script.Plan {
-        return .{ .round = a.script, .level = @intCast(@min(setup.level, 3)) };
+        return .{ .round = a.script, .level = @intCast(@min(setup.level, 3)), .lives = setup_mod.Progress.livesOf(setup) };
     }
 
     /// One display tick.
@@ -203,6 +267,7 @@ pub const Round = struct {
         self.shown_phase = self.phase;
         self.shown_banner = self.banner;
         self.shown_bar = self.bar();
+        self.shown_game_over = self.gameOver() != null;
         if (turn.world_out) |o| o.latch();
         self.logic_ran = false;
         if (self.phase != .setup and self.phase != .play) self.trace_t += 1;
@@ -281,12 +346,51 @@ pub const Round = struct {
         return null;
     }
 
-    /// START on the pad of a player in play.
+    /// START on the pad of a player in play (not waiting to continue).
     fn startPressed(self: *const Round, turn: *const scene.Turn) bool {
         const w = &self.play.world;
-        if (w.players[0].entity != null and turn.pressed.pad1.start) return true;
-        if (w.players[1].entity != null and turn.pressed.pad2.start) return true;
+        if (self.fighting(0) and turn.pressed.pad1.start) return true;
+        if (self.fighting(1) and turn.pressed.pad2.start) return true;
+        _ = w;
         return false;
+    }
+
+    /// Whether player `k` plays as a fighter.
+    fn fighting(self: *const Round, k: usize) bool {
+        const w = &self.play.world;
+        const e = w.getConst(w.players[k].entity orelse return false) orelse return false;
+        return e.mind == .player;
+    }
+
+    /// Whether the player (out of the game) answered NO to the continue.
+    fn answeredNo(self: *const Round, p: world.Player) bool {
+        const e = self.play.world.getConst(p.entity orelse return false) orelse return false;
+        return switch (e.mind) {
+            .player_waiting => |m| m.answered_no,
+            else => false,
+        };
+    }
+
+    /// Whether player `k` waits to continue (out of lives).
+    fn waiting(self: *const Round, k: usize) bool {
+        const w = &self.play.world;
+        const e = w.getConst(w.players[k].entity orelse return false) orelse return false;
+        return e.mind == .player_waiting;
+    }
+
+    /// The last player out of the game, counting the game over down: its state (null: the
+    /// game is not over).
+    fn gameOver(self: *const Round) ?world.behaviours.player_waiting.State {
+        const w = &self.play.world;
+        for (w.players) |p| {
+            const e = w.getConst(p.entity orelse continue) orelse continue;
+            switch (e.mind) {
+                // The game over's text shows from the count's first tick.
+                .player_waiting => |m| if (m.state == .game_over or (m.state == .countdown and m.music)) return m.state,
+                else => {},
+            }
+        }
+        return null;
     }
 
     /// A display tick of play: START is heard (a pause at the next logic tick's start), and at
@@ -313,13 +417,19 @@ pub const Round = struct {
         for (out.sounds.slice()) |s| if (a.sounds.find(s.name)) |id| turn.play(id);
         self.cycle(a);
         const w = &self.play.world;
-        self.join.blink(w.players[1].entity == null, a.screen.status_bar.join.blink);
+        self.join.blink(w.players[1].entity == null, self.waiting(0), a.screen.status_bar.join.blink);
+        for (&self.out_blinks, w.players) |*b, pl| b.blink(pl.out, !self.answeredNo(pl), a.screen.status_bar.join.blink);
         if (w.timer.up) {
             turn.play(a.stop);
             self.phase = .time_over;
             self.left = a.screen.time_over.ticks;
         } else if (w.script.stage == .won) {
-            self.leave(.cleared);
+            self.leave(turn, .cleared);
+        } else if (self.over) {
+            self.leave(turn, .game_over);
+        } else if (self.gameOver() == .game_over) {
+            // The game ends at the next tick (the original's leaving starts then).
+            self.over = true;
         }
         return null;
     }
@@ -331,7 +441,8 @@ pub const Round = struct {
         turn.play(a.music);
         const w = &self.play.world;
         w.timer.seconds = t.seconds;
-        for (w.players) |pl| {
+        for (w.players, 0..) |pl, k| {
+            if (!self.fighting(k)) continue;
             const h = pl.entity orelse continue;
             const e = w.get(h) orelse continue;
             e.health -|= t.health;
@@ -342,11 +453,26 @@ pub const Round = struct {
         self.play.schedule = .{ .rate = .play };
     }
 
-    /// The round ends with `outcome` once the screen has faded out.
-    fn leave(self: *Round, outcome: flow.Exit) void {
+    /// The round ends with `outcome` once the screen has faded out; the game under way keeps
+    /// the players' parts for the next round, or ends.
+    fn leave(self: *Round, turn: *scene.Turn, outcome: flow.Exit) void {
         self.outcome = outcome;
         self.phase = .leaving;
         self.colours.startFade(.black);
+        const g = &turn.setup.progress;
+        if (outcome == .game_over) {
+            g.* = .{};
+            return;
+        }
+        const w = &self.play.world;
+        g.timer = w.timer.seconds;
+        for (&g.players, w.players) |*gp, wp| gp.* = .{
+            .in_play = wp.entity != null,
+            .score = wp.score,
+            .lives = wp.lives,
+            .specials = wp.specials,
+            .continues = wp.continues,
+        };
     }
 
     /// The round's set-up: the game under way (a new one at the first round), the world at the
@@ -367,7 +493,7 @@ pub const Round = struct {
         var t: world.tick.Tick = .{ .world = w, .kinds = a.kinds, .random = turn.random.?, .out = out, .plan = &p };
         const r = a.script;
         for (&w.players, g.players, 0..) |*wp, gp, k| {
-            wp.* = .{ .lives = gp.lives, .specials = gp.specials, .score = gp.score };
+            wp.* = .{ .lives = gp.lives, .specials = gp.specials, .score = gp.score, .continues = gp.continues };
             if (!gp.in_play) continue;
             const character = setup.characters[k] orelse continue;
             const kind = a.kinds.find(@tagName(character)) orelse {
@@ -377,6 +503,7 @@ pub const Round = struct {
             const at: world.Vec3 = .{ .x = w.camera.x.add(.pixels(r.players.x)), .depth = .pixels(r.players.depth[k]), .height = .pixels(r.players.height) };
             const h = w.spawn(a.kinds, kind, at, .right) catch continue;
             wp.entity = h;
+            wp.character = kind;
             wp.specials = 1;
             if (t.actor(world.behaviours.player, h)) |act| world.behaviours.player.startLife(act);
         }
@@ -410,14 +537,27 @@ pub const Round = struct {
     /// What the status bar shows.
     fn bar(self: *const Round) Bar {
         const w = &self.play.world;
-        var out: Bar = .{ .time = w.timer.seconds, .join = self.join.shown };
-        for (w.players, 0..) |p, k| {
-            const e = w.getConst(p.entity orelse continue) orelse continue;
-            out.names[k] = true;
-            out.scores[k] = p.score;
-            out.lives[k] = p.lives;
-            out.specials[k] = p.specials;
-            out.health[k] = @intCast(std.math.clamp(e.health, 0, 80));
+        var out: Bar = .{ .time = w.timer.shown, .join = self.join.shown };
+        for (w.players, &out.players, self.out_blinks, 0..) |p, *o, ob, k| {
+            const playing: PlayerBar = .{ .playing = .{ .score = p.score, .lives = p.lives, .specials = p.specials, .health = 0 } };
+            const gone: PlayerBar = .{ .out = .{ .name = true, .score = p.score, .game_over = ob.shown } };
+            const h = p.entity orelse {
+                if (p.out) o.* = gone;
+                continue;
+            };
+            const e = w.getConst(h) orelse continue;
+            const new_game = k == 0 and w.players[1].entity == null and !w.players[1].out;
+            o.* = switch (e.mind) {
+                .player => .{ .playing = .{ .score = p.score, .lives = p.lives, .specials = p.specials, .health = @intCast(std.math.clamp(e.health, 0, 80)) } },
+                .player_waiting => |m| switch (m.state) {
+                    // Its first tick: the bar as it was (the question still, after a NO).
+                    .begin => if (m.answered_no) .{ .asking = .{ .continues = m.count, .new_game = new_game, .cursor = if (m.shown) m.cursor else null } } else playing,
+                    .continue_choose, .continue_chosen => .{ .asking = .{ .continues = m.count, .new_game = new_game, .cursor = if (m.shown) m.cursor else null } },
+                    // The tick it went out its part is cleared: its name comes at the next.
+                    .countdown, .game_over => .{ .out = .{ .name = m.state != .countdown or m.music, .score = p.score, .game_over = ob.shown } },
+                },
+                else => .none,
+            };
         }
         return out;
     }
@@ -450,33 +590,25 @@ pub const Round = struct {
             .time_over => try v.sprites.append(v.gpa, .of(a.time_over_text, 0, 0)),
             else => {},
         }
+        if (self.shown_game_over) try v.sprites.append(v.gpa, .of(a.game_over_text, 0, 0));
     }
 };
 
-/// The status bar's parts that changed since `was` (all of them when null).
+/// The status bar's parts that changed since `was` (all of them when null). A player's part
+/// that changes its kind (playing, asking, out) is cleared, then drawn whole.
 fn drawBar(v: *view.View, a: *const Round.Assets, now: Bar, was: ?Bar) !void {
     const board = v.board(.window);
-    const sb = &a.screen.status_bar;
-    for (sb.players, 0..) |p, k| {
-        const before: Bar = was orelse .{ .time = now.time +% 1 };
-        if (was == null or now.names[k] != before.names[k]) {
-            if (now.names[k]) {
-                try v.write(.window, a.text, p.name_at.x, p.name_at.y, p.name, .{});
-                try board.write(a.text.sheet, a.text.font, p.lives_mark.x, p.lives_mark.y, "x", .{});
-                try board.write(a.text.sheet, a.text.font, p.specials_mark.x, p.specials_mark.y, "x", .{});
-                try board.drawMap(a.police_icon, p.icon.x, p.icon.y);
+    for (now.players, 0..) |p, k| {
+        const before: ?PlayerBar = if (was) |w| w.players[k] else null;
+        if (before) |b| {
+            if (std.meta.eql(b, p)) continue;
+            if (std.meta.activeTag(b) != std.meta.activeTag(p)) {
+                try clearPlayer(v, a, k);
+                try drawPlayer(v, a, k, p, null);
+                continue;
             }
         }
-        if (now.scores[k]) |s| if (was == null or before.scores[k] != s) {
-            var buf: [8]u8 = undefined;
-            const text = std.fmt.bufPrint(&buf, "{d:0>6}", .{@min(s, 999_999)}) catch unreachable;
-            try v.write(.window, a.text, p.score.x, p.score.y, text, .{});
-        };
-        if (now.lives[k]) |n| if (was == null or before.lives[k] != n) try bigDigit(board, a, p.lives, n);
-        if (now.specials[k]) |n| if (was == null or before.specials[k] != n) try bigDigit(board, a, p.specials, n);
-        if (now.health[k]) |h| if (was == null or before.health[k] != h) {
-            try healthBar(board, a, if (k == 0) a.health_1 else a.health_2, p.health, h);
-        };
+        try drawPlayer(v, a, k, p, before);
     }
     if (was == null or was.?.time != now.time) {
         try bigDigit(board, a, a.screen.status_bar.time, now.time / 10);
@@ -485,29 +617,100 @@ fn drawBar(v: *view.View, a: *const Round.Assets, now: Bar, was: ?Bar) !void {
     if ((was == null and now.join) or (was != null and was.?.join != now.join)) try drawJoin(v, a, now.join);
 }
 
-/// Player 2's invitation to join, or the status bar's cells under it; its words only (a space
-/// leaves the bar's cell).
-fn drawJoin(v: *view.View, a: *const Round.Assets, shown: bool) !void {
+/// Player `k`'s part of the bar, the parts that changed since `was` (all when null).
+fn drawPlayer(v: *view.View, a: *const Round.Assets, k: usize, now: PlayerBar, was: ?PlayerBar) !void {
     const board = v.board(.window);
-    const j = &a.screen.status_bar.join;
-    const place = a.status_bar.place orelse art.Place{ .layer = .window, .x = 0, .y = 0 };
-    var x: i32 = j.at.x;
-    var words = std.mem.splitScalar(u8, j.text, ' ');
-    while (words.next()) |word| : (x += 1) {
-        if (shown) {
-            try v.write(.window, a.text, x, j.at.y, word, .{});
-            x += @intCast(word.len);
-            continue;
-        }
-        for (0..word.len) |_| {
-            board.erase(x, j.at.y, 1, 1);
-            const mx = x - place.x;
-            const my = @as(i32, j.at.y) - place.y;
-            if (mx >= 0 and my >= 0 and mx < a.status_bar.width and my < a.status_bar.height)
-                try putCell(board, a.status_bar, @intCast(mx), @intCast(my), @intCast(x), j.at.y);
-            x += 1;
-        }
+    const p = &a.screen.status_bar.players[k];
+    const cq = &a.screen.continue_question;
+    const places = &cq.players[k];
+    switch (now) {
+        .none => {},
+        .playing => |x| {
+            const before: ?PlayerBar.Playing = if (was) |w| w.playing else null;
+            if (before == null) {
+                try v.write(.window, a.text, p.name_at.x, p.name_at.y, p.name, .{});
+                try board.write(a.text.sheet, a.text.font, p.lives_mark.x, p.lives_mark.y, "x", .{});
+                try board.write(a.text.sheet, a.text.font, p.specials_mark.x, p.specials_mark.y, "x", .{});
+                try board.drawMap(a.police_icon, p.icon.x, p.icon.y);
+            }
+            if (before == null or before.?.score != x.score) try drawScore(v, a, p.score, x.score);
+            if (before == null or before.?.lives != x.lives) try bigDigit(board, a, p.lives, x.lives);
+            if (before == null or before.?.specials != x.specials) try bigDigit(board, a, p.specials, x.specials);
+            if (before == null or before.?.health != x.health) try healthBar(board, a, if (k == 0) a.health_1 else a.health_2, p.health, x.health);
+        },
+        .asking => |x| {
+            const before: ?PlayerBar.Asking = if (was) |w| w.asking else null;
+            if (before == null) try writeWords(v, a, places.question, cq.question);
+            if (before == null or before.?.continues != x.continues) {
+                var buf: [4]u8 = undefined;
+                const digit = std.fmt.bufPrint(&buf, "{d}", .{@min(x.continues, 9)}) catch unreachable;
+                try v.write(.window, a.text, places.question.x + cq.count, places.question.y, digit, .{});
+            }
+            if (before == null or before.?.new_game != x.new_game) {
+                restore(board, a, places.answer, @intCast(@max(cq.new_game.len, cq.game_over.len)));
+                try writeWords(v, a, places.answer, if (x.new_game) cq.new_game else cq.game_over);
+            }
+            if (before == null or before.?.cursor != x.cursor) {
+                restore(board, a, places.yes, 1);
+                restore(board, a, places.no, 1);
+                if (x.cursor) |c| {
+                    const at = if (c == .yes) places.yes else places.no;
+                    try v.write(.window, a.text, at.x, at.y, cq.cursor, .{});
+                }
+            }
+        },
+        .out => |x| {
+            const before: ?PlayerBar.Out = if (was) |w| w.out else null;
+            const named = if (before) |b| b.name else false;
+            if (x.name and !named) try v.write(.window, a.text, p.name_at.x, p.name_at.y, p.name, .{});
+            if (x.name and (!named or before.?.score != x.score)) try drawScore(v, a, p.score, x.score);
+            if (before == null or before.?.game_over != x.game_over) {
+                restore(board, a, places.out, @intCast(cq.game_over.len));
+                if (x.game_over) try writeWords(v, a, places.out, cq.game_over);
+            }
+        },
     }
+}
+
+/// A score's six digits at `at`.
+fn drawScore(v: *view.View, a: *const Round.Assets, at: records.Cell, score: u32) !void {
+    var buf: [8]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf, "{d:0>6}", .{@min(score, 999_999)}) catch unreachable;
+    try v.write(.window, a.text, at.x, at.y, text, .{});
+}
+
+/// Player `k`'s cells of the bar, back to the bar's own: on each row, the original's count
+/// from its first.
+fn clearPlayer(v: *view.View, a: *const Round.Assets, k: usize) !void {
+    const cq = &a.screen.continue_question;
+    for (cq.players[k].cleared) |at| restore(v.board(.window), a, at, cq.cleared);
+}
+
+/// `n` cells from `at`, back to the status bar's own.
+fn restore(board: *render.Board, a: *const Round.Assets, at: records.Cell, n: u8) void {
+    const place = a.status_bar.place orelse art.Place{ .layer = .window, .x = 0, .y = 0 };
+    for (0..n) |i| {
+        const x = @as(i32, at.x) + @as(i32, @intCast(i));
+        board.erase(x, at.y, 1, 1);
+        const mx = x - place.x;
+        const my = @as(i32, at.y) - place.y;
+        if (mx >= 0 and my >= 0 and mx < a.status_bar.width and my < a.status_bar.height)
+            putCell(board, a.status_bar, @intCast(mx), @intCast(my), @intCast(x), at.y) catch {};
+    }
+}
+
+/// A text's words from `at`: a space leaves the bar's cell.
+fn writeWords(v: *view.View, a: *const Round.Assets, at: records.Cell, text: []const u8) !void {
+    var x: i32 = at.x;
+    var words = std.mem.splitScalar(u8, text, ' ');
+    while (words.next()) |word| : (x += @intCast(word.len + 1)) try v.write(.window, a.text, x, at.y, word, .{});
+}
+
+/// Player 2's invitation to join, or the status bar's cells under it.
+fn drawJoin(v: *view.View, a: *const Round.Assets, shown: bool) !void {
+    const j = &a.screen.status_bar.join;
+    if (shown) return writeWords(v, a, j.at, j.text);
+    restore(v.board(.window), a, j.at, @intCast(j.text.len));
 }
 
 /// A digit two cells high (`play/time_digits`) at `at`; 10 or more shows 9.
@@ -542,10 +745,15 @@ test "player 2's invitation blinks every `blink` logic ticks while it does not p
     var j: Join = .{ .ticks = 8 };
     var shown: [24]bool = undefined;
     for (&shown) |*s| {
-        j.blink(true, 8);
+        j.blink(true, false, 8);
         s.* = j.shown;
     }
     for (shown, 0..) |s, k| try std.testing.expectEqual((k + 1) / 8 % 2 == 1, s);
-    j.blink(false, 8);
+    // Player 1 waiting to continue: hidden, the blink held; then on from where it was.
+    j.blink(true, true, 8);
+    try std.testing.expect(!j.shown and j.ticks == 8);
+    for (0..8) |_| j.blink(true, false, 8);
+    try std.testing.expect(!j.shown and j.phase == false);
+    j.blink(false, false, 8);
     try std.testing.expect(!j.shown);
 }

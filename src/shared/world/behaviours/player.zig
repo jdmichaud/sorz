@@ -25,6 +25,9 @@
 //! - `pick_up`: B near an item.
 //! - `hurt`, `knocked_down` (thrown back, two bounces), `down`, `getting_up`, `recover`: the
 //!   player blinks from its getting up, and while it blinks nothing strikes it.
+//! - `dying` (thrown back and up, one bounce), `lying_dead`: a blow that takes its last health,
+//!   or none left at a tick it is not down nor hurt (the time over's), kills it: a life is lost
+//!   (lives.zig); when it has lain dead its time, its next life starts, or it waits to continue.
 //! - `grab` (from the front) and `grab_behind`: walking into an enemy grabs it; B knees it (the
 //!   third knee is the last, which knocks it down), the pad away and B throws it over the
 //!   shoulder (`grab_blow`), C vaults over it to hold it from behind (`throw`), from behind B
@@ -36,6 +39,7 @@ const fixed = @import("../fixed.zig");
 const entity = @import("../entity.zig");
 const content_entity = @import("../../content/entity.zig");
 const Command = @import("../world.zig").Command;
+const lives = @import("../lives.zig");
 
 const Fixed = fixed.Fixed;
 const Vec3 = fixed.Vec3;
@@ -73,6 +77,8 @@ pub const State = enum {
     vault,
     vault_land,
     throw_back,
+    dying,
+    lying_dead,
 };
 
 /// A blow taken, felt at the next tick.
@@ -142,6 +148,7 @@ pub const Animation = enum {
     vault,
     vault_land,
     throw_back,
+    lying_dead,
 };
 
 pub const Move = enum {
@@ -159,7 +166,7 @@ pub const Move = enum {
     throw_back,
 };
 
-pub const Sound = enum { jump, land, hurt, thud };
+pub const Sound = enum { jump, land, hurt, thud, death };
 
 pub const Numbers = struct {
     /// The walk across and in depth, straight and diagonal, a logic tick.
@@ -180,6 +187,10 @@ pub const Numbers = struct {
     /// Knocked down: its speed back across (negative: away from the one who hit) and up.
     knocked_down_x: Fixed,
     knocked_down_up: Fixed,
+    /// Dying: its speed back across and up, and the ticks it lies dead.
+    dying_x: Fixed,
+    dying_up: Fixed,
+    dead: u8,
     /// Ticks: hurt, lying down, blinking, the combo's window, the pause after a jump kick lands.
     hurt: u8,
     down: u8,
@@ -256,8 +267,9 @@ fn begin(a: Actor, state: State) void {
         .back_attack => a.startMove(.back_attack),
         .pick_up => a.animate(.pick_up),
         .hurt => a.animate(.hurt),
-        .knocked_down => a.animate(.knocked_down),
+        .knocked_down, .dying => a.animate(.knocked_down),
         .down => a.animate(.down),
+        .lying_dead => a.animate(.lying_dead),
         .getting_up => a.animate(.getting_up),
         .recover => a.animate(.recover),
         .grab => a.animate(.grab),
@@ -278,6 +290,7 @@ fn begin(a: Actor, state: State) void {
     const keep_x = state == .jump_kick;
     if (!keep_x) a.entity.velocity.x = switch (state) {
         .knocked_down => n.knocked_down_x.times(a.entity.facing.sign()),
+        .dying => n.dying_x.times(a.entity.facing.sign()),
         else => .zero,
     };
     a.entity.velocity.depth = .zero;
@@ -387,7 +400,12 @@ fn act(a: Actor, c: Command) void {
             a.mind.timer -%= 1;
             if (a.mind.timer == 0) change(a, .ready);
         },
-        .knocked_down => gravity(a),
+        .knocked_down, .dying => gravity(a),
+        .lying_dead => {
+            _ = a.step();
+            a.mind.timer -%= 1;
+            if (a.mind.timer == 0) return lives.lifeOver(a.tick, a.handle);
+        },
         .down => {
             a.mind.timer -%= 1;
             if (a.mind.timer == 0) change(a, .getting_up);
@@ -525,17 +543,34 @@ fn hitPause(a: Actor) bool {
 
 // Taking blows ---------------------------------------------------------------------------------
 
+/// Down or hurt: no blow is felt, and no health left does not kill it yet.
+fn downOrHurt(state: State) bool {
+    return switch (state) {
+        .hurt, .knocked_down, .down, .getting_up, .dying, .lying_dead => true,
+        else => false,
+    };
+}
+
 /// The blow taken at the last tick: in the air, or a blow that knocks down, it is knocked down
-/// facing the one who hit; else it is hurt, facing it.
+/// facing the one who hit (with the hurt's sound); else it is hurt, facing it. A blow that
+/// takes its last health kills it; with no health left (the time over took it), it dies at a
+/// tick it is not down nor hurt.
 fn feelBlow(a: Actor) void {
+    if (a.entity.health <= 0 and !downOrHurt(a.mind.state)) {
+        a.mind.taken = null;
+        return die(a, null);
+    }
     const t = a.mind.taken orelse return;
     a.mind.taken = null;
     const n = a.numbers();
     if (a.other(t.by)) |by| a.faceToward(by);
+    const knocked = t.reaction == .knock_down or a.entity.flags.airborne;
+    if (knocked) a.sound(.hurt);
     a.takeDamage(t.by, t.damage);
-    a.sound(.hurt);
+    if (a.entity.health <= 0) return die(a, t.by);
+    if (!knocked) a.sound(.hurt);
     if (a.entity.holding != null) a.letGo();
-    if (t.reaction == .knock_down or a.entity.flags.airborne) {
+    if (knocked) {
         change(a, .knocked_down);
         a.mind.bounces = 0;
         a.entity.velocity.height = n.knocked_down_up;
@@ -544,6 +579,20 @@ fn feelBlow(a: Actor) void {
     }
     change(a, .hurt);
     a.mind.timer = n.hurt;
+}
+
+/// It dies: its cry, a hold let go, thrown back from the one who struck (facing it) and up, a
+/// life less.
+fn die(a: Actor, by: ?Handle) void {
+    const n = a.numbers();
+    a.sound(.death);
+    if (a.entity.holding != null) a.letGo();
+    if (by) |h| if (a.other(h)) |o| a.faceToward(o);
+    change(a, .dying);
+    a.mind.bounces = 0;
+    a.entity.velocity.height = n.dying_up;
+    a.entity.flags.airborne = true;
+    lives.lose(a.tick, a.handle);
 }
 
 /// A blow meets its body: it feels it at the next tick.
@@ -579,6 +628,18 @@ pub fn landed(a: Actor) void {
             }
             change(a, .down);
             a.mind.timer = n.down;
+        },
+        .dying => {
+            a.mind.bounces += 1;
+            a.sound(.thud);
+            if (a.mind.bounces < 2) {
+                a.animate(.down);
+                a.entity.velocity.height = a.entity.velocity.height.neg().shr(1);
+                a.entity.flags.airborne = true;
+                return;
+            }
+            change(a, .lying_dead);
+            a.mind.timer = n.dead;
         },
         .fall, .jump, .jump_kick => {
             a.sound(.land);

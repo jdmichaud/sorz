@@ -138,12 +138,45 @@ pub const StatusBar = struct {
     join: Join,
 };
 
+/// A player's cells on the status bar for the continue's question and the game over.
+pub const ContinuePlaces = struct {
+    /// The first of the cells cleared on each of the bar's rows (its name's, its bar's).
+    cleared: [2]Cell,
+    question: Cell,
+    answer: Cell,
+    /// Where the cursor shows for each answer.
+    yes: Cell,
+    no: Cell,
+    /// The game over's text when no continue is left.
+    out: Cell,
+};
+
+/// The continue's question, which a player out of lives answers on the status bar, and the game
+/// over. Texts of `fonts/main`, their words only (a space leaves the bar's cell).
+pub const Continue = struct {
+    provenance: []const u8 = "",
+    /// The question, the continues left a digit `count` cells after its first.
+    question: []const u8,
+    count: u8,
+    /// The second answer: `new_game` for player 1 while player 2 has not gone out of the game,
+    /// `game_over` else; the answers' cursor, which blinks.
+    new_game: []const u8,
+    game_over: []const u8,
+    cursor: []const u8,
+    /// The cells cleared on each row from its first.
+    cleared: u8,
+    players: [2]ContinuePlaces,
+    /// The game over's text over the picture, while the last player counts down.
+    frame: []const u8,
+};
+
 /// Play's screen (`screens/round`): its fixed texts and its status bar.
 pub const Round = struct {
     banner: Banner,
     pause: Text,
     time_over: TimeOver,
     status_bar: StatusBar,
+    continue_question: Continue,
 };
 
 /// The screens' records a tree has.
@@ -237,6 +270,16 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
         }) },
     });
     const t = &r.time_over;
+    const cq = &r.continue_question;
+    const places = try arena.alloc(json.Value, 2);
+    for (places, &cq.players) |*o, *p| o.* = try obj(arena, &.{
+        .{ .key = "cleared", .value = .{ .array = try arena.dupe(json.Value, &.{ try cellValue(arena, p.cleared[0]), try cellValue(arena, p.cleared[1]) }) } },
+        .{ .key = "question", .value = try cellValue(arena, p.question) },
+        .{ .key = "answer", .value = try cellValue(arena, p.answer) },
+        .{ .key = "yes", .value = try cellValue(arena, p.yes) },
+        .{ .key = "no", .value = try cellValue(arena, p.no) },
+        .{ .key = "out", .value = try cellValue(arena, p.out) },
+    });
     return obj(arena, &.{
         .{ .key = "banner", .value = try withProvenance(arena, b.provenance, &.{
             .{ .key = "left", .value = .{ .str = b.left } },
@@ -265,6 +308,16 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
                 .{ .key = "at", .value = try cellValue(arena, r.status_bar.join.at) },
                 .{ .key = "blink", .value = json.Value.num(r.status_bar.join.blink) },
             }) },
+        }) },
+        .{ .key = "continue", .value = try withProvenance(arena, cq.provenance, &.{
+            .{ .key = "question", .value = .{ .str = cq.question } },
+            .{ .key = "count", .value = json.Value.num(cq.count) },
+            .{ .key = "new_game", .value = .{ .str = cq.new_game } },
+            .{ .key = "game_over", .value = .{ .str = cq.game_over } },
+            .{ .key = "cursor", .value = .{ .str = cq.cursor } },
+            .{ .key = "cleared", .value = json.Value.num(cq.cleared) },
+            .{ .key = "players", .value = .{ .array = places } },
+            .{ .key = "frame", .value = .{ .str = cq.frame } },
         }) },
     });
 }
@@ -387,7 +440,7 @@ fn readFrame(n: json.Node, a: ?*const art.Art) Error![]const u8 {
 }
 
 fn readRound(n: json.Node, a: ?*const art.Art) Error!Round {
-    try n.only(&.{ "banner", "pause", "time_over", "status_bar" });
+    try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue" });
     const b = try n.get("banner");
     try b.only(&.{ "provenance", "left", "number", "right", "fade", "in", "in_ticks", "wait", "out", "out_ticks", "after" });
     const p = try n.get("pause");
@@ -418,7 +471,37 @@ fn readRound(n: json.Node, a: ?*const art.Art) Error!Round {
             .specials_mark = try readCell(try at.get("specials_mark")),
         };
     }
+    const c = try n.get("continue");
+    try c.only(&.{ "provenance", "question", "count", "new_game", "game_over", "cursor", "cleared", "players", "frame" });
+    const cps = try c.get("players");
+    if (try cps.len() != 2) return cps.fail("not the two players'");
+    var places: [2]ContinuePlaces = undefined;
+    for (&places, 0..) |*o, k| {
+        const e = try cps.at(k);
+        try e.only(&.{ "cleared", "question", "answer", "yes", "no", "out" });
+        const cl = try e.get("cleared");
+        if (try cl.len() != 2) return cl.fail("not the two rows'");
+        o.* = .{
+            .cleared = .{ try readCell(try cl.at(0)), try readCell(try cl.at(1)) },
+            .question = try readCell(try e.get("question")),
+            .answer = try readCell(try e.get("answer")),
+            .yes = try readCell(try e.get("yes")),
+            .no = try readCell(try e.get("no")),
+            .out = try readCell(try e.get("out")),
+        };
+    }
     const r: Round = .{
+        .continue_question = .{
+            .provenance = if (try c.opt("provenance")) |x| try x.string() else "",
+            .question = try (try c.get("question")).string(),
+            .count = try (try c.get("count")).int(u8),
+            .new_game = try (try c.get("new_game")).string(),
+            .game_over = try (try c.get("game_over")).string(),
+            .cursor = try (try c.get("cursor")).string(),
+            .cleared = try (try c.get("cleared")).int(u8),
+            .players = places,
+            .frame = try readFrame(try c.get("frame"), a),
+        },
         .banner = .{
             .provenance = if (try b.opt("provenance")) |x| try x.string() else "",
             .left = try readFrame(try b.get("left"), a),
@@ -586,6 +669,19 @@ test "the screens' records write and read back the same" {
                 .players = @splat(.{ .name = "1UP-", .name_at = .{ .x = 1, .y = 1 }, .score = .{ .x = 5, .y = 1 }, .health = .{ .x = 1, .y = 2 }, .lives = .{ .x = 12, .y = 1 }, .lives_mark = .{ .x = 11, .y = 2 }, .icon = .{ .x = 14, .y = 1 }, .specials = .{ .x = 17, .y = 1 }, .specials_mark = .{ .x = 16, .y = 2 } }),
                 .time = .{ .x = 19, .y = 1 },
                 .join = .{ .text = "PRESS 2UP START", .at = .{ .x = 24, .y = 1 }, .blink = 8 },
+            },
+            .continue_question = .{
+                .question = "CONTINUE",
+                .count = 9,
+                .new_game = "NEW GAME",
+                .game_over = "GAME OVER",
+                .cursor = "->",
+                .cleared = 18,
+                .players = .{
+                    .{ .cleared = .{ .{ .x = 1, .y = 1 }, .{ .x = 1, .y = 2 } }, .question = .{ .x = 3, .y = 1 }, .answer = .{ .x = 3, .y = 2 }, .yes = .{ .x = 1, .y = 1 }, .no = .{ .x = 1, .y = 2 }, .out = .{ .x = 1, .y = 2 } },
+                    .{ .cleared = .{ .{ .x = 21, .y = 1 }, .{ .x = 21, .y = 2 } }, .question = .{ .x = 29, .y = 1 }, .answer = .{ .x = 29, .y = 2 }, .yes = .{ .x = 27, .y = 1 }, .no = .{ .x = 27, .y = 2 }, .out = .{ .x = 27, .y = 2 } },
+                },
+                .frame = "play/game_over",
             },
         },
     };

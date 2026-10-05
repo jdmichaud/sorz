@@ -104,6 +104,7 @@ fn commands(t: *Tick) void {
         p.command = .{
             .held = @bitCast((last & directions) | ((first | last) & buttons)),
             .pressed = @bitCast((last_new & directions) | ((first_new | last_new) & buttons)),
+            .first = @bitCast(first_new),
         };
         p.last = @bitCast(last);
     }
@@ -395,6 +396,7 @@ fn camera(t: *Tick) void {
     if (!c.follows) return;
     for (t.world.players) |p| {
         const e = t.world.get(p.entity orelse continue) orelse continue;
+        if (e.flags.hidden) continue;
         if (e.holding == null and e.holder == null) {
             const left = c.x.add(.pixels(following.margin));
             const right = left.add(.pixels(following.width - 2 * following.margin));
@@ -405,11 +407,13 @@ fn camera(t: *Tick) void {
     noteDrawn(t);
 }
 
-/// Where the players are drawn at this tick, for the camera's next.
+/// Where the players are drawn at this tick, for the camera's next (a player waiting to continue
+/// is not drawn).
 fn noteDrawn(t: *Tick) void {
     for (t.world.players, &t.world.camera.drawn) |p, *d| {
         d.* = null;
         const e = t.world.get(p.entity orelse continue) orelse continue;
+        if (e.flags.hidden) continue;
         d.* = e.position.x;
     }
 }

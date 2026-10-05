@@ -221,9 +221,10 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
 
 The optional fields are written only when they are not their defaults, so a file read and
 written again keeps its bytes. The extractor writes Axel (`axel`, behaviour `player`), round 1's
-Galsia (`galsia`), a stand-in for the special attack's police car (`police_car`) and the GO arrow
-a section's opening shows (`go_arrow`); the other characters and enemies come with PLAN items 12
-to 15. Their numbers are read from the ROM's
+Galsia (`galsia`), a stand-in for the special attack's police car (`police_car`), the GO arrow
+a section's opening shows (`go_arrow`) and a player out of lives (`player_waiting`: no art, the
+continue's question's numbers and sounds); the other characters and enemies come with PLAN items
+12 to 15. Their numbers are read from the ROM's
 tables and from the immediate values of the code that uses them, each with its place in the
 definition's provenance, but the car's times, which the original's car, camera and shells make
 together: those are measured in sor-remaster and said so.
@@ -267,6 +268,14 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   play: its `text` (`fonts/main`, its words only: a space leaves the bar's cell) `at` its cell,
   shown and hidden in turn every `blink` logic ticks of play. The status bar shows each tick
   what the tick before left (the original copies its image as a frame starts, as the sprites).
+  `continue`, the continue's question that a player out of lives answers on the bar: the
+  `question` with the continues left a digit `count` cells after its first, the second answer
+  (`new_game` for player 1 while player 2 has not gone out of the game, else `game_over`), the
+  `cursor` that blinks before the answer chosen, the cells `cleared` on each row of a player's
+  part, and each player's places (`players`: the first cell `cleared` of each row, the
+  `question`, the `answer`, the cursor's `yes` and `no`, and `out`, where a player out of the game
+  has `game_over` blink); `frame`, the game over's text over the picture while the last player
+  counts the game over down.
   The parts' pictures are the `play` set's: `play/status_bar`
   under them, `play/time_digits` (the big digits, a column of two cells each), `play/health_1`
   and `_2` and `play/enemy_bar_1` and `_2` (a bar's ten full cells, its partial cell, ten empty:
@@ -391,7 +400,7 @@ The art (PLAN 06), by set:
 | --- | --- |
 | `fonts` | the fonts' sheets (`main`, `italic`, `intro`, `big`) and the glyphs of `main`, `italic`, `intro` |
 | `segalogo`, `intro`, `title`, `menu`, `options`, `select`, `highscores`, `round_end`, `ending`, `boss_ending` | each screen's sheets, maps (with where the original draws them) and palettes |
-| `play` | the status bar's sheet and maps, its parts' maps (`screens/round`), play's colours, the arrow, sparks and shadow frames, the banner's, the pause's and the time over's texts as frames, and the bars' tiles the game makes (`bar_tiles`, `fills`) |
+| `play` | the status bar's sheet and maps, its parts' maps (`screens/round`), play's colours, the arrow, sparks and shadow frames, the banner's, the pause's, the time over's and the game over's texts as frames, and the bars' tiles the game makes (`bar_tiles`, `fills`) |
 | `offer` | Mr. X's window in round 8 (and in Japan) |
 | `round1` to `round8` | the round's two art sheets, its planes' whole maps (`plane_a`, `plane_b`), its colours and cycles, its props' frames; round 3's waves (four maps, five palettes) |
 | `axel`, `adam`, `blaze` | the players' frames |
