@@ -70,6 +70,8 @@ pub const Ranking = struct { player: u1, name: ?[3]?u8 = null };
 pub const ColourLoad = union(enum) {
     enemies: struct { colours: u8, into: u2 },
     boss,
+    /// The colours of the boss's kind a reserve brings as an enemy (`ReserveBoss`).
+    reserve_boss,
     police,
     palette: *const art.Palette,
     keep,

@@ -427,6 +427,32 @@ fn copiesBossArt(rom: []const u8, r: u32) Error!bool {
     return u16be(rom, 0x18EB2) == r;
 }
 
+/// The bosses' art and colours by kind (0x1C3A8, six bytes each: the type, its art's load, its
+/// colours' lists).
+const boss_palettes = 0x1C3A8;
+const boss_palettes_count = 6;
+/// Which types the reserve takes as common enemies (0x9350: $20 to $2A, but those this table
+/// marks; the others' art and colours are a boss's).
+const uncommon_types = 0x936E;
+
+/// A reserve's entry of a type that is not a common enemy's (0x9350): its art and colours a
+/// boss's, by its palette byte (0xA02, 0xB24): the low nibble its kind's entry of the bosses'
+/// table (whose type must be its own), whose art's load it takes; the high nibble the list of
+/// that entry's colours lists, loaded over the first line; the byte itself the colours' number.
+fn reserveBoss(arena: std.mem.Allocator, rom: []const u8, t: u8, palette: u8) Error!?round.ReserveBoss {
+    if (t >= 0x20 and t < 0x2B and rom[uncommon_types + @as(u32, t - 0x20)] == 0) return null;
+    if (u32be(rom, 0x9354) != 0x04000020 or u16be(rom, 0x935A) != 0x0C00 or rom[0x935D] != 0x0B or u16be(rom, 0x9360) != 0x103B) return error.BadData;
+    if (palette & 0xF >= boss_palettes_count) return error.BadData;
+    const e = boss_palettes + 6 * @as(u32, palette & 0xF);
+    if (rom[e] != t) return error.BadData;
+    const list = u32be(rom, u32be(rom, e + 2) + 4 * @as(u32, palette >> 4));
+    return .{
+        .art = rom[e + 1],
+        .colours = palette,
+        .palette = try palettes.bossColoursName(arena, rom, list) orelse return error.BadData,
+    };
+}
+
 /// A waiting entry's kind's art streamed from its call: a tick, then its load (0xB76).
 fn arrivalStream(arena: std.mem.Allocator, rom: []const u8, t: u8) Error![]const round.Streamed {
     if (!commonEnemy(t)) return &.{};
@@ -722,8 +748,16 @@ fn reserve(arena: std.mem.Allocator, rom: []const u8, l: *Lists) Error![]const r
         const side = try l.byte();
         var s = try entry(rom, t, b, y);
         s.side = if (side == 0) .right else .left;
-        s.arrives_after = try arrivalTicks(rom, t & 0x7F);
-        s.streamed = try arrivalStream(arena, rom, t & 0x7F);
+        if (try reserveBoss(arena, rom, t & 0x7F, b[2])) |rb| {
+            // A boss's kind: its art's load streamed from its call as a common enemy's.
+            var buf: [8]u16 = undefined;
+            s.reserve_boss = rb;
+            s.arrives_after = @intCast(1 + streamTicks(try loadBlocks(rom, rb.art, &buf)));
+            s.streamed = try stream.schedule(arena, &.{.{ .after = 1, .blocks = try loadStream(arena, rom, rb.art) }});
+        } else {
+            s.arrives_after = try arrivalTicks(rom, t & 0x7F);
+            s.streamed = try arrivalStream(arena, rom, t & 0x7F);
+        }
         try out.append(arena, s);
     }
     l.at = next;

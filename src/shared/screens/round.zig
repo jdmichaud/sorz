@@ -1120,6 +1120,7 @@ pub const Round = struct {
                     else => set.own,
                 } else null,
                 .boss => self.stage(a).boss_colours,
+                .reserve_boss => self.stage(a).reserve_boss_colours,
                 .police => a.enemy_colours.police,
                 .palette => |pal| pal,
                 .keep => {

@@ -99,6 +99,19 @@ pub const StreamOf = struct {
 /// and the other (the first line's other colours, some kinds' own); null: none given.
 pub const Colours = struct { first: ?u8 = null, second: ?u8 = null, other: ?u8 = null };
 
+/// A boss's kind that comes as one of a reserve's enemies (round 5's round 3's bosses): its art
+/// and colours are a boss's, not an enemy's. Its art, a load of art by number, takes the boss's
+/// art slot (once no enemy shows the second's, the third's or the boss's, unless it holds it
+/// already); its colours, by their number among those the lines hold (its record's palette byte,
+/// apart from the enemies' numbers), take the other's place and the first's, and `palette`, a
+/// palette of the art, is loaded over the first line (once no enemy shows on the first or the
+/// other, unless the other holds them already).
+pub const ReserveBoss = struct {
+    art: u8,
+    colours: u8,
+    palette: []const u8,
+};
+
 /// One entity the script brings: placed ahead at its place, or coming in at the screen's edge.
 pub const Spawn = struct {
     /// The kind's name (`entities/NAME.json`).
@@ -142,6 +155,8 @@ pub const Spawn = struct {
     /// An enemy's art, by its number (the art slots hold enemies' art by number; 128 and more:
     /// art none of them holds).
     art: ?u8 = null,
+    /// A reserve's boss's kind: its art and colours a boss's.
+    reserve_boss: ?ReserveBoss = null,
 };
 
 pub const Section = struct {
@@ -528,6 +543,11 @@ fn spawnValue(arena: std.mem.Allocator, s: *const Spawn, where: Where) !json.Val
     if (where == .reserve and s.streamed.len != 0) try f.append(arena, .{ .key = "streamed", .value = try streamedValue(arena, s.streamed) });
     if (s.colours) |c| try f.append(arena, .{ .key = "colours", .value = json.Value.num(c) });
     if (s.art) |x| try f.append(arena, .{ .key = "art", .value = json.Value.num(x) });
+    if (where == .reserve) if (s.reserve_boss) |b| try f.append(arena, .{ .key = "reserve_boss", .value = try obj(arena, &.{
+        .{ .key = "art", .value = json.Value.num(b.art) },
+        .{ .key = "colours", .value = json.Value.num(b.colours) },
+        .{ .key = "palette", .value = .{ .str = b.palette } },
+    }) });
     return .{ .object = f.items };
 }
 
@@ -718,7 +738,7 @@ fn spawnFields(comptime where: Where) []const []const u8 {
     const own: []const []const u8 = switch (where) {
         .placed => &.{ "x", "height", "drift" },
         .wave => &.{ "side", "after" },
-        .reserve => &.{ "side", "arrives_after", "streamed" },
+        .reserve => &.{ "side", "arrives_after", "streamed", "reserve_boss" },
     };
     var traits: [std.enums.values(Trait).len][]const u8 = undefined;
     for (std.enums.values(Trait), &traits) |t, *n| n.* = @tagName(t);
@@ -774,6 +794,11 @@ fn readSpawn(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Erro
     };
     if (try n.opt("colours")) |c| s.colours = try c.int(u8);
     if (try n.opt("art")) |x| s.art = try x.int(u8);
+    if (where == .reserve) if (try n.opt("reserve_boss")) |b| {
+        try b.only(&.{ "art", "colours", "palette" });
+        s.reserve_boss = .{ .art = try (try b.get("art")).int(u8), .colours = try (try b.get("colours")).int(u8), .palette = try (try b.get("palette")).string() };
+        if (s.art != null or s.colours != null) return b.fail("a reserve's boss with an enemy's art or colours");
+    };
     return s;
 }
 

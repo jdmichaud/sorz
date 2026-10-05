@@ -515,6 +515,16 @@ A record of `placed`, `wave` or `reserve` is one entity:
   its colours by number (`enemy_colours`); `art`, its art by number (the art slots hold it).
 - A breakable's (an oil drum's too): `holds`, the kind of the item it leaves. A boss's: `bar`,
   its entry in the status bar's names and bars.
+- A reserve's boss's kind (round 5's round 3's bosses, among its enemies): `reserve_boss`, its
+  art and colours a boss's rather than an enemy's `art` and `colours`: its `art`, a load by
+  number, takes the boss's art slot, once no enemy shows the second's, the third's or the boss's
+  (none is streamed, and it comes the next tick, when that slot holds it already); its
+  `colours`, a number apart from the enemies' (its record's palette byte), take the other's
+  place and the first's, and its `palette`, a palette of the art, is loaded over the first line
+  as it is called, once no enemy shows on the first or the other (unless the other holds them).
+  While a boss's art is in its slot the later records take the first's art and the second's
+  colours only; when the last such boss goes, the art of the slots from the second on is
+  cleared.
 - A piece of scenery's (placed): `height`, the height it takes as it starts (on a wall; placed
   on the ground, as the original places it); the trait `stirs`: it moves while a flight passes
   (round 2's posters' corners); `drift`, how a drifting piece moves (round 3's): `still`,

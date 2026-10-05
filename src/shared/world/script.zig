@@ -212,7 +212,8 @@ pub const State = struct {
     /// The enemies' art the art slots hold by number (`Section.art`: the three enemies' slots,
     /// the boss's, and one more), and how many enemies show each, as the original tallies them
     /// (and its colours' counts, `Held`): the enemies in the world as the reserve begins, one more
-    /// as each arrives, one less as each is knocked out while it runs; never cleared.
+    /// as each arrives, one less as each is knocked out while it runs; cleared from the second
+    /// when the last boss of its kind a reserve brought goes (`bossCountedOff`).
     art: [5]u8 = @splat(0),
     art_counts: [5]u8 = @splat(0),
     /// The reserve runs: from its wave's end to the section's clear.
@@ -222,6 +223,8 @@ pub const State = struct {
     taken: u32 = 0,
     chosen: u8 = 0,
     chosen_art: ?u3 = null,
+    /// The arriving one's art is in its slot already: none is streamed (a reserve's boss's).
+    chosen_loaded: bool = false,
     /// The round's own sound (`Round.own_sound`): its times left, the ticks to the next.
     own_sound: struct { left: ?u8 = 0, ticks: u16 = 0 } = .{},
     /// The round's animation (`Round.animation`): the step it shows, the ticks to the next.
@@ -417,17 +420,19 @@ pub fn run(t: *Tick) void {
             if (s.arriving != 0) {
                 const rec = &list[s.chosen];
                 // The arriving enemy's colours, at its arrival's first tick.
-                if (s.arriving == @max(rec.arrives_after, 1)) {
+                if (s.arriving == arrivalTicks(s, rec)) {
                     t.out.colours = true;
-                    if (rec.colours) |c| if (s.taking) |into| t.out.colour_loads.append(.{ .enemies = .{ .colours = c, .into = into } });
+                    if (rec.reserve_boss != null) {
+                        t.out.colour_loads.append(.reserve_boss);
+                    } else if (rec.colours) |c| if (s.taking) |into| t.out.colour_loads.append(.{ .enemies = .{ .colours = c, .into = into } });
                 }
                 s.arriving -= 1;
                 if (s.arriving != 0) return;
-                if (rec.colours) |c| if (s.taking) |into| {
+                if (coloursOf(rec)) |c| if (s.taking) |into| {
                     s.held.colours[into] = c;
                     s.held.counts[into] +%= 1;
                 };
-                if (s.chosen_art) |slot| if (rec.art) |a| {
+                if (s.chosen_art) |slot| if (artOf(rec)) |a| {
                     s.art[slot] = a;
                     s.art_counts[slot] +%= 1;
                 };
@@ -437,9 +442,9 @@ pub fn run(t: *Tick) void {
                 s.enemies = countEnemies(t);
             } else if (s.calls != 0) if (chooseWaiting(t, p, list)) |k| {
                 s.chosen = k;
-                s.arriving = @max(list[k].arrives_after, 1);
-                // Its kind's art is loaded as it is called.
-                if (list[k].streamed.len != 0) t.out.streamed = .{ .part = s.part, .record = k };
+                s.arriving = arrivalTicks(s, &list[k]);
+                // Its kind's art is loaded as it is called (unless its slot holds it).
+                if (list[k].streamed.len != 0 and !s.chosen_loaded) t.out.streamed = .{ .part = s.part, .record = k };
                 return;
             };
             clearIfDone(t, p);
@@ -511,13 +516,37 @@ fn chooseWaiting(t: *Tick, p: *const Plan, list: []const Spawn) ?u8 {
         const art = artSlot(t.world, p, rec) orelse continue;
         const colours = coloursSlot(t.world, p, rec) orelse continue;
         s.chosen_art = art.slot;
+        s.chosen_loaded = art.loaded;
         s.taking = colours.slot;
+        // A reserve's boss's colours hold the first line too from now (0xB4C).
+        if (rec.reserve_boss) |b| s.held.colours[Held.first] = b.colours;
         return @intCast(k);
     }
     return null;
 }
 
-const Slot = struct { slot: ?u3 };
+/// The ticks from a reserve's record's call to its coming in: its art's load's (none when its
+/// slot holds it already), at least one.
+fn arrivalTicks(s: *const State, rec: *const Spawn) u16 {
+    if (s.chosen_loaded) return 1;
+    return @max(rec.arrives_after, 1);
+}
+
+/// A record's art and colours by number: an enemy's, or a reserve's boss's.
+fn artOf(rec: *const Spawn) ?u8 {
+    if (rec.reserve_boss) |b| return b.art;
+    return rec.art;
+}
+
+fn coloursOf(rec: *const Spawn) ?u8 {
+    if (rec.reserve_boss) |b| return b.colours;
+    return rec.colours;
+}
+
+/// The boss's art slot.
+const boss_slot = 3;
+
+const Slot = struct { slot: ?u3, loaded: bool = false };
 const ColoursSlot = struct { slot: ?u2 };
 
 /// Whether a waiting record's art can be had (0x966), and the art slot it takes: its art's own,
@@ -526,6 +555,13 @@ const ColoursSlot = struct { slot: ?u2 };
 /// without the enemies' art takes none.
 fn artSlot(w: anytype, p: *const Plan, rec: *const Spawn) ?Slot {
     const s = &w.script;
+    // A reserve's boss's (0xA02): the boss's slot, holding its art already, or once no enemy
+    // shows the second's, the third's or the boss's.
+    if (rec.reserve_boss) |b| {
+        if (s.art[boss_slot] == b.art) return .{ .slot = boss_slot, .loaded = true };
+        if (s.art_counts[boss_slot] != 0 or s.art_counts[1] != 0 or s.art_counts[2] != 0) return null;
+        return .{ .slot = boss_slot };
+    }
     const a = rec.art orelse return .{ .slot = null };
     if (bossFight(w, p) or s.art[3] != 0) {
         if (s.art[3] == p.round.boss_art_full) return null;
@@ -542,6 +578,13 @@ fn artSlot(w: anytype, p: *const Plan, rec: *const Spawn) ?Slot {
 /// the boss's fight (or a section that holds a boss's art) only the second's, never a kind's own.
 fn coloursSlot(w: anytype, p: *const Plan, rec: *const Spawn) ?ColoursSlot {
     const s = &w.script;
+    // A reserve's boss's (0xB24): the other's, holding them already, or once no enemy shows on
+    // the first or the other (its colours go over the first line).
+    if (rec.reserve_boss) |b| {
+        if (s.held.colours[Held.other] == b.colours) return .{ .slot = Held.other };
+        if (s.held.counts[Held.first] != 0 or s.held.counts[Held.other] != 0) return null;
+        return .{ .slot = Held.other };
+    }
     const c = rec.colours orelse return .{ .slot = null };
     const own = p.ownColours(c);
     if (bossFight(w, p) or s.art[3] != 0) {
@@ -577,6 +620,18 @@ pub fn countOff(t: *Tick, e: *const entity.Entity) void {
     } else if (h.colours[Held.second] == c) {
         h.counts[Held.second] -%= 1;
     }
+}
+
+/// A boss that goes as an enemy (its beating not the round's end: a reserve's, or a variant of
+/// the boss's fight) is counted off as the original counts it, the reserve running or not:
+/// off the boss's art slot's count, which at 0 clears the art of the second, the third, the
+/// boss's slot and the one more (the boss's art loaded over theirs); off the other colours'
+/// count. (The enemies' count and the reserve's call: as any enemy's going.)
+pub fn bossCountedOff(t: *Tick) void {
+    const s = &t.world.script;
+    s.art_counts[boss_slot] -%= 1;
+    if (s.art_counts[boss_slot] == 0) @memset(s.art[1..], 0);
+    s.held.counts[Held.other] -%= 1;
 }
 
 /// The section is cleared when nothing more is to come and its last enemy has gone: the next
