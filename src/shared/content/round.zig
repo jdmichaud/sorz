@@ -386,6 +386,8 @@ pub const Round = struct {
     in_front: InFront = .{},
     /// Its lift (round 7's): the camera stays, plane B rides by.
     lift: ?Lift = null,
+    /// How it ends without a boss (round 7's): the players walk out.
+    exit: ?Exit = null,
 };
 
 /// A round on a lift (round 7's): the camera stays where it starts; plane B, the face the lift
@@ -403,6 +405,19 @@ pub const Lift = struct {
     jolts: []const i8,
     period: u8,
     wait: u8,
+};
+
+/// How a round without a boss ends (round 7's): once its last section is cleared, its timer stops
+/// and the players walk out by themselves (their pads but in the air not theirs; nothing keeps
+/// them on the screen): each left until it is before `x`, then up or down into the depths
+/// `depth` (from the first, before the second); there it walks on left, and the round ends
+/// `ticks` turns of a player there later (the last to get there counts them again), as a boss's
+/// beating ends one.
+pub const Exit = struct {
+    provenance: []const u8 = "",
+    x: i32,
+    depth: [2]i32,
+    ticks: u16,
 };
 
 /// What a round draws in front of its layers' cells that are in front of the sprites: the
@@ -718,6 +733,11 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
             .{ .key = "wait", .value = json.Value.num(lf.wait) },
         }) });
     }
+    if (r.exit) |ex| try fields.append(arena, .{ .key = "exit", .value = try withProvenance(arena, ex.provenance, &.{
+        .{ .key = "x", .value = json.Value.num(ex.x) },
+        .{ .key = "depth", .value = try pair(arena, ex.depth[0], ex.depth[1]) },
+        .{ .key = "ticks", .value = json.Value.num(ex.ticks) },
+    }) });
     if (r.in_front.script or r.in_front.players or r.in_front.things) try fields.append(arena, .{ .key = "in_front", .value = try withProvenance(arena, r.in_front.provenance, &.{
         .{ .key = "script", .value = .{ .bool = r.in_front.script } },
         .{ .key = "players", .value = .{ .bool = r.in_front.players } },
@@ -855,7 +875,7 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off", "in_front", "lift" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off", "in_front", "lift", "exit" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
@@ -1044,6 +1064,16 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         if (r.lift.?.period == 0) return (try lf.get("period")).fail("not 1 or more");
         if (r.lift.?.wait == 0) return (try lf.get("wait")).fail("not 1 or more");
     }
+    if (try root.opt("exit")) |ex| {
+        try ex.only(&.{ "provenance", "x", "depth", "ticks" });
+        r.exit = .{
+            .provenance = try provenanceOf(ex),
+            .x = try (try ex.get("x")).int(i32),
+            .depth = try readPair(try ex.get("depth"), i32),
+            .ticks = try (try ex.get("ticks")).int(u16),
+        };
+        if (r.exit.?.ticks == 0) return (try ex.get("ticks")).fail("not 1 or more");
+    }
     if (try root.opt("in_front")) |f| {
         try f.only(&.{ "provenance", "script", "players", "things" });
         r.in_front = .{
@@ -1084,6 +1114,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
             .reserve = try readSpawns(arena, try b.get("reserve"), .reserve),
         };
     }
+    if (r.exit != null and r.boss != null) return (try root.get("exit")).fail("an exit in a round with a boss");
     return r;
 }
 

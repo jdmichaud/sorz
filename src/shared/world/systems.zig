@@ -218,9 +218,9 @@ fn padOf(pads: input.Pads, player: usize) input.Pad {
 // Player control ----------------------------------------------------------------------------------
 
 fn control(t: *Tick) void {
-    for (t.world.players) |p| {
+    for (t.world.players, 0..) |p, k| {
         const h = p.entity orelse continue;
-        t.control(h, p.command);
+        t.control(h, script.exitWalk(t, @intCast(k), h) orelse p.command);
     }
 }
 
@@ -808,7 +808,7 @@ pub fn keepPlayers(t: *Tick) void {
     const rules = c.follows orelse return;
     for (t.world.players) |p| {
         const e = t.world.get(p.entity orelse continue) orelse continue;
-        if (t.keptInView(p.entity.?)) {
+        if (!script.exiting(t.world) and t.keptInView(p.entity.?)) {
             const left = c.x.whole();
             e.position.x = keptWithin(e.position.x, left + rules.kept_x[0], left + rules.kept_x[1]);
         }

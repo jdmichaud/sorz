@@ -962,7 +962,10 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     if (u16be(rom, 0x632) != 0xFF02 or u16be(rom, 0x642) != 0xFF04 or u16be(rom, 0x67E) != 0xFF04) return error.BadData;
     const late_sections = try immediate(rom, 0x62E, &.{ 0x0C, 0x78 }, 2);
     const boss_from = try immediate(rom, if (r < late_sections) 0x67A else 0x63E, &.{ 0x0C, 0x78 }, 2);
-    const section_count: u32 = @intCast(boss_from + 1);
+    // The round of 0x646's `cmpi.w` (round 7's) ends there without a boss: its players walk out
+    // (0x656, `exitOf`).
+    const exit = try exitOf(arena, rom, r);
+    const section_count: u32 = @intCast(if (exit != null) boss_from else boss_from + 1);
     const lift = try liftOf(arena, rom, r, mode_a, mode_b, u16be(rom, h + 12 + 8), section_count);
     const sections = try arena.alloc(round.Section, section_count);
     for (sections, 0..) |*s, k| {
@@ -1012,40 +1015,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         };
     }
 
-    // The boss's section (0x59C): the camera stops, the music fades ($E0), the boss's art loads
-    // (the art load of 0x1C378), then $20 ticks, the boss's music ($87); then the art of the
-    // section's slots and the boss's again, and the wave.
-    const fade = try immediate(rom, 0x5A4, &.{ 0x11, 0xFC, 0x00 }, 1);
-    const wait = try immediate(rom, 0x5CE, &.{ 0x31, 0xFC }, 2);
-    const music = try immediate(rom, 0x5E0, &.{ 0x11, 0xFC, 0x00 }, 1);
-    const boss_load = rom[round_bosses + 6 * r + 4];
-    var buf: [8]u16 = undefined;
-    const boss_blocks = try loadBlocks(rom, boss_load, &buf);
-    const music_after = 1 + streamTicks(boss_blocks) + wait - 1;
-    const boss_art = artKinds(rom, entryAt(rom, part, section_count));
-    var kinds = boss_art;
-    kinds[3] = boss_load;
-    const wave_after = 1 + try artTicks(rom, kinds);
-    // From the last section's clear: the boss's art a tick later, then the wait, then the art
-    // loads, their first look the tick after the music's.
-    var boss_loads: std.ArrayList(stream.Load) = .empty;
-    try boss_loads.append(arena, .{ .after = 1, .blocks = try loadStream(arena, rom, boss_load) });
-    try artLoads(arena, rom, kinds, @intCast(wait), &boss_loads);
-    const boss_section: round.Boss = .{
-        .provenance = try std.fmt.allocPrint(arena, "the boss's section (0x59C): the fade's request at ROM 0x{X:0>5}, the boss's art (load {d}, 0x1C378) streamed, then the wait of ROM 0x{X:0>5}, the music's request at ROM 0x{X:0>5}; then the section's art and the boss's (0xD70) before its wave", .{ 0x5A7, boss_load, 0x5D0, 0x5E3 }),
-        .fade = try soundName(@intCast(fade)),
-        .music = try soundName(@intCast(music)),
-        .music_after = @intCast(music_after),
-        .wave_after = @intCast(wave_after),
-        .streamed = try stream.schedule(arena, boss_loads.items),
-        .again = if (try copiesBossArt(rom, r)) &.{} else try againStream(arena, rom, kinds),
-        .section_colours = try sectionColours(rom, entryAt(rom, part, section_count)),
-        .colours = try palettes.bossColoursName(arena, rom, u32be(rom, round_bosses + 6 * r)) orelse return error.BadData,
-        // The section's art kinds, the boss's in the last slot (0x59C: its art load).
-        .art = kinds,
-        .wave = try wave(arena, rom, &l),
-        .reserve = try reserve(arena, rom, &l),
-    };
+    const boss_section: ?round.Boss = if (exit != null) null else try bossSection(arena, rom, r, entryAt(rom, part, section_count), &l);
 
     // The ground: the floor's height (0xAD2A probes the floor map) at every place the script
     // places an enemy, the same in all.
@@ -1139,6 +1109,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .boss_art_full = @intCast(try immediate(rom, 0x9E8, &.{ 0x0C, 0x38, 0x00 }, 1)),
         .in_front = try inFront(arena, rom, r),
         .lift = lift,
+        .exit = exit,
     };
 }
 
@@ -1189,6 +1160,62 @@ fn liftOf(arena: std.mem.Allocator, rom: []const u8, r: u32, mode_a: u16, mode_b
         .jolts = jolts,
         .period = @intCast(period & 0xFF),
         .wait = @intCast(u16be(rom, 0x752)),
+    };
+}
+
+/// How round `r` ends without a boss (0x646: the round of its `cmpi.w`, round 7's): its last
+/// section's opening (0x656) stops the timer ($FA79) and has the players walk out ($FA73, 0x502C):
+/// each left while at or past `cmpi.w #N,d0` at 0x5062, then down before 0x5074's depth or up
+/// from 0x507C's; there `move.b #N,($FA74)` at 0x508A turns of a player there, walking left; then
+/// the round ends (0x5098: $FA71 and the fade, as a boss's beating).
+fn exitOf(arena: std.mem.Allocator, rom: []const u8, r: u32) Error!?round.Exit {
+    if (u16be(rom, 0x646) != 0x0C78 or u16be(rom, 0x64A) != 0xFF02 or u16be(rom, 0x64C) != 0x6708) return error.BadData;
+    if (u16be(rom, 0x648) != r) return null;
+    if (u32be(rom, 0x656) != 0x11FC0001 or u16be(rom, 0x65A) != 0xFA79 or u32be(rom, 0x65C) != 0x11FC0001 or u16be(rom, 0x660) != 0xFA73) return error.BadData;
+    if (u16be(rom, 0x508E) != 0xFA74 or u32be(rom, 0x5098) != 0x11FC0001 or u16be(rom, 0x509C) != 0xFA71) return error.BadData;
+    return .{
+        .provenance = try std.fmt.allocPrint(arena, "the players' walk out (0x502C, set at 0x656 with the timer stopped): left while at or past ROM 0x05064's place across, then into the depths of ROM 0x05076 to ROM 0x0507E's (excluded), then left ROM 0x0508A's turns of a player there; then the round ends (0x5098)", .{}),
+        .x = @intCast(try immediate(rom, 0x5062, &.{ 0x0C, 0x40 }, 2)),
+        .depth = .{ @intCast(try immediate(rom, 0x5074, &.{ 0x0C, 0x40 }, 2)), @intCast(try immediate(rom, 0x507C, &.{ 0x0C, 0x40 }, 2)) },
+        .ticks = @intCast(try immediate(rom, 0x508A, &.{ 0x11, 0xFC, 0x00 }, 1)),
+    };
+}
+
+/// Round `r`'s boss's section, its entry at `at`, its wave and reserve the next of the lists `l`.
+fn bossSection(arena: std.mem.Allocator, rom: []const u8, r: u32, at: u32, l: *Lists) Error!round.Boss {
+    // The boss's section (0x59C): the camera stops, the music fades ($E0), the boss's art loads
+    // (the art load of 0x1C378), then $20 ticks, the boss's music ($87); then the art of the
+    // section's slots and the boss's again, and the wave.
+    const fade = try immediate(rom, 0x5A4, &.{ 0x11, 0xFC, 0x00 }, 1);
+    const wait = try immediate(rom, 0x5CE, &.{ 0x31, 0xFC }, 2);
+    const music = try immediate(rom, 0x5E0, &.{ 0x11, 0xFC, 0x00 }, 1);
+    const boss_load = rom[round_bosses + 6 * r + 4];
+    var buf: [8]u16 = undefined;
+    const boss_blocks = try loadBlocks(rom, boss_load, &buf);
+    const music_after = 1 + streamTicks(boss_blocks) + wait - 1;
+    const boss_art = artKinds(rom, at);
+    var kinds = boss_art;
+    kinds[3] = boss_load;
+    const wave_after = 1 + try artTicks(rom, kinds);
+    // From the last section's clear: the boss's art a tick later, then the wait, then the art
+    // loads, their first look the tick after the music's.
+    var boss_loads: std.ArrayList(stream.Load) = .empty;
+    try boss_loads.append(arena, .{ .after = 1, .blocks = try loadStream(arena, rom, boss_load) });
+    try artLoads(arena, rom, kinds, @intCast(wait), &boss_loads);
+    return .{
+        .provenance = try std.fmt.allocPrint(arena, "the boss's section (0x59C): the fade's request at ROM 0x{X:0>5}, the boss's art (load {d}, 0x1C378) streamed, then the wait of ROM 0x{X:0>5}, the music's request at ROM 0x{X:0>5}; then the section's art and the boss's (0xD70) before its wave", .{ 0x5A7, boss_load, 0x5D0, 0x5E3 }),
+        .fade = try soundName(@intCast(fade)),
+        .music = try soundName(@intCast(music)),
+        .music_after = @intCast(music_after),
+        .wave_after = @intCast(wave_after),
+        .streamed = try stream.schedule(arena, boss_loads.items),
+        .again = if (try copiesBossArt(rom, r)) &.{} else try againStream(arena, rom, kinds),
+        .section_colours = try sectionColours(rom, at),
+        .colours = try palettes.bossColoursName(arena, rom, u32be(rom, round_bosses + 6 * r)) orelse return error.BadData,
+        // The section's art kinds, the boss's in the last slot (0x59C: its art load).
+        .art = kinds,
+        .wave = try wave(arena, rom, l),
+        .reserve = try reserve(arena, rom, l),
     };
 }
 

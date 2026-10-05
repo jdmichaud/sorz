@@ -20,6 +20,9 @@
 //! lift (the first's, a hidden piece of it: `callLift`), and its wave waits for the lift's stop
 //! (`wait` ticks, then its next jolt).
 //!
+//! A round without a boss ends with its `Exit`: once its last section is cleared, the timer stops
+//! and the players walk out by themselves (`exitWalk`).
+//!
 //! The original's level events do not run during the special attack, nor does its timer: the
 //! script and the timer wait while it lasts.
 const std = @import("std");
@@ -185,7 +188,9 @@ pub const Stage = enum {
     boss_music,
     /// The boss's art: its wave in `ticks`.
     boss_wave,
-    /// A beaten boss has ended the round.
+    /// The last section of a round without a boss is cleared: the players walk out.
+    exit,
+    /// A beaten boss has ended the round (or the players walked out).
     won,
     /// Its records come from elsewhere: an agent's situation brings them as the other program's
     /// trace has them; the timer and the lives still follow the round.
@@ -236,6 +241,9 @@ pub const State = struct {
     own_sound: struct { left: ?u8 = 0, ticks: u16 = 0 } = .{},
     /// The round's animation (`Round.animation`): the step it shows, the ticks to the next.
     animation: struct { step: u8 = 0, ticks: u8 = 0 } = .{},
+    /// The players' walk out (`Round.exit`): under way (still once the round is won), each
+    /// player past the exit's place across, each at its depths; the turns of a player there left.
+    exit: struct { on: bool = false, past: [2]bool = .{ false, false }, there: [2]bool = .{ false, false }, ticks: u16 = 0 } = .{},
 };
 
 /// The round's timer, part of the world.
@@ -398,7 +406,7 @@ pub fn run(t: *Tick) void {
     s.enemies = now;
     const r = p.round;
     switch (s.stage) {
-        .opening, .won, .stand_in => {},
+        .opening, .exit, .won, .stand_in => {},
         .lift => {
             // Its wait's last tick forgets the jolts before (the lift's start's); then the next
             // one (its stop's) brings the wave.
@@ -513,6 +521,52 @@ pub fn run(t: *Tick) void {
 /// A section calls the lift: the camera starts it at its next turn.
 pub fn callLift(w: anytype) void {
     w.camera.lift.called = true;
+}
+
+/// Whether the players walk out (`Round.exit`), the round won or not: nothing keeps them on the
+/// screen.
+pub fn exiting(w: anytype) bool {
+    return w.script.exit.on;
+}
+
+/// The command player `k` (its fighter `h`) takes in the players' walk out, instead of its own:
+/// none outside it, and none in the air (its own then). It lets go of what it holds. Left while
+/// it is at or past the exit's place across; once before it, up or down into the exit's depths;
+/// there, left, and each such turn counts down the round's end (`won` at none left, its own
+/// command at that turn; the last player there counts again from the exit's ticks).
+pub fn exitWalk(t: *Tick, k: u1, h: entity.Handle) ?world_mod.Command {
+    const p = t.plan orelse return null;
+    const ex = p.round.exit orelse return null;
+    const s = &t.world.script;
+    if (s.stage != .exit) return null;
+    const e = t.world.get(h) orelse return null;
+    if (e.holding != null) t.letGo(h);
+    if (!e.velocity.height.eql(.zero)) return null;
+    const own = t.world.players[k].command;
+    const way: world_mod.Actions = way: {
+        if (!s.exit.there[k]) {
+            if (!s.exit.past[k]) {
+                if (e.position.x.whole() >= ex.x) break :way .{ .left = true };
+                s.exit.past[k] = true;
+            }
+            const d = e.position.depth.whole();
+            if (d < ex.depth[0]) break :way .{ .down = true };
+            if (d >= ex.depth[1]) break :way .{ .up = true };
+            s.exit.there[k] = true;
+            s.exit.ticks = ex.ticks;
+        }
+        s.exit.ticks -|= 1;
+        if (s.exit.ticks == 0) {
+            won(t.world);
+            return null;
+        }
+        break :way .{ .left = true };
+    };
+    var held = way;
+    held.start = own.held.start;
+    var pressed = way;
+    pressed.start = own.pressed.start;
+    return .{ .held = held, .pressed = pressed, .last = pressed };
 }
 
 /// Whether the boss's section has begun (the boss's fight is on): the script reads the boss's
@@ -683,6 +737,13 @@ fn clearIfDone(t: *Tick, p: *const Plan) void {
     }
     const k = s.part + 1;
     if (k < r.sections.len) return beginSection(t, p, k);
+    if (r.exit != null) {
+        // The players walk out; the timer stops.
+        s.stage = .exit;
+        s.exit = .{ .on = true };
+        t.world.timer.stopped = true;
+        return;
+    }
     if (r.boss == null) return;
     // The boss's section opens as a section does: its colours; its art loads.
     holdColours(t, r.boss.?.section_colours);
