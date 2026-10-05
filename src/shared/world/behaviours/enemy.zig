@@ -256,9 +256,11 @@ pub const Common = struct {
     bounce_slowing: Fixed,
     fall_most: Fixed,
     /// Falling into a hole (the round's floor by cells): over one whose floor is this far down
-    /// or farther, it is drawn in front of the planes; fallen this far, it is out of the fight.
+    /// or farther, it is drawn in front of the planes; fallen this far, it is out of the fight,
+    /// and at or below the floor's top past `fall_out_below` too.
     hole_deep: ?i16 = null,
     fall_out: ?i16 = null,
+    fall_out_below: ?i16 = null,
     /// Knocked down, it lands on a floor only from less than this far below its top (a wall's
     /// top, round 7's railing): deeper, it flies on.
     land_within: ?i16 = null,
@@ -1205,7 +1207,8 @@ pub fn Of(comptime M: type) type {
 
         /// Knocked off a lift: at its first tick, a thrown body facing its striker, in the
         /// second pose of its knock-down, its speed across set away from the striker (its
-        /// fraction kept); it flies across, its height kept, a while, then falls on as a
+        /// fraction kept); it flies across, its height kept, while the cells and the round's
+        /// limits let it (`groundAhead`, `acrossAllowed`), a while, then falls on as a
         /// knock-down's flight, slower across, not slowing.
         fn knockedOff(a: A) void {
             const n = a.numbers();
@@ -1221,7 +1224,8 @@ pub fn Of(comptime M: type) type {
                 const v: Fixed = .parts(@intCast(n.knocked_off_x.whole()), a.entity.velocity.x.frac());
                 a.entity.velocity.x = if (a.entity.facingLeft()) v else v.neg();
             }
-            a.entity.position.x = a.entity.position.x.add(a.entity.velocity.x);
+            const x = a.entity.position.x.add(a.entity.velocity.x);
+            if (groundAhead(a, a.entity.position) and acrossAllowed(a, x)) a.entity.position.x = x;
             b.timer -%= 1;
             if (b.timer != 0) return;
             const v = a.entity.velocity.x;
@@ -1300,35 +1304,54 @@ pub fn Of(comptime M: type) type {
         /// floor (`EnemyWalk`), from `flight_low` down, it flies on over a cell deeper than
         /// `deep`, else while the cell `flight_ahead` ahead is neither the level's top nor deeper.
         fn fliesOn(a: A, at: fixed.Vec3) bool {
-            const way: i32 = if (a.entity.velocity.x.raw < 0) -1 else 1;
-            const across = struct {
-                fn by(p: fixed.Vec3, x: i32) fixed.Vec3 {
-                    return .{ .x = p.x.add(.pixels(x)), .depth = p.depth, .height = p.height };
-                }
-            }.by;
             if (roundWalk(a)) |ew| if (at.height.whole() >= ew.flight_low) {
                 if (cellHeight(a, at) > ew.deep) return true;
-                const h = cellHeight(a, across(at, way * ew.flight_ahead));
+                const h = cellHeight(a, acrossBy(at, wayAcross(a) * ew.flight_ahead));
                 return h != 0 and h < ew.deep;
             };
+            return groundAhead(a, at);
+        }
+
+        /// From `at`, whether the cell `fly_ahead` ahead of its way has a height (none: a wall).
+        fn groundAhead(a: A, at: fixed.Vec3) bool {
             const reach = a.numbers().fly_ahead orelse return true;
-            const c = a.tick.cellAt(across(at, way * reach)) orelse return true;
+            const c = a.tick.cellAt(acrossBy(at, wayAcross(a) * reach)) orelse return true;
             return c.height != 0;
         }
 
+        /// Its way across by its speed: -1 to the left, else 1.
+        fn wayAcross(a: A) i32 {
+            return if (a.entity.velocity.x.raw < 0) -1 else 1;
+        }
+
+        fn acrossBy(p: fixed.Vec3, x: i32) fixed.Vec3 {
+            return .{ .x = p.x.add(.pixels(x)), .depth = p.depth, .height = p.height };
+        }
+
         /// In the air after its move: down on the floor or below it, it lands, rising or not,
-        /// the fraction of its height kept; its gravity is applied before its move. Over a hole
-        /// it falls on: a deep one draws it in front of the planes, and fallen far enough it is
-        /// knocked out, crying out. Knocked down, it lands only from less than `land_within` below
-        /// the floor's top.
+        /// the fraction of its height kept; its gravity is applied before its move. Above it, or
+        /// over a hole, it falls on: a cell whose floor lies deep (or a hole's) draws it in front
+        /// of the planes, and fallen far enough it is knocked out, crying out (round 7's lift's
+        /// sides, whose floor lies below the screen); so is one at or below the floor's top past
+        /// `fall_out_below`. Knocked down, it lands only from less than `land_within` below the
+        /// floor's top.
         pub fn fall(a: A) void {
             const n = a.numbers();
             if (a.atGround()) {
+                const z = a.entity.position.height.whole();
+                if (n.fall_out_below) |out| if (z > out) return fellOut(a);
                 const floor = a.tick.floorUnder(a.entity.position).?.whole();
-                if (n.land_within) |within| if (a.mind.state == .knocked_down and a.entity.position.height.whole() - floor >= within) return;
+                if (n.land_within) |within| if (a.mind.state == .knocked_down and z - floor >= within) return;
                 return a.land(.fraction_kept);
             }
-            if (a.tick.floorUnder(a.entity.position) != null) return;
+            fallsOn(a);
+        }
+
+        /// Above the floor under it, or over a hole (a floor far below the screen, round 7's
+        /// lift's sides, or none), it falls on: drawn in front of the planes over a deep one,
+        /// out of the fight fallen far enough.
+        fn fallsOn(a: A) void {
+            const n = a.numbers();
             const p = a.tick.plan orelse return;
             const f = p.round.floor orelse return;
             if (n.hole_deep) |deep| if (f.at(a.entity.position.x.whole(), a.entity.position.depth.whole()).height >= deep) {
@@ -1336,10 +1359,12 @@ pub fn Of(comptime M: type) type {
             };
             const out = n.fall_out orelse return;
             if (a.entity.position.height.whole() < out) return;
-            switch (a.mind.state) {
-                .knocked_out => return,
-                else => {},
-            }
+            fellOut(a);
+        }
+
+        /// Fallen out of the fight: knocked out, crying out (once).
+        fn fellOut(a: A) void {
+            if (a.mind.state == .knocked_out) return;
             cry(a);
             a.entity.missile = null;
             enter(a, .knocked_out);

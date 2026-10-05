@@ -169,6 +169,8 @@ fn commonNumbers(d: *Def, kind: u8) Error!void {
     if (u16be(rom, 0x97AE) != 0x0C41 or u16be(rom, 0x97B0) != 4 or u16be(rom, 0x97B4) != 0x9046) return error.BadData;
     try d.number("land_within", try immediate(rom, 0x97B6, &.{ 0x0C, 0x40 }, 2), "ROM 0x097B6: cmpi.w #N,d0 (its knock-down's height below the floor's top, 0x979C; from it, it flies on)");
     try d.number("fall_out", try immediate(rom, 0x977A, &.{ 0x0C, 0x68 }, 2), "ROM 0x0977A: cmpi.w #N,(24,a0) (fallen this far, out of the fight, 0x9782)");
+    if (u16be(rom, 0x979C) != 0x3028 or u16be(rom, 0x97A4) != 0x6EDC) return error.BadData;
+    try d.number("fall_out_below", try immediate(rom, 0x97A0, &.{ 0x0C, 0x40 }, 2), "ROM 0x097A0: cmpi.w #N,d0 (at or below the floor's top, its height past this: out of the fight, 0x9782)");
     try d.number("floor_ahead_x", try moveq(rom, 0x9E90, 1), "ROM 0x09E90: moveq #N,d1 (the walk's look ahead for a floor, 0x9E68; none there: it walks off, 0x9EBE)");
     try d.number("floor_ahead_depth", try moveq(rom, 0x9E92, 2), "ROM 0x09E92: moveq #N,d2");
     try d.number("fly_ahead", try moveq(rom, 0x9F56, 1), "ROM 0x09F56: moveq #N,d1 (flying off a blow, it moves across while the cell this far ahead has a height)");
