@@ -18,6 +18,7 @@ const tick_mod = @import("tick.zig");
 const draw_list = @import("draw_list.zig");
 const behaviours = @import("behaviours.zig");
 const script = @import("script.zig");
+const content_round = @import("../content/round.zig");
 const lives = @import("lives.zig");
 const shadow_places = @import("shadows.zig");
 
@@ -717,17 +718,71 @@ fn camera(t: *Tick) void {
             return;
         },
     };
+    // The round's lift: its jolts, then its start, before the camera moves.
+    const lift = if (t.plan) |p| p.round.lift else null;
+    if (lift) |lf| liftSteps(t, &lf);
     if (c.follows) |rules| {
         if (c.run == null) c.x_min = c.x;
         c.x = c.x.add(.pixels(std.math.clamp(followSpeed(c, rules), -rules.most, rules.most)));
     }
     c.x = c.x.clamp(c.x_min, c.x_max);
+    // On the lift no limit holds the camera down (its jolts move it) and no fall shakes it;
+    // plane B rides.
+    if (lift) |lf| {
+        liftRide(c, &lf);
+        return keepPlayers(t);
+    }
     if (c.shake != 0) {
         c.shake -= 1;
         const by: i32 = if (c.follows) |rules| rules.shake_by else 0;
         c.y = c.y.add(.pixels(if (c.shake & 1 != 0) by else -by));
     } else if (c.follows == null or c.follows.?.wobble == null) c.y = c.y.clamp(c.y_min, c.y_max);
     keepPlayers(t);
+}
+
+/// The lift's jolts under way: every period one more, the camera down by its jolt (noted for the
+/// round's script); after the last its ride for the section begins (plane B rising to the
+/// section's height), unless it rode already. Then a section that called it starts it: the
+/// timer starts again, its jolts begin.
+fn liftSteps(t: *Tick, lf: *const content_round.Lift) void {
+    const c = &t.world.camera;
+    const l = &c.lift;
+    if (l.jolt) |n| {
+        l.ticks -|= 1;
+        if (l.ticks == 0) {
+            l.ticks = lf.period;
+            if (n < lf.jolts.len) {
+                l.jolt = n + 1;
+                l.jolted = true;
+                c.y = c.y.add(.pixels(lf.jolts[n]));
+            } else {
+                l.jolt = null;
+                if (!l.rode) {
+                    l.rode = true;
+                    l.rides = true;
+                    l.to = lf.heights[@min(t.world.script.part, lf.heights.len - 1)];
+                }
+            }
+        }
+    }
+    if (!l.called) return;
+    l.called = false;
+    l.jolt = 0;
+    l.ticks = lf.period;
+    l.rode = false;
+    script.restartTimer(t.world, t.plan.?);
+}
+
+/// Plane B's ride: up by the lift's speed to its height; there the lift stops, its jolts again.
+fn liftRide(c: *world_mod.Camera, lf: *const content_round.Lift) void {
+    const l = &c.lift;
+    if (!l.rides) return;
+    if (l.y == l.to) {
+        l.rides = false;
+        l.jolt = 0;
+        return;
+    }
+    l.y = @max(l.y - lf.speed, l.to);
 }
 
 /// The camera's rocking (`Rules.wobble`): its speed down grows by its acceleration, which turns

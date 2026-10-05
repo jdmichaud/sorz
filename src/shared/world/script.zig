@@ -16,6 +16,10 @@
 //! The section's enemies are the entities of the enemies' and bosses' families in the world (the
 //! script brings them all); one that leaves the world has gone.
 //!
+//! On a lift (round 7's, the round's `Lift`) the camera stays: a section's opening starts the
+//! lift (the first's, a hidden piece of it: `callLift`), and its wave waits for the lift's stop
+//! (`wait` ticks, then its next jolt).
+//!
 //! The original's level events do not run during the special attack, nor does its timer: the
 //! script and the timer wait while it lasts.
 const std = @import("std");
@@ -167,6 +171,8 @@ pub const Stage = enum {
     opening,
     /// It is open: its wave waits for the camera to reach the wall.
     wall,
+    /// It is open on a lift: its wave waits `ticks`, then for the lift's next jolt.
+    lift,
     /// Its wave comes in: the next record in `ticks`.
     wave,
     /// Its wave is in; `ticks` until the reserve's calls are heard.
@@ -276,6 +282,7 @@ pub fn start(w: anytype, plan: *const Plan) void {
     // The round's start ripples its water by as many ticks as its lines show.
     if (r.camera.water) |wt| c.ripple = @as(u32, wt.half) + wt.whole;
     if (c.follows.?.wobble) |wb| c.wobble = .fresh(wb);
+    c.lift = if (r.lift) |lf| .{ .y = lf.from, .to = lf.from } else .{};
     w.script = .{};
     ownSoundAgain(w, r);
     if (r.animation) |an| w.script.animation.ticks = an.every;
@@ -360,6 +367,13 @@ pub fn opening(t: *Tick) void {
     s.ticks -|= 1;
     if (s.ticks != 0) return;
     s.section = s.part;
+    // On a lift: the lift starts (the first section's, by its own piece), the wave waits for it.
+    if (p.round.lift) |lf| {
+        s.stage = .lift;
+        s.ticks = lf.wait;
+        if (s.part != 0) callLift(t.world);
+        return;
+    }
     s.stage = .wall;
     // The first section's wall and timer are the round's own.
     if (s.part == 0) return;
@@ -385,6 +399,19 @@ pub fn run(t: *Tick) void {
     const r = p.round;
     switch (s.stage) {
         .opening, .won, .stand_in => {},
+        .lift => {
+            // Its wait's last tick forgets the jolts before (the lift's start's); then the next
+            // one (its stop's) brings the wave.
+            const l = &t.world.camera.lift;
+            if (s.ticks != 0) {
+                s.ticks -= 1;
+                if (s.ticks == 0) l.jolted = false;
+            }
+            if (s.ticks != 0 or !l.jolted) return;
+            s.stage = .wave;
+            s.next = 0;
+            nextWave(t, p);
+        },
         .wall => {
             const c = &t.world.camera;
             if (c.x_max.sub(c.x_min).whole() >= r.camera.wall_within) return;
@@ -481,6 +508,11 @@ pub fn run(t: *Tick) void {
             nextWave(t, p);
         },
     }
+}
+
+/// A section calls the lift: the camera starts it at its next turn.
+pub fn callLift(w: anytype) void {
+    w.camera.lift.called = true;
 }
 
 /// Whether the boss's section has begun (the boss's fight is on): the script reads the boss's

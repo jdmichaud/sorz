@@ -99,6 +99,24 @@ pub const Camera = struct {
     /// Its rocking under way (`Rules.wobble`): the ticks to its next turn, its acceleration and
     /// its speed down.
     wobble: WobbleState = .{},
+    /// The round's lift (its `Lift`, round 7's), which the camera runs.
+    lift: Lift = .{},
+
+    /// The lift: plane B's place down (whole pixels) and the height its ride goes to; whether it
+    /// rides; its jolts under way (the last one's number, from 1; null: none) and the ticks to
+    /// the next; whether its ride for the section is done (its stop's jolts end with no other);
+    /// whether a jolt came since the round's script last cleared it (a section's wave waits for
+    /// one); whether a section called it (its opening, the first's opener).
+    pub const Lift = struct {
+        y: i32 = 0,
+        to: i32 = 0,
+        rides: bool = false,
+        jolt: ?u8 = null,
+        ticks: u8 = 0,
+        rode: bool = false,
+        jolted: bool = false,
+        called: bool = false,
+    };
 
     pub const WobbleState = struct {
         ticks: u8 = 0,

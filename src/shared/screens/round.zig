@@ -270,6 +270,8 @@ pub const Round = struct {
     shown_camera: [3]i32 = .{ 0, 0, 0 },
     /// The ticks the round's water had rippled then.
     shown_ripple: u32 = 0,
+    /// Plane B's place down on a lift (the camera's `Lift`), as shown.
+    shown_lift: i32 = 0,
     shown_banner: i16 = 0,
     shown_bar: Bar = .{},
     shown_game_over: bool = false,
@@ -457,6 +459,7 @@ pub const Round = struct {
         const shaken: i32 = if (cam.shake & 1 != 0) if (cam.follows) |rules| rules.shake_by else 0 else 0;
         self.shown_camera = .{ cam.x.whole(), cam.y.whole(), cam.y.whole() - shaken };
         self.shown_ripple = cam.ripple;
+        self.shown_lift = cam.lift.y;
         if (self.logic_ran) {
             self.bosses_before = self.bosses_last;
             self.bosses_last = self.bossesBar(a);
@@ -715,8 +718,9 @@ pub const Round = struct {
 
     /// The columns and rows of blocks the camera's move from `before` to `after` brings into the
     /// planes (the round's bands: each band's place across crossing a column of blocks, the
-    /// camera's down crossing a row), due at the next picture. A drifting plane is drawn once,
-    /// and a rocking camera brings no rows (the original's round sets both).
+    /// camera's down crossing a row; on a lift, plane B's own place down for plane B), due at the
+    /// next picture. A drifting plane is drawn once, and a rocking camera brings no rows (the
+    /// original's round sets both).
     fn noteStrips(self: *Round, r: *const content_round.Round, before: world.Camera, after: world.Camera) void {
         const block = 16;
         const pb = r.camera.plane_b;
@@ -732,11 +736,13 @@ pub const Round = struct {
             self.strips_due +|= 1;
             self.strip_blocks_due +|= b.rows;
         };
-        if (r.camera.wobble == null and @divFloor(before.y.whole(), block) != @divFloor(after.y.whole(), block)) {
-            for (r.camera.bands) |bands| if (bands.len != 0) {
-                self.strip_rows_due +|= 1;
-            };
-        }
+        const ys = [2][2]i32{
+            .{ before.y.whole(), after.y.whole() },
+            if (r.lift != null) .{ before.lift.y, after.lift.y } else .{ before.y.whole(), after.y.whole() },
+        };
+        if (r.camera.wobble == null) for (r.camera.bands, ys) |bands, y| {
+            if (bands.len != 0 and @divFloor(y[0], block) != @divFloor(y[1], block)) self.strip_rows_due +|= 1;
+        };
     }
 
     /// After the world's tick (`out` its output): each player's new frame's art, and its health
@@ -1319,7 +1325,7 @@ pub const Round = struct {
         v.screen.plane_a.x = c[0];
         v.screen.plane_a.y = c[1];
         v.screen.plane_b.x = @divFloor(c[0] * r.camera.plane_b[0], r.camera.plane_b[1]);
-        v.screen.plane_b.y = if (r.camera.plane_b_down) c[1] else r.camera.y;
+        v.screen.plane_b.y = if (r.lift != null) self.shown_lift else if (r.camera.plane_b_down) c[1] else r.camera.y;
         // A plane whose bands scroll at their own ratios scrolls by lines, each band's at its
         // place across.
         for ([_]view.Plane{ .a, .b }, r.camera.bands, [_]i32{ v.screen.plane_a.x, v.screen.plane_b.x }) |p, bands, x| {

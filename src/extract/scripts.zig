@@ -167,14 +167,19 @@ fn immediate(rom: []const u8, at: u32, opcode: []const u8, width: u8) Error!u32 
 /// offset; a negative word ends the list).
 fn bandsOf(arena: std.mem.Allocator, rom: []const u8, r: u32, p: u32) Error![]const round.Band {
     var a: u32 = rounds.layout_table + @as(u32, u16be(rom, rounds.layout_table + 4 * r + 2 * p)) + 6;
+    // The vertical layout (round 7's: its planes' limits' set the one of 0x19A16's `cmpi.w`) has
+    // one band, its chunks laid out by 0x19A70 after its header.
+    if (u16be(rom, 0x19A16) != 0x0C69 or u16be(rom, 0x19A1A) != 66 or u16be(rom, 0x19A1C) != 0x6752) return error.BadData;
+    const vertical = u16be(rom, rounds.header(rom, r) + 32 + 12 * p + 4) == u16be(rom, 0x19A18);
     var out: std.ArrayList(round.Band) = .empty;
     while (true) {
         const rows_less = s16be(rom, a);
         if (rows_less < 0) break;
         const times = u16be(rom, a + 2);
         const per = u16be(rom, a + 4);
-        if (rows_less > 63 or times == 0 or per == 0 or times > 255 or per > 255) return error.BadData;
+        if (rows_less > @as(i16, if (vertical) 95 else 63) or times == 0 or per == 0 or times > 255 or per > 255) return error.BadData;
         try out.append(arena, .{ .rows = @intCast(rows_less + 1), .times = @intCast(times), .per = @intCast(per) });
+        if (vertical) break;
         a += 8;
         while (s16be(rom, a) >= 0) a += 2;
         a += 4;
@@ -196,8 +201,8 @@ fn atPlaneX(arena: std.mem.Allocator, bands: []const round.Band) Error![]const r
 /// plane B's 0x1934A) each band's place across is the camera's X times its layout record's
 /// ratio (0x190EA: muls.w, then divs.w), in mode 1 the plane's (`atPlaneX`); in mode 2 plane A's
 /// is its mode 1 (the camera's table at 0x18C34 runs 0x18C70 for both), plane B's the water's
-/// (`waterOf`), the plane's too. The other modes (the lift's) are refused until their rounds come
-/// (PLAN item 15).
+/// (`waterOf`), the plane's too; in mode 3 (the lift's: plane A's 0x18C92, plane B's 0x1938E)
+/// the plane's, which stays across. The other modes are the special attack's.
 fn bandsInMode(arena: std.mem.Allocator, rom: []const u8, r: u32, p: u32, mode: u16) Error![]const round.Band {
     const bands = try bandsOf(arena, rom, r, p);
     return switch (mode) {
@@ -207,6 +212,7 @@ fn bandsInMode(arena: std.mem.Allocator, rom: []const u8, r: u32, p: u32, mode: 
             if (p == 0 and u16be(rom, 0x18C36) != u16be(rom, 0x18C38)) return error.BadData;
             return atPlaneX(arena, bands);
         },
+        3 => atPlaneX(arena, bands),
         else => error.BadData,
     };
 }
@@ -817,7 +823,9 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
 
     // The round header's plane A: its width, height, limits' set, X, Y, mode (0x19922).
     const h = rounds.header(rom, r) + 32;
-    const limits_set: u32 = u16be(rom, h + 4) * 8;
+    // Plane A takes the next set of limits in the round of 0x19936's `cmpi.w` (round 7's).
+    if (u16be(rom, 0x19936) != 0x0C78 or u16be(rom, 0x1993A) != 0xFF02 or u16be(rom, 0x19944) != 0x5040) return error.BadData;
+    const limits_set: u32 = u16be(rom, h + 4) * 8 + @as(u32, if (u16be(rom, 0x19938) == r) 8 else 0);
     const limits = camera_limits + limits_set;
     // The wall reached (0x6A6: cmpi.w #N,d0 on the limits' gap), the enemies left behind brought
     // to its edge (subi.w #N,d1 from the camera's X; moveq #N,d2, their depth), the edges a wave
@@ -864,6 +872,8 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         1 => .{ 1, if (r == 0) 1 else @as(u8, 1) << plane_b_shift },
         // The water's: half the camera's (asr.w #1 at 0x19232).
         2 => .{ 1, 2 },
+        // The lift's: its own place across, the camera's (which stays).
+        3 => .{ 1, 1 },
         else => return error.BadData,
     };
     const camera: round.Camera = .{
@@ -931,6 +941,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     const late_sections = try immediate(rom, 0x62E, &.{ 0x0C, 0x78 }, 2);
     const boss_from = try immediate(rom, if (r < late_sections) 0x67A else 0x63E, &.{ 0x0C, 0x78 }, 2);
     const section_count: u32 = @intCast(boss_from + 1);
+    const lift = try liftOf(arena, rom, r, mode_a, mode_b, u16be(rom, h + 12 + 8), section_count);
     const sections = try arena.alloc(round.Section, section_count);
     for (sections, 0..) |*s, k| {
         const lists_from = l.at;
@@ -940,7 +951,10 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
             page +%= page_step * 0x100;
         }
         if (k == 0) try ownPlaced(arena, rom, r, &placed);
-        const art_at = if (k == 0) first + 6 else entryAt(rom, part, @intCast(k));
+        // A later section's entry is the next of the section's number as its opening counts it
+        // (0x618: ($FF04) + 1): one less than the section's own, but in the lift's round, whose
+        // first ride counts too (0x18F3A), its first's opening not (0xDFC).
+        const art_at = if (k == 0) first + 6 else entryAt(rom, part, @intCast(if (lift != null) k + 1 else k));
         const kinds = artKinds(rom, art_at);
         const art = try artTicks(rom, kinds);
         // The first section's loads count from the round's start (its first queued with the
@@ -948,7 +962,8 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         // first look the tick after.
         var loads: std.ArrayList(stream.Load) = .empty;
         try artLoads(arena, rom, kinds, if (k == 0) 0 else 1, &loads);
-        const wall: i32 = if (k == 0) first_wall else u16be(rom, camera_stops + 2 * @as(u32, @intCast(k)));
+        // The lift's camera keeps its first limit (its mode never moves it).
+        const wall: i32 = if (k == 0 or lift != null) first_wall else u16be(rom, camera_stops + 2 * @as(u32, @intCast(k)));
         s.* = .{
             .provenance = try std.fmt.allocPrint(arena, "section {d}: its wall {s} 0x{X:0>5}; its entry at ROM 0x{X:0>5} (0x1C1C4), its art kinds {any} loaded in {d} ticks (0xD70, the load lists at 0x8672 streamed by 0x8510){s}; its lists from byte {d} of the spawn lists (Nemesis at ROM 0x{X:0>5}){s}", .{
                 k,
@@ -1017,8 +1032,12 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     const row_width: u32 = u16be(rom, h);
     const tables: u32 = floor_tables + @as(u32, u16be(rom, floor_tables + 2 * r));
     const heights: u32 = tables + @as(u32, u16be(rom, tables + 2));
-    var ground: ?u16 = null;
-    for (sections) |s| for (s.placed) |rec| {
+    // In the round of 0xC8E's `cmpi.w` (round 7's lift) the script puts its enemies at the height
+    // of 0xC96's `move.w #N,d6` without a probe, its placed pieces where their own code says.
+    if (u16be(rom, 0xC8E) != 0x0C78 or u16be(rom, 0xC92) != 0xFF02 or u16be(rom, 0xC9A) != 0x6006) return error.BadData;
+    const fixed_ground: ?u16 = if (u16be(rom, 0xC90) == r) @intCast(try immediate(rom, 0xC96, &.{ 0x3C, 0x3C }, 2)) else null;
+    var ground: ?u16 = fixed_ground;
+    if (fixed_ground == null) for (sections) |s| for (s.placed) |rec| {
         const at = @as(u32, @intCast(rec.depth >> 3)) * row_width + @as(u32, @intCast(rec.x >> 4));
         if (at >= floor.len) return error.BadData;
         const cell = if (rec.x & 0xF < 8) floor[at] >> 4 else floor[at] & 0xF;
@@ -1097,6 +1116,57 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .art_from = try artFrom(rom, r),
         .boss_art_full = @intCast(try immediate(rom, 0x9E8, &.{ 0x0C, 0x38, 0x00 }, 1)),
         .in_front = try inFront(arena, rom, r),
+        .lift = lift,
+    };
+}
+
+/// Round `r`'s lift, when its plane A's mode is the lift's (3: the camera's table at 0x18C34
+/// runs 0x18C92, which steps the lift, 0x18ECA, and starts it, 0x18F32), plane B's too (0x1933A's
+/// entry 3, 0x1938E): plane B's place down at the start its header's (`plane_b_y`), each
+/// section's height the next word of 0x18F20 (by the section's number, counted from 1 as the
+/// lift starts: `addq.w #1,($FF04)`), its first the start's; its speed up (0x193B0: `move.l
+/// #N,(22,a1)`, negated, whole pixels); its jolts the words of 0x18F2C from the second, up to the
+/// step of 0x18EE0's `cmpi.w` (the first, 0, unused); their period (0x18F44: `move.w #N,($FA12)`,
+/// the ticks to the first and the period, the same); the wave's wait (0x750: `move.w #N,($FB16)`)
+/// in the round whose sections go to it from their art (0xE0A's `cmpi.w`), then the next jolt
+/// (`$FA27`, 0x18EE8).
+fn liftOf(arena: std.mem.Allocator, rom: []const u8, r: u32, mode_a: u16, mode_b: u16, plane_b_y: u16, sections: u32) Error!?round.Lift {
+    if (mode_a != 3 and mode_b != 3) return null;
+    if (mode_a != 3 or mode_b != 3) return error.BadData;
+    const at = struct {
+        fn f(base: u32, offset: u16) u32 {
+            return base + offset;
+        }
+    }.f;
+    if (at(0x18C34, u16be(rom, 0x18C34 + 6)) != 0x18C92 or u16be(rom, 0x18C92) != 0x4EBA or u16be(rom, 0x18C96) != 0x4EBA) return error.BadData;
+    if (at(0x18C94, u16be(rom, 0x18C94)) != 0x18ECA or at(0x18C98, u16be(rom, 0x18C98)) != 0x18F32) return error.BadData;
+    if (at(0x1933A, u16be(rom, 0x1933A + 6)) != 0x1938E) return error.BadData;
+    // The round whose sections wait for the lift: 0xE0A's, which sets the state $10 (0x748).
+    if (u16be(rom, 0xE0A) != 0x0C78 or u16be(rom, 0xE0E) != 0xFF02 or u16be(rom, 0xE1A) != 0x31FC or u16be(rom, 0xE1C) != 0x10) return error.BadData;
+    if (u16be(rom, 0xE0C) != r) return error.BadData;
+    const heights_at = 0x18F20;
+    if (u16be(rom, 0x18F18) != 0x31FB or u16be(rom, 0x18F1C) != 0xE126) return error.BadData;
+    if (u16be(rom, heights_at) != plane_b_y) return error.BadData;
+    const heights = try arena.alloc(i32, sections);
+    for (heights, 0..) |*x, k| x.* = u16be(rom, heights_at + 2 * @as(u32, @intCast(k + 1)));
+    if (u16be(rom, 0x193B0) != 0x237C or u16be(rom, 0x193B6) != 22 or u16be(rom, 0x193B4) != 0) return error.BadData;
+    const speed = -s16be(rom, 0x193B2);
+    const steps = try immediate(rom, 0x18EE0, &.{ 0x0C, 0x78 }, 2);
+    if (u16be(rom, 0x18EE4) != 0xFB36 or u16be(rom, 0x18F2C) != 0 or steps < 2 or steps > 8) return error.BadData;
+    const jolts = try arena.alloc(i8, steps - 1);
+    for (jolts, 0..) |*j, k| j.* = @intCast(s16be(rom, 0x18F2C + 2 * @as(u32, @intCast(k + 1))));
+    if (u16be(rom, 0x18F44) != 0x31FC or u16be(rom, 0x18F48) != 0xFA12) return error.BadData;
+    const period = u16be(rom, 0x18F46);
+    if (period >> 8 != period & 0xFF or period & 0xFF == 0) return error.BadData;
+    if (u16be(rom, 0x750) != 0x31FC or u16be(rom, 0x754) != 0xFB16) return error.BadData;
+    return .{
+        .provenance = try std.fmt.allocPrint(arena, "the lift's camera (plane A's mode 3, 0x18C92; plane B's, 0x1938E): plane B from its header's place down, up to each section's height (ROM 0x{X:0>5}, a word a section from the second), by ROM 0x193B2's pixels a tick (negated); the jolts of the lift's start and stop (0x18ECA: ROM 0x18F2E, a word each, to the step of ROM 0x18EE2), a step every ROM 0x18F46's ticks (0x18F32); the wave's wait (0x748: ROM 0x00752's ticks), then the next jolt", .{heights_at}),
+        .from = plane_b_y,
+        .heights = heights,
+        .speed = speed,
+        .jolts = jolts,
+        .period = @intCast(period & 0xFF),
+        .wait = @intCast(u16be(rom, 0x752)),
     };
 }
 

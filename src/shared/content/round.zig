@@ -384,6 +384,25 @@ pub const Round = struct {
     walk_off: ?WalkOff = null,
     /// What it draws in front of its layers' cells that are in front of the sprites.
     in_front: InFront = .{},
+    /// Its lift (round 7's): the camera stays, plane B rides by.
+    lift: ?Lift = null,
+};
+
+/// A round on a lift (round 7's): the camera stays where it starts; plane B, the face the lift
+/// rides up, moves on its own. It is `from` pixels down at the round's start; each section's
+/// opening starts the lift, and plane B moves up `speed` pixels a tick to the section's entry of
+/// `heights` (the first section's first), where the lift stops. As it starts and as it stops the
+/// camera jolts: it moves down by each of `jolts` in turn, one every `period` ticks, the first a
+/// period after; the ride begins a period after the last. A section's wave waits `wait` ticks from
+/// its opening, then for the lift's next jolt (its stop's).
+pub const Lift = struct {
+    provenance: []const u8 = "",
+    from: i32,
+    heights: []const i32,
+    speed: i32,
+    jolts: []const i8,
+    period: u8,
+    wait: u8,
 };
 
 /// What a round draws in front of its layers' cells that are in front of the sprites: the
@@ -685,6 +704,20 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         if (wo.down_before) |x| try wf.append(arena, .{ .key = "down_before", .value = json.Value.num(x) });
         try fields.append(arena, .{ .key = "walk_off", .value = .{ .object = wf.items } });
     }
+    if (r.lift) |lf| {
+        const heights = try arena.alloc(json.Value, lf.heights.len);
+        for (heights, lf.heights) |*v, x| v.* = json.Value.num(x);
+        const jolts = try arena.alloc(json.Value, lf.jolts.len);
+        for (jolts, lf.jolts) |*v, x| v.* = json.Value.num(x);
+        try fields.append(arena, .{ .key = "lift", .value = try withProvenance(arena, lf.provenance, &.{
+            .{ .key = "from", .value = json.Value.num(lf.from) },
+            .{ .key = "heights", .value = .{ .array = heights } },
+            .{ .key = "speed", .value = json.Value.num(lf.speed) },
+            .{ .key = "jolts", .value = .{ .array = jolts } },
+            .{ .key = "period", .value = json.Value.num(lf.period) },
+            .{ .key = "wait", .value = json.Value.num(lf.wait) },
+        }) });
+    }
     if (r.in_front.script or r.in_front.players or r.in_front.things) try fields.append(arena, .{ .key = "in_front", .value = try withProvenance(arena, r.in_front.provenance, &.{
         .{ .key = "script", .value = .{ .bool = r.in_front.script } },
         .{ .key = "players", .value = .{ .bool = r.in_front.players } },
@@ -822,7 +855,7 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off", "in_front" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off", "in_front", "lift" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
@@ -988,6 +1021,28 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
             }
         }
         r.floor = .{ .provenance = try provenanceOf(fl), .cell = cell, .kinds = kinds, .rows = rows };
+    }
+    if (try root.opt("lift")) |lf| {
+        try lf.only(&.{ "provenance", "from", "heights", "speed", "jolts", "period", "wait" });
+        const hn = try lf.get("heights");
+        const heights = try arena.alloc(i32, try hn.len());
+        for (heights, 0..) |*x, i| x.* = try (try hn.at(i)).int(i32);
+        const jn = try lf.get("jolts");
+        const jolts = try arena.alloc(i8, try jn.len());
+        for (jolts, 0..) |*x, i| x.* = try (try jn.at(i)).int(i8);
+        r.lift = .{
+            .provenance = try provenanceOf(lf),
+            .from = try (try lf.get("from")).int(i32),
+            .heights = heights,
+            .speed = try (try lf.get("speed")).int(i32),
+            .jolts = jolts,
+            .period = try (try lf.get("period")).int(u8),
+            .wait = try (try lf.get("wait")).int(u8),
+        };
+        if (heights.len < r.sections.len) return hn.fail("not a height for each section");
+        if (r.lift.?.speed <= 0) return (try lf.get("speed")).fail("not 1 or more");
+        if (r.lift.?.period == 0) return (try lf.get("period")).fail("not 1 or more");
+        if (r.lift.?.wait == 0) return (try lf.get("wait")).fail("not 1 or more");
     }
     if (try root.opt("in_front")) |f| {
         try f.only(&.{ "provenance", "script", "players", "things" });
