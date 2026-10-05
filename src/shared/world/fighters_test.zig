@@ -81,6 +81,8 @@ const hero =
     \\   "air_slam_loops": 2, "air_slam_gravity": 14336, "air_slam_x": 229376, "air_slam_drop": 16,
     \\   "air_fall_x": 327680, "air_fall_reach": 24, "air_fall_ahead": -16, "slammed_first": 2,
     \\   "slammed_pace": 4, "slammed_fall_back": 131072, "slammed_fall_up": -262144,
+    \\   "slammed_enemy_back": 16, "tossed_first": 5, "tossed_pace": 3, "tossed_step": 30,
+    \\   "tossed_drop": 8, "tossed_falls": 1,
     \\   "countered_drop": 16, "vault_off_step": 16, "wall_above": 8},
     \\ "tables": {"slammed_back": [0, 0, 16, 32], "slammed_down": [-8, -40, 16, 32]},
     \\ "partners": {"held": {"by": {"hero": [[-50, 0]]}, "depth": true, "moves_partner": true},

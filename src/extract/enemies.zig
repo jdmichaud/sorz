@@ -925,7 +925,10 @@ fn bossBody(d: *Def, kind: u8) Error!void {
     try d.number("blast_ticks", try moveByte(rom, 0x16AA4, 0x62), "ROM 0x16AA4: move.b #N,(98,a0)");
     try d.number("blast_bounces", try moveByte(rom, 0x16A9E, 0x63), "ROM 0x16A9E: move.b #N,(99,a0)");
     try d.sound("hurt", @bitCast(@as(i8, @intCast(try moveq(rom, 0x17C4A, 7)))));
-    try d.sound("cry", @bitCast(@as(i8, @intCast(try moveq(rom, 0x166D4, 7)))));
+    // The beaten cry (0x166D4), but the type of 0x166D6's compare's own (0x166DC).
+    if (u16be(rom, 0x166D6) != 0x0C10 or rom[0x166D8] != 0 or u16be(rom, 0x166DA) != 0x6602) return error.BadData;
+    const own_cry = kind == rom[0x166D9];
+    try d.sound("cry", @bitCast(@as(i8, @intCast(try moveq(rom, if (own_cry) 0x166DC else 0x166D4, 7)))));
     try d.sound("thud", @bitCast(@as(i8, @intCast(try moveq(rom, 0x16412, 7)))));
     if (try moveq(rom, 0x17C08, 7) != try moveq(rom, 0x17C4A, 7) or try moveq(rom, 0x166B6, 7) != try moveq(rom, 0x16412, 7)) return error.BadData;
     try d.number("depth_most", (try immediate(rom, 0x17ACE, &.{ 0x0C, 0x80 }, 4)) >> 16, "ROM 0x17ACE: cmpi.l #N,d0 (whole pixels: the depth a boss moves to at most, 0x17AB8)");
@@ -1426,6 +1429,137 @@ pub fn bossR4(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition
     };
 }
 
+/// Round 5's bosses, the twins (type $58, handler 0x158C4, sor-remaster's obj/boss_58.zig): they
+/// wait for their art to be copied from the players' (0x158EE); then one (the first of twins)
+/// stands, walks, leaps back from a near target and pounces on one a little off its depth, a
+/// flying kick; the other (the second, holding) walks slower, catches a player its reach meets,
+/// then tosses it from the front or slams it from behind, somersaults at a target facing it,
+/// leaps back from one it may not set on. A twin left alone turns from one to the other. Their
+/// boxes are the players' (0xAB24: `HitBoxes58`), their art the players'.
+pub fn bossR5(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const kind: u8 = 0x58;
+    const set = u32be(rom, boss_sets + 4 * @as(u32, kind - 0x55));
+    // His boxes: the players' table (0xAB2A: cmpi.b #$58,(0,a0), then lea HitBoxes58).
+    if (u16be(rom, 0xAB2A) != 0x0C28 or rom[0xAB2D] != kind) return error.BadData;
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "twins", .set = set, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
+    const anims = [_]struct { name: []const u8, word: i32 }{
+        .{ .name = "stand", .word = try moveq(rom, 0x15888, 0) },
+        .{ .name = "walk", .word = try moveq(rom, 0x15AA6, 0) },
+        .{ .name = "knocked", .word = try animWord(rom, 0x17CC2) },
+        .{ .name = "held", .word = try animWord(rom, 0x17D66) },
+        .{ .name = "held_behind", .word = try animWord(rom, 0x17D90) },
+        .{ .name = "flight", .word = try animWord(rom, 0x17CC2) + try immediate(rom, 0x163F8, &.{ 0x06, 0x68 }, 2) },
+        .{ .name = "bounce", .word = try animWord(rom, 0x17CC2) + try immediate(rom, 0x163F8, &.{ 0x06, 0x68 }, 2) + try quick(rom, 0x1640E, 0x5068) },
+        .{ .name = "down", .word = try immediate(rom, 0x16490, &.{ 0x30, 0x3C }, 2) },
+        .{ .name = "lifted", .word = try animWord(rom, 0x1662A) },
+        .{ .name = "flinch", .word = try moveq(rom, 0x16BB4, 0) },
+        .{ .name = "jump", .word = try moveq(rom, 0x15DB4, 0) },
+        .{ .name = "crouch", .word = try moveq(rom, 0x15A50, 0) },
+        .{ .name = "kick", .word = try moveq(rom, 0x15DD0, 0) },
+        .{ .name = "catch_front", .word = try moveq(rom, 0x15BA6, 0) },
+        .{ .name = "catch_behind", .word = try moveq(rom, 0x15B9A, 0) },
+        .{ .name = "toss", .word = try moveq(rom, 0x15E58, 0) },
+        .{ .name = "slam", .word = try moveq(rom, 0x15E50, 0) },
+        .{ .name = "leap", .word = try moveq(rom, 0x15A76, 0) },
+        .{ .name = "somersault", .word = try moveq(rom, 0x15CDA, 0) },
+    };
+    if (try moveq(rom, 0x15C5A, 0) != try moveq(rom, 0x15AA6, 0) or try moveq(rom, 0x15DFE, 0) != try moveq(rom, 0x15A50, 0) or try moveq(rom, 0x15C12, 0) != try moveq(rom, 0x15A76, 0)) return error.BadData;
+    for (anims) |an| try d.animations.append(arena, .{ .name = an.name, .loop = true, .frames = try enemyFrames(&d, an.name, try wordEntry(an.word)) });
+    // His power is his blows' only in state 2 (0x15D12: (74,a0) to (52,a0); cleared at each
+    // tick, 0x158C4): the frames there with a box that strikes (the kick's, the walk's on the
+    // pounce's first tick, the stand's at its end). A blow that lands knocks down (0x15D44).
+    if (u32be(rom, 0x158C4) != 0x42280034 or u32be(rom, 0x15D12) != 0x1168004A or u16be(rom, 0x15D16) != 52) return error.BadData;
+    if (u32be(rom, 0x15D44) != 0x137C0001 or u16be(rom, 0x15D48) != 125) return error.BadData;
+    blows(&d, "stand");
+    blows(&d, "walk");
+    blows(&d, "kick");
+    const power = bossByte(rom, boss_power, kind);
+    try d.moves.append(arena, .{ .name = "pounce", .provenance = "the pounce (state 2, 0x15D0C): a blow that lands knocks the player down (0x15D44: move.b #1,(125,a1)), its damage his power (0x15D12)", .animation = d.animationIndex("kick").?, .damage = power, .reaction = .knock_down });
+    try bossBody(&d, kind);
+    // His art copied from the players' (0x17FC2, a step each tick after the objects', asked at
+    // 0x1590E): its steps (cmpi.w #N,d0 by steps of addi.w #N,($FB54)), then the tick that ends
+    // it; he comes out at the next.
+    if (u16be(rom, 0x17FCE) != 0x0C40 or u16be(rom, 0x17FE6) != 0x0678 or u16be(rom, 0x17FEA) != 0xFB54 or u32be(rom, 0x1590E) != 0x11FC0001 or u16be(rom, 0x15912) != 0xFA5A) return error.BadData;
+    const copy_steps = @divExact(u16be(rom, 0x17FD0), u16be(rom, 0x17FE8));
+    try d.number("copy_ticks", copy_steps + 1, "ROM 0x17FD0 over ROM 0x17FE8: the copy's steps (0x17FC2), a tick each from the one asking, then the tick that ends it");
+    // His target (0x15946) and his measures; state 1 (0x159C2): the pounce's band in depth, its
+    // reach across; the leap back's; standing; walking (0x1792C, 0x17924: whole pixels toward his
+    // target; 0x17954: in depth toward or away by the band; 0x1797E: toward it, by the depth).
+    try d.number("pounce_far", try comparedWord(rom, 0x15A1C), "ROM 0x15A1C: cmpi.w #N,(82,a0) (in depth, nearer than this)");
+    try d.number("pounce_near", try comparedWord(rom, 0x15A24), "ROM 0x15A24: cmpi.w #N,(82,a0) (and not nearer than this)");
+    try d.number("pounce_reach", try comparedWord(rom, 0x15A2C), "ROM 0x15A2C: cmpi.w #N,(80,a0) (across, nearer than this)");
+    try d.number("pounce_from_walk", try moveByte(rom, 0x15A44, 120), "ROM 0x15A44: move.b #N,(120,a0) (his count, from a walk)");
+    try d.number("leap_near", try comparedWord(rom, 0x15A64), "ROM 0x15A64: cmpi.w #N,(80,a0) (across, nearer: he leaps back)");
+    try d.number("stand_ticks", try immediate(rom, 0x15A88, &.{ 0x0C, 0x28, 0x00 }, 1), "ROM 0x15A88: cmpi.b #N,(120,a0)");
+    try d.number("walk_speed", (try moveq(rom, 0x1792C, 0)) << 16, "ROM 0x1792C: moveq #N,d0; swap d0");
+    try d.number("hold_walk_speed", (try moveq(rom, 0x17924, 0)) << 16, "ROM 0x17924: moveq #N,d0; swap d0");
+    try d.number("somersault_x", (try moveq(rom, 0x17928, 0)) << 16, "ROM 0x17928: moveq #N,d0; swap d0");
+    try d.number("leap_x", (try moveq(rom, 0x17942, 0)) << 16, "ROM 0x17942: moveq #N,d0; swap d0 (away)");
+    try d.number("hover_speed", try moveLong(rom, 0x17954, 0), "ROM 0x17954: move.l #N,d0");
+    try d.number("hover_band", try comparedWord(rom, 0x1795A), "ROM 0x1795A: cmpi.w #N,(82,a0) (farther in depth: toward, else away)");
+    try d.number("level_far", try comparedWord(rom, 0x17984), "ROM 0x17984: cmpi.w #N,d1 (from it, moveq #N,d0 at 0x17982)");
+    try d.number("level_mid", try comparedWord(rom, 0x1798C), "ROM 0x1798C: cmpi.w #N,d1 (0x1798A)");
+    try d.number("level_near", try comparedWord(rom, 0x17994), "ROM 0x17994: cmpi.w #N,d1 (0x17992)");
+    try d.number("level_far_speed", (try moveq(rom, 0x17982, 0)) << 16, "ROM 0x17982: moveq #N,d0; swap d0");
+    try d.number("level_mid_speed", (try moveq(rom, 0x1798A, 0)) << 16, "ROM 0x1798A: moveq #N,d0");
+    try d.number("level_near_speed", (try moveq(rom, 0x17992, 0)) << 16, "ROM 0x17992: moveq #N,d0");
+    // The leap back (move 2, 0x15ABA; the holding twin's move 3), its fall (0x15AF4).
+    try d.number("leap_at", try immediate(rom, 0x15AC2, &.{ 0x0C, 0x01, 0x00 }, 1), "ROM 0x15AC2: cmpi.b #N,d1 (his count: the leap starts)");
+    try d.number("leap_depth", try movedLong(rom, 0x15ACA), "ROM 0x15ACA: move.l #N,(32,a0) (toward his target's depth)");
+    try d.number("leap_up", try movedLong(rom, 0x15ADC), "ROM 0x15ADC: move.l #N,(36,a0)");
+    try d.number("fall_gravity", try immediate(rom, 0x15AFE, &.{ 0x06, 0xA8 }, 4), "ROM 0x15AFE: addi.l #N,(36,a0); 0x15DE0");
+    if (try immediate(rom, 0x15DE0, &.{ 0x06, 0xA8 }, 4) != try immediate(rom, 0x15AFE, &.{ 0x06, 0xA8 }, 4)) return error.BadData;
+    // The holding twin (0x15B2A): the catch's places, the airborne catch's count; the leap off a
+    // target he may not set on (0x15BE8: near, on the screen); the somersault (0x15C72).
+    try d.number("catch_front", try immediate(rom, 0x15BA8, &.{ 0x34, 0x3C }, 2), "ROM 0x15BA8: move.w #N,d2 (across from him, in front)");
+    try d.number("catch_behind", try immediate(rom, 0x15B9C, &.{ 0x34, 0x3C }, 2), "ROM 0x15B9C: move.w #N,d2 (from behind)");
+    try d.number("catch_airborne", try moveByte(rom, 0x15B5A, 120), "ROM 0x15B5A: move.b #N,(120,a0) (his count, caught in the air)");
+    try d.number("leap_off_near", try comparedWord(rom, 0x15BF0), "ROM 0x15BF0: cmpi.w #N,(80,a0)");
+    try d.number("leap_off_from", try immediate(rom, 0x15BFC, &.{ 0x0C, 0x40 }, 2) - 0x80, "ROM 0x15BFC: cmpi.w #N+$80,d0 (drawn across, past it)");
+    try d.number("leap_off_to", try immediate(rom, 0x15C02, &.{ 0x0C, 0x40 }, 2) - 0x80, "ROM 0x15C02: cmpi.w #N+$80,d0 (before it)");
+    try d.number("somersault_near", try comparedWord(rom, 0x15C72), "ROM 0x15C72: cmpi.w #N,(80,a0)");
+    try d.number("somersault_far", try comparedWord(rom, 0x15C84), "ROM 0x15C84: cmpi.w #N,(80,a0)");
+    try d.number("somersault_up", try movedLong(rom, 0x15CC2), "ROM 0x15CC2: move.l #N,(36,a0)");
+    try d.number("hop_ticks", try immediate(rom, 0x15CE0, &.{ 0x0C, 0x28, 0x00 }, 1), "ROM 0x15CE0: cmpi.b #N,(13,a0) (a frame's first tick)");
+    try d.number("hop_up_frame", try frameCompared(rom, 0x15CE8), "ROM 0x15CE8: cmpi.b #N,(10,a0)");
+    try d.number("hop_down_frame", try frameCompared(rom, 0x15CF8), "ROM 0x15CF8: cmpi.b #N,(10,a0)");
+    try d.number("hop", try immediate(rom, 0x15CF0, &.{ 0x04, 0x68 }, 2), "ROM 0x15CF0: subi.w #N,(24,a0); addi.w at 0x15D00");
+    if (try immediate(rom, 0x15D00, &.{ 0x06, 0x68 }, 2) != try immediate(rom, 0x15CF0, &.{ 0x04, 0x68 }, 2)) return error.BadData;
+    // The pounce (state 2, 0x15D0C): its count's steps (0x15D52...), its jump.
+    try d.number("pounce_stand_at", try immediate(rom, 0x15D52, &.{ 0x0C, 0x01, 0x00 }, 1), "ROM 0x15D52: cmpi.b #N,d1");
+    try d.number("pounce_end_at", try immediate(rom, 0x15D5C, &.{ 0x0C, 0x01, 0x00 }, 1), "ROM 0x15D5C: cmpi.b #N,d1");
+    try d.number("pounce_at", try immediate(rom, 0x15D7C, &.{ 0x0C, 0x01, 0x00 }, 1), "ROM 0x15D7C: cmpi.b #N,d1 (the jump)");
+    try d.number("shout_at", try immediate(rom, 0x15DBC, &.{ 0x0C, 0x01, 0x00 }, 1), "ROM 0x15DBC: cmpi.b #N,d1");
+    try d.number("kick_at", try immediate(rom, 0x15DCA, &.{ 0x0C, 0x01, 0x00 }, 1), "ROM 0x15DCA: cmpi.b #N,d1");
+    if (u16be(rom, 0x15D96) != 0xE880) return error.BadData;
+    try d.number("pounce_up", try moveWord(rom, 0x15D9C, 36), "ROM 0x15D9C: move.w #N,(36,a0) (whole pixels, the fraction kept; in depth a sixteenth of the gap, 0x15D96: asr.l #4)");
+    try d.number("pounce_x", try movedLong(rom, 0x15DA2), "ROM 0x15DA2: move.l #N,(28,a0)");
+    // The hold (0x15E06): its count's throw, the toss's and the slam's ends.
+    try d.number("throw_at", try immediate(rom, 0x15E40, &.{ 0x0C, 0x06, 0x00 }, 1), "ROM 0x15E40: cmpi.b #N,d6");
+    try d.number("toss_end", try immediate(rom, 0x15E16, &.{ 0x0C, 0x06, 0x00 }, 1), "ROM 0x15E16: cmpi.b #N,d6");
+    try d.number("slam_end", try immediate(rom, 0x15E24, &.{ 0x0C, 0x06, 0x00 }, 1), "ROM 0x15E24: cmpi.b #N,d6");
+    if (try moveq(rom, 0x15CD2, 7) != try moveq(rom, 0x15AE8, 7) or try moveq(rom, 0x15D86, 7) != try moveq(rom, 0x15AE8, 7) or try moveq(rom, 0x15DF2, 7) != try moveq(rom, 0x15B0A, 7) or try moveq(rom, 0x15E66, 7) != try moveq(rom, 0x15DC2, 7)) return error.BadData;
+    try d.sound("jump", @bitCast(@as(i8, @intCast(try moveq(rom, 0x15AE8, 7)))));
+    try d.sound("land", @bitCast(@as(i8, @intCast(try moveq(rom, 0x15B0A, 7)))));
+    try d.sound("shout", @bitCast(@as(i8, @intCast(try moveq(rom, 0x15DC2, 7)))));
+    return .{
+        .name = "boss_r5",
+        .provenance = try std.fmt.allocPrint(arena, "boss type $58, round 5's twins (handler 0x158C4): the animation set at ROM 0x{X:0>5} (0x158B4), the players' boxes (0x1ABA8, 0x1AB8E); health ROM 0x{X:0>5} (0x17EDC); his palette line his art's (move.w #N,d1 at ROM 0x1593C){s}", .{ set, boss_health + @as(u32, kind - 0x55), d.number_notes.items }),
+        .family = .boss,
+        .team = .enemy,
+        .behaviour = "boss_r5",
+        .palette = try lineOfArt(rom, 0x1593C),
+        .health = bossByte(rom, boss_health, kind),
+        .shadow = true,
+        .numbers = d.numbers.items,
+        .tables = d.tables.items,
+        .sounds = d.sounds.items,
+        .boxes = d.boxes.items,
+        .animations = d.animations.items,
+        .moves = d.moves.items,
+    };
+}
+
 /// Round 4's boss's shoulder (type $97, handler 0x17858, made at 0x1781E): his rush's blow, at
 /// his shoulder (0x178D0): its first look until the last tick of its frame 2, then its second;
 /// gone once he leaves his charge (in its second look). A blow that lands knocks down, its damage
@@ -1683,4 +1817,5 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity
     try out.append(arena, try bossR2Trail(arena, rom));
     try out.append(arena, try bossR4(arena, rom));
     try out.append(arena, try bossR4Shoulder(arena, rom));
+    try out.append(arena, try bossR5(arena, rom));
 }

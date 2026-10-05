@@ -520,6 +520,30 @@ fn playerPartners(d: *Def, character: u8) Error!void {
     try d.number_notes.print(d.arena, "; the places in a hold between the two players: ROM 0x{X:0>5} (0x479C)", .{table});
 }
 
+/// The places of a player tossed over by round 5's twins (type $58: 0x4A5A takes the table of
+/// 0x4B22 by a boss's type from $55; the twins' alone has the toss's, $8C), as a hold between the
+/// players gives them (`partners`, `thrown` by `boss_r5`): its frames' places from the twin.
+fn tossedPlaces(d: *Def, character: u8) Error!void {
+    const rom = d.rom;
+    if (u16be(rom, 0x4A90) != 0x0C01 or rom[0x4A93] != 0x55 or u16be(rom, 0x4AA4) != 0x247B) return error.BadData;
+    const table = u32be(rom, 0x4B22 + 4 * (0x58 - 0x55));
+    const w = u16be(rom, table + (0x8C - 0x70) / 2);
+    if (w & 0x8000 == 0) return error.BadData;
+    const list = table + (w & 0x7FFF);
+    const at = list + rom[list + character];
+    const frames = d.animations.items[d.animationIndex("thrown").?].frames.len;
+    const places = try d.arena.alloc(entity.Place, frames);
+    for (places, 0..) |*p, k| p.* = .{ .x = s8(rom, at + 2 * @as(u32, @intCast(k))), .height = s8(rom, at + 2 * @as(u32, @intCast(k)) + 1) };
+    for (d.partners.items) |*p| if (std.mem.eql(u8, p.name, "thrown")) {
+        const by = try d.arena.alloc(entity.PartnerPlaces, p.by.len + 1);
+        @memcpy(by[0..p.by.len], p.by);
+        by[p.by.len] = .{ .partner = "boss_r5", .places = places };
+        p.by = by;
+        return;
+    };
+    return error.BadData;
+}
+
 /// The spark a player's blow makes when it landed in frame `j` of the animation pair whose
 /// right-facing entry is `entry` (0x4650, at the player's turn after the landing): from the
 /// player's place, across (the other way facing left) and in height, by the pair and the
@@ -873,6 +897,18 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     try d.number("thrown_ahead", try moveq(rom, 0x286E, 0), "ROM 0x0286E: moveq #N,d0");
     try d.number("thrown_up", (try immediate(rom, 0x2882, &.{ 0x31, 0x7C }, 2)) << 16, "ROM 0x02882: move.w #N,(36,a0)");
     try d.number("thrown_x", try immediate(rom, 0x2888, &.{ 0x20, 0x3C }, 4), "ROM 0x02888: move.l #N,d0");
+    // Tossed over by an enemy holding it from the front (its reaction 9, 0x253A; state $88,
+    // 0x28A2): its first frame's ticks, the step ahead and down, the next frames' ticks, the frame
+    // it falls at, its fall (0x28EA) the throw's (0x286E).
+    // The same code but its jsr's displacement (0x28FA: jsr (0x34CA,pc), as 0x287E's).
+    if (!std.mem.eql(u8, rom[0x28EA..][0..0x12], rom[0x286E..][0..0x12]) or !std.mem.eql(u8, rom[0x28FE..][0..0x20], rom[0x2882..][0..0x20])) return error.BadData;
+    if (u16be(rom, 0x28FA) != 0x4EBA or u16be(rom, 0x287E) != 0x4EBA or 0x28FC + u16be(rom, 0x28FC) != 0x287E + 2 + u16be(rom, 0x2880)) return error.BadData;
+    if (u16be(rom, 0x2540) != 0x303C or u16be(rom, 0x2542) != 0x88 or u16be(rom, 0x28CC) != 24) return error.BadData;
+    try d.number("tossed_first", try moveByte(rom, 0x253A, 0x4E), "ROM 0x0253A: move.b #N,(78,a0)");
+    try d.number("tossed_pace", try moveByte(rom, 0x28E2, 0x4E), "ROM 0x028E2: move.b #N,(78,a0)");
+    try d.number("tossed_step", try moveq(rom, 0x28BA, 0), "ROM 0x028BA: moveq #N,d0 (ahead, the way it faces)");
+    try d.number("tossed_drop", try quick(rom, 0x28CA, 0x5068), "ROM 0x028CA: addq.w #N,(24,a0)");
+    try d.number("tossed_falls", try frameCompared(rom, 0x28D0), "ROM 0x028D0: cmpi.b #N,(10,a0)");
     // Holds between the two players (0x2260 to 0x2A9E): a knee taken pauses the one held
     // (0x255E), the last knocks it down at the holder's frame its character gives (0x256C);
     // lifted, its frames go every few ticks to the last, then up and over (0x2A22); the
@@ -902,6 +938,10 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     try d.number("air_fall_reach", try moveq(rom, 0x3D4C, 3), "ROM 0x03D4C: moveq #N,d3 (the ground looked for this far below the feet, 0x3D48)");
     try d.number("air_fall_ahead", if (rom[0x3EC7] == character) try moveq(rom, 0x3ECC, 0) else try moveq(rom, 0x3EC2, 0), "ROM 0x03EC2: moveq #N,d0, or 0x03ECC's for the character 0x03EC4 tests (the landing's step ahead)");
     try d.number("slammed_first", try moveByte(rom, 0x25E2, 0x41), "ROM 0x025E2: move.b #N,(65,a0)");
+    // Slammed by an enemy (its holder not a player, 0x2952: cmpi.b #1,(0,a1)), the first step
+    // goes back too.
+    if (u16be(rom, 0x2952) != 0x0C29 or u16be(rom, 0x2954) != 1 or u16be(rom, 0x2956) != 0) return error.BadData;
+    try d.number("slammed_enemy_back", try moveq(rom, 0x295A, 0), "ROM 0x0295A: moveq #N,d0 (back from the way it faces)");
     try d.number("slammed_pace", try moveByte(rom, 0x292E, 0x41), "ROM 0x0292E: move.b #N,(65,a0)");
     if (try immediate(rom, 0x2994, &.{0x70}, 1) != 16 or try immediate(rom, 0x29AC, &.{0x70}, 1) != 32 or try moveByte(rom, 0x29C2, 10) != 1) return error.BadData;
     try d.table("slammed_back", &.{ 0, 0, try immediate(rom, 0x2994, &.{0x70}, 1), try immediate(rom, 0x29AC, &.{0x70}, 1) }, "ROM 0x02994, 0x029AC: moveq #N,d0 (steps 3 and 4 back, the one at 0x029C2 to frame 1)");
@@ -918,6 +958,7 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     try d.number("wall_above", wall_above, "ROM 0x03C94: moveq #-N,d3 (the walls ahead, 0x3C92), the same at 0x03B60 (in depth)");
     try d.number("wall_ahead", try moveq(rom, 0x3C96, 1), "ROM 0x03C96: moveq #N,d1 (the walls this far ahead, 0x3C92; negated when it goes left)");
     try playerPartners(&d, character);
+    try tossedPlaces(&d, character);
 
     // Held from behind by a stalker, it is kept this far ahead of it (0xDB18's table at 0xDBC8,
     // by character).

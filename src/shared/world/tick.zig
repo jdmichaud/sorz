@@ -476,6 +476,19 @@ pub const Tick = struct {
 
     /// `holder` throws the one it holds, a throw of `damage` (`thrownBy`: the one thrown lets go
     /// when its throw ends).
+    /// The enemy `holder`, holding `held`, asks it what its hold does (the original's reaction
+    /// it writes into the one held, `ask`): held from the front (2), from behind (3), slammed down
+    /// (4), tossed over (9); a throw's landing costs it `damage`. The one held answers at its next
+    /// tick (`askedBy`).
+    pub fn askHeld(t: *Tick, held: Handle, holder: Handle, ask: u8, damage: i16) void {
+        dispatch(t, held, "askedBy", void, {}, .{ holder, ask, damage });
+    }
+
+    /// Whether the one `holder` holds may get out of its hold by itself (by default, yes).
+    pub fn holdEscapable(t: *Tick, holder: Handle) bool {
+        return dispatch(t, holder, "holdEscapable", bool, true, .{});
+    }
+
     pub fn throwHeld(t: *Tick, holder: Handle, damage: i16) void {
         const h = t.world.get(holder) orelse return;
         const held = h.holding orelse return;

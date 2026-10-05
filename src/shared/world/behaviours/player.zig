@@ -114,6 +114,7 @@ pub const State = enum {
     held_behind,
     escape,
     thrown,
+    tossed,
     slam_pause,
     lift,
     air_slam,
@@ -167,6 +168,8 @@ pub const Mind = struct {
     thrower: ?Handle = null,
     may_recover: bool = false,
     recovers: bool = false,
+    /// Tossed: it took its step ahead and down.
+    tossed_on: bool = false,
     /// Whether its life has started (its first tick: it then blinks).
     started: bool = false,
     /// The ticks it still blinks: nothing strikes it.
@@ -234,7 +237,7 @@ pub const Way = enum(u3) { across, up_across, up, down_across, down };
 /// What a player holding the other asks of it: the hold turned to the front or to behind (a
 /// jump over it), slammed down from behind, kneed (the last knee's knocks it down at its blow's
 /// frame), lifted over by a throw. Letting go needs no asking: the hold ends.
-pub const Request = enum { none, to_front, to_behind, slam, knee, last_knee, lift };
+pub const Request = enum { none, to_front, to_behind, slam, knee, last_knee, lift, toss };
 
 /// The animation, frame and facing shown.
 pub const Shown = struct {
@@ -396,6 +399,15 @@ pub const Numbers = struct {
     thrown_ahead: i16,
     thrown_up: Fixed,
     thrown_x: Fixed,
+    /// Tossed over by an enemy holding it from the front (round 5's twins): its first frame's
+    /// ticks, then a step ahead and down, its next ones'; the frame it falls at (as a throw's).
+    tossed_first: u8,
+    tossed_pace: u8,
+    tossed_step: i16,
+    tossed_drop: i16,
+    tossed_falls: u8,
+    /// Slammed down by an enemy (not the other player), its first step goes this far back too.
+    slammed_enemy_back: i16,
     /// Held from behind, it is kept this far ahead of its holder.
     held_ahead: i16,
     /// Held by the other player: a knee taken pauses it these ticks; the last knee knocks it
@@ -606,7 +618,7 @@ fn beginWith(a: Actor, state: State, own: ?Move) void {
         .held => a.animate(.held),
         .held_behind => a.animate(.held_behind),
         .escape => a.startMove(.escape),
-        .thrown => a.animate(.thrown),
+        .thrown, .tossed => a.animate(.thrown),
         .slam_pause => a.animate(.slam_pause),
         .lift => a.animate(.lift),
         .air_slam => a.startMove(.air_slam),
@@ -854,6 +866,7 @@ fn act(a: Actor, c: Command) void {
         .held_behind => heldBehind(a, c),
         .escape => escape(a),
         .thrown => thrown(a),
+        .tossed => tossed(a),
         .slam_pause => {
             a.mind.timer -%= 1;
             if (a.mind.timer == 0) change(a, .held);
@@ -1094,7 +1107,7 @@ fn ledge(a: Actor) void {
 /// The states in which it flies (falling, thrown, dying...), which no hole changes.
 fn flies(state: State) bool {
     return switch (state) {
-        .fall, .dying, .thrown_fall, .throw, .throw_back, .thrown, .slammed, .lift, .air_slam, .air_fall => true,
+        .fall, .dying, .thrown_fall, .throw, .throw_back, .thrown, .tossed, .slammed, .lift, .air_slam, .air_fall => true,
         else => false,
     };
 }
@@ -1483,6 +1496,17 @@ fn heldFront(a: Actor) void {
     a.entity.velocity.height = .zero;
     if (a.entity.holder == null) return change(a, .ready);
     if (partnerOf(a)) |holder| return heldByPlayer(a, holder);
+    if (a.mind.request == .toss) {
+        const carried = a.mind.carried;
+        const thrower = a.mind.thrower;
+        change(a, .tossed);
+        a.mind.carried = carried;
+        a.mind.thrower = thrower;
+        a.mind.throw_ticks = n.tossed_first;
+        a.mind.tossed_on = false;
+        _ = placeByHolderKind(a, "thrown");
+        return;
+    }
     if (a.mind.throw_asked) {
         a.mind.throw_asked = false;
         const carried = a.mind.carried;
@@ -1505,15 +1529,9 @@ fn heldBehind(a: Actor, c: Command) void {
     const holder = partnerOf(a);
     if (holder != null) switch (a.mind.request) {
         .to_front => return change(a, .held),
-        .slam => {
-            dropWeapon(a);
-            change(a, .slammed);
-            a.mind.step = 0;
-            a.mind.timer = a.numbers().slammed_first;
-            return;
-        },
+        .slam => return slammedBy(a),
         else => {},
-    };
+    } else if (a.mind.request == .slam) return slammedBy(a);
     if (a.mind.counter_window != 0) {
         a.mind.counter_window -= 1;
         if (a.mind.counter_window != 0 and c.pressed.attack) {
@@ -1528,9 +1546,11 @@ fn heldBehind(a: Actor, c: Command) void {
             }
         }
     }
-    // No jump out while the other player holding it jumps over it.
+    // No jump out while the other player holding it jumps over it, nor out of a hold that has
+    // none (round 5's twins').
     const jumping_over = if (holder) |h| h.mind.state == .throw or h.mind.state == .throw_back else false;
-    if (c.pressed.jump and !jumping_over) {
+    const escapable = if (a.entity.holder) |h| a.tick.holdEscapable(h) else true;
+    if (c.pressed.jump and !jumping_over and escapable) {
         a.sound(.jump);
         return change(a, .escape);
     }
@@ -1549,6 +1569,72 @@ fn escape(a: Actor) void {
     a.mind.counter_window = n.escape_window;
     enter(a, .held_behind);
     begin(a, .held_behind);
+}
+
+/// Slammed down from behind by its holder (the other player, or an enemy): its weapon dropped,
+/// by steps from the next tick, its carried damage kept.
+fn slammedBy(a: Actor) void {
+    const carried = a.mind.carried;
+    const thrower = a.mind.thrower;
+    dropWeapon(a);
+    change(a, .slammed);
+    a.mind.carried = carried;
+    a.mind.thrower = thrower;
+    a.mind.step = 0;
+    a.mind.timer = a.numbers().slammed_first;
+}
+
+/// An enemy holding it asks what its hold does (`Tick.askHeld`): toss it over (9) or slam it
+/// down from behind (4), the throw's landing costing it `damage` (taken once, as the throw
+/// begins: its holder goes on asking); it answers at its next tick.
+pub fn askedBy(a: Actor, holder: Handle, what: u8, damage: i16) void {
+    if (a.mind.state != .held and a.mind.state != .held_behind) return;
+    a.mind.request = switch (what) {
+        9 => .toss,
+        4 => .slam,
+        else => return,
+    };
+    a.mind.thrower = holder;
+    a.mind.carried = damage;
+}
+
+/// Tossed over by an enemy holding it from the front: its first frame a while, then a step
+/// ahead and down; its next frame, then it falls ahead, knocked down, the throw's damage at its
+/// landing. At each frame it is placed from its holder by its holder's kind (`placeByHolderKind`).
+fn tossed(a: Actor) void {
+    const n = a.numbers();
+    const e = a.entity;
+    a.mind.throw_ticks -%= 1;
+    if (a.mind.throw_ticks != 0) return;
+    if (a.frame() == 0 and !a.mind.tossed_on) {
+        a.mind.tossed_on = true;
+        e.position.x = e.position.x.add(Fixed.pixels(n.tossed_step).times(e.facing.sign()));
+        e.position.height = e.position.height.add(.pixels(n.tossed_drop));
+        a.mind.throw_ticks = n.tossed_pace;
+        return;
+    }
+    if (a.frame() == n.tossed_falls) return throwFall(a);
+    a.showFrame(a.frame() + 1, null);
+    a.mind.throw_ticks = n.tossed_pace;
+    _ = placeByHolderKind(a, "thrown");
+}
+
+/// At a new frame of what its holder does to it, placed from its holder by the places its
+/// definition gives for the holder's kind (`partners`, `name`): across toward the side it faces,
+/// its height from the holder's, at its depth (whole pixels, its fractions kept). False when it
+/// has none for that kind.
+fn placeByHolderKind(a: Actor, name: []const u8) bool {
+    const h = a.entity.holder orelse return false;
+    const holder = a.other(h) orelse return false;
+    const pp = a.kind.definition.partnerPlaces(name, a.tick.kindOf(holder).definition.name) orelse return false;
+    if (a.mind.placed_frame == a.frame()) return true;
+    a.mind.placed_frame = a.frame();
+    const p = pp.places[@min(a.frame(), pp.places.len - 1)];
+    const e = a.entity;
+    e.position.x = .parts(@intCast(holder.position.x.whole() + @as(i32, p.x) * e.facing.sign()), e.position.x.frac());
+    e.position.height = .parts(@intCast(holder.position.height.whole() + p.height), e.position.height.frac());
+    e.position.depth = .parts(@intCast(holder.position.depth.whole()), e.position.depth.frac());
+    return true;
 }
 
 /// Thrown over its holder's head: a frame at a time, each placed from the holder; at its last,
@@ -1747,6 +1833,10 @@ fn slammed(a: Actor) void {
                 e.velocity = .zero;
             }
             if (k == 4) a.showFrame(1, null);
+            // Slammed by an enemy, its first step goes back too.
+            if (k == 1) if (e.holder) |h| if (!a.tick.isPlayer(h)) {
+                e.position.x = e.position.x.add(Fixed.pixels(n.slammed_enemy_back).times(back));
+            };
             e.position.x = e.position.x.add(Fixed.pixels(t.slammed_back[k - 1]).times(back));
             e.position.height = e.position.height.add(.pixels(t.slammed_down[k - 1]));
             onGround(a);
@@ -1832,7 +1922,7 @@ pub fn touchClass(a: Actor) u8 {
 /// throw or a lift.
 pub fn keptInView(a: Actor) bool {
     return switch (a.mind.state) {
-        .grab, .grab_blow, .grab_behind, .knee, .knee_last, .throw, .throw_back, .held, .held_behind, .escape, .thrown, .slam_pause, .lift => false,
+        .grab, .grab_blow, .grab_behind, .knee, .knee_last, .throw, .throw_back, .held, .held_behind, .escape, .thrown, .tossed, .slam_pause, .lift => false,
         else => true,
     };
 }

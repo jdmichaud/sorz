@@ -57,7 +57,7 @@
 //! (`boss_r2_trail`); round 3's: the `lamp`s, the `crate`s, the `drifter`s, the `rain`, the
 //! acrobats of a trio (`acrobat_trio`); round 4's: the cones, posts and barriers a blow knocks
 //! away (`obstacle`, round 5's things on the deck too), its boss `boss_r4` and his shoulder
-//! (`boss_r4_shoulder`).
+//! (`boss_r4_shoulder`); round 5's: its bosses the twins (`boss_r5`).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -107,6 +107,7 @@ pub const rain = @import("behaviours/rain.zig");
 pub const obstacle = @import("behaviours/obstacle.zig");
 pub const boss_r4 = @import("behaviours/boss_r4.zig");
 pub const boss_r4_shoulder = @import("behaviours/boss_r4_shoulder.zig");
+pub const boss_r5 = @import("behaviours/boss_r5.zig");
 
 /// An entity's behaviour and its memory: one line a behaviour module.
 pub const Mind = union(enum) {
@@ -156,6 +157,7 @@ pub const Mind = union(enum) {
     obstacle: obstacle.Mind,
     boss_r4: boss_r4.Mind,
     boss_r4_shoulder: boss_r4_shoulder.Mind,
+    boss_r5: boss_r5.Mind,
 };
 
 pub const Behaviour = std.meta.Tag(Mind);
