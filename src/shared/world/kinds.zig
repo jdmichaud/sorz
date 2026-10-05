@@ -22,10 +22,11 @@ pub const Kind = struct {
     /// Each animation's frames' art, by animation and frame.
     frames: []const []const *const art.Frame,
     /// The behaviour's names, in the order it declares them, as the definition's indices: its
-    /// animations, its moves, its numbers' values and its sounds' names.
+    /// animations, its moves, its numbers' values (null: an optional one the definition leaves
+    /// out) and its sounds' names.
     animation_of: []const u8 = &.{},
     move_of: []const u8 = &.{},
-    numbers: []const i32 = &.{},
+    numbers: []const ?i32 = &.{},
     sound_of: []const []const u8 = &.{},
     /// The behaviour's tables and choices (`M.Tables`, `M.Choices`), bound once.
     tables: ?*const anyopaque = null,
@@ -124,11 +125,14 @@ fn bindNames(arena: std.mem.Allocator, comptime M: type, k: *Kind, file: []const
     if (@hasDecl(M, "Numbers")) {
         const fields = comptime @typeInfo(M.Numbers).@"struct".field_names;
         const types = comptime @typeInfo(M.Numbers).@"struct".field_types;
-        const out = try arena.alloc(i32, fields.len);
+        const out = try arena.alloc(?i32, fields.len);
         inline for (fields, types, 0..) |n, T, i| {
-            const v = d.number(n) orelse return refuse(diag, file, "numbers." ++ n, missing);
-            if (T != fixed.Fixed and std.math.cast(T, v) == null) return refuse(diag, file, "numbers." ++ n, "out of range for the behaviour " ++ behaviour);
-            out[i] = v;
+            // An optional number (`?T`) may be left out: the behaviour then does without.
+            const optional = @typeInfo(T) == .optional;
+            const V = if (optional) @typeInfo(T).optional.child else T;
+            out[i] = d.number(n);
+            if (out[i] == null and !optional) return refuse(diag, file, "numbers." ++ n, missing);
+            if (out[i]) |v| if (V != fixed.Fixed and std.math.cast(V, v) == null) return refuse(diag, file, "numbers." ++ n, "out of range for the behaviour " ++ behaviour);
         }
         k.numbers = out;
     }
@@ -168,7 +172,14 @@ pub fn numbersOf(comptime M: type, k: *const Kind) M.Numbers {
     var out: M.Numbers = undefined;
     const info = @typeInfo(M.Numbers).@"struct";
     inline for (info.field_names, info.field_types, 0..) |n, T, i| {
-        @field(out, n) = if (T == fixed.Fixed) fixed.Fixed.of(k.numbers[i]) else @intCast(k.numbers[i]);
+        if (@typeInfo(T) == .optional) {
+            const V = @typeInfo(T).optional.child;
+            @field(out, n) = if (k.numbers[i]) |v| typed(V, v) else null;
+        } else @field(out, n) = typed(T, k.numbers[i].?);
     }
     return out;
+}
+
+fn typed(comptime T: type, v: i32) T {
+    return if (T == fixed.Fixed) fixed.Fixed.of(v) else @intCast(v);
 }
