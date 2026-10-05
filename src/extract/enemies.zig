@@ -159,6 +159,8 @@ fn commonNumbers(d: *Def, kind: u8) Error!void {
     try d.number("bounce_most", (try immediate(rom, 0x9A72, &.{ 0x0C, 0x68 }, 2)) << 16, "ROM 0x09A72: cmpi.w #N,(36,a0)");
     try d.number("bounce_slowing", try immediate(rom, 0x9A92, &.{ 0x20, 0x3C }, 4), "ROM 0x09A92: move.l #N,d0");
     try d.number("fall_most", try immediate(rom, 0x974E, &.{ 0x0C, 0xA8 }, 4), "ROM 0x0974E: cmpi.l #N,(36,a0)");
+    try d.number("hole_deep", try immediate(rom, 0x976E, &.{ 0x0C, 0x46 }, 2), "ROM 0x0976E: cmpi.w #N,d6 (a hole's floor this far down or more: drawn in front, 0x9774)");
+    try d.number("fall_out", try immediate(rom, 0x977A, &.{ 0x0C, 0x68 }, 2), "ROM 0x0977A: cmpi.w #N,(24,a0) (fallen this far, out of the fight, 0x9782)");
     try d.number("lying", (try immediate(rom, 0x9A26, &.{ 0x31, 0x7C }, 2)) & 0xFF, "ROM 0x09A26: move.w #N*$101,(12,a0)");
     if (rom[0x9A4E] & 0xF1 != 0x50 or rom[0x9A4F] != 0) return error.BadData;
     try d.number("lying_least", @as(i32, rom[0x9A4E] >> 1) & 7, "ROM 0x09A4E: addq.b #N,d0 (the draw's low two bits, doubled)");

@@ -196,13 +196,28 @@ pub const Tick = struct {
     }
 
     /// The entity is in the air after its move. Its behaviour's `fall` decides whether it lands
-    /// (`land`) and how it falls; by default it lands when it has come down to the ground, and
-    /// otherwise its definition's gravity adds to its speed in height.
+    /// (`land`) and how it falls; by default it lands when it has come down to the floor under it,
+    /// and otherwise its definition's gravity adds to its speed in height.
     pub fn fall(t: *Tick, h: Handle) void {
         const e = t.world.get(h) orelse return;
         if (hasHook(e, "fall")) return dispatch(t, h, "fall", void, {}, .{});
-        if (!e.position.height.lessThan(t.world.ground) and e.velocity.height.raw >= 0) return t.land(h, .whole);
+        if (t.onFloor(e.position) and e.velocity.height.raw >= 0) return t.land(h, .whole);
         e.velocity.height = e.velocity.height.add(.of(t.kindOf(e).definition.gravity));
+    }
+
+    /// The height of the floor under `at` (the round's floor by cells; else its ground
+    /// everywhere), or null over a hole, where nothing stands.
+    pub fn floorUnder(t: *const Tick, at: fixed.Vec3) ?Fixed {
+        const p = t.plan orelse return t.world.ground;
+        const f = p.round.floor orelse return t.world.ground;
+        const cell = f.at(at.x.whole(), at.depth.whole());
+        return if (cell.floor) .pixels(cell.height) else null;
+    }
+
+    /// Whether `at` is down on the floor under it, or below it (over a hole: never).
+    pub fn onFloor(t: *const Tick, at: fixed.Vec3) bool {
+        const floor = t.floorUnder(at) orelse return false;
+        return !at.height.lessThan(floor);
     }
 
     /// How a landing puts the entity on the ground: on its whole pixels, or with the fraction
@@ -854,9 +869,9 @@ pub fn Actor(comptime M: type) type {
             return a.tick.power(a.entity);
         }
 
-        /// Whether its place is down on the ground or below it.
+        /// Whether its place is down on the floor under it, or below it (over a hole: never).
         pub fn atGround(a: Self) bool {
-            return !a.entity.position.height.lessThan(a.tick.world.ground);
+            return a.tick.onFloor(a.entity.position);
         }
 
         /// It lands (`Tick.land`).

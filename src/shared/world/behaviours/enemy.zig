@@ -247,6 +247,10 @@ pub const Common = struct {
     bounce_most: Fixed,
     bounce_slowing: Fixed,
     fall_most: Fixed,
+    /// Falling into a hole (the round's floor by cells): over one whose floor is this far down
+    /// or farther, it is drawn in front of the planes; fallen this far, it is out of the fight.
+    hole_deep: ?i16 = null,
+    fall_out: ?i16 = null,
     /// Lying: each frame's ticks, the least of the drawn wait, the frame it is up at.
     lying: u8,
     lying_least: u8,
@@ -1105,10 +1109,28 @@ pub fn Of(comptime M: type) type {
             a.entity.velocity.height = v;
         }
 
-        /// In the air after its move: down on the ground or below it, it lands, rising or not,
-        /// the fraction of its height kept; its gravity is applied before its move.
+        /// In the air after its move: down on the floor or below it, it lands, rising or not,
+        /// the fraction of its height kept; its gravity is applied before its move. Over a hole
+        /// it falls on: a deep one draws it in front of the planes, and fallen far enough it is
+        /// knocked out, crying out.
         pub fn fall(a: A) void {
-            if (a.atGround()) a.land(.fraction_kept);
+            if (a.atGround()) return a.land(.fraction_kept);
+            const n = a.numbers();
+            if (a.tick.floorUnder(a.entity.position) != null) return;
+            const p = a.tick.plan orelse return;
+            const f = p.round.floor orelse return;
+            if (n.hole_deep) |deep| if (f.at(a.entity.position.x.whole(), a.entity.position.depth.whole()).height >= deep) {
+                a.entity.flags.in_front = true;
+            };
+            const out = n.fall_out orelse return;
+            if (a.entity.position.height.whole() < out) return;
+            switch (a.mind.state) {
+                .knocked_out => return,
+                else => {},
+            }
+            cry(a);
+            a.entity.missile = null;
+            enter(a, .knocked_out);
         }
 
         /// It landed: a knock-down bounces, slides on, or lies; a missile's flight ends.
