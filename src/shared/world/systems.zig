@@ -294,13 +294,25 @@ fn blowsOn(t: *Tick, xh: Handle) void {
     }
 }
 
-/// `x`'s blow under way, or `x` thrown or flying as a missile, meets the players.
+/// `x`'s blow under way, or `x` thrown or flying as a missile, meets the players: but not a
+/// player whose blow or reach meets `x`'s body. The original looks at the player's box first:
+/// then the player's blow, its grab, or neither (a reach that cannot grab: a weapon in hand, `x`
+/// too high) is the tick's meeting of the two, and `x`'s own blow is not looked at.
 fn blowsOnPlayers(t: *Tick, xh: Handle) void {
     for (t.world.players) |p| {
         const th = p.entity orelse continue;
         const x = t.world.get(xh) orelse return;
+        if (reachesBody(t, th, x)) continue;
         if (x.missile != null) missileOn(t, xh, th) else blow(t, xh, th);
     }
+}
+
+/// Whether the attack box of player entity `ph` (a blow's or a reach) meets `x`'s body.
+fn reachesBody(t: *Tick, ph: Handle, x: *const Entity) bool {
+    const p = t.world.get(ph) orelse return false;
+    const reach = p.boxes.attack orelse return false;
+    const body = x.boxes.body orelse return false;
+    return meet(p, &t.kindOf(p).definition.boxes[reach], x, &t.kindOf(x).definition.boxes[body]);
 }
 
 /// `a`'s blow under way (`Tick.power`), when its frame has an attack box, strikes `target` when
