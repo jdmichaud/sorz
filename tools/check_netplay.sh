@@ -18,9 +18,13 @@ fail() { echo "check_netplay: $*" >&2; exit 1; }
 field() { printf '%s\n' "$1" | sed -n "s/.*\"$2\":\"\{0,1\}\([^\",}]*\).*/\1/p"; }
 
 ticks=600
-front="--key 500:enter:3 --key 560:enter:3 --key 640:enter:3"
-host_keys="$front --key 860:right:3 --key 880:z:3 --key 1500:right:60 --key 1700:x:3"
-guest_keys="$front --key 3000:z:3"
+# Both to their game menus; the host's 2 PLAYERS at once, the guest's much later: the two run as
+# fast as they can, so that a guest at its select while the host is still at its own would join
+# it there. The menu waits; its 2 PLAYERS 2,300 updates after the host's keeps the host in its
+# round by then unless the guest runs three times as fast.
+front="--key 500:enter:3 --key 560:enter:3"
+host_keys="$front --key 640:enter:3 --key 860:right:3 --key 880:z:3 --key 1500:right:60 --key 1700:x:3"
+guest_keys="$front --key 2940:enter:3 --key 3240:z:3"
 
 # A port of their own (another try on another port if it is taken).
 for try in 1 2 3; do
