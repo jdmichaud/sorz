@@ -380,14 +380,21 @@ pub const Situation = struct {
         /// another's (up to the situation's next tick, which tells of a blow struck at its own).
         struck_by: ?u32 = null,
         struck_at: ?u64 = null,
+        /// A blow that met it at the situation's tick (the trace tells its damage at the next):
+        /// who struck, and the damage.
+        met_by: ?u32 = null,
+        met_damage: i32 = 0,
         landed: ?u64 = null,
         /// A weapon's or an item's: who picked it up last, and how many times it was.
         holder: ?u32 = null,
         taken: u8 = 0,
         /// The frame of its animation at the situation's tick and the tick it began showing, as
-        /// the other program's probe tells them (`framesOf`).
+        /// the other program's probe tells them (`framesOf`); the original's number of the
+        /// animation, when the probe gives one, and the tick it began.
         frame: ?u8 = null,
         frame_since: u64 = 0,
+        anim: ?u16 = null,
+        anim_since: u64 = 0,
         /// The other program's place for it (its object slot), which the order of updates
         /// follows.
         slot: ?u8 = null,
@@ -397,6 +404,8 @@ pub const Situation = struct {
         /// another's); the bounces it made in its state (its speed down turned up).
         course_since: u64 = 0,
         course_draws: []const u16 = &.{},
+        /// The tick its speed across became what it is.
+        across_since: u64 = 0,
         bounces: u8 = 0,
     };
 };
@@ -507,6 +516,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             };
             x.position = .{ @intCast(int(o, "x") orelse 0), @intCast(int(o, "d") orelse 0), @intCast(int(o, "h") orelse 0) };
             const speed: [3]i32 = .{ @intCast(int(o, "vx") orelse 0), @intCast(int(o, "vd") orelse 0), @intCast(int(o, "vh") orelse 0) };
+            if (speed[0] != x.velocity[0]) x.across_since = @intCast(int(o, "t") orelse 0);
             if (!std.mem.eql(i32, &speed, &x.velocity)) {
                 const changed_at: u64 = @intCast(int(o, "t") orelse 0);
                 x.course_since = changed_at;
@@ -596,6 +606,10 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             const by: u32 = @intCast(int(o, "by") orelse continue);
             for (entities) |*x| {
                 if (x.id == id and x.since == s.t) x.struck_by = by;
+                if (x.id == id) {
+                    x.met_by = by;
+                    x.met_damage = @intCast(int(o, "damage") orelse 0);
+                }
                 if (x.id == by) x.landed = s.t + 1;
             }
             continue;
@@ -638,11 +652,27 @@ pub fn framesOf(situation: *Situation, arena: std.mem.Allocator, probe_text: []c
         if (t > situation.t) break;
         const id: u32 = @intCast(int(o, "e") orelse continue);
         const f: u8 = @intCast(int(o, "frame") orelse continue);
+        const anim: ?u16 = if (int(o, "anim")) |n| @intCast(n) else null;
         for (entities) |*x| if (x.id == id) {
-            if (x.frame != f) x.frame_since = t;
+            if (x.frame != f or x.anim != anim) x.frame_since = t;
+            if (x.anim != anim) x.anim_since = t;
             x.frame = f;
+            x.anim = anim;
         };
     }
+}
+
+/// The animation the original's number names (twice its entry in the kind's set, bit 1 drawn
+/// facing left), for the kinds whose take-up shows the probe's (sor-remaster's probes number
+/// them): round 1's boss, by the quarter of the number, and his boomerang.
+fn originalAnimation(kind: []const u8, original: u16) ?struct { name: []const u8, left: bool } {
+    const left = original & 2 != 0;
+    const boss = [_][]const u8{ "stand", "swing", "knocked", "held", "held_behind", "flight", "bounce", "down", "lifted", "idle", "walk", "taunt", "throw", "wait" };
+    const boomerang = [_][]const u8{ "held", "held_high", "spin" };
+    const i = original / 4;
+    if (std.mem.eql(u8, kind, "antonio") and i < boss.len) return .{ .name = boss[i], .left = left };
+    if (std.mem.eql(u8, kind, "boomerang") and i >= boss.len and i - boss.len < boomerang.len) return .{ .name = boomerang[i - boss.len], .left = left };
+    return null;
 }
 
 /// A pad holding the buttons a trace's letters name (`U D L R A B C S`).
@@ -817,6 +847,17 @@ pub const Run = struct {
             if (x.team == .enemy) takeUpSpawn(kinds, x, e, extras.round, &r.used);
             made[h.index] = .{ .h = h, .e = e };
         }
+        // The animation the other program's probe names by the original's number, for the kinds
+        // whose take-up shows it (the boss and his boomerang), and the way it faces.
+        for (made) |m_| {
+            const m = m_ orelse continue;
+            const anim = m.e.anim orelse continue;
+            const o = originalAnimation(m.e.kind, anim) orelse continue;
+            const x = w.get(m.h).?;
+            x.animation.index = kinds.get(x.kind.?).definition.animation(o.name) orelse continue;
+            x.animation.frame = 0;
+            x.facing = if (o.left) .left else .right;
+        }
         // Who struck each last, by the trace's ids; then each takes its state up.
         for (made) |m_| {
             const m = m_ orelse continue;
@@ -847,6 +888,7 @@ pub const Run = struct {
             if (trace) |tw| tw.assignId(h.index, h.generation, e.id);
             var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
             t.takeUp(h, @intCast(situation.t -| e.since));
+            t.takeUpSince(h, @intCast(situation.t -| e.across_since), @intCast(situation.t -| e.anim_since));
             if (e.came_from) |from| t.takeUpCameFrom(h, from);
             t.takeUpPlayersThen(h, e.players_depth);
             if (e.taken != 0) t.takeUpTaken(h, e.taken);
@@ -866,6 +908,11 @@ pub const Run = struct {
                 const landed: ?u32 = if (e.landed) |l| (if (l > e.since and l <= situation.t) @as(u32, @intCast(l - e.since)) else null) else null;
                 t.takeUpPresses(h, @intCast(situation.t - e.since), ticks[0..k], landed);
             }
+            // A blow that met it at the situation's tick, felt at the next.
+            if (e.met_by) |by| for (made) |o_| {
+                const o = o_ orelse continue;
+                if (o.e.id == by) t.takeUpMet(h, o.h, @intCast(e.met_damage));
+            };
             // A blow that cost it health in its state, so many ticks before, its striker still in
             // the state it struck in (its blow may still touch).
             if (e.struck_at) |at| if (at > e.since) {
@@ -931,6 +978,10 @@ pub const Run = struct {
             const an = kinds.get(x.kind.?).definition.animations[index];
             if (f >= an.frames.len) continue;
             x.animation.frame = f;
+            // Its boxes those of the frame it shows (where the probe named its animation).
+            if (m.e.anim != null and originalAnimation(m.e.kind, m.e.anim.?) != null) {
+                x.boxes = .{ .body = an.frames[f].body, .attack = an.frames[f].attack, .mirrored = x.facingLeft() != an.frames[f].flip };
+            }
             var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
             if (t.takeUpFrame(m.h, @intCast(situation.t -| m.e.frame_since), @intCast(situation.t -| m.e.course_since), m.e.course_draws)) continue;
             const ticks: u64 = x.animation.pace orelse an.frames[f].ticks;

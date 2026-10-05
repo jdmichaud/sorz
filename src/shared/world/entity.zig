@@ -179,6 +179,8 @@ pub const Spawn = struct {
     offset_x: i16 = 0,
     offset_depth: i16 = 0,
     strength: u2 = 0,
+    /// A boss's entry in the status bar's names and bars.
+    bar: ?u8 = null,
 };
 
 /// The boxes in use (DESIGN.md W2): those of the frame the entity last showed, or of the first

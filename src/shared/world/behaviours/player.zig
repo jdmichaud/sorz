@@ -914,7 +914,8 @@ fn placeHeld(a: Actor) void {
     const held = a.other(h) orelse return;
     const at = a.entity.position;
     const was = held.position;
-    held.position = .{
+    // A boss takes its places in a hold itself.
+    if (a.tick.kindOf(held).family() != .boss) held.position = .{
         .x = .parts(@intCast(at.x.whole() + @as(i32, where.x) * a.entity.facing.sign()), was.x.frac()),
         .depth = .parts(@intCast(at.depth.whole()), was.depth.frac()),
         .height = .parts(@intCast(at.height.whole() + where.height), was.height.frac()),
@@ -940,6 +941,18 @@ fn feelCatch(a: Actor) void {
 /// It takes one blow or catch a tick, the first (the original's players take one hit a tick).
 pub fn catchable(a: Actor) bool {
     return a.mind.taken == null and a.mind.caught_by == null;
+}
+
+/// Whether an enemy may set on it now: not while it blinks, nor from a blow or a fall until it
+/// stands again (hurt, knocked down, down but at the tick it lay down, getting up or
+/// recovering; dying or dead).
+pub fn attackable(a: Actor) bool {
+    if (a.mind.blink != 0) return false;
+    return switch (a.mind.state) {
+        .down => a.mind.timer == a.numbers().down,
+        .hurt, .knocked_down, .getting_up, .recover, .dying, .lying_dead => false,
+        else => true,
+    };
 }
 
 /// `holder` holds it from now (its own catch, or a hold turned).

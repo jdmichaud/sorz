@@ -52,17 +52,19 @@ pub fn points(rom: []const u8, index: u8) Error!i32 {
 }
 
 /// The frames of an enemy's entry `entry` (facing right) with the next one's (facing left), each
-/// shown for the animation's timing byte, as the objects' animations run (0xB0B6).
+/// shown for the animation's timing byte, as the objects' animations run (0xB0B6); a still
+/// picture (one frame, a timing of 0) shows a tick at a time.
 fn enemyFrames(d: *Def, name: []const u8, entry: u32) Error![]entity.Frame {
     const right = try readAnimation(d.arena, d.rom, d.set, entry);
     const left = try readAnimation(d.arena, d.rom, d.set, entry + 1);
-    if (right.frames.len != left.frames.len or right.timing == 0) return error.BadData;
+    if (right.frames.len != left.frames.len or right.timing != left.timing) return error.BadData;
+    if (right.timing == 0 and right.frames.len != 1) return error.BadData;
     const out = try d.arena.alloc(entity.Frame, right.frames.len);
     for (out, right.frames, left.frames) |*f, r, l| {
         if (r.address != l.address or r.mirrored == l.mirrored) return error.BadData;
         f.* = .{
             .frame = try d.frameName(r.address),
-            .ticks = right.timing,
+            .ticks = @max(right.timing, 1),
             .flip = r.mirrored,
             .body = try d.box(0, r.body, l.body, name, "body"),
             .attack = try d.box(1, r.attack, l.attack, name, "attack"),
@@ -665,6 +667,363 @@ pub fn brawler(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definitio
     return finish(&d, "brawler", 0x26, "brawler", "the brawler (handler 0xF038)");
 }
 
+// --- Antonio, round 1's boss, and his boomerang -------------------------------------------------
+
+/// The bosses' animation sets by type from $55 (0x158B4).
+const boss_sets = 0x158B4;
+/// The bosses' power and health by type from $55 (0x17EDC).
+const boss_power = 0x17F26;
+const boss_health = 0x17F2A;
+/// The bosses' points' index by type from $55 (0x16542).
+const boss_points = 0x16564;
+/// Where the boomerang shows in Antonio's hand: by his animation word / 2 the offset of its
+/// frames' records, 0 when it is hidden (0x173F6); the records, 4 bytes (0x1741C): across from
+/// him, in depth, up from his feet, the boomerang's own animation word.
+const boomerang_hands = 0x17494;
+const boomerang_records = 0x173A0;
+
+/// The entry of the animation word `word` (facing right; the next entry faces left).
+fn wordEntry(word: i32) Error!u32 {
+    if (word < 0 or @mod(word, 4) != 0) return error.BadData;
+    return @intCast(@divExact(word, 2));
+}
+
+/// `move.w #N,(8,a0)`: an animation word written.
+fn animWord(rom: []const u8, at: u32) Error!i32 {
+    if (u16be(rom, at) != 0x317C or u16be(rom, at + 4) != 8) return error.BadData;
+    return u16be(rom, at + 2);
+}
+
+/// `cmpi.w #N,(D,a0)` or `cmpi.w #N,dK`: the immediate word compared (the instruction checked).
+fn comparedWord(rom: []const u8, at: u32) Error!i32 {
+    const op = u16be(rom, at);
+    if (op & 0xFFF8 != 0x0C40 and op != 0x0C68 and op != 0x0C69) return error.BadData;
+    return @as(i16, @bitCast(@as(u16, @intCast(u16be(rom, at + 2)))));
+}
+
+/// `move.l #N,(D,a0)`: the long written.
+fn movedLong(rom: []const u8, at: u32) Error!i32 {
+    return immediate(rom, at, &.{ 0x21, 0x7C }, 4);
+}
+
+/// `move.w #N,(D,a0)`: the word written (sign extended).
+fn movedWord(rom: []const u8, at: u32, displacement: u16) Error!i32 {
+    if (u16be(rom, at) != 0x317C or u16be(rom, at + 4) != displacement) return error.BadData;
+    return @as(i16, @bitCast(@as(u16, @intCast(u16be(rom, at + 2)))));
+}
+
+/// `moveq #N,dK` then `swap dK`: N whole pixels.
+fn swappedPixels(rom: []const u8, at: u32, register: u3) Error!i32 {
+    const v = try moveq(rom, at, register);
+    if (u16be(rom, at + 2) != 0x4840 | @as(u16, register)) return error.BadData;
+    return v << 16;
+}
+
+/// The byte of a boss's table at `table` for type `kind` (from $55).
+fn bossByte(rom: []const u8, table: u32, kind: u8) u8 {
+    return rom[table + @as(u32, kind - 0x55)];
+}
+
+/// Antonio (type $56, his handler 0x16CE4, his states at 0x16CF4, sor-remaster's
+/// obj/boss_antonio.zig): he walks in from the screen's side, backs away from a target that
+/// comes near, taunts, strolls in depth, aligns with his target and throws his boomerang, waits
+/// for it and catches it; near, he charges and swings his boomerang in hand (state 2, a blow
+/// that knocks down). Struck, he is knocked back or down; held, kneed, thrown; the special
+/// attack holds him still and costs him health at its end.
+pub fn antonio(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const kind: u8 = 0x56;
+    const set = u32be(rom, boss_sets + 4 * @as(u32, kind - 0x55));
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "antonio", .set = set, .box_table = entities.object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
+    const anims = [_]struct { name: []const u8, word: i32 }{
+        .{ .name = "stand", .word = try moveq(rom, 0x15888, 0) },
+        .{ .name = "swing", .word = try moveq(rom, 0x16F26, 0) },
+        .{ .name = "knocked", .word = try animWord(rom, 0x17CC2) },
+        .{ .name = "held", .word = try animWord(rom, 0x17D66) },
+        .{ .name = "held_behind", .word = try animWord(rom, 0x17D90) },
+        .{ .name = "flight", .word = try animWord(rom, 0x17CC2) + try immediate(rom, 0x163F8, &.{ 0x06, 0x68 }, 2) },
+        .{ .name = "bounce", .word = try animWord(rom, 0x17CC2) + try immediate(rom, 0x163F8, &.{ 0x06, 0x68 }, 2) + try quick(rom, 0x1640E, 0x5068) },
+        .{ .name = "down", .word = try immediate(rom, 0x16490, &.{ 0x30, 0x3C }, 2) },
+        .{ .name = "lifted", .word = try animWord(rom, 0x1662A) },
+        .{ .name = "idle", .word = try moveq(rom, 0x17058, 0) },
+        .{ .name = "walk", .word = try moveq(rom, 0x1703A, 0) },
+        .{ .name = "taunt", .word = try moveq(rom, 0x16FEE, 0) },
+        .{ .name = "throw", .word = try moveq(rom, 0x1711A, 0) },
+        .{ .name = "wait", .word = try moveq(rom, 0x1712C, 0) },
+    };
+    for (anims) |an| try d.animations.append(arena, .{ .name = an.name, .loop = true, .frames = try enemyFrames(&d, an.name, try wordEntry(an.word)) });
+    // The swing's frames with an attack box are blows; a blow that lands knocks down (the
+    // player's reaction 1, 0x171E4), its damage his power.
+    blows(&d, "swing");
+    // The boomerang in his hand, frame by frame.
+    for (anims) |an| try boomerangHands(&d, an.name, an.word);
+
+    const power = bossByte(rom, boss_power, kind);
+    try d.moves.append(arena, .{ .name = "swing", .provenance = "the swing (state 2, 0x171CC): a blow that lands knocks the player down (0x171E4: its reaction 1), its damage his power (0x17EDC)", .animation = d.animationIndex("swing").?, .damage = power, .reaction = .knock_down });
+    try d.number("power", power, "ROM 0x17F27 (by type from $55, 0x17EDC)");
+    try d.number("hardest_health", try quick(rom, 0x17EFC, 0x5042), "ROM 0x17EFC: addq.w #N,d2 (the hardest level's)");
+    try d.number("outside_power", try quick(rom, 0x17F1A, 0x5001), "ROM 0x17F1A: addq.b #N,d1 (out of the boss's section, 0x17F08)");
+    // The screen, from where he was drawn: off it he walks in (0x16DEC).
+    try d.number("on_screen_from", try comparedWord(rom, 0x16DF0) - 0x80, "ROM 0x16DF0: cmpi.w #N+$80,d1 (drawn across)");
+    try d.number("on_screen_to", try comparedWord(rom, 0x16DF6) - 0x80, "ROM 0x16DF6: cmpi.w #N+$80,d1");
+    try d.number("screen_middle", try comparedWord(rom, 0x16E04) - 0x80, "ROM 0x16E04: cmpi.w #N+$80,d1");
+    try d.number("walk_in_speed", try movedLong(rom, 0x16DFC), "ROM 0x16DFC: move.l #N,(28,a0); in depth 0x16E0E");
+    if (try movedLong(rom, 0x16E0E) != try movedLong(rom, 0x16DFC)) return error.BadData;
+    try d.number("walk_in_low", try comparedWord(rom, 0x16E16), "ROM 0x16E16: cmpi.w #N,(20,a1)");
+    try d.number("walk_in_ticks", try moveByte(rom, 0x16E22, 0x5C), "ROM 0x16E22: move.b #N,(92,a0)");
+    try d.number("walk_in_ticks_second", try moveByte(rom, 0x16E30, 0x5C), "ROM 0x16E30: move.b #N,(92,a0) (the second of twins)");
+    try d.number("struck_from", try comparedWord(rom, 0xAABA) - 0x80, "ROM 0x0AABA: cmpi.w #N+$80,(40,a0) (drawn across: the meeting check's, 0xAA22)");
+    try d.number("struck_to", try comparedWord(rom, 0xAAC2) - 0x80, "ROM 0x0AAC2: cmpi.w #N+$80,(40,a0)");
+    try d.number("grab_height", try comparedWord(rom, 0xAAF6), "ROM 0x0AAF6: cmpi.w #N,d2 (a grab's reach in height, 0xAA22)");
+    try d.number("near", try comparedWord(rom, 0x16E60), "ROM 0x16E60: cmpi.w #N,d2");
+    try d.number("charge_from", try comparedWord(rom, 0x16E7A), "ROM 0x16E7A: cmpi.w #N,d2");
+    if (try comparedWord(rom, 0x16E74) != try comparedWord(rom, 0x16E60)) return error.BadData;
+    try d.number("charge_level", try comparedWord(rom, 0x16E80), "ROM 0x16E80: cmpi.w #N,(82,a0)");
+    try d.number("charge_speed", try movedLong(rom, 0x16E8E), "ROM 0x16E8E: move.l #N,(28,a0)");
+    try d.number("charge_stop_far", try comparedWord(rom, 0x16F6E), "ROM 0x16F6E: cmpi.w #N,(80,a0)");
+    try d.number("charge_stop_near", try comparedWord(rom, 0x16F76), "ROM 0x16F76: cmpi.w #N,(80,a0)");
+    try d.number("charge_stop_level", try comparedWord(rom, 0x16F7E), "ROM 0x16F7E: cmpi.w #N,(82,a0)");
+    try d.number("swing_reach_coming", try comparedWord(rom, 0x16EF0), "ROM 0x16EF0: cmpi.w #N,d2 (a target coming at him)");
+    try d.number("swing_reach_going", try comparedWord(rom, 0x16EC0), "ROM 0x16EC0: cmpi.w #N,d2 (going away)");
+    try d.number("swing_reach_still", try comparedWord(rom, 0x16EE8), "ROM 0x16EE8: cmpi.w #N,d2 (still, on his right)");
+    try d.number("swing_reach_still_left", try comparedWord(rom, 0x16EE0), "ROM 0x16EE0: cmpi.w #N,d2 (still, on his left)");
+    try d.number("swing_level_above", try comparedWord(rom, 0x16F00), "ROM 0x16F00: cmpi.w #N,d0");
+    try d.number("swing_level", try comparedWord(rom, 0x16F08), "ROM 0x16F08: cmpi.w #N,d0");
+    try d.number("swing_frame", try moveByte(rom, 0x16F32, 10), "ROM 0x16F32: move.b #N,(10,a0)");
+    try d.number("swing_from_start", try immediate(rom, 0x16F2C, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x16F2C: cmpi.b #N,d7 (the walk's frame from which the swing starts at its first)");
+    try d.number("swing_ends", try frameCompared(rom, 0x171EA), "ROM 0x171EA: cmpi.b #N,(10,a0)");
+    try d.number("back_away_ticks", try moveByte(rom, 0x16FA4, 0x78), "ROM 0x16FA4: move.b #N,(120,a0)");
+    try d.number("back_away_speed", try movedLong(rom, 0x16FCC), "ROM 0x16FCC: move.l #N,(28,a0); the other way 0x16FC2");
+    if (try movedLong(rom, 0x16FC2) != -(try movedLong(rom, 0x16FCC))) return error.BadData;
+    try d.number("taunt_from", try comparedWord(rom, 0x16FE4), "ROM 0x16FE4: cmpi.w #N,(80,a0)");
+    try d.number("stroll_ticks", try moveByte(rom, 0x16FF0, 0x78), "ROM 0x16FF0: move.b #N,(120,a0)");
+    try d.number("stroll_toward_from", try comparedWord(rom, 0x17020), "ROM 0x17020: cmpi.w #N,(80,a0)");
+    try d.number("stroll_speed", try swappedPixels(rom, 0x1701C, 1), "ROM 0x1701C: moveq #N,d1; swap d1");
+    try d.number("stand_near", try comparedWord(rom, 0x17050), "ROM 0x17050: cmpi.w #N,(80,a0)");
+    try d.number("stand_far_level", try comparedWord(rom, 0x1706E), "ROM 0x1706E: cmpi.w #N,(82,a0)");
+    if (u16be(rom, 0x17076) != 0x323C) return error.BadData;
+    try d.number("stand_far_speed", (try swappedPixels(rom, 0x1706A, 1)) | u16be(rom, 0x17078), "ROM 0x1706A: moveq #N,d1; swap d1; 0x17076: move.w #F,d1");
+    try d.number("align_speed", try swappedPixels(rom, 0x170CC, 1), "ROM 0x170CC: moveq #N,d1; swap d1");
+    try d.number("align_level", try comparedWord(rom, 0x170FA), "ROM 0x170FA: cmpi.w #N,(82,a0)");
+    try d.number("depth_most", try comparedWord(rom, 0x170F4), "ROM 0x170F4: cmpi.w #N,d1 (his move's, 0x17ACE)");
+    if (try immediate(rom, 0x17ACE, &.{ 0x0C, 0x80 }, 4) != (try comparedWord(rom, 0x170F4)) << 16) return error.BadData;
+    try d.number("throw_ticks", try moveByte(rom, 0x17110, 0x78), "ROM 0x17110: move.b #N,(120,a0)");
+    try d.number("charge_back_from", try comparedWord(rom, 0x17154), "ROM 0x17154: cmpi.w #N,(80,a0)");
+    try d.number("charge_back_level", try comparedWord(rom, 0x1715C), "ROM 0x1715C: cmpi.w #N,(82,a0)");
+    try d.number("catch_hand", try immediate(rom, 0x171AC, &.{ 0x06, 0x41 }, 2), "ROM 0x171AC: addi.w #N,d1");
+    try d.number("catch_within", try comparedWord(rom, 0x171BE), "ROM 0x171BE: cmpi.w #N,d1");
+    try d.number("catch_steer", try immediate(rom, 0x17188, &.{ 0x21, 0x7C }, 4), "ROM 0x17188: move.l #N,(32,a0); the other way 0x17192");
+    if (try immediate(rom, 0x17192, &.{ 0x21, 0x7C }, 4) != -(try immediate(rom, 0x17188, &.{ 0x21, 0x7C }, 4))) return error.BadData;
+    try d.number("sway_speed", try swappedPixels(rom, 0x17A6E, 1), "ROM 0x17A6E: moveq #N,d1; swap d1");
+    try d.number("zigzag_turn", try comparedWord(rom, 0x17A7A), "ROM 0x17A7A: cmpi.w #N,d7");
+    try d.number("zigzag_back", try comparedWord(rom, 0x17A80), "ROM 0x17A80: cmpi.w #N,d7");
+    // Keeping a little above his target in depth (0x179AC) and going to its depth (0x1797E).
+    try d.number("keep_far", try comparedWord(rom, 0x179B8), "ROM 0x179B8: cmpi.w #N,d1");
+    try d.number("keep_near", try comparedWord(rom, 0x179BE), "ROM 0x179BE: cmpi.w #N,d1");
+    try d.number("keep_step_2", try comparedWord(rom, 0x179C6), "ROM 0x179C6: cmpi.w #N,d1");
+    try d.number("keep_step_1", try comparedWord(rom, 0x179D4), "ROM 0x179D4: cmpi.w #N,d1");
+    try d.number("keep_at", try comparedWord(rom, 0x179DA), "ROM 0x179DA: cmpi.w #N,d1");
+    try d.number("steer_fast", (try moveq(rom, 0x179B0, 0)) << 16, "ROM 0x179B0: moveq #N,d0 (whole pixels)");
+    try d.number("steer", (try moveq(rom, 0x179C4, 0)) << 16, "ROM 0x179C4: moveq #N,d0");
+    try d.number("steer_slow", (try moveq(rom, 0x179D2, 0)) << 16, "ROM 0x179D2: moveq #N,d0");
+    try d.number("level_far", try comparedWord(rom, 0x17984), "ROM 0x17984: cmpi.w #N,d1");
+    try d.number("level_mid", try comparedWord(rom, 0x1798C), "ROM 0x1798C: cmpi.w #N,d1");
+    try d.number("level_near", try comparedWord(rom, 0x17994), "ROM 0x17994: cmpi.w #N,d1");
+    for ([_][2]u32{ .{ 0x17982, 0x179B0 }, .{ 0x1798A, 0x179C4 }, .{ 0x17992, 0x179D2 } }) |p| {
+        if (try moveq(rom, p[0], 0) != try moveq(rom, p[1], 0)) return error.BadData;
+    }
+    // The screen's edges, far out (0x17088).
+    try d.number("edge_from", (try immediate(rom, 0x1708C, &.{ 0x32, 0x3C }, 2)) - 0x80, "ROM 0x1708C: move.w #N+$80,d1");
+    try d.number("edge_to", (try immediate(rom, 0x17094, &.{ 0x32, 0x3C }, 2)) - 0x80, "ROM 0x17094: move.w #N+$80,d1");
+    try d.number("push_from", try comparedWord(rom, 0x170A2) - 0x80, "ROM 0x170A2: cmpi.w #N+$80,d0");
+    try d.number("push_to", try comparedWord(rom, 0x170A8) - 0x80, "ROM 0x170A8: cmpi.w #N+$80,d0");
+    // Blows taken (0x17C36), and the knock back and down (state 3, 0x163D0).
+    try d.number("knock_back_ticks", try moveq(rom, 0x17C7C, 0), "ROM 0x17C7C: moveq #N,d0");
+    try d.number("knock_down_ticks", try moveq(rom, 0x17C9C, 0), "ROM 0x17C9C: moveq #N,d0");
+    try d.number("knocked_x", try movedLong(rom, 0x17C9E), "ROM 0x17C9E: move.l #N,(28,a0)");
+    try d.number("knocked_up", try movedLong(rom, 0x17CA6), "ROM 0x17CA6: move.l #N,(36,a0)");
+    try d.number("knocked_bounces", try moveByte(rom, 0x17CAE, 0x63), "ROM 0x17CAE: move.b #N,(99,a0)");
+    try d.number("knocked_gravity", try immediate(rom, 0x163E8, &.{ 0x06, 0xA8 }, 4), "ROM 0x163E8: addi.l #N,(36,a0)");
+    try d.number("bounce_up", try movedLong(rom, 0x16406), "ROM 0x16406: move.l #N,(36,a0)");
+    try d.number("shake", try quick(rom, 0x16436, 0x5168), "ROM 0x16436: subq.w #N,(16,a0)");
+    try d.number("down_ticks", try moveByte(rom, 0x1648A, 0x62), "ROM 0x1648A: move.b #N,(98,a0)");
+    try d.number("dead_ticks", try moveByte(rom, 0x16498, 0x62), "ROM 0x16498: move.b #N,(98,a0)");
+    try d.number("points_at", try immediate(rom, 0x1651E, &.{ 0x0C, 0x28, 0x00 }, 1), "ROM 0x1651E: cmpi.b #N,(98,a0)");
+    try d.number("points", try points(rom, bossByte(rom, boss_points, kind)), "ROM 0x16565 (the score's index by type from $55, 0x16542), the amount at ROM 0x10DDE");
+    // Held (0x17CF2): his place in front of his holder or before him, the knees' damage.
+    try d.number("hold_front", entities.s8(rom, 0x17D76 + @as(u32, kind - 0x55)), "ROM 0x17D77 (by type from $55, 0x17D6C)");
+    try d.number("hold_behind", entities.s8(rom, 0x17DB0 + @as(u32, kind - 0x55)), "ROM 0x17DB1 (by type from $55, 0x17D96)");
+    try d.number("knee_damage", try moveByte(rom, 0x17D32, 0x6C), "ROM 0x17D32: move.b #N,(108,a0)");
+    try d.number("missile_damage", try moveByte(rom, 0x17BF4, 0x6C), "ROM 0x17BF4: move.b #N,(108,a0) (a body thrown at him)");
+    if (rom[0xA9F2] & 0xF1 != 0x51 or rom[0xA9F3] != 0x68) return error.BadData;
+    try d.number("thrown_damage", @as(i32, rom[0xA9F2] >> 1) & 7, "ROM 0x0A9F2: subq.w #N,(50,a0) (what a thrown body does to the enemies it meets)");
+    try d.number("last_knee_damage", try moveByte(rom, 0x17D2A, 0x6C), "ROM 0x17D2A: move.b #N,(108,a0)");
+    // Thrown by a player (states 6, 7, 8): their places, ticks and bounces.
+    try d.number("toss_place", entities.s8(rom, 0x17DF4 + @as(u32, kind - 0x55)), "ROM 0x17DF5 (by type from $55, 0x17DC8)");
+    try d.number("toss_ticks", try moveByte(rom, 0x17DDC, 0x62), "ROM 0x17DDC: move.b #N,(98,a0)");
+    try d.number("vault_place", entities.s8(rom, 0x17E90 + @as(u32, kind - 0x55)), "ROM 0x17E91 (by type from $55, 0x17E64)");
+    try d.number("vault_ticks", try moveByte(rom, 0x17E76, 0x62), "ROM 0x17E76: move.b #N,(98,a0)");
+    try d.number("fling_place", entities.s8(rom, 0x17ED6 + @as(u32, kind - 0x55)), "ROM 0x17ED7 (by type from $55, 0x17EA8)");
+    try d.number("fling_ticks", try moveByte(rom, 0x17EBC, 0x62), "ROM 0x17EBC: move.b #N,(98,a0)");
+    try d.number("thrown_bounces", try moveByte(rom, 0x17DE2, 0x63), "ROM 0x17DE2: move.b #N,(99,a0); 0x17E7C, 0x17EC2");
+    if (try moveByte(rom, 0x17E7C, 0x63) != try moveByte(rom, 0x17DE2, 0x63) or try moveByte(rom, 0x17EC2, 0x63) != try moveByte(rom, 0x17DE2, 0x63)) return error.BadData;
+    try thrownNumbers(&d, kind);
+    // The special attack (0x16AEC, state 10 0x16A60) and a player's new life (0x16A1A).
+    try d.number("special_grounded", try moveByte(rom, 0x16B4E, 0x76), "ROM 0x16B4E: move.b #N,(118,a0)");
+    try d.number("special_ticks", try movedWord(rom, 0x16B60, 0x54), "ROM 0x16B60: move.w #N,(84,a0)");
+    try d.number("special_ticks_second", try movedWord(rom, 0x16B6C, 0x54), "ROM 0x16B6C: move.w #N,(84,a0) (the second player's)");
+    try d.number("special_damage", try immediate(rom, 0x16A66, &.{ 0x04, 0x68 }, 2), "ROM 0x16A66: subi.w #N,(50,a0)");
+    try d.number("blast_x", try movedLong(rom, 0x16A84), "ROM 0x16A84: move.l #N,(28,a0)");
+    try d.number("blast_up", try movedLong(rom, 0x16A8C), "ROM 0x16A8C: move.l #N,(36,a0); 0x16A7A");
+    if (try movedLong(rom, 0x16A7A) != try movedLong(rom, 0x16A8C)) return error.BadData;
+    try d.number("dying_x", try movedLong(rom, 0x16A72), "ROM 0x16A72: move.l #N,(28,a0)");
+    try d.number("blast_ticks", try moveByte(rom, 0x16AA4, 0x62), "ROM 0x16AA4: move.b #N,(98,a0)");
+    try d.number("blast_bounces", try moveByte(rom, 0x16A9E, 0x63), "ROM 0x16A9E: move.b #N,(99,a0)");
+    try d.sound("swing", @bitCast(@as(i8, @intCast(try moveq(rom, 0x16F1A, 7)))));
+    try d.sound("hurt", @bitCast(@as(i8, @intCast(try moveq(rom, 0x17C4A, 7)))));
+    try d.sound("cry", @bitCast(@as(i8, @intCast(try moveq(rom, 0x166D4, 7)))));
+    try d.sound("thud", @bitCast(@as(i8, @intCast(try moveq(rom, 0x16412, 7)))));
+    if (try moveq(rom, 0x17C08, 7) != try moveq(rom, 0x17C4A, 7) or try moveq(rom, 0x166B6, 7) != try moveq(rom, 0x16412, 7)) return error.BadData;
+    return .{
+        .name = "antonio",
+        .provenance = try std.fmt.allocPrint(arena, "boss type $56, Antonio (handler 0x16CE4): the animation set at ROM 0x{X:0>5} (0x158B4), the boxes (0x1A68E, 0x1AB8E); health ROM 0x17F2B (0x17EDC){s}", .{ set, d.number_notes.items }),
+        .family = .boss,
+        .team = .enemy,
+        .behaviour = "antonio",
+        .health = bossByte(rom, boss_health, kind),
+        .shadow = true,
+        .numbers = d.numbers.items,
+        .tables = d.tables.items,
+        .sounds = d.sounds.items,
+        .boxes = d.boxes.items,
+        .animations = d.animations.items,
+        .moves = d.moves.items,
+    };
+}
+
+/// The numbers of the throws he takes (states 6, 7 and 8: 0x1659A, 0x16702, 0x168CC): the
+/// ticks left at which each step comes, the speeds, the damage of the landings.
+fn thrownNumbers(d: *Def, kind: u8) Error!void {
+    const rom = d.rom;
+    // Tossed over the shoulder (state 6).
+    try d.number("toss_lift_at", try immediate(rom, 0x16620, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x16620: cmpi.b #N,d7");
+    try d.number("toss_up", (try movedWord(rom, 0x16630, 0x24)) << 16, "ROM 0x16630: move.w #N,(36,a0)");
+    try d.number("toss_lift", try immediate(rom, 0x16636, &.{ 0x04, 0x68 }, 2), "ROM 0x16636: subi.w #N,(24,a0)");
+    try d.number("toss_x", (try immediate(rom, 0x1663C, &.{ 0x30, 0x3C }, 2)) << 16, "ROM 0x1663C: move.w #N,d0");
+    try d.number("toss_ahead", try immediate(rom, 0x16640, &.{ 0x32, 0x3C }, 2), "ROM 0x16640: move.w #N,d1");
+    try d.number("thrown_gravity", (try quick(rom, 0x1666A, 0x5068)) << 16, "ROM 0x1666A: addq.w #N,(36,a0)");
+    try d.number("toss_bounce", (try movedWord(rom, 0x1667E, 0x24)) << 16, "ROM 0x1667E: move.w #N,(36,a0)");
+    try d.number("toss_bounce_2", (try movedWord(rom, 0x16698, 0x24)) << 16, "ROM 0x16698: move.w #N,(36,a0)");
+    try d.number("toss_damage", try quick(rom, 0x166A4, 0x5168), "ROM 0x166A4: subq.w #N,(50,a0)");
+    // Vaulted over (state 7): his places as he is carried over, by steps of 8 from the table
+    // 0x168A4 (two bytes by type from $55).
+    try d.number("vault_turn_at", try immediate(rom, 0x16712, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x16712: cmpi.b #N,d7");
+    try d.number("vault_over_at", try immediate(rom, 0x16748, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x16748: cmpi.b #N,d7");
+    try d.number("vault_down_at", try immediate(rom, 0x1674E, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x1674E: cmpi.b #N,d7");
+    try d.number("vault_damage", try quick(rom, 0x16756, 0x5168), "ROM 0x16756: subq.w #N,(50,a0)");
+    try d.number("vault_fly_at", try immediate(rom, 0x167F8, &.{ 0x0C, 0x28, 0x00 }, 1), "ROM 0x167F8: cmpi.b #N,(98,a0)");
+    try d.number("vault_fly", try movedLong(rom, 0x16818), "ROM 0x16818: move.l #N,(28,a0); in height 0x16820");
+    if (try movedLong(rom, 0x16820) != try movedLong(rom, 0x16818)) return error.BadData;
+    try d.number("vault_slide", try movedLong(rom, 0x16874), "ROM 0x16874: move.l #N,(28,a0); in height 0x1687C");
+    if (try movedLong(rom, 0x1687C) != try movedLong(rom, 0x16874)) return error.BadData;
+    var places: [10]i32 = undefined;
+    for (0..5) |k| {
+        const at: u32 = 0x168A4 + 8 * @as(u32, @intCast(k)) + 2 * @as(u32, kind - 0x55);
+        places[2 * k] = entities.s8(rom, at);
+        places[2 * k + 1] = entities.s8(rom, at + 1);
+    }
+    try d.table("carried", &places, "ROM 0x168A4 (by step of 8, two bytes by type from $55: back from the thrower, then down)");
+    // Flung (state 8).
+    try d.number("fling_lift_at", try immediate(rom, 0x1694A, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x1694A: cmpi.b #N,d7");
+    try d.number("fling_at", try immediate(rom, 0x16952, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x16952: cmpi.b #N,d7");
+    try d.number("fling_up", (try movedWord(rom, 0x169CC, 0x24)) << 16, "ROM 0x169CC: move.w #N,(36,a0)");
+    try d.number("fling_x", (try moveq(rom, 0x169D2, 3)) << 16, "ROM 0x169D2: moveq #N,d3");
+    try d.number("fling_turn_at", try immediate(rom, 0x1695C, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x1695C: cmpi.b #N,d7");
+    try d.number("fling_bounce", (try movedWord(rom, 0x16988, 0x24)) << 16, "ROM 0x16988: move.w #N,(36,a0)");
+    try d.number("fling_bounce_2", (try movedWord(rom, 0x169A2, 0x24)) << 16, "ROM 0x169A2: move.w #N,(36,a0)");
+    try d.number("fling_damage", try quick(rom, 0x169AE, 0x5168), "ROM 0x169AE: subq.w #N,(50,a0)");
+}
+
+/// The frames of his animation `name` (its word `word`, facing right) show the boomerang in his
+/// hand where the records say, in its pose by the record's animation word; the frames facing
+/// left have the mirror records (but the throw's sixth, never reached in hand: the original's
+/// table names the right-facing record there).
+fn boomerangHands(d: *Def, name: []const u8, word: i32) Error!void {
+    const rom = d.rom;
+    const right = rom[boomerang_hands + @as(u32, @intCast(word)) / 2];
+    const left = rom[boomerang_hands + @as(u32, @intCast(word)) / 2 + 1];
+    const frames: []entity.Frame = @constCast(d.animations.items[d.animationIndex(name).?].frames);
+    if ((right == 0) != (left == 0)) return error.BadData;
+    if (right == 0) return;
+    var launched = false;
+    for (frames, 0..) |*f, k| {
+        const r = boomerang_records + 4 * @as(u32, rom[boomerang_hands + @as(u32, right) + k]);
+        const l = boomerang_records + 4 * @as(u32, rom[boomerang_hands + @as(u32, left) + k]);
+        if (rom[r + 1] != 0) return error.BadData;
+        const pose: []const u8 = switch (rom[r + 3]) {
+            0x38 => "held",
+            0x3C => "held_high",
+            0x40 => "spin",
+            else => return error.BadData,
+        };
+        if (!launched and (entities.s8(rom, l) != -entities.s8(rom, r) or rom[l + 2] != rom[r + 2] or rom[l + 3] != rom[r + 3] + 2)) return error.BadData;
+        if (rom[r + 3] == 0x40) launched = true;
+        f.hand = .{ .x = entities.s8(rom, r), .height = -@as(i16, rom[r + 2]), .pose = pose };
+    }
+}
+
+/// His boomerang (type $96, its handler 0x17262): in his hand (0x173D8) it shows where his frame
+/// says, hidden in his frames without it; at the frame of his throw that holds it out ahead it
+/// flies off (0x172B2), slowing to a stop, then back (0x17320) faster and faster until he
+/// catches it or it leaves the screen; struck in flight it drops away (0x1727A). It knocks down
+/// a player it meets.
+pub fn boomerang(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set = u32be(rom, boss_sets + 4 * (0x56 - 0x55));
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "antonio", .set = set, .box_table = entities.object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
+    const held = try moveq(rom, 0x17230, 0);
+    const high: i32 = rom[boomerang_records + 4 * 10 + 3];
+    const spin = try comparedWord(rom, 0x17450);
+    for ([_]struct { name: []const u8, word: i32 }{
+        .{ .name = "held", .word = held },
+        .{ .name = "held_high", .word = high },
+        .{ .name = "spin", .word = spin },
+    }) |an| try d.animations.append(arena, .{ .name = an.name, .loop = true, .frames = try enemyFrames(&d, an.name, try wordEntry(an.word)) });
+    try d.number("flight_speed", try movedLong(rom, 0x17458), "ROM 0x17458: move.l #N,(28,a0); the other way 0x17462");
+    if (try movedLong(rom, 0x17462) != -(try movedLong(rom, 0x17458))) return error.BadData;
+    try d.number("flight_depth", try movedLong(rom, 0x1746A), "ROM 0x1746A: move.l #N,(32,a0)");
+    try d.number("flight_ticks", try moveByte(rom, 0x17476, 0x6B), "ROM 0x17476: move.b #N,(107,a0)");
+    try d.number("slowing", try immediate(rom, 0x172D4, &.{ 0x22, 0x3C }, 4), "ROM 0x172D4: move.l #N,d1; 0x17344");
+    if (try immediate(rom, 0x17344, &.{ 0x22, 0x3C }, 4) != try immediate(rom, 0x172D4, &.{ 0x22, 0x3C }, 4)) return error.BadData;
+    try d.number("depth_slowing", try immediate(rom, 0x172E8, &.{ 0x06, 0xA8 }, 4), "ROM 0x172E8: addi.l #N,(32,a0)");
+    try d.number("depth_back", try immediate(rom, 0x1737A, &.{ 0x06, 0xA8 }, 4), "ROM 0x1737A: addi.l #N,(32,a0); 0x17370");
+    if (try immediate(rom, 0x17370, &.{ 0x04, 0xA8 }, 4) != try immediate(rom, 0x1737A, &.{ 0x06, 0xA8 }, 4)) return error.BadData;
+    try d.number("depth_within", try comparedWord(rom, 0x17364), "ROM 0x17364: cmpi.w #N,d1");
+    try d.number("depth_most", (try immediate(rom, 0x17ACE, &.{ 0x0C, 0x80 }, 4)) >> 16, "ROM 0x17ACE: cmpi.l #N,d0 (its move's, as his)");
+    try d.number("gone_from", try comparedWord(rom, 0x1738C) - 0x80, "ROM 0x1738C: cmpi.w #N+$80,d1 (drawn across)");
+    try d.number("gone_to", try comparedWord(rom, 0x17394) - 0x80, "ROM 0x17394: cmpi.w #N+$80,d1");
+    try d.number("struck_from", try comparedWord(rom, 0xAABA) - 0x80, "ROM 0x0AABA: cmpi.w #N+$80,(40,a0) (drawn across: the meeting check's, 0xAA22)");
+    try d.number("struck_to", try comparedWord(rom, 0xAAC2) - 0x80, "ROM 0x0AAC2: cmpi.w #N+$80,(40,a0)");
+    try d.number("dropped_ticks", try moveByte(rom, 0x17286, 0x7B), "ROM 0x17286: move.b #N,(123,a0)");
+    try d.number("dropped_up", (try movedWord(rom, 0x1728C, 0x24)) << 16, "ROM 0x1728C: move.w #N,(36,a0)");
+    try d.number("dropped_depth", (try movedWord(rom, 0x17292, 0x20)) << 16, "ROM 0x17292: move.w #N,(32,a0)");
+    if (u16be(rom, 0x1729C) & 0xF1FF != 0xE080) return error.BadData;
+    try d.number("dropped_back", (u16be(rom, 0x1729C) >> 9) & 7, "ROM 0x1729C: asr.l #N,d0 (its speed across back, so much shifted)");
+    try d.sound("whirr", @bitCast(@as(i8, @intCast(try moveq(rom, 0x1747E, 7)))));
+    try d.sound("dropped", @bitCast(@as(i8, @intCast(try moveq(rom, 0x172AA, 7)))));
+    if (try moveq(rom, 0x17314, 7) != try moveq(rom, 0x1747E, 7)) return error.BadData;
+    return .{
+        .name = "boomerang",
+        .provenance = try std.fmt.allocPrint(arena, "Antonio's boomerang (type $96, handler 0x17262): his animation set at ROM 0x{X:0>5}, the boxes (0x1A68E, 0x1AB8E){s}", .{ set, d.number_notes.items }),
+        .family = .projectile,
+        .team = .enemy,
+        .behaviour = "boomerang",
+        .shadow = true,
+        .numbers = d.numbers.items,
+        .sounds = d.sounds.items,
+        .boxes = d.boxes.items,
+        .animations = d.animations.items,
+    };
+}
+
 /// The definitions this module writes, appended to `out`.
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
     try out.append(arena, try brawler(arena, rom));
@@ -675,4 +1034,6 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity
     try out.append(arena, try galsiaPipe(arena, rom));
     try out.append(arena, try acrobat(arena, rom));
     try out.append(arena, try shutter(arena, rom));
+    try out.append(arena, try antonio(arena, rom));
+    try out.append(arena, try boomerang(arena, rom));
 }

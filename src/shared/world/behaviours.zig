@@ -45,7 +45,7 @@
 //! `player_waiting` a player out of lives (PLAN item 13); round 1's other enemies, `stalker`,
 //! `signal`, `galsia_pipe`, `galsia_knife`, `acrobat`, `brawler`, their weapons (`weapon`,
 //! `knife`), the rolling `shutter`, `breakable` and `item` the street's breakables and what they
-//! leave (PLAN item 12).
+//! leave, round 1's boss `antonio` and his `boomerang` (PLAN item 12).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -65,6 +65,8 @@ pub const weapon = @import("behaviours/weapon.zig");
 pub const knife = @import("behaviours/knife.zig");
 pub const breakable = @import("behaviours/breakable.zig");
 pub const item = @import("behaviours/item.zig");
+pub const antonio = @import("behaviours/antonio.zig");
+pub const boomerang = @import("behaviours/boomerang.zig");
 pub const police_car = @import("behaviours/police_car.zig");
 pub const go_arrow = @import("behaviours/go_arrow.zig");
 pub const player_waiting = @import("behaviours/player_waiting.zig");
@@ -87,6 +89,8 @@ pub const Mind = union(enum) {
     knife: knife.Mind,
     breakable: breakable.Mind,
     item: item.Mind,
+    antonio: antonio.Mind,
+    boomerang: boomerang.Mind,
     police_car: police_car.Mind,
     go_arrow: go_arrow.Mind,
     player_waiting: player_waiting.Mind,
@@ -144,6 +148,15 @@ pub fn setState(m: *Mind, name: []const u8) bool {
             x.state = std.meta.stringToEnum(S, name) orelse return false;
             return true;
         },
+    }
+}
+
+/// The place of the state the entity is in among its behaviour's states (0, the first, without a
+/// behaviour).
+pub fn stateIndex(m: *const Mind) usize {
+    switch (m.*) {
+        .none => return 0,
+        inline else => |*x| return @backingInt(x.state),
     }
 }
 

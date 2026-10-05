@@ -97,6 +97,8 @@ pub const Timer = struct {
     ticks: u8 = 0,
     /// It ran out at this tick: the round's time is up.
     up: bool = false,
+    /// A boss's last blow stopped it.
+    stopped: bool = false,
 };
 
 /// How round `r`'s camera follows the players.
@@ -134,12 +136,13 @@ pub fn placeFirst(t: *Tick, plan: *const Plan) void {
 }
 
 /// The timer: a second less every `pace` ticks while every player in play plays (none dying or
-/// waiting to continue); at zero the time is up. It holds during the special attack.
+/// waiting to continue); at zero the time is up. It holds during the special attack, and stops
+/// at a boss's last blow.
 pub fn timer(t: *Tick) void {
     const p = t.plan orelse return;
     const tm = &t.world.timer;
     tm.up = false;
-    if (t.world.special) return;
+    if (t.world.special or tm.stopped) return;
     tm.ticks -|= 1;
     if (tm.ticks != 0) return;
     tm.ticks = p.round.timer.pace;
@@ -264,6 +267,12 @@ pub fn run(t: *Tick) void {
             nextWave(t, p);
         },
     }
+}
+
+/// Whether the boss's section has begun (the boss's fight is on): the script reads the boss's
+/// part.
+pub fn bossFight(w: anytype, plan: *const Plan) bool {
+    return w.script.part >= plan.round.sections.len;
 }
 
 /// The boss was beaten: the round is won (the boss's behaviour says when).
@@ -397,6 +406,7 @@ pub fn placing(rec: *const Spawn) entity.Spawn {
         sp.offset_x = o.x;
         sp.offset_depth = o.depth;
     }
+    sp.bar = rec.bar;
     return sp;
 }
 

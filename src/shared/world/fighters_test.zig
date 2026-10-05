@@ -436,6 +436,134 @@ const waiting =
     \\ "sounds": {"cursor": "menu move", "game_over": "game over music"}}
 ;
 
+/// Round 1's boss and his boomerang, as the extractor writes them (their frames on the test art).
+const antonio_fixture =
+    \\{"animations": {"bounce": {"frames": [{"attack": "bounce_attack", "flip": true,
+    \\"frame": "t/f0", "ticks": 1}], "loop": true}, "down": {"frames": [{"frame": "t/f0",
+    \\"ticks": 1}], "loop": true}, "flight": {"frames": [{"attack": "flight_attack",
+    \\"frame": "t/f0", "ticks": 1}], "loop": true}, "held": {"frames": [{"body": "knocked_body",
+    \\"frame": "t/f0", "ticks": 1}], "loop": true},
+    \\"held_behind": {"frames": [{"body": "held_behind_body", "frame": "t/f0", "ticks": 1}],
+    \\"loop": true}, "idle": {"frames": [{"body": "stand_body", "frame": "t/f0",
+    \\"hand": {"height": -80, "pose": "held", "x": -18}, "ticks": 6}, {"body": "stand_body",
+    \\"frame": "t/f0", "hand": {"height": -76, "pose": "held", "x": -14}, "ticks": 6},
+    \\{"body": "stand_body", "frame": "t/f0", "hand": {"height": -84, "pose": "held", "x": -24},
+    \\"ticks": 6}, {"body": "stand_body", "frame": "t/f0", "hand": {"height": -76,
+    \\"pose": "held", "x": -14}, "ticks": 6}], "loop": true},
+    \\"knocked": {"frames": [{"body": "knocked_body", "frame": "t/f0", "ticks": 1}],
+    \\"loop": true}, "lifted": {"frames": [{"attack": "lifted_attack", "frame": "t/f0",
+    \\"ticks": 1}], "loop": true}, "stand": {"frames": [{"body": "stand_body", "frame": "t/f0",
+    \\"hand": {"height": -80, "pose": "held", "x": -18}, "ticks": 6}, {"body": "stand_body",
+    \\"frame": "t/f0", "hand": {"height": -81, "pose": "held", "x": -18}, "ticks": 6},
+    \\{"body": "stand_body", "frame": "t/f0", "hand": {"height": -80, "pose": "held", "x": -18},
+    \\"ticks": 6}, {"body": "stand_body", "frame": "t/f0", "hand": {"height": -81,
+    \\"pose": "held", "x": -18}, "ticks": 6}], "loop": true},
+    \\"swing": {"frames": [{"body": "stand_body", "frame": "t/f0", "ticks": 3},
+    \\{"attack": "swing_attack", "blow": true, "body": "swing_body", "frame": "t/f0",
+    \\"ticks": 3}, {"attack": "swing_attack_2", "blow": true, "body": "swing_body",
+    \\"frame": "t/f0", "ticks": 3}, {"attack": "swing_attack_3", "blow": true,
+    \\"body": "swing_body_2", "frame": "t/f0", "ticks": 3}, {"attack": "swing_attack_3",
+    \\"blow": true, "body": "swing_body_2", "frame": "t/f0", "ticks": 3},
+    \\{"attack": "swing_attack_3", "blow": true, "body": "swing_body_2", "frame": "t/f0",
+    \\"ticks": 3}, {"attack": "swing_attack_3", "blow": true, "body": "swing_body_2",
+    \\"frame": "t/f0", "ticks": 3}, {"body": "stand_body", "frame": "t/f0", "ticks": 3},
+    \\{"body": "stand_body", "frame": "t/f0", "ticks": 3}], "loop": true},
+    \\"taunt": {"frames": [{"body": "stand_body", "frame": "t/f0", "hand": {"height": -80,
+    \\"pose": "held", "x": -18}, "ticks": 6}, {"body": "taunt_body", "frame": "t/f0",
+    \\"hand": {"height": -80, "pose": "held", "x": -36}, "ticks": 6}], "loop": true},
+    \\"throw": {"frames": [{"body": "stand_body", "frame": "t/f0", "hand": {"height": -80,
+    \\"pose": "held", "x": -18}, "ticks": 6}, {"body": "throw_body", "frame": "t/f0",
+    \\"hand": {"height": -45, "pose": "held_high", "x": -36}, "ticks": 6}, {"body": "throw_body",
+    \\"frame": "t/f0", "hand": {"height": -48, "pose": "spin", "x": 64}, "ticks": 6},
+    \\{"body": "throw_body", "frame": "t/f0", "hand": {"height": -48, "pose": "spin", "x": 64},
+    \\"ticks": 6}, {"body": "throw_body", "frame": "t/f0", "hand": {"height": -48,
+    \\"pose": "spin", "x": 64}, "ticks": 6}, {"body": "stand_body", "frame": "t/f0",
+    \\"hand": {"height": -80, "pose": "held", "x": -18}, "ticks": 6}], "loop": true},
+    \\"wait": {"frames": [{"body": "stand_body", "frame": "t/f0", "hand": {"height": -45,
+    \\"pose": "held_high", "x": -36}, "ticks": 6}, {"body": "stand_body", "frame": "t/f0",
+    \\"hand": {"height": -45, "pose": "held_high", "x": -36}, "ticks": 6}, {"body": "stand_body",
+    \\"frame": "t/f0", "hand": {"height": -45, "pose": "held_high", "x": -36}, "ticks": 6},
+    \\{"body": "stand_body", "frame": "t/f0", "hand": {"height": -45, "pose": "held_high",
+    \\"x": -36}, "ticks": 6}], "loop": true}, "walk": {"frames": [{"body": "stand_body",
+    \\"frame": "t/f0", "hand": {"height": -80, "pose": "held", "x": -18}, "ticks": 6},
+    \\{"body": "stand_body", "frame": "t/f0", "hand": {"height": -76, "pose": "held", "x": -14},
+    \\"ticks": 6}, {"body": "stand_body", "frame": "t/f0", "hand": {"height": -84,
+    \\"pose": "held", "x": -24}, "ticks": 6}, {"body": "stand_body", "frame": "t/f0",
+    \\"hand": {"height": -76, "pose": "held", "x": -14}, "ticks": 6}], "loop": true}},
+    \\"behaviour": "antonio", "boxes": {"bounce_attack": {"depth": [-8, 8], "height": [-20, -4],
+    \\"x": [-48, 4]}, "flight_attack": {"depth": [-8, 8], "height": [-52, -18], "x": [-38, 6]},
+    \\"held_behind_body": {"depth": [-8, 8], "height": [-56, 0], "x": [-18, 14]},
+    \\"knocked_body": {"depth": [-8, 8], "height": [-56, 0], "x": [-14, 15]},
+    \\"lifted_attack": {"depth": [-8, 8], "height": [-42, 0], "x": [-34, -4]},
+    \\"stand_body": {"depth": [-8, 8], "height": [-68, 0], "x": [-14, 15]},
+    \\"swing_attack": {"depth": [-8, 8], "height": [-36, -6], "x": [-8, 30]},
+    \\"swing_attack_2": {"depth": [-8, 8], "height": [-36, -6], "x": [-8, 60]},
+    \\"swing_attack_3": {"depth": [-8, 8], "height": [-50, -32], "x": [12, 84]},
+    \\"swing_body": {"depth": [-8, 8], "height": [-66, 0], "x": [-6, 22]},
+    \\"swing_body_2": {"depth": [-8, 8], "height": [-74, 0], "x": [14, 40]},
+    \\"taunt_body": {"depth": [-8, 8], "height": [-68, 0], "x": [-32, 0]},
+    \\"throw_body": {"depth": [-8, 8], "height": [-62, 0], "x": [-8, 22]}}, "family": "boss",
+    \\"health": 24, "moves": {"swing": {"animation": "swing", "damage": 20,
+    \\"reaction": "knock_down"}}, "numbers": {"align_level": 20, "align_speed": 65536,
+    \\"back_away_speed": 98304, "back_away_ticks": 32, "blast_bounces": 2, "blast_ticks": 30,
+    \\"blast_up": -327680, "blast_x": -196608, "bounce_up": -196608, "catch_hand": 24,
+    \\"catch_steer": 65536, "catch_within": 8, "charge_back_from": 224, "charge_back_level": 20,
+    \\"charge_from": 40, "charge_level": 20, "charge_speed": 262144, "charge_stop_far": 224,
+    \\"charge_stop_level": 16, "charge_stop_near": 40, "dead_ticks": 110, "depth_most": 112,
+    \\"down_ticks": 8, "dying_x": -262144, "edge_from": -64, "edge_to": 384, "fling_at": 41,
+    \\"fling_bounce": -131072, "fling_bounce_2": -393216, "fling_damage": 4, "fling_lift_at": 45,
+    \\"fling_place": 40, "fling_ticks": 50, "fling_turn_at": 33, "fling_up": -524288,
+    \\"fling_x": 458752, "grab_height": 8, "hardest_health": 5, "hold_behind": -32,
+    \\"hold_front": 40, "keep_at": 18, "keep_far": 32, "keep_near": 8, "keep_step_1": 22,
+    \\"keep_step_2": 26, "knee_damage": 2, "knock_back_ticks": 8, "knock_down_ticks": 30,
+    \\"knocked_bounces": 2, "knocked_gravity": 65536, "knocked_up": -327680,
+    \\"knocked_x": -327680, "last_knee_damage": 3, "level_far": 32, "level_mid": 16,
+    \\"level_near": 8, "missile_damage": 1, "near": 120, "on_screen_from": 0,
+    \\"on_screen_to": 320, "outside_power": 2, "points": 3000, "points_at": 90, "power": 20,
+    \\"push_from": -32, "push_to": 352, "screen_middle": 160, "shake": 2, "special_damage": 10,
+    \\"special_grounded": 20, "special_ticks": 300, "special_ticks_second": 390,
+    \\"stand_far_level": 144, "stand_far_speed": 98304, "stand_near": 20, "steer": 131072,
+    \\"steer_fast": 262144, "steer_slow": 65536, "stroll_speed": 65536, "stroll_ticks": 28,
+    \\"stroll_toward_from": 128, "struck_from": -8, "struck_to": 328, "sway_speed": 65536,
+    \\"swing_ends": 8, "swing_frame": 1, "swing_from_start": 2, "swing_level": 16,
+    \\"swing_level_above": 8, "swing_reach_coming": 120, "swing_reach_going": 80,
+    \\"swing_reach_still": 104, "swing_reach_still_left": 80, "taunt_from": 192,
+    \\"throw_ticks": 36, "thrown_bounces": 3, "thrown_damage": 2, "thrown_gravity": 131072,
+    \\"toss_ahead": 32, "toss_bounce": -524288, "toss_bounce_2": -131072, "toss_damage": 4,
+    \\"toss_lift": 64, "toss_lift_at": 41, "toss_place": 16, "toss_ticks": 45,
+    \\"toss_up": -327680, "toss_x": 524288, "vault_damage": 5, "vault_down_at": 32,
+    \\"vault_fly": -393216, "vault_fly_at": 29, "vault_over_at": 36, "vault_place": -10,
+    \\"vault_slide": -196608, "vault_ticks": 45, "vault_turn_at": 40, "walk_in_low": 56,
+    \\"walk_in_speed": 262144, "walk_in_ticks": 72, "walk_in_ticks_second": 70,
+    \\"zigzag_back": 64, "zigzag_turn": 32}, "shadow": true, "sounds": {"cry": "boss cry",
+    \\"hurt": "enemy hit", "swing": "swing", "thud": "heavy fall"}, "tables": {"carried": [8,
+    \\-22, 16, 8, 14, 24, 64, -24, 32, -8]}, "team": "enemy"}
+;
+
+const boomerang_fixture =
+    \\{"animations": {"held": {"frames": [{"frame": "t/f0", "ticks": 1}], "loop": true},
+    \\"held_high": {"frames": [{"frame": "t/f0", "ticks": 1}], "loop": true},
+    \\"spin": {"frames": [{"attack": "spin_attack", "body": "spin_body", "frame": "t/f0",
+    \\"ticks": 1}, {"attack": "spin_attack_2", "body": "spin_body_2", "frame": "t/f0",
+    \\"ticks": 1}, {"attack": "spin_attack_3", "body": "spin_body_3", "frame": "t/f0",
+    \\"ticks": 1}, {"attack": "spin_attack_4", "body": "spin_body_4", "frame": "t/f0",
+    \\"ticks": 1}], "loop": true}}, "behaviour": "boomerang",
+    \\"boxes": {"spin_attack": {"depth": [-8, 8], "height": [-18, 0], "x": [-4, 22]},
+    \\"spin_attack_2": {"depth": [-8, 8], "height": [-10, 0], "x": [-18, 18]},
+    \\"spin_attack_3": {"depth": [-8, 8], "height": [-18, 0], "x": [-20, 6]},
+    \\"spin_attack_4": {"depth": [-8, 8], "height": [-18, -8], "x": [-20, 16]},
+    \\"spin_body": {"depth": [-8, 8], "height": [-18, 0], "x": [-4, 22]},
+    \\"spin_body_2": {"depth": [-8, 8], "height": [-10, 0], "x": [-18, 18]},
+    \\"spin_body_3": {"depth": [-8, 8], "height": [-18, 0], "x": [-20, 6]},
+    \\"spin_body_4": {"depth": [-8, 8], "height": [-18, -8], "x": [-20, 16]}},
+    \\"family": "projectile", "numbers": {"depth_back": 12288, "depth_most": 112,
+    \\"depth_slowing": -12288, "depth_within": 4, "dropped_back": 3, "dropped_depth": 262144,
+    \\"dropped_ticks": 11, "dropped_up": -720896, "flight_depth": 294912, "flight_speed": 917504,
+    \\"flight_ticks": 32, "gone_from": -256, "gone_to": 576, "slowing": 28672, "struck_from": -8,
+    \\"struck_to": 328}, "shadow": true, "sounds": {"dropped": "metal clang",
+    \\"whirr": "boomerang"}, "team": "enemy"}
+;
+
 const Fixture = struct {
     arena: std.heap.ArenaAllocator,
     kinds: Kinds,
@@ -459,6 +587,8 @@ const Fixture = struct {
             .{ .name = "breakable", .text = breakable },
             .{ .name = "apple", .text = apple },
             .{ .name = "gold", .text = gold },
+            .{ .name = "antonio", .text = antonio_fixture },
+            .{ .name = "boomerang", .text = boomerang_fixture },
             .{ .name = "police_car", .text = car },
             .{ .name = "player_waiting", .text = waiting },
         };
@@ -1226,4 +1356,73 @@ test "a brawler: struck, it reels a tick later; placed to, it shrugs the blow of
     try testing.expect(shrugged);
     try testing.expect(r2.w.get(b2).?.health < 12);
     try testing.expectEqualStrings("knocked_down", r2.state());
+}
+
+test "Antonio comes in: on the status bar from his first tick; off the screen he walks in, his boomerang in hand" {
+    var r = try Round.init();
+    defer r.deinit();
+    const h = try r.w.spawnEnemy(&r.f.kinds, r.f.kinds.find("antonio").?, .pixels(768 + 328, 16, 160), .{ .bar = 4 });
+    r.step(.{});
+    try testing.expectEqual(@as(?u8, 4), r.w.boss_bar);
+    try testing.expect(r.w.bosses[0].?.eql(h));
+    const e = r.w.get(h).?;
+    try testing.expectEqual(@as(i16, 24), e.health);
+    try testing.expectEqualStrings("walk", behaviours.stateName(&e.mind).?);
+    r.step(.{});
+    // Drawn off the screen's right side: in at 4 pixels a tick across, and in depth by the
+    // player's (from the depths' lower half, up).
+    try testing.expectEqual(@as(i32, -4 << 16), e.velocity.x.raw);
+    try testing.expectEqual(@as(i32, -4 << 16), e.velocity.depth.raw);
+    try testing.expectEqual(entity.Facing.left, e.facing);
+    // His boomerang in his hand: behind him, up.
+    const b = r.w.get(r.w.handleAt(h.index + 1).?).?;
+    try testing.expectEqualStrings("in_hand", behaviours.stateName(&b.mind).?);
+    try testing.expectEqual(e.position.x.whole() + 18, b.position.x.whole());
+    try testing.expectEqual(@as(i32, 80), b.position.height.whole());
+}
+
+test "Antonio swings at a near player; a jab met then costs him its damage at his next tick, knocked back a while" {
+    var r = try Round.init();
+    defer r.deinit();
+    const h = try r.w.spawnEnemy(&r.f.kinds, r.f.kinds.find("antonio").?, .pixels(830, 64, 160), .{});
+    r.step(.{});
+    r.step(b_pad);
+    const e = r.w.get(h).?;
+    try testing.expectEqualStrings("throw", behaviours.traceName(&e.mind).?);
+    var hit_at: ?usize = null;
+    for (0..4) |k| {
+        r.step(.{});
+        if (e.health < 24) {
+            hit_at = k;
+            break;
+        }
+    }
+    try testing.expect(hit_at != null);
+    try testing.expectEqual(@as(i16, 23), e.health);
+    try testing.expectEqualStrings("knocked_back", behaviours.stateName(&e.mind).?);
+    for (0..7) |_| r.step(.{});
+    try testing.expectEqualStrings("knocked_back", behaviours.stateName(&e.mind).?);
+    r.step(.{});
+    try testing.expectEqualStrings("walk", behaviours.stateName(&e.mind).?);
+}
+
+test "Antonio throws his boomerang: it leaves his hand at his throw's third frame, flies out, turns, comes back" {
+    var r = try Round.init();
+    defer r.deinit();
+    const h = try r.w.spawnEnemy(&r.f.kinds, r.f.kinds.find("antonio").?, .pixels(960, 64, 160), .{});
+    r.step(.{});
+    // Not near: level with the player, he throws (from the tick after).
+    r.step(.{});
+    r.step(.{});
+    const e = r.w.get(h).?;
+    try testing.expect(e.animation.index.? == r.f.kinds.get(e.kind.?).definition.animation("throw").?);
+    const b = r.w.get(r.w.handleAt(h.index + 1).?).?;
+    for (0..11) |_| r.step(.{});
+    try testing.expectEqualStrings("in_hand", behaviours.stateName(&b.mind).?);
+    r.step(.{});
+    try testing.expectEqualStrings("out", behaviours.stateName(&b.mind).?);
+    try testing.expectEqual(@as(i32, -14 << 16), b.velocity.x.raw);
+    try testing.expect(b.missile != null);
+    for (0..32) |_| r.step(.{});
+    try testing.expectEqualStrings("back", behaviours.stateName(&b.mind).?);
 }

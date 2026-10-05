@@ -117,8 +117,14 @@ pub const World = struct {
     /// The most a player's score holds (play's record's, which the round sets; none before).
     score_most: u32 = std.math.maxInt(u32),
     /// A special attack is under way (play's phase `special`): the players stand still, the
-    /// enemies it caught wait for its blast.
+    /// enemies it caught wait for its blast; the player who called the last one.
     special: bool = false,
+    special_by: ?Handle = null,
+    /// The status bar's bosses, from the first tick of the round's boss: its entry in the bar's
+    /// names and bars (the round's script's `bar`), and the bosses whose health its bars show
+    /// (the second of twins in the second).
+    boss_bar: ?u8 = null,
+    bosses: [2]?Handle = .{ null, null },
 
     pub const Full = error{Full};
 

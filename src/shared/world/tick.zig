@@ -231,6 +231,18 @@ pub const Tick = struct {
         return dispatch(t, h, "takeUpFrame", bool, false, .{ shown, ago, draws });
     }
 
+    /// Taken up from a situation, the entity's speed across has been what it is `across_ago`
+    /// ticks, its animation `pose_ago` ticks.
+    pub fn takeUpSince(t: *Tick, h: Handle, across_ago: u32, pose_ago: u32) void {
+        dispatch(t, h, "takeUpSince", void, {}, .{ across_ago, pose_ago });
+    }
+
+    /// Taken up from a situation, a blow of `by` met the entity at the situation's tick, its
+    /// `damage` felt at the next.
+    pub fn takeUpMet(t: *Tick, h: Handle, by: Handle, damage: i16) void {
+        dispatch(t, h, "takeUpMet", void, {}, .{ by, damage });
+    }
+
     /// Taken up from a situation, the entity bounced `times` times in its state.
     pub fn takeUpBounces(t: *Tick, h: Handle, times: u8) void {
         dispatch(t, h, "takeUpBounces", void, {}, .{times});
@@ -284,6 +296,12 @@ pub const Tick = struct {
     /// Whether `by` may grab the entity (by default, no).
     pub fn grabbable(t: *Tick, h: Handle, by: Handle) bool {
         return dispatch(t, h, "grabbable", bool, false, .{by});
+    }
+
+    /// Whether an enemy may set on the entity now: its behaviour's `attackable` says (a player
+    /// struck down or blinking may not); by default, yes.
+    pub fn attackable(t: *Tick, h: Handle) bool {
+        return dispatch(t, h, "attackable", bool, true, .{});
     }
 
     /// Whether an enemy may catch the entity at this tick (`catchHeld`): its behaviour's
@@ -470,6 +488,7 @@ pub const Tick = struct {
     pub fn callSpecial(t: *Tick, by: Handle) bool {
         if (t.world.special) return false;
         const kind = t.kinds.find(special_kind) orelse return false;
+        t.world.special_by = by;
         const c = t.world.camera;
         const car = t.world.spawn(t.kinds, kind, .{ .x = c.x, .depth = .zero, .height = t.world.ground }, .right) catch return false;
         if (t.world.get(car)) |e| e.flags.on_screen = false;
