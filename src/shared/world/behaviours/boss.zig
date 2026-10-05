@@ -311,11 +311,11 @@ pub fn Of(comptime M: type) type {
             if (a.entity.holder != null) a.letGo();
         }
 
-        /// The cry of his last health; with no twin left, the round's timer stops.
+        /// The cry of his last health; in his section with no twin left, the round's timer stops.
         pub fn beatenCry(a: A) void {
             const m = a.mind;
             const alone = m.twin == 0 or if (twinOf(a)) |o| o.entity.health <= 0 else true;
-            if (alone) a.tick.world.timer.stopped = true;
+            if (alone and inFight(a)) a.tick.world.timer.stopped = true;
             a.sound(.cry);
         }
 
@@ -396,15 +396,28 @@ pub fn Of(comptime M: type) type {
             m.count -%= 1;
             if (m.count == 0) {
                 if (m.twin == 0) a.tick.roundWon();
-                // His twin is alone from now.
-                if (twinOf(a)) |o| {
-                    o.mind.twin = 0;
-                    o.mind.twin_at = null;
-                }
-                return a.remove();
+                return leave(a);
             }
-            if (m.count == n.points_at) return scorePoints(a);
+            if (m.count == n.points_at) {
+                scorePoints(a);
+                // Brought by a section's reserve, outside the boss's section: he leaves then,
+                // counted off the reserve's boss's art and colours.
+                if (!inFight(a)) {
+                    script.bossCountedOff(a.tick);
+                    leave(a);
+                }
+                return;
+            }
             if (m.count > n.points_at and m.count & 2 != 0) a.entity.flags.hidden = false;
+        }
+
+        /// He goes: his twin is alone from now.
+        fn leave(a: A) void {
+            if (twinOf(a)) |o| {
+                o.mind.twin = 0;
+                o.mind.twin_at = null;
+            }
+            a.remove();
         }
 
         /// His points to the player who struck him last: player 1, else player 2.
