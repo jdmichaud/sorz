@@ -127,7 +127,9 @@ pub fn ShutterEntry(comptime M: type) type {
             const n = a.numbers();
             const e = a.entity;
             Of(M).faceTarget(a);
+            // Its walk's first frame, held while it waits (shown or not); let out, it walks.
             a.animate(.walk);
+            a.pause(true);
             e.facing = .left;
             e.position.depth = .parts(0, e.position.depth.frac());
             a.tick.putUpShutter(a.handle);
@@ -1001,6 +1003,9 @@ pub fn Of(comptime M: type) type {
 
         pub fn heldBy(a: A, holder: Handle) void {
             const b = body(a);
+            // Reeling, it shook at this tick before the grab met it (the original's reel shakes,
+            // then looks at its grabs).
+            if (a.mind.state == .reel and b.reel_taken and !b.settling) a.setFrame(a.frame() ^ 1);
             a.endMove();
             b.timer = 0;
             b.other = holder;
@@ -1411,9 +1416,12 @@ pub fn Of(comptime M: type) type {
                 const b = body(a);
                 b.fresh = false;
                 a.animate(.walk);
+                // Its walk held while it waits; dropping, it walks.
+                a.pause(true);
                 if (a.entity.velocity.height.raw > 0) {
                     b.let_out = true;
                     b.dropping = true;
+                    a.pause(false);
                 }
                 return;
             }
