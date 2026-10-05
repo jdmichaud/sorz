@@ -296,10 +296,15 @@ pub fn takeUp(a: Actor, elapsed: u32) void {
     a.entity.velocity = v;
 }
 
-/// The state's animation, move and speed across.
+/// The state's animation, move and speed across. A blow queued in the combo's first blows is
+/// kept by them alone (the original forgets the moves a new state does not keep).
 fn begin(a: Actor, state: State) void {
     const n = a.numbers();
     a.endMove();
+    switch (state) {
+        .attack1, .attack2, .attack3 => {},
+        else => a.mind.queued = false,
+    }
     switch (state) {
         .fall, .jump => a.animate(.jump),
         .ready => a.animate(.ready),
