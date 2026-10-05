@@ -43,6 +43,9 @@ pub const Mind = struct {
     state: State = .appear,
     body: enemy.Body = .{},
     punk: galsia.PunkMemory = .{},
+    /// Sneaking up, it saw its target turn round at this tick's start: it takes no blow nor grab
+    /// until its next.
+    seen: bool = false,
 };
 
 pub const Animation = enum { walk, down, reel, stand, thrown, slammed, punch, grab };
@@ -68,18 +71,28 @@ pub fn hurtable(state: State) bool {
 }
 
 pub fn begin(a: Actor) void {
-    if (!Common.setUpDue(a)) return;
-    const was = a.mind.state;
-    switch (was) {
-        .approach => approachSetUp(a),
-        .lurk => lurkSetUp(a),
-        .sneak => sneakSetUp(a),
-        .grab => grabSetUp(a),
-        .close_in => Punk.closeInSetUp(a),
-        .punch => Punk.punchSetUp(a),
-        else => Common.setUp(a),
+    a.mind.seen = false;
+    if (Common.setUpDue(a)) {
+        const was = a.mind.state;
+        switch (was) {
+            .approach => approachSetUp(a),
+            .lurk => lurkSetUp(a),
+            .sneak => sneakSetUp(a),
+            .grab => grabSetUp(a),
+            .close_in => Punk.closeInSetUp(a),
+            .punch => Punk.punchSetUp(a),
+            else => Common.setUp(a),
+        }
+        if (Common.leftAt(a, was)) return;
+    } else if (a.mind.body.waits or a.mind.body.fresh) return;
+    // Sneaking up, it watches its target's back before anything else: turned round, the target
+    // sees it, and it takes up the fight again at its next tick, this one's blows and grabs
+    // missing it.
+    if (a.mind.state == .sneak and !backTurned(a)) {
+        Common.enter(a, fights);
+        a.mind.body.left = true;
+        a.mind.seen = true;
     }
-    _ = Common.leftAt(a, was);
 }
 
 pub fn think(a: Actor) void {
@@ -156,7 +169,6 @@ fn sneakSetUp(a: Actor) void {
 }
 
 fn sneak(a: Actor) void {
-    if (!backTurned(a)) return Common.enter(a, fights);
     if (grabs(a)) return;
     Common.pointBeside(a, 0);
     if (!Common.headForPoint(a)) {
@@ -218,6 +230,7 @@ fn grab(a: Actor) void {
 }
 
 pub fn struck(a: Actor, blow: tick.Blow) bool {
+    if (a.mind.seen) return false;
     // A blow on it while it holds frees the one held.
     const holding = a.mind.state == .grab and a.entity.holding != null;
     const took = Common.struck(a, blow);
@@ -251,7 +264,7 @@ pub fn blowLanded(a: Actor, target: Handle) void {
 }
 
 pub fn grabbable(a: Actor, by: Handle) bool {
-    if (a.mind.state == .grab) return false;
+    if (a.mind.state == .grab or a.mind.seen) return false;
     return Common.grabbable(a, by);
 }
 
