@@ -361,7 +361,7 @@ pub const Round = struct {
     }
 
     /// The status bar's lines (the fixed layer's, its map's), above the sprites'.
-    fn barLines(a: *const Assets) u16 {
+    pub fn barLines(a: *const Assets) u16 {
         const top: u16 = if (a.status_bar.place) |p| @intCast(@max(p.y, 0)) else 0;
         return (top + a.status_bar.height) * art.tile_side;
     }

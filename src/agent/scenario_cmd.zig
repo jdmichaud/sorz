@@ -36,6 +36,8 @@ pub const Drawn = struct {
     shadow: ?*const sorz.content.art.Frame,
     /// The kinds of entity: their frames tell a sprite's kind.
     kinds: *const sorz.world.Kinds,
+    /// The status bar's own lines in play (without the bosses' bars' row).
+    bar_lines: u16,
 
     pub fn picture(self: Drawn) sorz.platform.RgbaFrame {
         return self.view.frame();
@@ -45,10 +47,20 @@ pub const Drawn = struct {
         return self.view.sprites.items;
     }
 
-    pub fn redraw(self: Drawn, sprites_instead: []const sorz.render.Sprite) !sorz.platform.RgbaFrame {
+    /// The window's lines (the status bar's, with the bosses' bars' row while it shows).
+    pub fn window(self: Drawn) sorz.render.Lines {
+        return self.view.screen.window.lines;
+    }
+
+    /// The picture drawn again with `sprites_instead`, on `lines` when given (else the sprites'
+    /// own lines).
+    pub fn redraw(self: Drawn, sprites_instead: []const sorz.render.Sprite, lines: ?sorz.render.Lines) !sorz.platform.RgbaFrame {
         const own = self.view.screen.sprites;
+        const own_lines = self.view.screen.sprite_lines;
         defer self.view.screen.sprites = own;
+        defer self.view.screen.sprite_lines = own_lines;
         self.view.screen.sprites = sprites_instead;
+        if (lines) |l| self.view.screen.sprite_lines = l;
         _ = try self.view.composer.compose(&self.view.screen);
         return self.view.composer.frame();
     }
@@ -294,7 +306,7 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
                 try cwd.writeFile(io, .{ .sub_path = s.path, .data = bytes });
                 shots_written += 1;
             };
-            if (options.pictures) |p| if (p.wanted(p.ctx, ticks)) try p.take(p.ctx, ticks, .{ .view = v, .shadow = c.kinds.shadow, .kinds = &c.kinds });
+            if (options.pictures) |p| if (p.wanted(p.ctx, ticks)) try p.take(p.ctx, ticks, .{ .view = v, .shadow = c.kinds.shadow, .kinds = &c.kinds, .bar_lines = sorz.scene.Round.barLines(&r.assets.round) });
         }
     } else r.failure = "the run reached its most ticks";
     if (shots_written != options.shots.len) r.failure = r.failure orelse "a picture asked for was past the run's end";

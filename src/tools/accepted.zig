@@ -4,7 +4,9 @@
 //! - in the pictures, sorz's sprites drawn again as the original would draw them (`redraws`, each
 //!   a way): a pixel that differs belongs to the difference when one of those pictures shows
 //!   there what the reference shows. A picture whose differing pixels all belong to accepted
-//!   differences is reported as such; it is not a difference, and the reach goes on past it;
+//!   differences is reported as such; it is not a difference, and the reach goes on past it. A
+//!   difference may name the lines its sprites show on (`lines`): its redraws draw them there,
+//!   and only the pixels on those lines belong to it;
 //! - in the traces, the entities whose own events the comparison leaves out (`leaves_out`: by
 //!   their spawn's kind and state), so that they neither differ nor take the numbers the others
 //!   are compared by.
@@ -12,6 +14,7 @@ const std = @import("std");
 const sorz = @import("sorz");
 
 const Sprite = sorz.render.Sprite;
+const Lines = sorz.render.Lines;
 const Frame = sorz.content.art.Frame;
 const Kinds = sorz.world.Kinds;
 
@@ -21,6 +24,10 @@ pub const Context = struct {
     shadow: ?*const Frame,
     /// The kinds of entity: their frames tell a sprite's kind.
     kinds: *const Kinds,
+    /// The status bar's own lines in play, and the window's lines in the picture (the status
+    /// bar's, with the bosses' bars' row while it shows).
+    bar_lines: u16 = 0,
+    window: Lines = .{},
 };
 
 /// sorz's sprites (`sprites`, back to front) as the original would draw them, into `out` (as
@@ -35,6 +42,9 @@ pub const Accepted = struct {
     reason: []const u8,
     redraws: []const Redraw,
     leaves_out: ?LeftOut = null,
+    /// The lines its redraws' sprites show on, the only ones whose pixels belong to it (null
+    /// from it: it has none in the picture); none: the sprites' own lines, every line.
+    lines: ?*const fn (c: Context) ?Lines = null,
 };
 
 pub const list = [_]Accepted{
@@ -49,7 +59,41 @@ pub const list = [_]Accepted{
         .redraws = &.{ withoutRaindrops, raindropsShown, shadowsOut },
         .leaves_out = .{ .kind = raindrop_kind, .state = raindrop_state },
     },
+    .{
+        .name = "sprites over the bosses' bar row",
+        .reason = "the original draws a player over the row the bosses' bars add below the status bar (round 4's new life dropping in under its boss's bar); sorz shows no sprite over the status bar, that row included: the cleaner picture, kept (2026-10-05)",
+        .redraws = &.{playersOnly},
+        .lines = bossesRow,
+    },
 };
+
+/// The row the bosses' bars add below the status bar's own lines, while it shows.
+fn bossesRow(c: Context) ?Lines {
+    if (c.window.bottom <= c.bar_lines) return null;
+    return .{ .top = c.bar_lines, .bottom = c.window.bottom };
+}
+
+/// The players' sprites alone (by their frames' kinds).
+fn playersOnly(sprites: []const Sprite, c: Context, out: []Sprite) usize {
+    var n: usize = 0;
+    for (sprites) |s| {
+        if (!ofPlayer(c.kinds, s.frame)) continue;
+        out[n] = s;
+        n += 1;
+    }
+    return n;
+}
+
+/// Whether `frame` is a frame of a player's kind.
+fn ofPlayer(kinds: *const Kinds, frame: *const Frame) bool {
+    for (kinds.list) |*k| {
+        if (k.family() != .player) continue;
+        for (k.frames) |animation| for (animation) |f| {
+            if (f == frame) return true;
+        };
+    }
+    return false;
+}
 
 /// The shadows in front of every other sprite: the pixels where sorz shows a sprite and the
 /// reference shows a shadow over it.

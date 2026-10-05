@@ -566,21 +566,25 @@ const PictureTaker = struct {
             const len = drawn.sprites().len;
             const buffers = try gpa.alloc(sorz.render.Sprite, 2 * len);
             defer gpa.free(buffers);
-            const context: accepted.Context = .{ .shadow = drawn.shadow, .kinds = drawn.kinds };
+            const context: accepted.Context = .{ .shadow = drawn.shadow, .kinds = drawn.kinds, .bar_lines = drawn.bar_lines, .window = drawn.window() };
             // Each way of drawing again: one of each difference's redraws or none (all none
             // left out), the differences' redraws applied one after the other, so that a pixel
             // two of them make is theirs.
             var choice: [accepted.list.len]usize = @splat(0);
-            while (nextChoice(&choice)) {
+            choices: while (nextChoice(&choice)) {
                 var sprites: []const sorz.render.Sprite = drawn.sprites();
                 var into: usize = 0;
+                // The lines a chosen difference names: its sprites drawn there, its pixels there.
+                var lines: ?sorz.render.Lines = null;
                 for (accepted.list, choice) |a, way| if (way != 0) {
+                    if (a.lines) |of| lines = of(context) orelse continue :choices;
                     const out = buffers[into * len ..][0..len];
                     sprites = out[0..a.redraws[way - 1](sprites, context, out)];
                     into = 1 - into;
                 };
-                const again = try drawn.redraw(sprites);
+                const again = try drawn.redraw(sprites, lines);
                 for (0..picture.height) |y| for (0..picture.width) |x| {
+                    if (lines) |l| if (!l.has(y)) continue;
                     const d = diff[(y * picture.width + x) * 4 ..][0..4];
                     if (!std.mem.eql(u8, d, &red)) continue;
                     const want = ref.palette[ref.pixels[y * picture.width + x]];
