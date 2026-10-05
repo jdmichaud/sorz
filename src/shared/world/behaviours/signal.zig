@@ -195,6 +195,7 @@ fn diagonal(a: Actor) void {
     const e = a.entity;
     if (holdsOrWatches(a)) return;
     if (!a.mind.across) {
+        if (Common.wallAcross(a)) return Common.enter(a, .walk_off);
         const x = e.position.x.add(e.velocity.x);
         const refused = x.lessThan(.zero) or !x.lessThan(.pixels(n.walk_x_most));
         if (!refused) e.position.x = x;
@@ -205,6 +206,7 @@ fn diagonal(a: Actor) void {
         }
         a.mind.across = true;
     }
+    if (Common.wallInDepth(a)) return Common.enter(a, .walk_off);
     const d = e.position.depth.add(e.velocity.depth);
     if (d.lessThan(.pixels(n.walk_depth_least)) or !d.lessThan(.pixels(n.walk_depth_most))) {
         e.velocity.depth = .pixels(-e.velocity.depth.whole());

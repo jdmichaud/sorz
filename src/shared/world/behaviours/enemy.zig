@@ -685,6 +685,23 @@ pub fn Of(comptime M: type) type {
             return c.height == 0 or c.height > low;
         }
 
+        /// Walking across alone, on a floor: whether the cell `across_ahead` ahead of its way
+        /// sends it back (`sendsBack`, lower than `across_lowest`).
+        pub fn wallAcross(a: A) bool {
+            const n = a.numbers();
+            const ax = n.across_ahead orelse return false;
+            const e = a.entity;
+            return a.tick.floorUnder(e.position) != null and sendsBack(a, if (e.velocity.x.raw < 0) -ax else ax, 0, n.across_lowest);
+        }
+
+        /// Walking in depth alone: whether the cell `depth_ahead` ahead of its way sends it back
+        /// (`sendsBack`, lower than `depth_lowest`).
+        pub fn wallInDepth(a: A) bool {
+            const n = a.numbers();
+            const dd = n.depth_ahead orelse return false;
+            return sendsBack(a, 0, if (a.entity.velocity.depth.raw < 0) -dd else dd, n.depth_lowest);
+        }
+
         /// It walks by its speed in depth alone (a circle's, a line up's), refused at the
         /// street's depths; a solid thing in its way stops it, and it walks off, as it does
         /// before a wall or a cell too low `depth_ahead` ahead. Returns false when it changed
@@ -692,10 +709,10 @@ pub fn Of(comptime M: type) type {
         pub fn walkDepth(a: A) bool {
             const n = a.numbers();
             const e = a.entity;
-            if (n.depth_ahead) |dd| if (sendsBack(a, 0, if (e.velocity.depth.raw < 0) -dd else dd, n.depth_lowest)) {
+            if (wallInDepth(a)) {
                 enter(a, .walk_off);
                 return false;
-            };
+            }
             const d = e.position.depth.add(e.velocity.depth);
             if (!d.lessThan(.pixels(n.walk_depth_least)) and d.lessThan(.pixels(n.walk_depth_most))) e.position.depth = d;
             return unblocked(a);
@@ -707,10 +724,10 @@ pub fn Of(comptime M: type) type {
         pub fn walkAcross(a: A) bool {
             const n = a.numbers();
             const e = a.entity;
-            if (n.across_ahead) |ax| if (a.tick.floorUnder(e.position) != null and sendsBack(a, if (e.velocity.x.raw < 0) -ax else ax, 0, n.across_lowest)) {
+            if (wallAcross(a)) {
                 enter(a, .walk_off);
                 return false;
-            };
+            }
             const x = e.position.x.add(e.velocity.x);
             if (!x.lessThan(.zero) and x.lessThan(.pixels(n.walk_x_most))) e.position.x = x;
             return unblocked(a);
