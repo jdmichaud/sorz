@@ -171,6 +171,8 @@ pub fn load(gpa: std.mem.Allocator, assets: platform.AssetSource, diag: *json.Di
     const self = try gpa.create(Content);
     self.* = .{ .arena = .init(gpa), .tree = undefined, .sounds = undefined };
     errdefer {
+        // The refusal's file and message may be in the arena, which goes.
+        diag.keep();
         self.destroy();
         gpa.destroy(self);
     }
@@ -338,4 +340,21 @@ test "a scene's assets and sounds are found by name, and a missing one refuses t
     };
     try testing.expectError(error.BadContent, find(Missing, &c, &diag));
     try testing.expectEqualStrings("menu/other", diag.fieldName());
+}
+
+test "a broken or stale tree is refused with its file named, after the content's memory is gone" {
+    var source = @import("memory.zig").MemoryAssetSource.init(testing.allocator);
+    defer source.deinit();
+    var diag: json.Diagnostic = .{};
+    var buf: [256]u8 = undefined;
+    // A record the manifest names, missing; then one of another format (its fields missing).
+    // The file's name is made in the content's arena, which the refusal frees.
+    try source.add("manifest.json",
+        \\{"format": "sorz-content", "version": 1, "extractor": "x", "rom": {"sha256": "0", "size": 1}, "art": [], "screens": ["round"]}
+    );
+    try testing.expectError(error.BadContent, load(testing.allocator, source.assetSource(), &diag));
+    try testing.expectEqualStrings("screens/round.json: missing", try std.fmt.bufPrint(&buf, "{f}", .{&diag}));
+    try source.add("screens/round.json", "{}");
+    try testing.expectError(error.BadContent, load(testing.allocator, source.assetSource(), &diag));
+    try testing.expect(std.mem.startsWith(u8, try std.fmt.bufPrint(&buf, "{f}", .{&diag}), "screens/round.json: "));
 }

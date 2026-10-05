@@ -124,9 +124,26 @@ pub const Diagnostic = struct {
     field: [256]u8 = undefined,
     field_len: usize = 0,
     message: []const u8 = "",
+    /// The file's name and the message once `keep` copied them (a half each).
+    kept: [512]u8 = undefined,
 
     pub fn fieldName(self: *const Diagnostic) []const u8 {
         return self.field[0..self.field_len];
+    }
+
+    /// Copies the file's name and the message into the diagnostic, for a loader that frees the
+    /// memory they are in (its arena) as it refuses: what the diagnostic says outlives it. A
+    /// longer name or message is cut.
+    pub fn keep(self: *Diagnostic) void {
+        const half = self.kept.len / 2;
+        self.file = keepIn(self.kept[0..half], self.file);
+        self.message = keepIn(self.kept[half..], self.message);
+    }
+
+    fn keepIn(to: []u8, s: []const u8) []const u8 {
+        const n = @min(s.len, to.len);
+        @memmove(to[0..n], s[0..n]);
+        return to[0..n];
     }
 
     /// The place of a refusal in a file that is not JSON: a line, or another place.
