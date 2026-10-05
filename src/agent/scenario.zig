@@ -107,6 +107,9 @@ pub const Command = struct {
         release: struct { pad: u1, buttons: u8 },
         wait: u32,
         until: struct { cond: Condition, within: u32 },
+        /// Player 1 played `bot` ticks by the bot's rule (the context's `bot`, as sor-remaster's
+        /// runner's): the script goes on after.
+        bot: u32,
     },
 };
 
@@ -180,6 +183,12 @@ pub fn parse(gpa: std.mem.Allocator, text: []const u8, diag: *Diagnostic) !Scrip
             if (count != 2) return refuse(diag, n, "`wait TICKS`");
             const t = number(w[1]) orelse return refuse(diag, n, "a wait is a number of ticks");
             try commands.append(gpa, .{ .line = n, .op = .{ .wait = t } });
+            continue;
+        }
+        if (std.mem.eql(u8, w[0], "bot")) {
+            if (count != 2) return refuse(diag, n, "`bot TICKS`");
+            const t = number(w[1]) orelse return refuse(diag, n, "a bot plays a number of ticks");
+            try commands.append(gpa, .{ .line = n, .op = .{ .bot = t } });
             continue;
         }
         if (std.mem.eql(u8, w[0], "until")) {
@@ -269,6 +278,8 @@ pub const Body = struct {
     holds: [2][8]?u64 = @splat(@splat(null)),
     /// The line of the condition that did not come in time.
     timed_out: ?u32 = null,
+    /// The ticks left to the bot's play (`bot TICKS`).
+    bot_left: u64 = 0,
 
     const forever = std.math.maxInt(u64);
 
@@ -306,9 +317,25 @@ pub const Body = struct {
                 .release => |r| self.set(r.pad, r.buttons, null),
                 .wait => |t| self.resume_at = self.now + t,
                 .until => |u| self.waiting = .{ .cond = u.cond, .deadline = self.now + u.within, .line = c.line },
+                .bot => |t| {
+                    self.bot_left = t;
+                    self.resume_at = self.now + t;
+                },
             }
         }
-        const held = self.pads();
+        var held = self.pads();
+        if (self.bot_left != 0) {
+            self.bot_left -= 1;
+            const Ctx = switch (@typeInfo(@TypeOf(ctx))) {
+                .pointer => |ptr| ptr.child,
+                else => @TypeOf(ctx),
+            };
+            const has = switch (@typeInfo(Ctx)) {
+                .@"struct", .@"union", .@"enum", .@"opaque" => @hasDecl(Ctx, "bot"),
+                else => false,
+            };
+            if (has) held.pad1 = ctx.bot(self.now);
+        }
         self.now += 1;
         return held;
     }
@@ -887,9 +914,9 @@ fn replayScript(gpa: std.mem.Allocator, kinds: *const world.Kinds, plan: *const 
     return w.script;
 }
 
-/// The kinds the round's script places: its enemies, its boss, its breakables.
+/// The kinds the round's script places: its enemies, its bosses, its breakables (rounds 1 and 2).
 fn scripted(kind: []const u8) bool {
-    for ([_][]const u8{ "galsia", "galsia_stalker", "galsia_knife", "galsia_pipe", "signal", "acrobat", "brawler", "antonio", "breakable" }) |k| {
+    for ([_][]const u8{ "galsia", "galsia_stalker", "galsia_knife", "galsia_pipe", "signal", "acrobat", "brawler", "antonio", "juggler", "boss_r2", "breakable" }) |k| {
         if (std.mem.eql(u8, k, kind)) return true;
     }
     return false;
