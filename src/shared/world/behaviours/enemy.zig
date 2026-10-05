@@ -913,15 +913,16 @@ pub fn Of(comptime M: type) type {
         }
 
         /// Lifted: it rises and falls by its gravity, in height alone (its place across stays);
-        /// down on the ground (at once, but in its knock-down's pose: the original's enemies fall
-        /// through the air in that pose alone), it reels on still a while, in the pose of one
-        /// thrown.
+        /// down on the ground (at once, but in its lift's pose: its knock-down's, or for one
+        /// lifted as one thrown, the acrobat, that one's), it reels on still a while, in the pose
+        /// of one thrown.
         fn lifted(a: A) void {
             const n = a.numbers();
             const b = body(a);
             gravity(a);
             a.entity.position.height = a.entity.position.height.add(a.entity.velocity.height);
-            if (a.playing(.down) and a.entity.position.height.lessThan(a.tick.world.ground)) return;
+            const in_pose = if (n.lift_thrown != 0) a.playing(.thrown) else a.playing(.down);
+            if (in_pose and a.entity.position.height.lessThan(a.tick.world.ground)) return;
             a.entity.position.height = .parts(@intCast(a.tick.world.ground.whole()), a.entity.position.height.frac());
             b.lifted = false;
             b.reel_still = true;
