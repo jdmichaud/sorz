@@ -306,9 +306,24 @@ fn stateName(names: []const []const u8, word: u16) Error![]const u8 {
 const galsia_states = [_][]const u8{ "appear", "choose", "reel", "knocked_down", "stand", "held", "knocked_out", "walk_off", "square_up", "close_in", "punch", "circle", "hesitate", "walk_off", "approach", "edge", "flank", "taunt", "wait", "shutter_entry" };
 
 /// The Galsias of round 1 (type $22, its handler 0xDD78, sor-remaster's obj/galsia.zig): their
-/// approaches by the way they are placed, their punch.
+/// approaches by the way they are placed, their punch. The looks of the armed Galsias (types $20
+/// and $23, whose animation set is theirs): one that finds no place for its weapon (0xD64C) or
+/// loses it becomes a plain Galsia, its type alone changed, and shows on the look it had until its
+/// next state sets its own.
 pub fn galsia(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
-    var d = try begin(arena, rom, 0x22, "galsia", &.{.{ .name = "punch", .entry = 10 }});
+    const set = u32be(rom, enemy_sets + 4 * (0x22 - 0x20));
+    if (u32be(rom, enemy_sets) != set or u32be(rom, enemy_sets + 4 * (0x23 - 0x20)) != set) return error.BadData;
+    var d = try begin(arena, rom, 0x22, "galsia", &.{
+        .{ .name = "punch", .entry = 10 },
+        .{ .name = "walk_knife", .entry = try animEntry(rom, 0xD77E) },
+        .{ .name = "jump_in", .entry = try animEntry(rom, 0xD6E2) },
+        .{ .name = "stab", .entry = try animEntry(rom, 0xD89C) },
+        .{ .name = "throw", .entry = try animEntry(rom, 0xD8FA) },
+        .{ .name = "walk_pipe", .entry = try animEntry(rom, 0xE3BA) },
+        .{ .name = "walk_pipe_b", .entry = try animEntry(rom, 0xE3C2) },
+        .{ .name = "swing", .entry = try animEntry(rom, 0xE486) },
+        .{ .name = "swing_b", .entry = try animEntry(rom, 0xE48E) },
+    });
     try punk(&d);
     // Waiting, flanking and taunting, at the screen's edge (0xDE78, 0xDEC6, 0xDF0A, 0xDF52).
     try d.number("wait_frame", try moveByte(rom, 0xDE8C, 10), "ROM 0x0DE8C: move.b #N,(10,a0)");
