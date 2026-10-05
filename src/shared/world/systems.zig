@@ -434,9 +434,12 @@ fn blowsOnPlayers(t: *Tick, xh: Handle) void {
 /// An enemy's blow that lands on a player who holds an enemy frees the one held at its turn of
 /// the same tick, when that turn is still to come: the original's hit test clears the hold's
 /// request as the blow lands, which the one held reads at its turn; one whose turn has passed
-/// lets go as the player feels the blow. (A blow dealt otherwise, a stalker's from behind, does
-/// not clear it.)
+/// lets go as the player feels the blow. A blow that knocks down frees it as the player feels
+/// it: its striker writes the knock-down's kind there, which reads as a hold from the front (a
+/// brawler's whip). (A blow dealt otherwise, a stalker's from behind, does not clear it.)
 fn freedByBlow(t: *Tick, xh: Handle, th: Handle) void {
+    const x = t.world.get(xh) orelse return;
+    if (x.move) |m| if (t.kindOf(x).definition.moves[m].reaction == .knock_down) return;
     const p = t.world.get(th) orelse return;
     const held = p.holding orelse return;
     if (t.isPlayer(held) or held.index < xh.index) return;
