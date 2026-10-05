@@ -1,0 +1,42 @@
+# The recorded play (game.pads) to VBlank 15864 (the knife Galsia's section); the player presses
+# B every 2 ticks until the knife Galsia, knocked down, drops its knife; it walks to the knife and
+# picks it up (B); armed, it stabs the Galsia near (B), then throws the knife (B), which breaks the
+# breakable that holds the beef. (Written for sorz's similar-check, PLAN item 12.)
+start pads ../../game.pads 15864
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+until state 230 lying within 60
++right
+until near knife 3 within 100
+-right
++up
+until near knife 3 2 within 40
+-up
+attack
+until state 1 armed_stand within 30
+attack
+wait 16
+attack
+wait 60

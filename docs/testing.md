@@ -160,7 +160,8 @@ catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (it
   does not hold), similar-check compares the enemies and the items too (PLAN item 12,
   src/tools/similar_enemies.zig): the catalogue's ai-* and item-* families (`tests/scenarios/
   enemies`: the recorded play to a wave, then the player stands, presses B every other tick, or
-  goes for an item), sorz taken up from sor-remaster's situation. Run by run, the traces are
+  goes for an item; with sorz's item-knife: the knife picked up, stabbed and thrown), sorz taken
+  up from sor-remaster's situation. Run by run, the traces are
   compared (the first difference and the kind of entity it is about); per enemy and thing
   thrown, the catalogue's measures over every run (its m_ai: each state's ticks and the states
   that follow it, an attack's place from the player at its start, its blows' tick, damage and
