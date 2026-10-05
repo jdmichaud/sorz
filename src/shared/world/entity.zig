@@ -87,7 +87,8 @@ pub const Flags = packed struct(u16) {
     /// Its blows land but do no damage: the original never set its power (a trio's others,
     /// acrobat_trio.zig).
     harmless: bool = false,
-    _: u1 = 0,
+    /// A shadow holds a place for it (world/shadows.zig).
+    has_shadow: bool = false,
 };
 
 /// The animation an entity plays: one of its kind's, the frame it is on, and the logic ticks

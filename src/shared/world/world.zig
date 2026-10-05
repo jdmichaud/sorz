@@ -13,6 +13,7 @@ const entity = @import("entity.zig");
 const kinds_mod = @import("kinds.zig");
 const behaviours = @import("behaviours.zig");
 const script = @import("script.zig");
+const shadows_mod = @import("shadows.zig");
 
 const Fixed = fixed.Fixed;
 const Vec3 = fixed.Vec3;
@@ -178,6 +179,8 @@ pub const World = struct {
     /// (the second of twins in the second).
     boss_bar: ?u8 = null,
     bosses: [2]?Handle = .{ null, null },
+    /// The shadows in the weapons' places (shadows.zig): a place a shadow holds is not free.
+    shadows: [shadows_mod.count]?shadows_mod.Shadow = @splat(null),
 
     pub const Full = error{Full};
 
@@ -204,16 +207,23 @@ pub const World = struct {
     /// team, health and palette from its definition, its behaviour at its first state, its
     /// definition's first animation started.
     pub fn spawn(self: *World, kinds: *const Kinds, kind: KindId, position: Vec3, facing: entity.Facing) Full!Handle {
-        const index = for (&self.entities, 0..) |*e, i| {
-            if (!e.alive()) break i;
+        const index = for (0..capacity) |i| {
+            if (self.free(i)) break i;
         } else return error.Full;
         return self.spawnIn(kinds, kind, index, position, facing);
+    }
+
+    /// Whether place `i` is free: no entity there, and no shadow (shadows.zig).
+    pub fn free(self: *const World, i: usize) bool {
+        if (self.entities[i].alive()) return false;
+        if (i >= shadows_mod.first and i < shadows_mod.first + shadows_mod.count) return self.shadows[i - shadows_mod.first] == null;
+        return true;
     }
 
     /// `spawn` in the place `index` (the order the world updates its entities in follows the
     /// places), which must be free.
     pub fn spawnIn(self: *World, kinds: *const Kinds, kind: KindId, index: usize, position: Vec3, facing: entity.Facing) Full!Handle {
-        if (index >= capacity or self.entities[index].alive()) return error.Full;
+        if (index >= capacity or !self.free(index)) return error.Full;
         const k = kinds.get(kind);
         const e = &self.entities[index];
         e.* = .{
@@ -302,7 +312,7 @@ pub const World = struct {
         var i = item_places.to;
         while (i > enemy_places.from) {
             i -= 1;
-            if (!self.entities[i].alive()) return self.spawnIn(kinds, kind, i, position, .right);
+            if (self.free(i)) return self.spawnIn(kinds, kind, i, position, .right);
         }
         return error.Full;
     }
@@ -310,7 +320,7 @@ pub const World = struct {
     /// `spawn` in the first free place from `from` to `to` (excluded).
     pub fn spawnWithin(self: *World, kinds: *const Kinds, kind: KindId, from: usize, to: usize, position: Vec3, facing: entity.Facing) Full!Handle {
         for (from..@min(to, capacity)) |i| {
-            if (!self.entities[i].alive()) return self.spawnIn(kinds, kind, i, position, facing);
+            if (self.free(i)) return self.spawnIn(kinds, kind, i, position, facing);
         }
         return error.Full;
     }

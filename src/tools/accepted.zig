@@ -55,7 +55,7 @@ pub const list = [_]Accepted{
     },
     .{
         .name = "objects past a band's 15",
-        .reason = "the original draws at most 15 objects in a band of depths, and one past them neither shows nor steps its animation at that tick (decision D4): round 3's raindrops, about twenty in one band, blink out of step there; and its shadows are objects of their own in eight places they share with the weapons, each entity taking one at each of its turns, so that a shadow may find none (the raindrops', a crowd's: a trio of acrobats knocked down at once). sorz draws every raindrop and every shadow, its shadows taking no place: more correct, the user's rule (2026-10-05)",
+        .reason = "the original draws at most 15 objects in a band of depths, and one past them neither shows nor steps its animation at that tick (decision D4): round 3's raindrops, about twenty in one band, blink out of step there; and its shadows are objects of their own in eight places they share with the weapons, each entity taking one at each of its turns, so that a shadow may find none (the raindrops', a crowd's: a trio of acrobats knocked down at once). sorz draws every raindrop, and a shadow under every entity in the air, one the original found no place for too (the places are kept as the original's: world/shadows.zig): more correct, the user's rule (2026-10-05)",
         .redraws = &.{ withoutRaindrops, raindropsShown, shadowsOut },
         .leaves_out = .{ .kind = raindrop_kind, .state = raindrop_state },
     },

@@ -78,6 +78,9 @@ pub const Tick = struct {
     input: Input = .{},
     /// The round's script the world follows (null: none, a world of the tests or the screens).
     plan: ?*const script.Plan = null,
+    /// The original's mode of play, where its objects take shadows' places (shadows.zig): not a
+    /// round's load (but the attract demo's).
+    play_mode: bool = true,
 
     pub fn kindOf(t: *const Tick, e: *const Entity) *const Kind {
         return t.kinds.get(e.kind.?);

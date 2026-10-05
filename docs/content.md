@@ -196,7 +196,9 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
   reads, naming the file and what is missing.
 - `health` (0 to 32767); `palette` (0 to 3), added to its frames' palettes; `gravity`, added to
   its height's speed every logic tick in the air; `shadow`, whether a shadow follows it on the
-  ground. Each is optional: 0, or false.
+  ground (it takes one of the shadows' places, world/shadows.zig); `shadow_place`, whether it
+  takes a shadow's place though none of it is drawn (a piece of scenery the original gives no
+  mark against a shadow: round 3's rain until it shows). Each is optional: 0, or false.
 - `traced_as` (optional): the name sor-remaster's traces give the kind when it differs (the
   `pepper` shaker is their `bottle`). The traces use it, and a kind is found by it as by its name
   (a scenario's `near bottle`, a situation taken up).

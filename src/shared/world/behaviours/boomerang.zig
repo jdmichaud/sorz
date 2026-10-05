@@ -101,10 +101,13 @@ fn inHand(a: Actor) void {
     const m = a.mind;
     const e = a.entity;
     const him = thrower(a).?;
+    // Shown it takes a shadow's place (world/shadows.zig), hidden none.
     e.flags.hidden = false;
+    e.flags.shadowless = false;
     const f = a.tick.frameOf(him);
     const h = (if (f) |x| x.hand else null) orelse {
         e.flags.hidden = true;
+        e.flags.shadowless = true;
         return;
     };
     e.position.x = .parts(@intCast(him.position.x.whole() + @as(i32, h.x) * him.facing.sign()), e.position.x.frac());

@@ -1080,7 +1080,10 @@ pub const Round = struct {
             seen.* = wp.specials;
         }
         world.script.placeFirst(&t, &p);
+        // The demo's load is in play's mode (its objects take the shadows' places), a round's not.
+        t.play_mode = self.demo;
         world.systems.loadTurns(&t);
+        t.play_mode = true;
         // The load's turn of the players (the original's objects run once as its load ends): the
         // points the clear's bonuses added may give a life more, its sound asked for then.
         for (w.players, 0..) |wp, k| {

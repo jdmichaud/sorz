@@ -72,6 +72,8 @@ pub fn think(a: Actor) void {
             e.flags.hidden = false;
             e.flags.on_screen = true;
             e.flags.stays = true;
+            // Shown, it takes no shadow's place any more (world/shadows.zig).
+            e.flags.shadowless = true;
             a.animate(.rain);
             a.pause(false);
             if (m.drop) {

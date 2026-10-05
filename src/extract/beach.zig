@@ -237,10 +237,11 @@ fn rain(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
     try colours.append(arena, .{ .name = "after", .palette = try std.fmt.allocPrint(arena, "round3/flash_{d}", .{(after - rounds.rain_flash) / 2 + 1}) });
     return .{
         .name = "rain",
-        .provenance = try std.fmt.allocPrint(arena, "round 3's rain, type $17 (handler 0x6F7C): the animation set at ROM 0x{X:0>5}; its showers (0x6FEE), its raindrops in the pieces' places (0x7EEA) else the last free below (0x7E92), the sky's flash (0x708A), its colours after it (0x706E){s}", .{ set, d.number_notes.items }),
+        .provenance = try std.fmt.allocPrint(arena, "round 3's rain, type $17 (handler 0x6F7C): the animation set at ROM 0x{X:0>5}; its showers (0x6FEE), its raindrops in the pieces' places (0x7EEA) else the last free below (0x7E92), the sky's flash (0x708A), its colours after it (0x706E); a shadow's place at each of its turns until it shows (its mark against a shadow then, 0x6FB0: or.b #$4E,(1,a0)), none for its raindrops{s}", .{ set, d.number_notes.items }),
         .family = .scenery,
         .team = .neutral,
         .behaviour = "rain",
+        .shadow_place = true,
         .numbers = d.numbers.items,
         .tables = d.tables.items,
         .animations = d.animations.items,

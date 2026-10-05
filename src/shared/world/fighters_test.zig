@@ -1749,8 +1749,9 @@ test "a pipe Galsia takes up its pipe, holds it frame by frame, and knocked down
     const g = try enemyAt(&r, "galsia_pipe", 900, .left, .approach);
     r.w.get(g).?.spawn.offset_x = 64;
     r.step(.{});
-    // Its pipe, in the weapons' places, taken up (noted as a pick-up), unseen until in the hand.
-    const pipe_h = r.w.handleAt(world_mod.World.weapon_places.from).?;
+    // Its pipe, in the weapons' places (the first a shadow does not hold: the player's takes the
+    // first after its turn), taken up (noted as a pick-up), unseen until in the hand.
+    const pipe_h = r.w.handleAt(world_mod.World.weapon_places.from + 1).?;
     try testing.expect(r.w.get(pipe_h).?.holder.?.eql(g));
     try testing.expectEqual(@as(usize, 1), r.out.pickups.len);
     r.step(.{});
@@ -2194,8 +2195,9 @@ test "a pepper shaker is thrown by the plain blow, a thing ahead or not; on the 
     }
     try testing.expect(r.w.get(b).?.flags.hidden);
     try testing.expect(r.w.get(b).?.missile == null);
-    // Its cloud in the weapons' places, then 8 pinches from the last of the items' places down.
-    const cloud = r.w.handleAt(World.weapon_places.from).?;
+    // Its cloud in the weapons' places (the first no shadow holds: the player's and the punk's
+    // take the first two), then 8 pinches from the last of the items' places down.
+    const cloud = r.w.handleAt(World.weapon_places.from + 2).?;
     try testing.expect(r.w.get(cloud).?.mind.pepper.part == .cloud);
     var grains: usize = 0;
     var last_seen: [entity.capacity]bool = @splat(false);

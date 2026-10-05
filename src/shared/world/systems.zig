@@ -19,6 +19,7 @@ const draw_list = @import("draw_list.zig");
 const behaviours = @import("behaviours.zig");
 const script = @import("script.zig");
 const lives = @import("lives.zig");
+const shadow_places = @import("shadows.zig");
 
 const Fixed = fixed.Fixed;
 const Entity = entity.Entity;
@@ -69,9 +70,24 @@ pub fn run(world: *World, kinds: *const Kinds, rng: *random.Random, in: Input, o
 
 /// The round's load: the entities its script placed take a turn (`turns`), as the original's
 /// objects run once at the end of its round's load, their first states setting them up (a
-/// breakable standing solid at its height), before play.
+/// breakable standing solid at its height), before play. A load in play's mode (`play_mode`: the
+/// attract demo's) takes the shadows' places too, the players' first, and the shadows have their
+/// turn in their places (shadows.zig).
 pub fn loadTurns(t: *Tick) void {
+    if (t.play_mode) for (t.world.players) |p| {
+        const h = p.entity orelse continue;
+        shadow_places.afterTurn(t, h.index);
+    };
     turns(t);
+    if (!t.play_mode) return;
+    for (shadow_places.first..capacity) |i| {
+        if (shadow_places.at(t.world, i) != null) {
+            shadow_places.turn(t, i);
+            shadow_places.afterTurn(t, i);
+        } else if (t.world.handleAt(i)) |h| {
+            if (t.world.playerOf(h) == null) shadow_places.afterTurn(t, i);
+        }
+    }
 }
 
 /// The draw list of the world as it stands, with no tick: each entity on the frame it is on
@@ -285,6 +301,9 @@ fn turns(t: *Tick) void {
         grabbedByPlayers(t, h);
         blowsOnPlayers(t, h);
         if (t.world.get(h) != null) t.think(h);
+        // Before the shadows' places, its shadow's place after its turn (from them on, after its
+        // move: the movement's).
+        if (i < shadow_places.first) shadow_places.afterTurn(t, i);
     }
     for (t.world.players) |p| {
         const h = p.entity orelse continue;
@@ -316,12 +335,14 @@ fn playersMove(t: *Tick) void {
         e.boxes.at = e.position;
         // The end of its turn, as a fighter: its score may give it a life more.
         if (e.mind == .player) _ = lives.extraLife(t, @intCast(k));
+        shadow_places.afterTurn(t, h.index);
     }
 }
 
 /// The other entities move, in the world's order. The sounds a move asks for (a landing's) go
 /// after those of its entity's turn, before the next ones' turns': the original's objects move in
-/// their own turn.
+/// their own turn. In the shadows' places, at each one's turn its shadow follows or goes; from
+/// them on, each takes its shadow's place after its move (shadows.zig).
 fn movement(t: *Tick) void {
     var buf: [capacity]u8 = undefined;
     const order = t.world.updateOrder(&buf);
@@ -330,7 +351,12 @@ fn movement(t: *Tick) void {
     const list = &t.out.sounds;
     // The turns' sounds not yet passed: from `at` to the movement's first.
     var at = @min(t.out.turn_sounds, list.len);
-    for (order) |i| {
+    for (0..capacity) |i| {
+        if (shadow_places.at(t.world, i) != null) {
+            shadow_places.turn(t, i);
+            shadow_places.afterTurn(t, i);
+            continue;
+        }
         const h = t.world.handleAt(i) orelse continue;
         if (t.world.playerOf(h) != null) continue;
         const before = list.len;
@@ -341,6 +367,7 @@ fn movement(t: *Tick) void {
         move(t, h);
         std.mem.rotate(output.SoundRequest, list.items[at..list.len], before - at);
         at += list.len - before;
+        if (i >= shadow_places.first) shadow_places.afterTurn(t, i);
     }
 }
 

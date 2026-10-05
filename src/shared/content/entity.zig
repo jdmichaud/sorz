@@ -218,7 +218,12 @@ pub const Definition = struct {
     palette: u2 = 0,
     /// Added to the height's speed each logic tick in the air, in 1/65536 pixel.
     gravity: i32 = 0,
+    /// Its shadow is drawn on the ground under it while it is in the air; it takes one of the
+    /// shadows' places (world/shadows.zig).
     shadow: bool = false,
+    /// It takes one of the shadows' places, though no shadow of it is drawn (a piece of scenery
+    /// the original gives no mark against one).
+    shadow_place: bool = false,
     numbers: []const Number = &.{},
     tables: []const Table = &.{},
     choices: []const Choice = &.{},
@@ -292,7 +297,7 @@ pub const max_items = 255;
 /// Reads definition `name` from its file's parsed `root`, checking every value; the frames must
 /// be `a`'s. A refusal names the field in the diagnostic.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *const art.Art) json.Error!Definition {
-    try root.only(&.{ "provenance", "traced_as", "family", "team", "behaviour", "health", "palette", "gravity", "shadow", "numbers", "tables", "choices", "sounds", "boxes", "animations", "moves", "partners", "colour_maps", "colours" });
+    try root.only(&.{ "provenance", "traced_as", "family", "team", "behaviour", "health", "palette", "gravity", "shadow", "shadow_place", "numbers", "tables", "choices", "sounds", "boxes", "animations", "moves", "partners", "colour_maps", "colours" });
     var d: Definition = .{
         .name = name,
         .provenance = if (try root.opt("provenance")) |p| try p.string() else "",
@@ -305,6 +310,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *con
     if (try root.opt("palette")) |n| d.palette = std.math.cast(u2, try n.int(i64)) orelse return n.fail("not 0 to 3");
     if (try root.opt("gravity")) |n| d.gravity = try n.int(i32);
     if (try root.opt("shadow")) |n| d.shadow = try n.boolean();
+    if (try root.opt("shadow_place")) |n| d.shadow_place = try n.boolean();
     if (try root.opt("traced_as")) |n| {
         d.traced_as = try n.string();
         if (!art.validName(d.traced_as.?)) return n.fail("not a kind's name (a-z, 0-9, _)");
@@ -598,6 +604,7 @@ pub fn value(arena: std.mem.Allocator, d: *const Definition) error{OutOfMemory}!
     if (d.palette != 0) try top.append(arena, .{ .key = "palette", .value = json.Value.num(d.palette) });
     if (d.gravity != 0) try top.append(arena, .{ .key = "gravity", .value = json.Value.num(d.gravity) });
     if (d.shadow) try top.append(arena, .{ .key = "shadow", .value = .{ .bool = true } });
+    if (d.shadow_place) try top.append(arena, .{ .key = "shadow_place", .value = .{ .bool = true } });
     if (d.traced_as) |t| try top.append(arena, .{ .key = "traced_as", .value = .{ .str = t } });
 
     if (d.numbers.len != 0) {

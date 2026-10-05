@@ -17,14 +17,16 @@
 //! drawn on the ground under its entity, just behind it, while the entity is in the air: the
 //! original's shadow goes as its entity stands on the floor (on round 1's floor; the floor's
 //! cells, PLAN item 13, will say where it stays). The original's shadow is an object of its own
-//! (type $4A, in the eight places the weapons and the effects share), sorted as any object at
-//! its owner's depth, which can draw it over another sprite there (a slammed enemy's hand and
-//! feet under a vaulting player); drawn just behind its owner here, a known difference the user
-//! accepted as more correct (a candidate for PLAN item 23 only).
+//! (type $4A, in the eight places the weapons share: their places are kept as the original's,
+//! shadows.zig), sorted as any object at its owner's depth, which can draw it over another sprite
+//! there (a slammed enemy's hand and feet under a vaulting player), and reorder the entities at
+//! nearly one depth; drawn just behind its owner here, and the order by depth alone, a known
+//! difference the user accepted as more correct (a candidate for PLAN item 23 only). Each
+//! sprite's place, rank and depth go with the draw list (`Output.sprite_info`), for the checks
+//! to draw it again in the original's order.
 //!
 //! Not reproduced (decision D4, the sprite limits): the original draws at most 15 objects a
-//! band, and an object past them neither shows nor advances its animation at that tick; and it
-//! has 8 shadows.
+//! band, and an object past them neither shows nor advances its animation at that tick.
 const std = @import("std");
 const render = @import("../render/root.zig");
 const entity = @import("entity.zig");
