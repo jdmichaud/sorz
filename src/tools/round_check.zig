@@ -60,19 +60,15 @@ const picture_every = 64;
 
 /// Round 1's scenarios (tests/scenarios/round1).
 pub const scenarios = [_]Scenario{
-    // TODO(PLAN item 13): the enemies' colours as the original loads them (a section's, an
-    // arriving enemy's palettes into its palette slots): the Galsias come out in other colours,
-    // the pictures from their coming out are not compared yet (walk's, join_enemies', blaze's, two's).
-    .{ .name = "walk", .what = "a walk to the first wall: the camera's follow, the placed Galsias coming out", .pictures_before = 1085 },
+    .{ .name = "walk", .what = "a walk to the first wall: the camera's follow, the placed Galsias coming out" },
     .{ .name = "idle", .what = "standing still: the timer, three time overs and deaths, new lives, the continue's question" },
     .{ .name = "continue", .what = "the continue's YES: a new game's lives, the next life" },
     .{ .name = "gameover", .what = "the continue's NO: the game over's count, the fade out, the high scores" },
     .{ .name = "pause", .what = "two pauses: the pause's sounds, its ticks on the game's clock, play after it" },
     .{ .name = "join", .what = "player 2's PRESS 2UP START mid-round, the timer down: its drop-in as Adam, the timer again" },
-    // Its first Galsia comes out no sooner than walk's (the same presses until then).
-    .{ .name = "join_enemies", .what = "player 2's PRESS 2UP START with the first Galsias on the screen: its drop-in as Adam knocks them back", .pictures_before = 1085 },
-    .{ .name = "blaze", .what = "Blaze chosen at the select: her walk to the first Galsia, her blows, her jump kick", .pictures_before = 1139 },
-    .{ .name = "two", .what = "two players, Axel and Blaze, chosen at the select: their walk and a jump, the Galsias coming", .pictures_before = 1129 },
+    .{ .name = "join_enemies", .what = "player 2's PRESS 2UP START with the first Galsias on the screen: its drop-in as Adam knocks them back" },
+    .{ .name = "blaze", .what = "Blaze chosen at the select: her walk to the first Galsia, her blows, her jump kick" },
+    .{ .name = "two", .what = "two players, Axel and Blaze, chosen at the select: their walk and a jump, the Galsias coming" },
 };
 
 /// The front end's objects (sor-remaster's) and the hit sparks (PLAN item 12): their events

@@ -37,6 +37,7 @@ const fixed = @import("../fixed.zig");
 const entity = @import("../entity.zig");
 const content_entity = @import("../../content/entity.zig");
 const systems = @import("../systems.zig");
+const script = @import("../script.zig");
 
 const Fixed = fixed.Fixed;
 const Handle = entity.Handle;
@@ -420,6 +421,8 @@ pub fn Of(comptime M: type) type {
             if (!comesOut(a)) return false;
             a.entity.flags.hidden = false;
             a.entity.spawn.traits.waits_for_camera = false;
+            // Its line: the one its colours are in as it appears (script.zig).
+            if (a.entity.spawn.colours) |c| a.entity.palette = script.lineOf(a.tick, c);
             a.entity.health = a.kind.definition.health;
             a.animate(.walk);
             a.pause(false);

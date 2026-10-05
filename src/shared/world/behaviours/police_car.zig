@@ -10,8 +10,8 @@
 //!   `fading`), whose end sends the camera running ahead; player 2's gunfire a while (`fading`),
 //!   the same;
 //! - the car, its officer and the bazooka go when the camera's run ahead leaves them behind.
-//! Its numbers, animations and sounds are its definition's (`entities/police_car.json`); TODO:
-//! the police's colours, which the original lays over the enemies' while the car is there.
+//! Its numbers, animations and sounds are its definition's (`entities/police_car.json`); its
+//! colours lie over the enemies' from its siren (the special attack gives theirs back).
 const tick = @import("../tick.zig");
 const fixed = @import("../fixed.zig");
 const entity = @import("../entity.zig");
@@ -136,6 +136,7 @@ fn arriving(a: Actor) void {
     if (!m.queued) return queueArt(a);
     if (artLoading(a)) return;
     a.sound(.siren);
+    a.tick.out.colour_loads.append(.police);
     m.state = .driving;
     e.flags.hidden = false;
     e.velocity.x = .parts(@intCast(n.drive.whole()), e.velocity.x.frac());

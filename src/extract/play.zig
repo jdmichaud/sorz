@@ -19,6 +19,7 @@ const vram_mod = @import("vram.zig");
 const screens = @import("screens.zig");
 const rounds = @import("rounds.zig");
 const fonts = @import("fonts.zig");
+const palettes = @import("palettes.zig");
 const builder_mod = @import("builder.zig");
 const Builder = builder_mod.Builder;
 const Vram = vram_mod.Vram;
@@ -517,6 +518,27 @@ fn nameEntry(arena: std.mem.Allocator, rom: []const u8, players: *const [2]recor
     };
 }
 
+/// The enemies' colours by number (the table at 0x1FACC, palettes.zig) and the lines they show
+/// on, as an enemy takes its line as it appears (0x9406): the first's (move.w #$2000,d2 at
+/// 0x9442), the second's (move.w #$4000,d2 at 0x944A), the other's (move.w #$2000,d2 at
+/// 0x9454); the police car's colours (0x5A1E).
+fn enemyColours(arena: std.mem.Allocator, rom: []const u8) !records.EnemyColours {
+    var lines: [3]u2 = undefined;
+    for (&lines, [_]u32{ 0x9442, 0x944A, 0x9454 }) |*l, at| {
+        if (u16be(rom, at) != 0x343C or u16be(rom, at + 2) & 0x9FFF != 0) return error.BadData;
+        l.* = @intCast(u16be(rom, at + 2) >> 13);
+    }
+    if (u16be(rom, 0x5A1E) != 0x4DFA) return error.BadData;
+    const police: u32 = @intCast(@as(i32, 0x5A20) + @as(i16, @bitCast(u16be(rom, 0x5A20))));
+    if (police != palettes.police_list) return error.BadData;
+    return .{
+        .provenance = "the enemies' colours by number (the table at 0x1FACC: a pair of lists, for the first line and the second, or one of its own), the lines an enemy shows on as it appears (0x9406: move.w #N,d2 at 0x09442, 0x0944A, 0x09454), the police car's colours (lea at 0x05A1E)",
+        .sets = try palettes.enemyColours(arena),
+        .lines = lines,
+        .police = palettes.police_name,
+    };
+}
+
 /// The glyph of the game's font that tile `tile` (from the font's base) draws.
 fn glyphOf(tile: u16) ![]const u8 {
     if (tile < font_base) return error.BadData;
@@ -757,6 +779,7 @@ pub fn extract(b: *Builder) !records.Round {
         },
         .continue_question = try continueQuestion(arena, rom),
         .name_entry = try nameEntry(arena, rom, &players),
+        .enemy_colours = try enemyColours(arena, rom),
         .clear = clear,
     };
 }

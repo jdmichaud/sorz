@@ -85,6 +85,8 @@ pub fn specialCalled(a: Actor) void {
     m.from = c.x;
     c.run = .{ .from = c.x, .speed = n.run, .limit = c.x.sub(n.run_most).max(.zero) };
     a.entity.flags.hidden = true;
+    // The colours shown are kept, the police car's to lie over them.
+    a.tick.out.colour_loads.append(.keep);
 }
 
 pub fn think(a: Actor) void {
@@ -114,6 +116,7 @@ pub fn think(a: Actor) void {
             a.tick.out.colours = true;
             if (c.x.whole() >= m.from.whole() - n.again_within) {
                 m.again = true;
+                a.tick.out.colour_loads.append(.back);
                 a.tick.out.streamed = .{ .part = w.script.part, .again = true };
             }
         }

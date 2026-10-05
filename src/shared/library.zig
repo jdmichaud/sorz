@@ -86,6 +86,25 @@ pub const RoundAssets = struct {
     colours: *const art.Palette,
     music: Sound,
     number: *const art.Frame,
+    /// The boss's colours, when the round has a boss.
+    boss_colours: ?*const art.Palette = null,
+};
+
+/// The enemies' colours by number (play's record, `screens/round`'s `enemy_colours`), their
+/// palettes found: a kind's for the enemies' first and second lines, or its own; the lines they
+/// show on (the first's, the second's, the other's); the police car's.
+pub const EnemyColours = struct {
+    pub const most = 16;
+    pub const Set = struct { first: ?*const art.Palette = null, second: ?*const art.Palette = null, own: ?*const art.Palette = null };
+    sets: [most]Set = @splat(.{}),
+    len: u8 = 0,
+    lines: [3]u2 = .{ 0, 0, 0 },
+    police: *const art.Palette,
+
+    /// Number `n`'s, if there is one.
+    pub fn of(self: *const EnemyColours, n: u8) ?*const Set {
+        return if (n < self.len) &self.sets[n] else null;
+    }
 };
 
 /// The rounds of the content (`rounds`), by their numbers from 1; round 1 is needed.
@@ -129,6 +148,7 @@ fn findRounds(c: *const Content, diag: *json.Diagnostic) LoadError!Rounds {
             .colours = a.palette(full[2]) orelse return refuse(diag, full[2], "a round's colours, not in its art set"),
             .music = c.sounds.find(r.music) orelse return refuse(diag, r.music, "a round's music, not in sound/sounds.json"),
             .number = a.frame(number) orelse return refuse(diag, number, "a banner's number, not in the art"),
+            .boss_colours = if (r.boss) |b| if (b.colours) |boss| a.palette(boss) orelse return refuse(diag, boss, "a boss's colours, not in the art") else null else null,
         };
     }
     if (out.items[0] == null) return refuse(diag, "rounds/round1", "no round 1");
@@ -235,6 +255,19 @@ fn findOne(comptime F: type, c: *const Content, name: []const u8, diag: *json.Di
         *const records.Round => if (std.mem.eql(u8, name, "screens/round")) if (c.tree.screens.round) |*r| r else null else null,
         Rounds => if (std.mem.eql(u8, name, "rounds")) try findRounds(c, diag) else null,
         *const art.ArtSet => a.set(name),
+        EnemyColours => blk: {
+            if (!std.mem.eql(u8, name, "enemy_colours")) break :blk null;
+            const play = if (c.tree.screens.round) |*r| r else break :blk null;
+            const ec = &play.enemy_colours;
+            if (ec.sets.len > EnemyColours.most) return refuse(diag, "screens/round", "more enemies' colours than the game keeps");
+            var out: EnemyColours = .{ .len = @intCast(ec.sets.len), .lines = ec.lines, .police = a.palette(ec.police) orelse return refuse(diag, ec.police, "the police car's colours, not in the art") };
+            for (ec.sets, out.sets[0..ec.sets.len]) |set, *o| {
+                inline for (.{ "first", "second", "own" }) |part| if (@field(set, part)) |p| {
+                    @field(o, part) = a.palette(p) orelse return refuse(diag, p, "an enemies' colours, not in the art");
+                };
+            }
+            break :blk out;
+        },
         Poses => blk: {
             if (!std.mem.eql(u8, name, "screens/select")) break :blk null;
             const sel = if (c.tree.screens.select) |*r| r else break :blk null;

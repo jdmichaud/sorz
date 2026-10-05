@@ -203,15 +203,16 @@ pub const World = struct {
     /// The entity `h` becomes one of `kind` in its place, its record kept, as the original's
     /// objects whose type alone changes (an armed Galsia that lost its weapon fights on as a plain
     /// one): its handle still finds it; its behaviour at its first state, its team and palette its
-    /// new definition's, the animation of the same name played on (else its first); its place,
-    /// speeds, health, holds and the rest kept.
+    /// new definition's (an enemy whose record gave it colours keeps its line), the animation of
+    /// the same name played on (else its first); its place, speeds, health, holds and the rest
+    /// kept.
     pub fn retype(self: *World, kinds: *const Kinds, h: Handle, kind: KindId) void {
         const e = self.get(h) orelse return;
         const old = if (e.animation.index) |i| kinds.get(e.kind.?).definition.animations[i].name else null;
         const k = kinds.get(kind);
         e.kind = kind;
         e.team = k.definition.team;
-        e.palette = k.definition.palette;
+        if (e.spawn.colours == null) e.palette = k.definition.palette;
         e.mind = behaviours.initial(k.behaviour);
         e.boxes = .{};
         const same = if (old) |n| k.definition.animation(n) else null;

@@ -341,6 +341,13 @@ fn shutterNumbers(d: *Def) Error!void {
     try d.number("shutter_depth", try immediate(rom, 0xDE52, &.{ 0x31, 0x7C }, 2), "ROM 0x0DE52: move.w #N,(20,a0)");
 }
 
+/// The palette line of an object's art, from `move.w #N,d1` at `at` (the art's place in video
+/// memory, its line in bits 13 and 14, as the animation's start takes it: 0xB1D6).
+fn lineOfArt(rom: []const u8, at: u32) Error!u2 {
+    if (u16be(rom, at) != 0x323C) return error.BadData;
+    return @intCast((u16be(rom, at + 2) >> 13) & 3);
+}
+
 // --- The rolling shutter ---------------------------------------------------------------------------
 
 /// Round 1's rolling shutter (type $54, its handler 0x101C8, sor-remaster's obj/shutter.zig): its
@@ -364,10 +371,11 @@ pub fn shutter(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definitio
     try d.sound("roll", @bitCast(@as(i8, @intCast(try moveq(rom, 0x102B6, 7)))));
     return .{
         .name = "shutter",
-        .provenance = try std.fmt.allocPrint(arena, "the rolling shutter, type $54 (handler 0x101C8): the animation set at ROM 0x{X:0>5}{s}", .{ set, d.number_notes.items }),
+        .provenance = try std.fmt.allocPrint(arena, "the rolling shutter, type $54 (handler 0x101C8): the animation set at ROM 0x{X:0>5}; its palette line its art's (move.w #N,d1 at ROM 0x1024C){s}", .{ set, d.number_notes.items }),
         .family = .scenery,
         .team = .neutral,
         .behaviour = "shutter",
+        .palette = try lineOfArt(rom, 0x1024C),
         .numbers = d.numbers.items,
         .sounds = d.sounds.items,
         .animations = d.animations.items,
@@ -898,10 +906,11 @@ pub fn antonio(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definitio
     if (try moveq(rom, 0x17C08, 7) != try moveq(rom, 0x17C4A, 7) or try moveq(rom, 0x166B6, 7) != try moveq(rom, 0x16412, 7)) return error.BadData;
     return .{
         .name = "antonio",
-        .provenance = try std.fmt.allocPrint(arena, "boss type $56, Antonio (handler 0x16CE4): the animation set at ROM 0x{X:0>5} (0x158B4), the boxes (0x1A68E, 0x1AB8E); health ROM 0x17F2B (0x17EDC){s}", .{ set, d.number_notes.items }),
+        .provenance = try std.fmt.allocPrint(arena, "boss type $56, Antonio (handler 0x16CE4): the animation set at ROM 0x{X:0>5} (0x158B4), the boxes (0x1A68E, 0x1AB8E); health ROM 0x17F2B (0x17EDC); his palette line his art's (move.w #N,d1 at ROM 0x16D36){s}", .{ set, d.number_notes.items }),
         .family = .boss,
         .team = .enemy,
         .behaviour = "antonio",
+        .palette = try lineOfArt(rom, 0x16D36),
         .health = bossByte(rom, boss_health, kind),
         .shadow = true,
         .numbers = d.numbers.items,

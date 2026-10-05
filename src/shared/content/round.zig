@@ -85,6 +85,11 @@ pub const StreamOf = struct {
     }
 };
 
+/// The enemies' colours a section holds as it begins, each by its number (play's
+/// `enemy_colours`): the first (the enemies' first palette line), the second (their second line)
+/// and the other (the first line's other colours, some kinds' own); null: none given.
+pub const Colours = struct { first: ?u8 = null, second: ?u8 = null, other: ?u8 = null };
+
 /// One entity the script brings: placed ahead at its place, or coming in at the screen's edge.
 pub const Spawn = struct {
     /// The kind's name (`entities/NAME.json`).
@@ -116,6 +121,8 @@ pub const Spawn = struct {
     bar: ?u8 = null,
     /// A reserve's: its kind's art streamed in from its call.
     streamed: []const Streamed = &.{},
+    /// An enemy's colours, by their number (play's `enemy_colours`); null: its kind's own.
+    colours: ?u8 = null,
 };
 
 pub const Section = struct {
@@ -135,6 +142,8 @@ pub const Section = struct {
     /// The art of its enemies the special attack's car took the place of (the boss's, or its
     /// second art kind's), streamed in again as the camera comes back.
     again: []const Streamed = &.{},
+    /// The enemies' colours it holds as it begins.
+    colours: Colours = .{},
     placed: []const Spawn = &.{},
     wave: []const Spawn = &.{},
     reserve: []const Spawn = &.{},
@@ -154,6 +163,10 @@ pub const Boss = struct {
     streamed: []const Streamed = &.{},
     /// The boss's art again after the special attack, as a section's (`Section.again`).
     again: []const Streamed = &.{},
+    /// The enemies' colours its section holds as it begins (`Section.colours`), and the boss's
+    /// own (a palette of the art, full name), shown as its music is asked for.
+    section_colours: Colours = .{},
+    colours: ?[]const u8 = null,
     wave: []const Spawn = &.{},
     reserve: []const Spawn = &.{},
 };
@@ -302,7 +315,23 @@ fn spawnValue(arena: std.mem.Allocator, s: *const Spawn, where: Where) !json.Val
     if (s.holds) |h| try f.append(arena, .{ .key = "holds", .value = .{ .str = h } });
     if (s.bar) |b| try f.append(arena, .{ .key = "bar", .value = json.Value.num(b) });
     if (where == .reserve and s.streamed.len != 0) try f.append(arena, .{ .key = "streamed", .value = try streamedValue(arena, s.streamed) });
+    if (s.colours) |c| try f.append(arena, .{ .key = "colours", .value = json.Value.num(c) });
     return .{ .object = f.items };
+}
+
+fn coloursValue(arena: std.mem.Allocator, c: Colours) !json.Value {
+    var f: std.ArrayList(json.Field) = .empty;
+    inline for (.{ "first", "second", "other" }) |name| if (@field(c, name)) |n| try f.append(arena, .{ .key = name, .value = json.Value.num(n) });
+    return .{ .object = f.items };
+}
+
+fn readColours(n: json.Node) Error!Colours {
+    try n.only(&.{ "first", "second", "other" });
+    var c: Colours = .{};
+    inline for (.{ "first", "second", "other" }) |name| if (try n.opt(name)) |x| {
+        @field(c, name) = try x.int(u8);
+    };
+    return c;
 }
 
 /// A list of display ticks' streaming: each [tiles, codes, long codes, bytes].
@@ -334,6 +363,7 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         .{ .key = "opens_after", .value = json.Value.num(s.opens_after) },
         .{ .key = "streamed", .value = try streamedValue(arena, s.streamed) },
         .{ .key = "again", .value = try streamedValue(arena, s.again) },
+        .{ .key = "colours", .value = try coloursValue(arena, s.colours) },
         .{ .key = "placed", .value = try spawnsValue(arena, s.placed, .placed) },
         .{ .key = "wave", .value = try spawnsValue(arena, s.wave, .wave) },
         .{ .key = "reserve", .value = try spawnsValue(arena, s.reserve, .reserve) },
@@ -385,6 +415,8 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         .{ .key = "wave_after", .value = json.Value.num(b.wave_after) },
         .{ .key = "streamed", .value = try streamedValue(arena, b.streamed) },
         .{ .key = "again", .value = try streamedValue(arena, b.again) },
+        .{ .key = "section_colours", .value = try coloursValue(arena, b.section_colours) },
+        .{ .key = "colours", .value = if (b.colours) |name| .{ .str = name } else .null },
         .{ .key = "wave", .value = try spawnsValue(arena, b.wave, .wave) },
         .{ .key = "reserve", .value = try spawnsValue(arena, b.reserve, .reserve) },
     }) });
@@ -421,7 +453,7 @@ fn readPair(n: json.Node, comptime T: type) Error![2]T {
 
 /// The fields a spawn record may have, by where it is.
 fn spawnFields(comptime where: Where) []const []const u8 {
-    const common = [_][]const u8{ "kind", "depth", "level", "two_players", "entrance", "offset", "strength", "holds", "bar" };
+    const common = [_][]const u8{ "kind", "depth", "level", "two_players", "entrance", "offset", "strength", "holds", "bar", "colours" };
     const own: []const []const u8 = switch (where) {
         .placed => &.{"x"},
         .wave => &.{ "side", "after" },
@@ -474,6 +506,7 @@ fn readSpawn(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Erro
     if (where == .reserve) if (try n.opt("streamed")) |l| {
         s.streamed = try readStreamed(arena, l);
     };
+    if (try n.opt("colours")) |c| s.colours = try c.int(u8);
     return s;
 }
 
@@ -553,7 +586,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     if (sections.len == 0) return ss.fail("no section");
     for (sections, 0..) |*s, i| {
         const n = try ss.at(i);
-        try n.only(&.{ "provenance", "wall", "timer", "opens_after", "streamed", "again", "placed", "wave", "reserve" });
+        try n.only(&.{ "provenance", "wall", "timer", "opens_after", "streamed", "again", "colours", "placed", "wave", "reserve" });
         s.* = .{
             .provenance = try provenanceOf(n),
             .wall = try (try n.get("wall")).int(i32),
@@ -561,6 +594,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
             .opens_after = try (try n.get("opens_after")).int(u16),
             .streamed = try readStreamed(arena, try n.get("streamed")),
             .again = if (try n.opt("again")) |x| try readStreamed(arena, x) else &.{},
+            .colours = if (try n.opt("colours")) |x| try readColours(x) else .{},
             .placed = try readSpawns(arena, try n.get("placed"), .placed),
             .wave = try readSpawns(arena, try n.get("wave"), .wave),
             .reserve = try readSpawns(arena, try n.get("reserve"), .reserve),
@@ -578,7 +612,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         r.special = .{ .provenance = try provenanceOf(sp), .streamed = .{ try readStreamed(arena, try both.at(0)), try readStreamed(arena, try both.at(1)) } };
     }
     if (try root.opt("boss")) |b| {
-        try b.only(&.{ "provenance", "fade", "music", "music_after", "wave_after", "streamed", "again", "wave", "reserve" });
+        try b.only(&.{ "provenance", "fade", "music", "music_after", "wave_after", "streamed", "again", "section_colours", "colours", "wave", "reserve" });
         r.boss = .{
             .provenance = try provenanceOf(b),
             .fade = try (try b.get("fade")).string(),
@@ -587,6 +621,8 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
             .wave_after = try (try b.get("wave_after")).int(u16),
             .streamed = try readStreamed(arena, try b.get("streamed")),
             .again = if (try b.opt("again")) |x| try readStreamed(arena, x) else &.{},
+            .section_colours = if (try b.opt("section_colours")) |x| try readColours(x) else .{},
+            .colours = if (try b.opt("colours")) |x| try x.string() else null,
             .wave = try readSpawns(arena, try b.get("wave"), .wave),
             .reserve = try readSpawns(arena, try b.get("reserve"), .reserve),
         };

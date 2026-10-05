@@ -181,6 +181,9 @@ pub const Spawn = struct {
     strength: u2 = 0,
     /// A boss's entry in the status bar's names and bars.
     bar: ?u8 = null,
+    /// An enemy's colours, by their number (play's `enemy_colours`), whose line it takes as it
+    /// appears (script.zig); null: its kind's own.
+    colours: ?u8 = null,
 };
 
 /// The boxes in use (DESIGN.md W2): those of the frame the entity last showed, or of the first

@@ -221,6 +221,23 @@ pub const NameEntry = struct {
     players: [2]NamePlaces,
 };
 
+/// An enemies' colours: a kind's for the enemies' first palette line and for their second (a
+/// palette giving each), or its own (a palette giving its own colours, over the first line).
+pub const ColourSet = struct { first: ?[]const u8 = null, second: ?[]const u8 = null, own: ?[]const u8 = null };
+
+/// The enemies' colours, which the round loads into the enemies' palette lines as they come
+/// (the round's records name them by number), and the lines they show on.
+pub const EnemyColours = struct {
+    provenance: []const u8 = "",
+    /// By number.
+    sets: []const ColourSet,
+    /// The palette line of an enemy whose colours are in the first, the second, the other (its
+    /// own, over the first line).
+    lines: [3]u2,
+    /// The police car's colours, over the enemies' while the car is there.
+    police: []const u8,
+};
+
 /// A line of the round's clear: its text (`fonts/main`) from its cell of plane A.
 pub const ClearLine = struct { text: []const u8, at: Cell };
 
@@ -259,6 +276,7 @@ pub const Round = struct {
     status_bar: StatusBar,
     continue_question: Continue,
     name_entry: NameEntry,
+    enemy_colours: EnemyColours,
     clear: Clear,
 };
 
@@ -497,7 +515,56 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
             .{ .key = "frame", .value = .{ .str = cq.frame } },
         }) },
         .{ .key = "name_entry", .value = try nameEntryValue(arena, &r.name_entry) },
+        .{ .key = "enemy_colours", .value = try enemyColoursValue(arena, &r.enemy_colours) },
     });
+}
+
+fn enemyColoursValue(arena: std.mem.Allocator, ec: *const EnemyColours) !json.Value {
+    const sets = try arena.alloc(json.Value, ec.sets.len);
+    for (sets, ec.sets) |*o, set| {
+        var f: std.ArrayList(json.Field) = .empty;
+        inline for (.{ "first", "second", "own" }) |name| if (@field(set, name)) |p| try f.append(arena, .{ .key = name, .value = .{ .str = p } });
+        o.* = .{ .object = f.items };
+    }
+    const lines = try arena.alloc(json.Value, 3);
+    for (lines, ec.lines) |*o, l| o.* = json.Value.num(l);
+    return withProvenance(arena, ec.provenance, &.{
+        .{ .key = "sets", .value = .{ .array = sets } },
+        .{ .key = "lines", .value = .{ .array = lines } },
+        .{ .key = "police", .value = .{ .str = ec.police } },
+    });
+}
+
+fn readEnemyColours(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!EnemyColours {
+    try n.only(&.{ "provenance", "sets", "lines", "police" });
+    const ss = try n.get("sets");
+    const sets = try arena.alloc(ColourSet, try ss.len());
+    for (sets, 0..) |*o, k| {
+        const e = try ss.at(k);
+        try e.only(&.{ "first", "second", "own" });
+        o.* = .{};
+        inline for (.{ "first", "second", "own" }) |name| if (try e.opt(name)) |x| {
+            @field(o, name) = try readPalette(x, a);
+        };
+        if ((o.own == null) == (o.first == null and o.second == null)) return e.fail("not a first and a second, or an own");
+    }
+    const ls = try n.get("lines");
+    if (try ls.len() != 3) return ls.fail("not the first's, the second's and the other's");
+    var lines: [3]u2 = undefined;
+    for (&lines, 0..) |*l, k| l.* = try (try ls.at(k)).int(u2);
+    return .{
+        .provenance = if (try n.opt("provenance")) |x| try x.string() else "",
+        .sets = sets,
+        .lines = lines,
+        .police = try readPalette(try n.get("police"), a),
+    };
+}
+
+/// A palette's full name; with `a`, one of its palettes.
+fn readPalette(n: json.Node, a: ?*const art.Art) Error![]const u8 {
+    const name = try n.string();
+    if (a) |x| if (x.palette(name) == null) return n.fail("not a palette of the art");
+    return name;
 }
 
 fn nameEntryValue(arena: std.mem.Allocator, ne: *const NameEntry) !json.Value {
@@ -661,7 +728,7 @@ fn readFrame(n: json.Node, a: ?*const art.Art) Error![]const u8 {
 }
 
 fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!Round {
-    try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue", "name_entry", "clear" });
+    try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue", "name_entry", "enemy_colours", "clear" });
     const b = try n.get("banner");
     try b.only(&.{ "provenance", "left", "numbers", "right", "fade", "in", "in_ticks", "wait", "out", "out_ticks", "after" });
     const ns = try b.get("numbers");
@@ -732,6 +799,7 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
             .frame = try readFrame(try c.get("frame"), a),
         },
         .name_entry = try readNameEntry(arena, try n.get("name_entry")),
+        .enemy_colours = try readEnemyColours(arena, try n.get("enemy_colours"), a),
         .banner = .{
             .provenance = if (try b.opt("provenance")) |x| try x.string() else "",
             .left = try readFrame(try b.get("left"), a),
@@ -946,6 +1014,11 @@ test "the screens' records write and read back the same" {
                     .{ .cleared = .{ .{ .x = 21, .y = 1 }, .{ .x = 21, .y = 2 } }, .question = .{ .x = 29, .y = 1 }, .answer = .{ .x = 29, .y = 2 }, .yes = .{ .x = 27, .y = 1 }, .no = .{ .x = 27, .y = 2 }, .out = .{ .x = 27, .y = 2 } },
                 },
                 .frame = "play/game_over",
+            },
+            .enemy_colours = .{
+                .sets = &.{ .{ .first = "e/c0_1", .second = "e/c0_2" }, .{ .own = "e/c1" } },
+                .lines = .{ 1, 2, 1 },
+                .police = "e/police",
             },
             .name_entry = .{
                 .label = "NAME",

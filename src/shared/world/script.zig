@@ -46,7 +46,58 @@ pub const Plan = struct {
     /// The round's art still streams in (`ArtQueue.loading`) as the logic tick's first half runs,
     /// and as its second half runs.
     art_loading: [2]bool = .{ false, false },
+    /// The palette lines of the enemies' colours (`Held`): the first's, the second's, the
+    /// other's; and which enemies' colours (by number, a bit each) are a kind's own.
+    colour_lines: [3]u2 = .{ 1, 2, 1 },
+    own_colours: u16 = 0,
+
+    /// Whether enemies' colours `n` are a kind's own (they show on the other).
+    pub fn ownColours(self: *const Plan, n: u8) bool {
+        return n < 16 and self.own_colours & (@as(u16, 1) << @intCast(n)) != 0;
+    }
 };
+
+/// The enemies' colours the round's palettes hold (DESIGN.md W6; play's `enemy_colours`, by
+/// number): the first (the enemies' first palette line), the second (their second line) and the
+/// other (the first line's other colours: some kinds' own); null: none an enemy's kind has (a
+/// boss's colours over the first). And since the reserve began, the enemies that show on each:
+/// an arriving enemy takes the colours that hold its own, or ones no enemy shows on.
+pub const Held = struct {
+    pub const first = 0;
+    pub const second = 1;
+    pub const other = 2;
+    colours: [3]?u8 = .{ null, null, null },
+    counts: [3]u8 = .{ 0, 0, 0 },
+
+    /// Which of them an enemy of `colours` shows on: its own the other; the first when the first
+    /// holds them; else the second.
+    pub fn of(self: *const Held, colours: u8, own: bool) u2 {
+        if (own) return other;
+        if (self.colours[first] == colours) return first;
+        return second;
+    }
+
+    /// Which of them an arriving enemy of `colours` takes (0xA66): its own, the other when it holds
+    /// them or none shows on it; else the first or the second that holds them, else the first or
+    /// the second none shows on; null when none can be had.
+    pub fn take(self: *const Held, colours: u8, own: bool) ?u2 {
+        if (own) {
+            if (self.colours[other] == colours or self.counts[other] == 0) return other;
+            return null;
+        }
+        if (self.colours[first] == colours) return first;
+        if (self.colours[second] == colours) return second;
+        if (self.counts[first] == 0) return first;
+        if (self.counts[second] == 0) return second;
+        return null;
+    }
+};
+
+/// An enemy of `colours` appears: the palette line it shows on, by the colours held then.
+pub fn lineOf(t: *const Tick, colours: u8) u2 {
+    const p = t.plan orelse return 0;
+    return p.colour_lines[t.world.script.held.of(colours, p.ownColours(colours))];
+}
 
 /// The art the round streams in, as the original's load queue is decoded: a display tick's share
 /// at a time (`content_round.Streamed`, from the end of the logic tick that queued it). The
@@ -147,6 +198,10 @@ pub const State = struct {
     /// Two players were in play when a section started: the two players' records come (and
     /// keep coming).
     two_players: bool = false,
+    /// The enemies' colours the palettes hold.
+    held: Held = .{},
+    /// The colours the arriving enemy takes.
+    taking: ?u2 = null,
 };
 
 /// The round's timer, part of the world.
@@ -277,6 +332,7 @@ pub fn run(t: *Tick) void {
             s.stage = .reserve;
             s.next = 0;
             nextReserve(p, s);
+            countColours(t, p);
             // None left: two are called at once.
             s.calls = if (s.enemies == 0) 2 else 0;
             s.arriving = 0;
@@ -287,9 +343,16 @@ pub fn run(t: *Tick) void {
             const list = reserveOf(r, s.part);
             if (s.arriving != 0) {
                 // The arriving enemy's colours, at its arrival's first tick.
-                if (s.arriving == @max(list[s.next].arrives_after, 1)) t.out.colours = true;
+                if (s.arriving == @max(list[s.next].arrives_after, 1)) {
+                    t.out.colours = true;
+                    if (list[s.next].colours) |c| if (s.taking) |into| t.out.colour_loads.append(.{ .enemies = .{ .colours = c, .into = into } });
+                }
                 s.arriving -= 1;
                 if (s.arriving != 0) return;
+                if (list[s.next].colours) |c| if (s.taking) |into| {
+                    s.held.colours[into] = c;
+                    s.held.counts[into] +|= 1;
+                };
                 bring(t, p, &list[s.next]);
                 s.next += 1;
                 s.calls -|= 1;
@@ -297,6 +360,10 @@ pub fn run(t: *Tick) void {
                 s.enemies = countEnemies(t);
             } else if (s.calls != 0 and s.next < list.len) {
                 s.arriving = @max(list[s.next].arrives_after, 1);
+                // The colours it takes. TODO(PLAN item 15): none to be had, the original brings
+                // the first waiting record whose colours (and art) can be had; round 1's always
+                // can.
+                s.taking = if (list[s.next].colours) |c| s.held.take(c, p.ownColours(c)) else null;
                 // Its kind's art is loaded as it is called.
                 if (list[s.next].streamed.len != 0) t.out.streamed = .{ .part = s.part, .record = s.next };
                 return;
@@ -312,7 +379,7 @@ pub fn run(t: *Tick) void {
             c.x_max = c.x;
             t.sound(b.fade, null);
             // The boss's colours.
-            t.out.colours = true;
+            bossColours(t);
             s.stage = .boss_music;
             s.ticks = @max(b.music_after -| 1, 1);
         },
@@ -327,6 +394,8 @@ pub fn run(t: *Tick) void {
         .boss_wave => {
             s.ticks -|= 1;
             if (s.ticks != 0) return;
+            // The boss's fight: its colours again.
+            bossColours(t);
             s.stage = .wave;
             s.next = 0;
             nextWave(t, p);
@@ -376,7 +445,7 @@ fn clearIfDone(t: *Tick, p: *const Plan) void {
     if (k < r.sections.len) return beginSection(t, p, k);
     if (r.boss == null) return;
     // The boss's section opens as a section does: its colours; its art loads.
-    t.out.colours = true;
+    holdColours(t, r.boss.?.section_colours);
     t.out.streamed = .{ .part = k };
     s.part = k;
     s.stage = .boss_opening;
@@ -388,7 +457,7 @@ fn beginSection(t: *Tick, p: *const Plan, k: u8) void {
     const s = &t.world.script;
     const sec = &p.round.sections[k];
     // A section's art's colours are set as it begins, and its art loads.
-    t.out.colours = true;
+    holdColours(t, sec.colours);
     t.out.streamed = .{ .part = k };
     s.part = k;
     s.stage = .opening;
@@ -401,6 +470,41 @@ fn beginSection(t: *Tick, p: *const Plan, k: u8) void {
         if (comes(p, s, rec)) place(t, rec, rec.x);
     }
     s.enemies = countEnemies(t);
+}
+
+/// A section's colours loaded (0xF46): the other's first when it gives one (else the other keeps
+/// its own), then the first's, then the second's.
+fn holdColours(t: *Tick, c: content_round.Colours) void {
+    const h = &t.world.script.held;
+    t.out.colours = true;
+    if (c.other) |n| {
+        h.colours[Held.other] = n;
+        t.out.colour_loads.append(.{ .enemies = .{ .colours = n, .into = Held.other } });
+    }
+    h.colours[Held.first] = c.first;
+    if (c.first) |n| t.out.colour_loads.append(.{ .enemies = .{ .colours = n, .into = Held.first } });
+    h.colours[Held.second] = c.second;
+    if (c.second) |n| t.out.colour_loads.append(.{ .enemies = .{ .colours = n, .into = Held.second } });
+}
+
+/// The boss's colours loaded (0x576), over the first's, which no kind's then match.
+fn bossColours(t: *Tick) void {
+    t.out.colours = true;
+    t.out.colour_loads.append(.boss);
+    t.world.script.held.colours[Held.first] = null;
+}
+
+/// As the reserve begins (0x810), the enemies that show on each of the colours held: by the line
+/// each took (those not yet out are not counted).
+fn countColours(t: *Tick, p: *const Plan) void {
+    const h = &t.world.script.held;
+    h.counts = .{ 0, 0, 0 };
+    for (&t.world.entities) |*e| {
+        if (!e.alive() or e.flags.hidden) continue;
+        const c = e.spawn.colours orelse continue;
+        const part: u2 = if (p.ownColours(c)) Held.other else if (e.palette == p.colour_lines[Held.first]) Held.first else if (e.palette == p.colour_lines[Held.second]) Held.second else continue;
+        h.counts[part] +|= 1;
+    }
 }
 
 /// Whether a record comes in this game: its level, and its players.
@@ -474,6 +578,7 @@ pub fn placing(rec: *const Spawn) entity.Spawn {
         sp.offset_depth = o.depth;
     }
     sp.bar = rec.bar;
+    sp.colours = rec.colours;
     return sp;
 }
 
@@ -502,4 +607,20 @@ fn bringBack(t: *Tick, r: *const Round) void {
         e.position.depth = .pixels(r.camera.left_behind[1]);
         t.leftBehind(t.world.handleAt(i).?);
     }
+}
+
+test "the enemies' colours: an enemy shows on those that hold its own; one arriving takes them, or ones none shows on" {
+    var h: Held = .{ .colours = .{ 0, 3, 9 } };
+    try std.testing.expectEqual(@as(u2, Held.first), h.of(0, false));
+    try std.testing.expectEqual(@as(u2, Held.second), h.of(3, false));
+    // Colours none holds: the second line.
+    try std.testing.expectEqual(@as(u2, Held.second), h.of(5, false));
+    try std.testing.expectEqual(@as(u2, Held.other), h.of(10, true));
+    try std.testing.expectEqual(@as(?u2, Held.second), h.take(3, false));
+    h.counts = .{ 2, 1, 1 };
+    try std.testing.expectEqual(@as(?u2, null), h.take(5, false));
+    h.counts[Held.second] = 0;
+    try std.testing.expectEqual(@as(?u2, Held.second), h.take(5, false));
+    try std.testing.expectEqual(@as(?u2, Held.other), h.take(9, true));
+    try std.testing.expectEqual(@as(?u2, null), h.take(10, true));
 }

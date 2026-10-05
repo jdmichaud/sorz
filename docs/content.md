@@ -307,9 +307,14 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   shows them): the `label` and, for each player (`players`), the label's cell (`label`), the
   first of the name's three places (`first`) and the end mark's cell after them (`mark`); the
   `letters` a place goes through, the last the end mark, which ends the entry (a high-score
-  entry shows it as a space). `clear`, the round's clear: the `header` ("ROUND n CLEAR", a map of
-  the `round_end` set) on plane A from `header_at`, the round's number a big digit at its cell
-  `number`; the bonuses' `lines` (the clear's, the time's, the level's: each a `text` from its
+  entry shows it as a space). `enemy_colours`, the enemies' colours the round loads as they
+  come, by number (`sets`: each a kind's colours for the enemies' first palette line and their
+  second, `first` and `second`, palettes of the art; or its `own`, over the first line), the
+  `lines` an enemy shows on as it appears (its colours in the first, the second, the other: its
+  own), and the police car's colours (`police`), over the enemies' from its siren until the
+  special attack gives theirs back. `clear`, the round's clear: the `header` ("ROUND n CLEAR",
+  a map of the `round_end` set) on plane A from `header_at`, the round's number a big digit at
+  its cell `number`; the bonuses' `lines` (the clear's, the time's, the level's: each a `text` from its
   cell `at` of plane A), a bonus's digits over the line's zeros from its `digits`th letter, in the `normal`
   palette or the `counted` one while it is counted; the `wait` between the steps; the bonuses
   (`clear_bonus` for the round and each special attack left, `time_bonus` a second left,
@@ -416,6 +421,13 @@ play).
 - `special.streamed`: the special attack's art, by its caller (player 1's, player 2's): the
   police car's and the caller's weapon's, queued as the car comes, once nothing else streams in;
   the car shows when it is all in.
+- `colours` (a section's; the boss's `section_colours`): the enemies' colours it loads as it
+  begins, by number (`screens/round`'s `enemy_colours`): its `first`, its `second` and, when
+  given, its `other` (else the other keeps its own). The boss's `colours`: its own, a palette of
+  the art, loaded over the first as its section opens and as its fight begins. An enemy that
+  appears shows on the line of the colours that hold its own (the other's for a kind's own; the
+  first's when the first holds them; else the second's); one that arrives from the reserve takes
+  the colours that hold its own, or ones no enemy has shown on since the reserve began.
 
 A record of `placed`, `wave` or `reserve` is one entity:
 
@@ -432,7 +444,7 @@ A record of `placed`, `wave` or `reserve` is one entity:
   place, not only until its place is on the screen; `slow`, `closes_in_after_lurking`, `pipe_b`,
   `slides`, `flips_away`, `drops_in`, `flips_at_close_range`, `unflinching`, `walks_off`,
   `twin`); `offset`, where it keeps from its target (`x` away from it, `depth`); `strength`, its
-  row of strength and colours (0 when absent).
+  row of strength and colours (0 when absent); `colours`, its colours by number (`enemy_colours`).
 - A breakable's: `holds`, the kind of the item it leaves. A boss's: `bar`, its entry in the
   status bar's names and bars.
 

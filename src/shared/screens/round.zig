@@ -218,6 +218,8 @@ pub const Round = struct {
     /// The art play streams in (a section's, the boss's, an arriving enemy's, the special
     /// attack's): its list, and the display tick of it that comes next.
     art: world.script.ArtQueue = .{},
+    /// The colours shown as the special attack was called, which it gives back.
+    kept: render.palettes.Colours = render.palettes.black,
     /// The round ended (its last tick).
     done: bool = false,
     /// The exit after the fade out.
@@ -268,6 +270,7 @@ pub const Round = struct {
         time_over_text: *const art.Frame,
         game_over_text: *const art.Frame,
         first_scores: *const records.HighScores,
+        enemy_colours: library.EnemyColours,
         sounds: *const library.Sounds,
         stop: library.Sound,
         pause: library.Sound,
@@ -296,6 +299,7 @@ pub const Round = struct {
             .time_over_text = "play/time_over",
             .game_over_text = "play/game_over",
             .first_scores = "screens/high_scores",
+            .enemy_colours = "enemy_colours",
             .sounds = "sound",
             .stop = "stop",
             .pause = "pause",
@@ -342,6 +346,8 @@ pub const Round = struct {
             .lives = setup_mod.Progress.livesOf(setup),
             .last_score = .{ .score = last.score, .level = last.level, .round = last.round },
             .art_loading = self.art.loading(self.stage(a).script),
+            .colour_lines = a.enemy_colours.lines,
+            .own_colours = ownColours(&a.enemy_colours),
         };
     }
 
@@ -776,6 +782,7 @@ pub const Round = struct {
         self.logic_ran = true;
         self.trace_t += 1;
         if (out.streamed) |of| self.art.start(of);
+        self.loadColours(a, out.colour_loads.slice(), .shown);
         self.noteTransfers(a.kinds, out);
         self.rank(turn.setup, a, out.rankings.slice());
         if (out.colours) self.colours_due = true;
@@ -888,14 +895,49 @@ pub const Round = struct {
             if (t.actor(world.behaviours.player, h)) |act| world.behaviours.player.startLife(act);
         }
         world.script.placeFirst(&t, &p);
+        const first_colours = out.colour_loads;
         world.systems.picture(&t);
         self.noteTransfers(a.kinds, out);
         self.join = .{ .ticks = a.screen.status_bar.join.blink };
         self.colours.palettes = .{};
         self.colours.aim(s.colours);
+        // The first section's enemies' colours, after the round's (0xE5C).
+        self.loadColours(a, first_colours.slice(), .target);
         self.colours.aim(a.play_colours);
         self.colours.aim(a.players_colours);
         for (s.set.cycles, self.cycles[0..s.set.cycles.len]) |c, *x| x.* = .{ .countdown = c.period };
+    }
+
+    /// The colours the world loaded at its tick, in their order, into the colours shown (or, at
+    /// the round's set-up, the colours its fade in goes to): an enemies' colours into the first,
+    /// the second or the other, the boss's, the police car's; the colours shown kept as the
+    /// special attack is called, and given back after it.
+    fn loadColours(self: *Round, a: *const Assets, loads: []const world.output.ColourLoad, into: enum { shown, target }) void {
+        const p = &self.colours.palettes;
+        for (loads) |l| {
+            const palette: ?*const art.Palette = switch (l) {
+                .enemies => |e| if (a.enemy_colours.of(e.colours)) |set| switch (e.into) {
+                    world.script.Held.first => set.first,
+                    world.script.Held.second => set.second,
+                    else => set.own,
+                } else null,
+                .boss => self.stage(a).boss_colours,
+                .police => a.enemy_colours.police,
+                .keep => {
+                    self.kept = p.shown;
+                    continue;
+                },
+                .back => {
+                    p.shown = self.kept;
+                    continue;
+                },
+            };
+            const pal = palette orelse continue;
+            switch (into) {
+                .shown => p.show(pal),
+                .target => p.aim(pal),
+            }
+        }
     }
 
     /// The round's colour cycles, a step every period of logic ticks.
@@ -992,6 +1034,15 @@ pub const Round = struct {
         if (self.shown_game_over) try v.sprites.append(v.gpa, .of(a.game_over_text, 0, 0));
     }
 };
+
+/// Which enemies' colours (by number, a bit each) are a kind's own.
+fn ownColours(ec: *const library.EnemyColours) u16 {
+    var bits: u16 = 0;
+    for (ec.sets[0..ec.len], 0..) |set, n| {
+        if (set.own != null) bits |= @as(u16, 1) << @intCast(n);
+    }
+    return bits;
+}
 
 /// A player entering its name, as its part of the bar shows it.
 fn naming(p: world.Player, m: *const world.behaviours.player_waiting.Mind) PlayerBar {

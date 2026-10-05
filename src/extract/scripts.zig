@@ -33,6 +33,7 @@ const kosinski = @import("kosinski.zig");
 const rom_mod = @import("rom.zig");
 const sound_names = @import("sound_names.zig");
 const spawns = @import("spawns.zig");
+const palettes = @import("palettes.zig");
 const rounds = @import("rounds.zig");
 const stream = @import("stream.zig");
 
@@ -59,6 +60,8 @@ const load_lists = 0x8672;
 const round_bosses = 0x1C378;
 /// The art kind of each common enemy type ($20 to $2A), the first art load (0x9CA).
 const art_of_type = 0xA4E;
+/// The first enemies' colours of each common enemy type (0xA66: by the type less $20).
+const palette_of_type = 0xA5A;
 const first_art_load = 0xB;
 /// The items a breakable holds, by its entry's index from 1 (0x7E54).
 const breakable_items = 0x7E85;
@@ -321,6 +324,30 @@ fn enemyRecord(rom: []const u8, s: *round.Spawn, t: u8, variant: u8, offsets: u8
     s.traits = d.traits;
     s.offset = d.offset;
     s.strength = d.strength;
+    s.colours = try coloursOf(rom, t, palette);
+}
+
+/// The enemies' colours of an entry (0xA66): its type's first (the table at 0xA5A) plus its
+/// palette byte; bit 7 set, its own (and that bit cleared). A number of the enemies' colours
+/// (palettes.zig: 0 to 8 a pair, 9 to 11 their own).
+fn coloursOf(rom: []const u8, t: u8, palette: u8) Error!u8 {
+    const p = rom[palette_of_type + @as(u32, t - 0x20)] +% palette;
+    if (p & 0x80 != 0) {
+        const own = p & 0x7F;
+        if (own < 9 or own > 11) return error.BadData;
+        return own;
+    }
+    if (p > 8) return error.BadData;
+    return p;
+}
+
+/// A section's colours (0xF46, its entry's bytes 4 and 5): the first's the low nibble of byte
+/// 4, the other's its high nibble plus 8 (none when 0), the second's byte 5. (A boss's colours
+/// in byte 4, bit 7: TODO(PLAN item 15), not in round 1.)
+fn sectionColours(rom: []const u8, at: u32) Error!round.Colours {
+    const b4 = rom[at + 4];
+    if (b4 & 0x80 != 0) return error.BadData;
+    return .{ .first = b4 & 0xF, .second = rom[at + 5], .other = if (b4 >> 4 != 0) (b4 >> 4) + 8 else null };
 }
 
 /// An entry's record: its kind, its depth (the Y, whose low two bits are its lowest level), and
@@ -551,6 +578,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
             .opens_after = @intCast(if (k == 0) art + 1 else art + 2),
             .streamed = try stream.schedule(arena, loads.items),
             .again = try againStream(arena, rom, kinds),
+            .colours = try sectionColours(rom, art_at),
             .placed = placed.items,
             .wave = try wave(arena, rom, &l),
             .reserve = try reserve(arena, rom, &l),
@@ -584,6 +612,8 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .wave_after = @intCast(wave_after),
         .streamed = try stream.schedule(arena, boss_loads.items),
         .again = try againStream(arena, rom, kinds),
+        .section_colours = try sectionColours(rom, entryAt(rom, part, section_count)),
+        .colours = try palettes.bossColoursName(arena, rom, u32be(rom, round_bosses + 6 * r)) orelse return error.BadData,
         .wave = try wave(arena, rom, &l),
         .reserve = try reserve(arena, rom, &l),
     };

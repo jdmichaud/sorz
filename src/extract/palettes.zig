@@ -62,4 +62,33 @@ pub fn extract(b: *Builder) !void {
         }
     }
     try add(b, "mrx/colours", mrx_list, "Mr. X's colours on palette 1 (round 8's boss, 0x1C378)");
+    try add(b, police_name, police_list, "the police car's colours on palette 1, over the enemies' (0x5A12: LoadPaletteLive at the siren)");
+}
+
+/// The police car's colours (lea (PolicePalette,pc) at 0x5A1E).
+pub const police_list = 0x5A78;
+pub const police_name = "police/colours";
+
+/// The enemies' colours by number, the palettes' names (`extract`'s): a pair for palettes 1 and
+/// 2, or one of its own.
+pub fn enemyColours(arena: std.mem.Allocator) ![]const sorz.content.screens.ColourSet {
+    const out = try arena.alloc(sorz.content.screens.ColourSet, enemy_owners.len);
+    for (out, enemy_owners, 0..) |*o, owner, i| {
+        const variant = i % 3 + 1;
+        o.* = if (i < 9) .{
+            .first = try std.fmt.allocPrint(arena, "{s}/variant_{d}_palette_1", .{ owner, variant }),
+            .second = try std.fmt.allocPrint(arena, "{s}/variant_{d}_palette_2", .{ owner, variant }),
+        } else .{ .own = try std.fmt.allocPrint(arena, "{s}/variant_{d}", .{ owner, variant }) };
+    }
+    return out;
+}
+
+/// The name of the boss's colours whose list is at `list` (a variant of the boss kinds at
+/// 0x1C3CC), or null.
+pub fn bossColoursName(arena: std.mem.Allocator, rom: []const u8, list: u32) !?[]const u8 {
+    for (boss_variants) |bv| for (0..bv.count) |k| {
+        if (u32be(rom, boss_lists + 4 * (bv.first + @as(u32, @intCast(k)))) == list)
+            return try std.fmt.allocPrint(arena, "{s}/variant_{d}", .{ bv.owner, k + 1 });
+    };
+    return null;
 }

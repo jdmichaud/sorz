@@ -62,6 +62,17 @@ pub const Pickup = struct { item: Handle, kind: entity.KindId, by: Handle };
 /// numbers at its places, null where none was taken).
 pub const Ranking = struct { player: u1, name: ?[3]?u8 = null };
 
+/// Colours the round loads into its palettes at the tick: an enemies' colours into one of the
+/// enemies' colours (the first, the second, the other: script.zig), the boss's, the police car's;
+/// or the colours shown kept as the special attack is called, and given back after it.
+pub const ColourLoad = union(enum) {
+    enemies: struct { colours: u8, into: u2 },
+    boss,
+    police,
+    keep,
+    back,
+};
+
 /// The frame an entity showed at the tick, and whether mirrored.
 pub const Shown = struct { frame: *const art.Frame, mirrored: bool };
 
@@ -77,6 +88,8 @@ pub const Output = struct {
     /// The high-score table's changes the round makes from the tick's rankings (the table is the
     /// game's, outside the world).
     rankings: List(Ranking, 4) = .{},
+    /// The colours loaded at the tick, in their order (the round's picture applies them).
+    colour_loads: List(ColourLoad, 8) = .{},
     /// By the entities' places in the pool: the frame each showed (the animation system).
     shown: [capacity]?Shown = @splat(null),
     /// The entities whose frame started at this tick (the game copies a player's art for its new
@@ -109,6 +122,7 @@ pub const Output = struct {
         self.hits.clear();
         self.pickups.clear();
         self.rankings.clear();
+        self.colour_loads.clear();
         @memset(&self.shown, null);
         @memset(&self.new_frames, false);
         self.colours = false;
