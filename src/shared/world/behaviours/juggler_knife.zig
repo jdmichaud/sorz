@@ -163,6 +163,18 @@ fn holder(a: Actor) ?*Entity {
     return if (e.mind == .juggler) e else null;
 }
 
+/// Its juggler's place at this tick: where its speed takes it when its turn came before the
+/// knife's (the original's things move in their own turns; the world moves them after all of
+/// them), else where it is.
+fn movedPlace(a: Actor, h: *const Entity) fixed.Vec3 {
+    const index = a.mind.holder.?.index;
+    if (index > a.handle.index or h.flags.still or h.holder != null) return h.position;
+    var p = h.position.add(h.velocity);
+    if (h.flags.keeps_depth) p.depth = h.position.depth;
+    if (!h.flags.airborne) p.height = h.position.height;
+    return p;
+}
+
 fn juggling(e: *Entity) *juggler.Memory {
     return &e.mind.juggler.juggler;
 }
@@ -240,8 +252,9 @@ fn juggled(a: Actor) bool {
         a.remove();
         return false;
     };
-    e.position.depth = .parts(@intCast(h.position.depth.whole() + n.juggle_depth), e.position.depth.frac());
-    e.position.x = Fixed.parts(@intCast(h.position.x.whole()), e.position.x.frac()).add(m.offset);
+    const at = movedPlace(a, h);
+    e.position.depth = .parts(@intCast(at.depth.whole() + n.juggle_depth), e.position.depth.frac());
+    e.position.x = Fixed.parts(@intCast(at.x.whole()), e.position.x.frac()).add(m.offset);
     m.offset = m.offset.add(e.velocity.x);
     if (!m.back) {
         _ = falling(a);
@@ -253,7 +266,7 @@ fn juggled(a: Actor) bool {
         m.back = true;
         e.velocity.x = n.juggle_back;
     }
-    const hand: i32 = h.position.x.whole() + if (h.facingLeft()) n.hand_left else n.hand;
+    const hand: i32 = at.x.whole() + if (h.facingLeft()) n.hand_left else n.hand;
     if (hand > e.position.x.whole()) return true;
     const j = juggling(h);
     if (h.mind.juggler.state != .raise) {
