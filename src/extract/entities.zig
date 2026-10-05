@@ -115,7 +115,15 @@ const State = struct {
     pub const escape = 0x7C;
     pub const counter = 0x7E;
     pub const thrown = 0x82;
+    pub const slammed = 0x84;
+    pub const slam_pause = 0x8A;
+    pub const lift = 0x90;
+    pub const air_slam = 0x92;
+    pub const air_fall = 0x94;
 };
+
+/// The players' names by character, as the partners' places name them.
+const player_names = [_][]const u8{ "axel", "adam", "blaze" };
 
 // --- Reading an animation ----------------------------------------------------------------------
 
@@ -203,6 +211,7 @@ pub const Def = struct {
     box_keys: std.ArrayList([3]u8) = .empty,
     animations: std.ArrayList(entity.Animation) = .empty,
     moves: std.ArrayList(entity.Move) = .empty,
+    partners: std.ArrayList(entity.Partner) = .empty,
 
     pub fn frameName(d: *Def, address: u32) Error![]const u8 {
         const i = std.mem.indexOfScalar(u32, d.frame_addresses, address) orelse return error.BadData;
@@ -370,6 +379,12 @@ const player_animations = [_]PlayerAnimation{
     .{ .name = "escape", .state = State.escape },
     .{ .name = "counter", .state = State.counter },
     .{ .name = "thrown", .state = State.thrown },
+    // Held by the other player: a knee taken; lifted over it by its throw (or over the one held,
+    // by a jump), the somersault in the air and the fall (0x2A22, 0x2A6E).
+    .{ .name = "slam_pause", .state = State.slam_pause },
+    .{ .name = "lift", .state = State.lift },
+    .{ .name = "air_slam", .state = State.air_slam },
+    .{ .name = "air_fall", .state = State.air_fall },
     // Armed: standing and walking, a weapon in hand; its blows: the plain one (in which a knife
     // is thrown), the stab, the swing (0x2F2C).
     .{ .name = "armed_stand", .state = State.armed_stand },
@@ -399,8 +414,30 @@ fn playerFrames(d: *Def, name: []const u8, entry: u32, timing: u8, character: u8
 /// which is thus never shown: facing left that frame may be another picture (Blaze's counter's
 /// last), whose boxes are then the right-facing frame's own mirrored ones.
 fn playerFramesShown(d: *Def, name: []const u8, entry: u32, timing: u8, character: u8, shown: ?usize) Error![]entity.Frame {
+    return framesOf(d, name, entry, timing, character, shown, false);
+}
+
+/// `playerFrames` of an animation whose list facing left may be shorter, the code reading past
+/// it: the words there name the frames facing left (Axel's slammed: its frame 1 mirrored).
+fn playerFramesPast(d: *Def, name: []const u8, entry: u32, timing: u8, character: u8) Error![]entity.Frame {
+    return framesOf(d, name, entry, timing, character, null, true);
+}
+
+fn framesOf(d: *Def, name: []const u8, entry: u32, timing: u8, character: u8, shown: ?usize, past: bool) Error![]entity.Frame {
     const right = try readAnimation(d.arena, d.rom, d.set, entry);
-    const left = try readAnimation(d.arena, d.rom, d.set, entry + 1);
+    var left = try readAnimation(d.arena, d.rom, d.set, entry + 1);
+    if (past and left.frames.len < right.frames.len) {
+        // The frame words past the list, read as 0x3B12 reads a list's (its count not looked at).
+        const at = d.set + @as(u32, @intCast(s16be(d.rom, d.set + 2 * (entry + 1))));
+        const frames = try d.arena.alloc(RawFrame, right.frames.len);
+        for (frames, 0..) |*f, j| {
+            const w = u16be(d.rom, at + 2 + 2 * @as(u32, @intCast(j)));
+            const fa = at + (w & 0x7FFF);
+            const m = w & 0x8000 != 0;
+            f.* = .{ .address = fa, .mirrored = m, .attack = d.rom[fa + @as(u32, if (m) 3 else 1)], .body = d.rom[fa + @as(u32, if (m) 4 else 2)] };
+        }
+        left.frames = frames;
+    }
     if (right.frames.len != left.frames.len) return error.BadData;
     const out = try d.arena.alloc(entity.Frame, right.frames.len);
     for (out, right.frames, left.frames, 0..) |*f, r, l_read, j| {
@@ -423,6 +460,48 @@ fn playerFramesShown(d: *Def, name: []const u8, entry: u32, timing: u8, characte
         };
     }
     return out;
+}
+
+/// The places of a player in a hold between the two players, by the other's character, as the
+/// players' code puts them (0x479C, the table at 0x4884: by the animation from $70, the lists by
+/// the character and the other's, a place a frame; bit 0 of an entry: the other moves): held
+/// from the front and from behind, slammed down, the vault over the other and the jump back
+/// over it, thrown by it, lifted over it. Each list is as long as the frames it places.
+fn playerPartners(d: *Def, character: u8) Error!void {
+    const rom = d.rom;
+    const table = 0x4884;
+    const Use = struct { name: []const u8, anim: u32, frames: []const u8, depth: bool };
+    const uses = [_]Use{
+        .{ .name = "held", .anim = 0x70, .frames = "held", .depth = true },
+        .{ .name = "held_behind", .anim = 0x74, .frames = "held_behind", .depth = true },
+        // Slammed: the list of $A0 (0x47B6: d0 = 48), its first look the hold's (anim $74).
+        .{ .name = "slammed", .anim = 0xA0, .frames = "held_behind", .depth = true },
+        // The vault over the other from the front: the list of $A4 (0x47D4: anim $7C, not from
+        // behind); the jump back over it from behind: $7C's.
+        .{ .name = "vault_over", .anim = 0xA4, .frames = "throw", .depth = false },
+        .{ .name = "throw_back", .anim = 0x7C, .frames = "throw_back", .depth = false },
+        .{ .name = "thrown", .anim = 0x8C, .frames = "thrown", .depth = false },
+        .{ .name = "lifted", .anim = 0x9C, .frames = "lift", .depth = false },
+        // Lifting itself over the one it holds (0x47E4: $9C with bit 6 of $59, set at 0x2290):
+        // the list of $A8.
+        .{ .name = "lift_over", .anim = 0xA8, .frames = "lift", .depth = false },
+    };
+    for (uses) |u| {
+        const w = u16be(rom, table + (u.anim - 0x70) / 2);
+        if (w & 0x8000 == 0) return error.BadData;
+        const list = table + (w & 0x7FFE);
+        const frames = d.animations.items[d.animationIndex(u.frames).?].frames.len;
+        const by = try d.arena.alloc(entity.PartnerPlaces, player_names.len);
+        for (by, 0..) |*b, other| {
+            const i = rom[list + character] +% @as(u8, @intCast(other));
+            const at = list + rom[list + i];
+            const places = try d.arena.alloc(entity.Place, frames);
+            for (places, 0..) |*p, k| p.* = .{ .x = s8(rom, at + 2 * @as(u32, @intCast(k))), .height = s8(rom, at + 2 * @as(u32, @intCast(k)) + 1) };
+            b.* = .{ .partner = player_names[other], .places = places };
+        }
+        try d.partners.append(d.arena, .{ .name = u.name, .moves_partner = w & 1 != 0, .depth = u.depth, .by = by });
+    }
+    try d.number_notes.print(d.arena, "; the places in a hold between the two players: ROM 0x{X:0>5} (0x479C)", .{table});
 }
 
 /// What the one held does in state `state` (the table at 0x32F2), as the move's reaction.
@@ -518,6 +597,17 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
         }
         try d.animations.append(arena, .{ .name = "vault_land", .loop = true, .frames = frames });
     }
+    // Slammed down by the other player's back drop (0x291E): at its second step the animation
+    // word $90 (0x2978: addi.w #N,(8,a0)), its frame 1 at the fourth. Facing left, Axel's list
+    // holds one frame: the code reads past it, the next word, which names the first list's frame 1
+    // mirrored.
+    {
+        if (u16be(rom, 0x2978) != 0x0668 or u16be(rom, 0x297C) != 8) return error.BadData;
+        const entry: u32 = u16be(rom, 0x297A) / 2;
+        const right = try readAnimation(arena, rom, set, entry);
+        try d.animations.append(arena, .{ .name = "slammed", .loop = true, .frames = try playerFramesPast(&d, "slammed", entry, right.timing, character) });
+    }
+
     // The vault over the one held and the jump back over it from behind: the holder's places
     // from the one held, frame by frame (0x4A5A; from behind, the list of animation $A0).
     {
@@ -610,6 +700,11 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
         .{ .name = "throw", .animation = "throw", .state = State.throw },
         .{ .name = "throw_back", .animation = "throw_back", .state = State.throw },
         .{ .name = "counter", .animation = "counter", .state = State.counter, .hold = true },
+        // The jump out of a hold from behind strikes with a frame.
+        .{ .name = "escape", .animation = "escape", .state = State.escape },
+        // The somersault and the fall of one lifted over the other player: their blows.
+        .{ .name = "air_slam", .animation = "air_slam", .state = State.air_slam },
+        .{ .name = "air_fall", .animation = "air_fall", .state = State.air_fall },
     };
     // The enemies' reel (0x9B36) takes a blow of the combo's third (state $1C) to its step the
     // striker's character + 1 (0x9C3E: move.b (80,a1),d0; addq.b #1,d0), by the table at 0x9B80:
@@ -674,6 +769,8 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     try d.number("diagonal_depth", -sp.y(rom, speeds, State.walk_up_side) * sixteenth, speed_place);
     try d.number("knocked_down_x", sp.x(rom, speeds, State.knocked_down) * sixteenth, speed_place);
     try d.number("dying_x", sp.x(rom, speeds, State.dying) * sixteenth, speed_place);
+    try d.number("air_slam_x", sp.x(rom, speeds, State.air_slam) * sixteenth, speed_place);
+    try d.number("air_fall_x", sp.x(rom, speeds, State.air_fall) * sixteenth, speed_place);
     try d.number("jump", @bitCast(u32be(rom, jump_speeds + 4 * @as(u32, character))), "ROM 0x03842, by character");
     try d.number("jump_x", try immediate(rom, 0x384E, &.{ 0x20, 0x3C }, 4), "ROM 0x0384E: move.l #N,d0");
     try d.number("steer", try immediate(rom, 0x38F0, &.{ 0x20, 0x3C }, 4), "ROM 0x038F0: move.l #N,d0");
@@ -735,6 +832,51 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     try d.number("thrown_ahead", try moveq(rom, 0x286E, 0), "ROM 0x0286E: moveq #N,d0");
     try d.number("thrown_up", (try immediate(rom, 0x2882, &.{ 0x31, 0x7C }, 2)) << 16, "ROM 0x02882: move.w #N,(36,a0)");
     try d.number("thrown_x", try immediate(rom, 0x2888, &.{ 0x20, 0x3C }, 4), "ROM 0x02888: move.l #N,d0");
+    // Holds between the two players (0x2260 to 0x2A9E): a knee taken pauses the one held
+    // (0x255E), the last knocks it down at the holder's frame its character gives (0x256C);
+    // lifted, its frames go every few ticks to the last, then up and over (0x2A22); the
+    // somersault loops its frames twice, a lighter gravity (0x38A6), then drops a little and
+    // falls (0x2A6E), landing ahead or back by character (0x3EC2); slammed down by a back drop,
+    // it goes by steps (0x291E: the table at 0x2944) to a fall as a knock-down's; thrown by the
+    // one it held, it starts lower (0x2324).
+    try d.number("slam_pause", try moveByte(rom, 0x255E, 0x41), "ROM 0x0255E: move.b #N,(65,a0)");
+    if (u16be(rom, 0x2572) != 0x0C29 or rom[0x2574] != 0 or u16be(rom, 0x2576) != 0x50) return error.BadData;
+    try d.number("knee_last_hits", if (rom[0x2575] == character) try moveq(rom, 0x257A, 0) else try moveq(rom, 0x2570, 0), "ROM 0x02570: moveq #N,d0, or 0x0257A's for the holder's character 0x02572 tests (its last knee's frame that knocks the other player down)");
+    const lift_first = try moveByte(rom, 0x2508, 0x4E);
+    if (lift_first != try moveByte(rom, 0x2296, 0x4E)) return error.BadData;
+    try d.number("lift_first", lift_first, "ROM 0x02508: move.b #N,(78,a0) (thrown up), the same at 0x02296 (jumping up)");
+    try d.number("lift_pace", try moveByte(rom, 0x2A28, 0x4E), "ROM 0x02A28: move.b #N,(78,a0)");
+    try d.number("lift_ends", try frameCompared(rom, 0x2A2E), "ROM 0x02A2E: cmpi.b #N,(10,a0)");
+    if (u16be(rom, 0x2A54) != 0x24) return error.BadData;
+    try d.number("lift_up", (try immediate(rom, 0x2A50, &.{ 0x31, 0x7C }, 2)) << 16, "ROM 0x02A50: move.w #N,(36,a0)");
+    if (u16be(rom, 0x2A5A) != 0x18) return error.BadData;
+    try d.number("lift_rise", try immediate(rom, 0x2A56, &.{ 0x04, 0x68 }, 2), "ROM 0x02A56: subi.w #N,(24,a0)");
+    try d.number("air_slam_loops", try moveByte(rom, 0x2A5C, 0x41), "ROM 0x02A5C: move.b #N,(65,a0)");
+    try d.number("air_slam_gravity", try immediate(rom, 0x38A6, &.{ 0x20, 0x3C }, 4), "ROM 0x038A6: move.l #N,d0");
+    if (u16be(rom, 0x2A90) != 0x18) return error.BadData;
+    try d.number("air_slam_drop", try immediate(rom, 0x2A8C, &.{ 0x06, 0x68 }, 2), "ROM 0x02A8C: addi.w #N,(24,a0)");
+    if (try immediate(rom, 0x3EBC, &.{ 0x0C, 0x00 }, 2) != State.air_fall) return error.BadData;
+    if (u16be(rom, 0x3EC4) != 0x0C28 or rom[0x3EC6] != 0 or u16be(rom, 0x3EC8) != 0x50) return error.BadData;
+    if (try immediate(rom, 0x3D3C, &.{ 0x0C, 0x00 }, 2) != State.air_fall) return error.BadData;
+    try d.number("air_fall_reach", try moveq(rom, 0x3D4C, 3), "ROM 0x03D4C: moveq #N,d3 (the ground looked for this far below the feet, 0x3D48)");
+    try d.number("air_fall_ahead", if (rom[0x3EC7] == character) try moveq(rom, 0x3ECC, 0) else try moveq(rom, 0x3EC2, 0), "ROM 0x03EC2: moveq #N,d0, or 0x03ECC's for the character 0x03EC4 tests (the landing's step ahead)");
+    try d.number("slammed_first", try moveByte(rom, 0x25E2, 0x41), "ROM 0x025E2: move.b #N,(65,a0)");
+    try d.number("slammed_pace", try moveByte(rom, 0x292E, 0x41), "ROM 0x0292E: move.b #N,(65,a0)");
+    if (try immediate(rom, 0x2994, &.{0x70}, 1) != 16 or try immediate(rom, 0x29AC, &.{0x70}, 1) != 32 or try moveByte(rom, 0x29C2, 10) != 1) return error.BadData;
+    try d.table("slammed_back", &.{ 0, 0, try immediate(rom, 0x2994, &.{0x70}, 1), try immediate(rom, 0x29AC, &.{0x70}, 1) }, "ROM 0x02994, 0x029AC: moveq #N,d0 (steps 3 and 4 back, the one at 0x029C2 to frame 1)");
+    try d.table("slammed_down", &.{ try immediate(rom, 0x296A, &.{ 0x06, 0x68 }, 2), try immediate(rom, 0x298C, &.{ 0x06, 0x68 }, 2), try immediate(rom, 0x29A4, &.{ 0x06, 0x68 }, 2), try immediate(rom, 0x29BC, &.{ 0x06, 0x68 }, 2) }, "ROM 0x0296A, 0x0298C, 0x029A4, 0x029BC: addi.w #N,(24,a0) (each step's height)");
+    try d.number("slammed_fall_back", (try immediate(rom, 0x29D0, &.{0x70}, 1)) << 16, "ROM 0x029D0: moveq #N,d0 (added to the speed back's whole pixels)");
+    if (u16be(rom, 0x29EA) != 0x24) return error.BadData;
+    try d.number("slammed_fall_up", try immediate(rom, 0x29E4, &.{ 0x21, 0x7C }, 4), "ROM 0x029E4: move.l #N,(36,a0)");
+    if (u16be(rom, 0x2328) != 0x18) return error.BadData;
+    try d.number("countered_drop", try immediate(rom, 0x2324, &.{ 0x06, 0x68 }, 2), "ROM 0x02324: addi.w #N,(24,a0)");
+    try d.number("vault_off_step", -(try moveq(rom, 0x27B6, 0)), "ROM 0x027B6: moveq #-N,d0 (back from the other player, after the vault back over it, 0x278A)");
+    // The walls ahead of its feet (0x3C92) and in depth (0x3B4E) are looked for this far above.
+    const wall_above = -(try moveq(rom, 0x3C94, 3));
+    if (-(try moveq(rom, 0x3B60, 1)) != wall_above) return error.BadData;
+    try d.number("wall_above", wall_above, "ROM 0x03C94: moveq #-N,d3 (the walls ahead, 0x3C92), the same at 0x03B60 (in depth)");
+    try playerPartners(&d, character);
+
     // Held from behind by a stalker, it is kept this far ahead of it (0xDB18's table at 0xDBC8,
     // by character).
     try d.number("held_ahead", rom[0xDBC8 + @as(u32, character)], "ROM 0x0DBC8, by character");
@@ -757,10 +899,12 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
         .gravity = try immediate(rom, 0x389A, &.{ 0x20, 0x3C }, 4),
         .shadow = true,
         .numbers = d.numbers.items,
+        .tables = d.tables.items,
         .sounds = d.sounds.items,
         .boxes = d.boxes.items,
         .animations = d.animations.items,
         .moves = d.moves.items,
+        .partners = d.partners.items,
     };
 }
 
