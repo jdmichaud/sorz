@@ -23,7 +23,8 @@ const usage =
     \\       sorz-agent [DIR|ROM] --pair [--delay N] [--frames N] [--key ...]... [--guest-key ...]...
     \\                  [--corrupt TICK]
     \\       sorz-agent DIR|ROM --server [ADDRESS:]PORT
-    \\       sorz-agent DIR|ROM --scenario FILE [--situation TRACE] [--trace-events OUT] [--probe OUT]
+    \\       sorz-agent DIR|ROM --scenario FILE [--situation TRACE [--game-tick N]]
+    \\                  [--trace-events OUT] [--probe OUT]
     \\       sorz-agent trace-compare FIRST SECOND [--ticks M] [--pos PIXELS] [--tol FIELD=N]...
     \\                  [--ignore EV[,EV...]] [--scene NAME] [--after TICK] [--ignore-kind K[,K...]]
     \\                  [--ignore-field F[,F...]] [--sounds SOUNDS_JSON] [--renumber] [--all]
@@ -51,10 +52,12 @@ const usage =
     \\  --scenario FILE  run a scenario (sor-remaster's format): from power-on, the whole game
     \\                   (its start through the screens, or a recorded play's pads), or with
     \\                   --situation from round 1's play in TRACE (another program's trace of
-    \\                   it); its script of pad events to its end; --trace-events writes its
-    \\                   semantic trace, --probe (with a situation) the fighters' frames, boxes
-    \\                   and power; a condition that does not come in time ends the run with
-    \\                   status 1
+    \\                   it: play's start, or the tick of `start pads FILE V`'s display tick V);
+    \\                   its script of pad events to its end; --game-tick gives the round's clock
+    \\                   (the other program's tick counter at the script's start, its
+    \\                   `script_game_tick`); --trace-events writes its semantic trace, --probe
+    \\                   (with a situation) the fighters' frames, boxes and power; a condition
+    \\                   that does not come in time ends the run with status 1
     \\  trace-compare    compare two semantic traces (sor-remaster's docs/traces.md): the first
     \\                   difference and the counts per kind of event; events match within
     \\                   --ticks M ticks, positions and speeds within --pos PIXELS, a field
@@ -97,6 +100,7 @@ pub fn main(init: std.process.Init) !void {
     var corrupt: ?u64 = null;
     var scenario: ?agent.scenario_cmd.Options = null;
     var situation: ?[]const u8 = null;
+    var game_tick: ?u32 = null;
     var trace_events: ?[]const u8 = null;
     var probe: ?[]const u8 = null;
     var options: native.cli.Options = .{};
@@ -134,6 +138,8 @@ pub fn main(init: std.process.Init) !void {
             scenario = .{ .scenario = args.next() orelse return fail(io) };
         } else if (std.mem.eql(u8, arg, "--situation")) {
             situation = args.next() orelse return fail(io);
+        } else if (std.mem.eql(u8, arg, "--game-tick")) {
+            game_tick = std.fmt.parseInt(u32, args.next() orelse return fail(io), 10) catch return fail(io);
         } else if (std.mem.eql(u8, arg, "--trace-events")) {
             trace_events = args.next() orelse return fail(io);
         } else if (std.mem.eql(u8, arg, "--probe")) {
@@ -182,6 +188,7 @@ pub fn main(init: std.process.Init) !void {
     if (scenario) |*sc| {
         if (options.assets == null or pair or presses.items.len != 0 or shots.items.len != 0 or wav_path != null) return fail(io);
         sc.situation = situation;
+        sc.game_tick = game_tick;
         sc.trace = trace_events;
         sc.probe = probe;
         var obuf: [512]u8 = undefined;
@@ -194,7 +201,7 @@ pub fn main(init: std.process.Init) !void {
         if (!done) std.process.exit(1);
         return;
     }
-    if (situation != null or trace_events != null or probe != null) return fail(io);
+    if (situation != null or game_tick != null or trace_events != null or probe != null) return fail(io);
 
     // Network play: a session over WebSockets, or two games in one process. (`--delay` goes with
     // `--netplay`, or with `--pair`.)

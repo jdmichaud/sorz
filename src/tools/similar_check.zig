@@ -1053,9 +1053,14 @@ fn runOne(c: *const Context, sc: *const Scenario, name: []const u8, text: []cons
         return error.ReferenceFailed;
     }
 
-    // sorz, from the reference's situation.
+    // sorz, from the reference's situation, with its round's clock.
+    const game_tick: ?u32 = blk: {
+        const line = std.json.parseFromSliceLeaky(json.Value, arena, std.mem.trim(u8, ran.stdout, " \r\n"), .{}) catch break :blk null;
+        if (line != .object) break :blk null;
+        break :blk if (int(line.object, "script_game_tick")) |g| @intCast(g) else null;
+    };
     var said: std.Io.Writer.Allocating = .init(arena);
-    const done = try agent.scenario_cmd.run(c.gpa, c.io, c.assets, .{ .scenario = scn, .situation = ref_trace, .trace = z_trace, .probe = z_probe }, &said.writer);
+    const done = try agent.scenario_cmd.run(c.gpa, c.io, c.assets, .{ .scenario = scn, .situation = ref_trace, .game_tick = game_tick, .trace = z_trace, .probe = z_probe }, &said.writer);
     if (!done) {
         std.log.err("{s}: sorz's run did not end as the scenario does: {s}", .{ name, said.written() });
         return error.RunFailed;
@@ -1065,7 +1070,7 @@ fn runOne(c: *const Context, sc: *const Scenario, name: []const u8, text: []cons
     const z_text = try cwd.readFileAlloc(c.io, z_trace, arena, .limited(1 << 30));
     const ref_run = try Run.load(arena, ref_text, try cwd.readFileAlloc(c.io, ref_probe, arena, .limited(1 << 30)), c.sound_names);
     const z_run = try Run.load(arena, z_text, try cwd.readFileAlloc(c.io, z_probe, arena, .limited(1 << 30)), &.{});
-    const t0: i64 = @intCast((try agent.scenario.situationOf(arena, ref_text)).t);
+    const t0: i64 = @intCast((try agent.scenario.situationOf(arena, ref_text, null)).t);
 
     // The traces from the situation's tick.
     const options: compare.Options = .{

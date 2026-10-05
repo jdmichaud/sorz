@@ -9,7 +9,12 @@
 //! (`--situation TRACE`, sor-remaster's trace of the same scenario: DESIGN.md decision D14, a
 //! converted starting state): the camera, the ground, the player dropping in, the enemies that
 //! wait for their turn, with the trace's ids. The script then runs from the next tick, as in
-//! sor-remaster, whose script's tick 0 is the tick after play's phase began.
+//! sor-remaster, whose script's tick 0 is the tick after play's phase began. `start pads FILE V`
+//! (a recorded play's first V display ticks) takes up round 1 where the trace was at the end of
+//! the logic tick that holds display tick V: every entity then, in its state, with the place the
+//! round's script gave each enemy (`rounds/round1.json`'s records: its way in, its traits, its
+//! offset), the random generator as the trace's draws left it, and the round's clock as the
+//! other program counts it (`--game-tick`: its tick counter at the script's start).
 const std = @import("std");
 const sorz = @import("sorz");
 const world = sorz.world;
@@ -316,14 +321,22 @@ pub const Body = struct {
 /// Where a round's play began in another program's trace: its scene's ticks, the camera, and
 /// each entity then (as the trace knows it: its kind, id, place, speed, state, side, health).
 pub const Situation = struct {
-    /// The display tick and the scene's tick of play's start.
+    /// The display tick and the scene's tick of the situation (play's start, or the tick asked).
     v: u64,
     t: u64,
     round: u8 = 1,
     camera: [2]i32 = .{ 0, 0 },
     camera_stop: [3]i32 = .{ 0, 0, 0 },
     lives: [2][2]u8 = .{ .{ 0, 0 }, .{ 0, 0 } },
+    scores: [2]u32 = .{ 0, 0 },
     next_id: u32 = 3,
+    /// The random generator's draws from power-on, and whether its state was set otherwise
+    /// (then `last_values` are the last tick's first draws, which tell its state).
+    draws: u64 = 0,
+    reseeded: bool = false,
+    last_values: []const u16 = &.{},
+    last_count: u32 = 0,
+    special: bool = false,
     entities: []const Seen,
 
     pub const Seen = struct {
@@ -335,15 +348,23 @@ pub const Situation = struct {
         state: ?[]const u8 = null,
         left: bool = false,
         health: ?i32 = null,
+        /// Where it appeared, and the kind it was before a change (an armed Galsia's).
+        spawned_at: [2]i32 = .{ 0, 0 },
+        was_kind: ?[]const u8 = null,
+        /// The states it has been in, joined by spaces.
+        states: []const u8 = "",
     };
 };
 
-/// The situation of a sor-trace at its round scene's first `phase play`: the events before it
-/// (from power-on) replayed for what they say of the entities and the camera.
-pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8) !Situation {
+/// The situation of a sor-trace at its round scene's first `phase play`, or at the end of the
+/// logic tick that holds display tick `at` (then in play): the events before it (from power-on)
+/// replayed for what they say of the entities, the camera, the players and the random draws.
+pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !Situation {
     var seen: std.AutoArrayHashMapUnmanaged(u32, Situation.Seen) = .empty;
     var s: Situation = .{ .v = 0, .t = 0, .entities = &.{} };
     var in_round = false;
+    var playing = false;
+    var last: ?struct { v: u64, t: u64 } = null;
     var lines = std.mem.splitScalar(u8, trace_text, '\n');
     while (lines.next()) |line| {
         if (line.len == 0) continue;
@@ -353,31 +374,62 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8) !Situation 
         const ev = str(o, "ev") orelse return error.BadTrace;
         if (std.mem.eql(u8, ev, "begin")) continue;
         if (std.mem.eql(u8, ev, "end")) break;
+        if (at) |limit| {
+            const ev_v: u64 = @intCast(int(o, "v") orelse 0);
+            if (ev_v > limit) {
+                if (!in_round or !playing) return error.NoPlay;
+                break;
+            }
+            if (in_round) last = .{ .v = ev_v, .t = @intCast(int(o, "t") orelse 0) };
+        }
+        if (std.mem.eql(u8, ev, "rng")) {
+            const count: u32 = @intCast(int(o, "draws") orelse 0);
+            s.draws += count;
+            if (o.get("reseed")) |r| if (r == .bool and r.bool) {
+                s.reseeded = true;
+            };
+            if (o.get("values")) |vals| if (vals == .array) {
+                const out = try arena.alloc(u16, vals.array.items.len);
+                for (out, vals.array.items) |*x, y| x.* = @intCast(y.integer);
+                s.last_values = out;
+                s.last_count = count;
+            };
+            continue;
+        }
         if (std.mem.eql(u8, ev, "scene")) {
             in_round = std.mem.eql(u8, str(o, "scene") orelse "", "round");
             if (in_round) s.round = @intCast(int(o, "round") orelse 1);
+            playing = false;
         } else if (std.mem.eql(u8, ev, "spawn")) {
             const e: u32 = @intCast(int(o, "e") orelse return error.BadTrace);
+            const x: i32 = @intCast(int(o, "x") orelse 0);
+            const d: i32 = @intCast(int(o, "d") orelse 0);
+            const state = if (str(o, "state")) |st| try arena.dupe(u8, st) else null;
             try seen.put(arena, e, .{
                 .id = e,
                 .kind = try arena.dupe(u8, str(o, "kind") orelse return error.BadTrace),
                 .player = if (int(o, "player")) |p| @intCast(p) else null,
-                .position = .{ @intCast(int(o, "x") orelse 0), @intCast(int(o, "d") orelse 0), @intCast(int(o, "h") orelse 0) },
+                .position = .{ x, d, @intCast(int(o, "h") orelse 0) },
                 .velocity = .{ @intCast(int(o, "vx") orelse 0), @intCast(int(o, "vd") orelse 0), @intCast(int(o, "vh") orelse 0) },
-                .state = if (str(o, "state")) |x| try arena.dupe(u8, x) else null,
+                .state = state,
                 .left = if (str(o, "facing")) |f| std.mem.eql(u8, f, "left") else false,
                 .health = if (int(o, "health")) |h| @intCast(h) else null,
+                .spawned_at = .{ x >> 16, d >> 16 },
+                .states = state orelse "",
             });
             s.next_id = @max(s.next_id, e + 1);
         } else if (std.mem.eql(u8, ev, "remove")) {
             _ = seen.orderedRemove(@intCast(int(o, "e") orelse return error.BadTrace));
         } else if (std.mem.eql(u8, ev, "morph")) {
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
+            x.was_kind = x.kind;
             x.kind = try arena.dupe(u8, str(o, "kind") orelse return error.BadTrace);
         } else if (std.mem.eql(u8, ev, "state")) {
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
-            x.state = try arena.dupe(u8, str(o, "state") orelse return error.BadTrace);
+            const state = str(o, "state") orelse return error.BadTrace;
+            x.state = try arena.dupe(u8, state);
             if (str(o, "facing")) |f| x.left = std.mem.eql(u8, f, "left");
+            if (std.mem.indexOf(u8, x.states, state) == null) x.states = try std.fmt.allocPrint(arena, "{s} {s}", .{ x.states, state });
         } else if (std.mem.eql(u8, ev, "pos")) {
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             x.position = .{ @intCast(int(o, "x") orelse 0), @intCast(int(o, "d") orelse 0), @intCast(int(o, "h") orelse 0) };
@@ -392,8 +444,16 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8) !Situation 
         } else if (std.mem.eql(u8, ev, "lives")) {
             const p: usize = @intCast((int(o, "player") orelse 1) - 1);
             if (p < 2) s.lives[p] = .{ @intCast(int(o, "lives") orelse 0), @intCast(int(o, "specials") orelse 0) };
+        } else if (std.mem.eql(u8, ev, "score")) {
+            const p: usize = @intCast((int(o, "player") orelse 1) - 1);
+            if (p < 2) s.scores[p] = @intCast(int(o, "score") orelse 0);
         } else if (std.mem.eql(u8, ev, "phase")) {
-            if (in_round and std.mem.eql(u8, str(o, "phase") orelse "", "play")) {
+            const phase = str(o, "phase") orelse "";
+            if (in_round) {
+                playing = std.mem.eql(u8, phase, "play") or std.mem.eql(u8, phase, "special");
+                s.special = std.mem.eql(u8, phase, "special");
+            }
+            if (at == null and in_round and std.mem.eql(u8, phase, "play")) {
                 s.v = @intCast(int(o, "v") orelse 0);
                 s.t = @intCast(int(o, "t") orelse 0);
                 s.entities = try arena.dupe(Situation.Seen, seen.values());
@@ -401,7 +461,38 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8) !Situation 
             }
         }
     }
-    return error.NoPlay;
+    if (at == null or !in_round or !playing) return error.NoPlay;
+    const l = last orelse return error.NoPlay;
+    s.v = l.v;
+    s.t = l.t;
+    s.entities = try arena.dupe(Situation.Seen, seen.values());
+    return s;
+}
+
+/// The random generator's state the situation's draws leave: its draws stepped from power-on;
+/// or, after a seed set otherwise, found from the last tick's draws (the state whose next draws
+/// they are, the low half sought, then stepped past them).
+pub fn generatorOf(s: *const Situation) ?world.Random {
+    if (!s.reseeded) {
+        var r: world.Random = .{};
+        var k: u64 = 0;
+        while (k < s.draws) : (k += 1) _ = r.next();
+        return r;
+    }
+    const vals = s.last_values;
+    if (vals.len < 2) return null;
+    var low: u32 = 0;
+    while (low <= 0xFFFF) : (low += 1) {
+        var r: world.Random = .{ .state = @as(u32, vals[0]) << 16 | low };
+        const ok = for (vals[1..]) |want| {
+            if (r.next() != want) break false;
+        } else true;
+        if (!ok) continue;
+        var k: u32 = @intCast(vals.len);
+        while (k < s.last_count) : (k += 1) _ = r.next();
+        return r;
+    }
+    return null;
 }
 
 fn str(o: std.json.ObjectMap, name: []const u8) ?[]const u8 {
@@ -443,7 +534,15 @@ pub const Run = struct {
     /// The script's tick 0's display tick.
     script_v: u64,
 
-    pub fn init(gpa: std.mem.Allocator, kinds: *const world.Kinds, script: *const Script, situation: *const Situation, trace: ?*world.trace.Writer, probe: ?*Probe) !Run {
+    /// What the run takes up besides the situation: the round's clock (the other program's tick
+    /// counter at the script's start, when known) and the round's spawn records.
+    pub const Extras = struct {
+        game_tick: ?u32 = null,
+        /// The round's script, whose records placed the enemies.
+        round: ?*const sorz.content.round.Round = null,
+    };
+
+    pub fn init(gpa: std.mem.Allocator, kinds: *const world.Kinds, script: *const Script, situation: *const Situation, extras: Extras, trace: ?*world.trace.Writer, probe: ?*Probe) !Run {
         var r: Run = .{
             .gpa = gpa,
             .kinds = kinds,
@@ -455,6 +554,11 @@ pub const Run = struct {
             .script_v = situation.v,
         };
         const w = &r.play.world;
+        // The round's clock: during the script's first tick, the other program's counter is one
+        // past its value at the script's start.
+        if (extras.game_tick) |g| w.tick = g + 1;
+        if (generatorOf(situation)) |g| r.random = g;
+        w.special = situation.special;
         w.ground = .pixels(round_ground);
         w.camera = .{
             .x = .of(situation.camera[0]),
@@ -465,14 +569,14 @@ pub const Run = struct {
             .y_max = .of(situation.camera_stop[2]),
             .follows = true,
         };
-        if (script.start != .players) return error.NoPlayers;
-        const players = script.start.players;
+        var used: [256]bool = @splat(false);
         for (situation.entities) |e| {
             var kind_name = e.kind;
-            if (e.player) |p| {
+            if (e.player) |p| switch (script.start) {
                 // The trace names a player by its character; the script chose it.
-                kind_name = if (p == 1) players.first else players.second orelse e.kind;
-            }
+                .players => |players| kind_name = if (p == 1) players.first else players.second orelse e.kind,
+                .pads => {},
+            };
             const kind = kinds.find(kind_name) orelse {
                 try r.skipped.append(gpa, e.kind);
                 continue;
@@ -484,8 +588,9 @@ pub const Run = struct {
             if (e.health) |hp| x.health = @intCast(hp);
             if (e.state) |st| _ = world.behaviours.setState(&x.mind, st);
             if (e.player) |p| {
-                w.players[p - 1] = .{ .entity = h, .lives = situation.lives[p - 1][0], .specials = situation.lives[p - 1][1] };
+                w.players[p - 1] = .{ .entity = h, .lives = situation.lives[p - 1][0], .specials = situation.lives[p - 1][1], .score = situation.scores[p - 1] };
             }
+            if (x.team == .enemy) takeUpSpawn(kinds, x, &e, extras.round, &used);
             r.ids[h.index] = e.id;
             if (trace) |tw| tw.assignId(h.index, h.generation, e.id);
             var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
@@ -503,6 +608,70 @@ pub const Run = struct {
 
     pub fn deinit(self: *Run) void {
         self.skipped.deinit(self.gpa);
+    }
+
+    /// The place the round's script gave the enemy `x` (seen as `e`): the record of its kind
+    /// that placed it where it appeared (placed ahead: at its place; brought in: at its depth),
+    /// not yet taken by another. One that has come in, waited or flanked has the way in and the
+    /// place it has now; one that changed kind keeps its old blows' damage.
+    fn takeUpSpawn(kinds: *const world.Kinds, x: *world.Entity, e: *const Situation.Seen, round_script: ?*const sorz.content.round.Round, used: *[256]bool) void {
+        const Record = sorz.content.round.Spawn;
+        var n: usize = 0;
+        const kind = e.was_kind orelse e.kind;
+        const found: ?*const Record = search: {
+            const r = round_script orelse break :search null;
+            var lists: [64][]const Record = undefined;
+            var count: usize = 0;
+            for (r.sections) |sec| {
+                for ([_][]const Record{ sec.placed, sec.wave, sec.reserve }) |l| {
+                    if (count < lists.len) lists[count] = l;
+                    count += 1;
+                }
+            }
+            if (r.boss) |b| for ([_][]const Record{ b.wave, b.reserve }) |l| {
+                if (count < lists.len) lists[count] = l;
+                count += 1;
+            };
+            for (lists[0..@min(count, lists.len)], 0..) |list, li| {
+                // Placed ahead: by its place; brought in: by its depth.
+                const placed = li % 3 == 0 and li < 3 * r.sections.len;
+                for (list) |*rec| {
+                    defer n += 1;
+                    if (n >= used.len or used[n]) continue;
+                    if (!std.mem.eql(u8, rec.kind, kind) or rec.depth != e.spawned_at[1]) continue;
+                    if (placed and rec.x != e.spawned_at[0]) continue;
+                    used[n] = true;
+                    break :search rec;
+                }
+            }
+            break :search null;
+        };
+        if (found) |rec| x.spawn = spawnOf(rec);
+        const state = e.state orelse "";
+        if (!std.mem.eql(u8, state, "appear")) x.spawn.traits.waits_for_camera = false;
+        // A Galsia that has waited, or come out of a shutter, fights on as a plain one.
+        for ([_][]const u8{ " wait", " shutter_entry", " enter" }) |s| {
+            if (std.mem.indexOf(u8, e.states, s) != null and !std.mem.eql(u8, state, s[1..])) x.spawn = .{ .entrance = .close_in, .offset_x = x.spawn.offset_x, .offset_depth = x.spawn.offset_depth };
+        }
+        if (e.was_kind) |was| {
+            x.spawn = .{ .entrance = .close_in, .offset_x = x.spawn.offset_x, .offset_depth = x.spawn.offset_depth };
+            if (kinds.find(was)) |k| if (kinds.get(k).definition.number("power")) |p| {
+                x.power = @intCast(p);
+            };
+        }
+    }
+
+    fn spawnOf(rec: *const sorz.content.round.Spawn) world.Spawn {
+        var sp: world.Spawn = .{ .strength = @intCast(rec.strength) };
+        if (rec.entrance) |way| sp.entrance = std.meta.stringToEnum(world.Entrance, @tagName(way)) orelse .approach;
+        inline for (comptime std.meta.fieldNames(sorz.content.round.Trait)) |t| {
+            if (@hasField(world.Traits, t)) @field(sp.traits, t) = rec.traits.contains(@field(sorz.content.round.Trait, t));
+        }
+        if (rec.offset) |o| {
+            sp.offset_x = o.x;
+            sp.offset_depth = o.depth;
+        }
+        return sp;
     }
 
     /// One logic tick: the script's pads, the world's tick, the observations. False when the
@@ -651,6 +820,7 @@ pub const Probe = struct {
         if (k.family() != .player) {
             // Not yet out of hiding, it has no blows.
             if (std.mem.eql(u8, world.behaviours.stateName(&e.mind) orelse "", "appear")) return 0;
+            if (e.power != 0) return e.power;
             var most: u16 = 0;
             for (k.definition.moves) |m| most = @max(most, m.damage);
             return @intCast(most);
@@ -687,6 +857,28 @@ test "a script: its start, presses, holds, waits and conditions" {
     try std.testing.expectEqual(@as(u8, 0b0110_0000), s.commands[4].op.press.buttons);
     try std.testing.expectError(error.BadScenario, parse(gpa, "start axel\nkick\n", &diag));
     try std.testing.expectEqual(@as(u32, 2), diag.line);
+}
+
+test "a start from a recorded play, and the random generator its draws left" {
+    const gpa = std.testing.allocator;
+    var diag: Diagnostic = .{};
+    var s = try parse(gpa, "start pads ../../game.pads 2280\nwait 900\n", &diag);
+    defer s.deinit(gpa);
+    try std.testing.expectEqualStrings("../../game.pads", s.start.pads.path);
+    try std.testing.expectEqual(@as(u64, 2280), s.start.pads.vblanks);
+    // Its draws from power-on, stepped.
+    var want: world.Random = .{};
+    _ = want.next();
+    _ = want.next();
+    try std.testing.expectEqual(want.state, generatorOf(&.{ .v = 0, .t = 0, .entities = &.{}, .draws = 2 }).?.state);
+    // A seed set otherwise: found from the last tick's draws (three, two of them listed).
+    var r: world.Random = .{ .state = 0x12345678 };
+    const first = r.next();
+    const second = r.next();
+    _ = r.next();
+    const values = [_]u16{ first, second };
+    const found = generatorOf(&.{ .v = 0, .t = 0, .entities = &.{}, .reseeded = true, .last_values = &values, .last_count = 3 }).?;
+    try std.testing.expectEqual(r.state, found.state);
 }
 
 test "the body: a press holds a tick and releases one; a hold lasts until released" {

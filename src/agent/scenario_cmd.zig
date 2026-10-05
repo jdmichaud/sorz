@@ -14,6 +14,8 @@ const input = sorz.input;
 pub const Options = struct {
     scenario: []const u8,
     situation: ?[]const u8 = null,
+    /// The other program's tick counter at the script's start (its `script_game_tick`).
+    game_tick: ?u32 = null,
     trace: ?[]const u8 = null,
     probe: ?[]const u8 = null,
     /// The most logic ticks the script runs.
@@ -43,8 +45,12 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
         return error.BadScenario;
     }
     const situation_text = try cwd.readFileAlloc(io, situation_path, arena, .limited(1 << 30));
-    const situation = scenario.situationOf(arena, situation_text) catch |e| {
-        std.log.err("{s}: no situation in the trace ({s}): a round scene's `phase play` is needed", .{ situation_path, @errorName(e) });
+    const at: ?u64 = switch (script.start) {
+        .players => null,
+        .pads => |p| p.vblanks + 1,
+    };
+    const situation = scenario.situationOf(arena, situation_text, at) catch |e| {
+        std.log.err("{s}: no situation in the trace ({s}): a round scene's play is needed", .{ situation_path, @errorName(e) });
         return e;
     };
 
@@ -81,7 +87,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
         probe = .{ .w = &probe_writer.interface };
     }
 
-    var r = try scenario.Run.init(gpa, &kinds, &script, &situation, if (options.trace != null) &tw else null, if (options.probe != null) &probe else null);
+    // TODO(PLAN item 13): the round's script's records, until its content holds them.
+    var r = try scenario.Run.init(gpa, &kinds, &script, &situation, .{ .game_tick = options.game_tick, .round = if (c.rounds.len != 0) &c.rounds[0] else null }, if (options.trace != null) &tw else null, if (options.probe != null) &probe else null);
     defer r.deinit();
     var ticks: u64 = 0;
     while (ticks < options.ticks) : (ticks += 1) {
