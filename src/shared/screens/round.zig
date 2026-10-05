@@ -509,7 +509,7 @@ pub const Round = struct {
             const depth = e.velocity.depth.raw;
             way = if (depth < 0) (if (across) 1 else 2) else if (depth > 0) (if (across) 3 else 4) else 0;
         }
-        return @as(u16, @intFromEnum(m.state)) << 4 | way << 1 | @intFromBool(e.facingLeft());
+        return @as(u16, @backingInt(m.state)) << 4 | way << 1 | @intFromBool(e.facingLeft());
     }
 
     /// Each player's health bar's partial cell is built again when its health changed.
