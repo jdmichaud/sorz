@@ -910,6 +910,10 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     try d.number("tossed_step", try moveq(rom, 0x28BA, 0), "ROM 0x028BA: moveq #N,d0 (ahead, the way it faces)");
     try d.number("tossed_drop", try quick(rom, 0x28CA, 0x5068), "ROM 0x028CA: addq.w #N,(24,a0)");
     try d.number("tossed_falls", try frameCompared(rom, 0x28D0), "ROM 0x028D0: cmpi.b #N,(10,a0)");
+    // Shaken in a hug (0x2AA4): its mark's fall (0x34CA), its speed across, negated facing left
+    // (btst #1,(9,a0)), and it may land on its feet ($45).
+    if (u32be(rom, 0x2ABC) != 0x4EBA0A0C or u16be(rom, 0x2AC6) != 0x0828 or u16be(rom, 0x2AD0) != 0x2140 or u16be(rom, 0x2AD2) != 28) return error.BadData;
+    try d.number("shaken_x", try immediate(rom, 0x2AC0, &.{ 0x20, 0x3C }, 4), "ROM 0x02AC0: move.l #N,d0 (into (28,a0), 0x2AA4)");
     // Holds between the two players (0x2260 to 0x2A9E): a knee taken pauses the one held
     // (0x255E), the last knocks it down at the holder's frame its character gives (0x256C);
     // lifted, its frames go every few ticks to the last, then up and over (0x2A22); the

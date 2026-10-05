@@ -1036,17 +1036,26 @@ fn hug(a: Actor) void {
         },
         else => {
             m.ticks -%= 1;
-            if (m.ticks != 0) return;
+            if (m.ticks != 0) {
+                // The first stage's last tick: the player is shaken, his power the damage of its
+                // fall.
+                if (m.stage == 0 and m.ticks == 1) a.tick.askHeld(ph, a.handle, shaken_ask, m.power);
+                return;
+            }
             m.stage += 1;
             a.setFrame(a.frame() + 1);
             switch (m.stage) {
+                1 => {},
                 2 => if (partOf(a)) |p| {
                     p.flags.hidden = false;
                 },
-                3 => if (partActor(a)) |p| part_mod.nextFrame(p),
+                // The player shaken down, turned his way.
+                3 => {
+                    if (partActor(a)) |p| part_mod.nextFrame(p);
+                    a.tick.shakeHeld(ph, a.entity.facing);
+                },
                 else => {
                     a.setFrame(3);
-                    releaseHugged(a);
                     return hugEnd(a);
                 },
             }
@@ -1068,14 +1077,13 @@ fn hugStage(a: Actor, pe: *Entity) void {
     pe.position.height = pe.position.height.add(.pixels(t.hug_height[s]));
 }
 
-/// The hug lets its player go, knocked down with his power's damage.
+/// What the hug asks of the player it holds (the original's reaction): shaken.
+const shaken_ask = 11;
+
+/// The hug's player is shaken down (when shaken; the mark kept until then).
 fn releaseHugged(a: Actor) void {
-    const m = a.mind;
-    const ph = m.target orelse return;
-    const pe = a.other(ph) orelse return;
-    if (pe.holder == null or !pe.holder.?.eql(a.handle)) return;
-    a.letGo();
-    _ = a.tick.struck(ph, .{ .attacker = a.handle, .damage = m.power, .reaction = .knock_down, .push = .zero });
+    const ph = a.mind.target orelse return;
+    a.tick.shakeHeld(ph, null);
 }
 
 fn hugEnd(a: Actor) void {

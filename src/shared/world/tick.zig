@@ -511,6 +511,12 @@ pub const Tick = struct {
         dispatch(t, held, "askedBy", void, {}, .{ holder, ask, damage });
     }
 
+    /// The one held is shaken down by its holder (the original's mark on it), turned to `facing`
+    /// when given: shaken (`askHeld`'s 11) it falls at its next tick (`shook`).
+    pub fn shakeHeld(t: *Tick, held: Handle, facing: ?entity.Facing) void {
+        dispatch(t, held, "shook", void, {}, .{facing});
+    }
+
     /// Whether the one `holder` holds may get out of its hold by itself (by default, yes).
     pub fn holdEscapable(t: *Tick, holder: Handle) bool {
         return dispatch(t, holder, "holdEscapable", bool, true, .{});
