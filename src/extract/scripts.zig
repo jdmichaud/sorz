@@ -83,9 +83,9 @@ const wave_end: u16 = 0x0099;
 /// 1's at VBlank 1139, round 2's at 17526); the others' are the flow's until they are measured.
 const measured_loads = [_]u16{ 53, 49 };
 
-/// The rounds whose scripts the extractor writes (PLAN items 13 and 15: rounds 1 to 5; the others
+/// The rounds whose scripts the extractor writes (PLAN items 13 and 15: rounds 1 to 6; the others
 /// to come).
-pub const extracted = [_]u8{ 1, 2, 3, 4, 5 };
+pub const extracted = [_]u8{ 1, 2, 3, 4, 5, 6 };
 
 /// The kinds' names of the original's object types: the traces' (sor-remaster's docs/traces.md),
 /// but the pepper's (type $0C, the traces' bottle).
@@ -120,6 +120,8 @@ fn kindName(t: u8) ?[]const u8 {
         0x30 => "boss_r3",
         0x3F => "money",
         0x40 => "gold",
+        0x41 => "shatter",
+        0x42 => "press",
         0x47 => "beef",
         0x4B => "apple",
         0x4C => "life",
@@ -542,10 +544,11 @@ fn entry(rom: []const u8, type_byte: u8, bytes: [3]u8, y: u8) Error!round.Spawn 
         .two_players = type_byte & 0x80 != 0,
     };
     switch (t) {
-        0x11, 0x18, 0x19, 0x1B, 0x1C, 0x1D, 0x1F => {
-            // A breakable, a crate, an oil drum, round 4's and 5's obstacles: the item it holds
-            // (its byte $41, which 0x7E54 reads), an index from 1 (0 for none).
-            if (t >= 0x1B and t <= 0x1D and (bytes[0] != 0 or bytes[2] != 0)) return error.BadData;
+        0x11, 0x18, 0x19, 0x1B, 0x1C, 0x1D, 0x1F, 0x41 => {
+            // A breakable, a crate, an oil drum, round 4's and 5's obstacles, round 6's crates
+            // that shatter: the item it holds (its byte $41, which 0x7E54 reads), an index from 1
+            // (0 for none).
+            if (((t >= 0x1B and t <= 0x1D) or t == 0x41) and (bytes[0] != 0 or bytes[2] != 0)) return error.BadData;
             if (bytes[1] != 0) {
                 if (bytes[1] > 11) return error.BadData;
                 s.holds = kindName(rom[breakable_items + @as(u32, bytes[1])]) orelse return error.BadData;
@@ -564,6 +567,13 @@ fn entry(rom: []const u8, type_byte: u8, bytes: [3]u8, y: u8) Error!round.Spawn 
             // A drifter: its way of drifting by its byte $40, a state (0x7238).
             if (bytes[0] > 3 or bytes[1] != 0 or bytes[2] != 0) return error.BadData;
             s.drift = @fromBackingInt(@intCast(bytes[0]));
+            return s;
+        },
+        0x42 => {
+            // A press: its place among the round's by its byte $40, which chooses its cells of
+            // the plane (0x7B28).
+            if (bytes[1] != 0 or bytes[2] != 0) return error.BadData;
+            s.place = bytes[0];
             return s;
         },
         // A drip, the rain, a flight, a lamp: their code reads none of the bytes.
@@ -900,9 +910,18 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     const pace = try immediate(rom, 0x10C9A, &.{ 0x31, 0xFC }, 2);
 
     // A life starts at the camera's X, at depth $40 (player 2, $20 less) and height 0 (0x1E0E).
-    const depth = try immediate(rom, 0x1E5E, &.{ 0x31, 0x7C }, 2);
     const second_less = try immediate(rom, 0x1EA2, &.{ 0x04, 0x68 }, 2);
     const height = try immediate(rom, 0x1E64, &.{ 0x31, 0x7C }, 2);
+    // By the round ($FF02, 0x1E50): round 8 farther across, round 7 farther across, round 6
+    // deeper.
+    if (u16be(rom, 0x1E50) != 0x0C78 or u16be(rom, 0x1E52) != 7 or u16be(rom, 0x1E6A) != 0x0C78 or u16be(rom, 0x1E6C) != 6 or u16be(rom, 0x1E7A) != 0x0C78 or u16be(rom, 0x1E7C) != 5) return error.BadData;
+    if (u16be(rom, 0x1E5C) != 16 or u16be(rom, 0x1E76) != 16 or u16be(rom, 0x1E86) != 20) return error.BadData;
+    const start_x: i32 = switch (r) {
+        7 => @intCast(try immediate(rom, 0x1E58, &.{ 0x06, 0x68 }, 2)),
+        6 => @intCast(try immediate(rom, 0x1E72, &.{ 0x06, 0x68 }, 2)),
+        else => 0,
+    };
+    const depth = try immediate(rom, 0x1E5E, &.{ 0x31, 0x7C }, 2) + if (r == 5) try immediate(rom, 0x1E82, &.{ 0x06, 0x68 }, 2) else 0;
 
     var l: Lists = .{ .bytes = lists, .at = list_start - 0xFF6800 };
     // A section's opening (0x5F4) brings the boss's from the section of a `cmpi.w` on $FF04 by
@@ -1008,9 +1027,10 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         ground = at_height;
     };
     // The floor is one kind of cell everywhere (round 1's): its height is the ground's at every
-    // place. Else it is written cell by cell (round 4's holes): each kind's height and whether it
-    // has a floor (its attribute, the byte table the tables' first word gives: 1 a floor, 0 none;
-    // the others, walls and the like, refused until their rounds come).
+    // place. Else it is written cell by cell (round 4's holes, round 6's machines and conveyors):
+    // each kind's height (0: a wall) and whether it has a floor (its attribute, the byte table the
+    // tables' first word gives: 0 none; 1 a floor; 2 and 3 a conveyor carrying a pixel a tick to
+    // the right, to the left: 0x92D8, 0x3E4A), the others refused until their rounds come.
     const kind = floor[0] >> 4;
     const uniform = for (floor) |byte| {
         if (byte >> 4 != kind or byte & 0xF != kind) break false;
@@ -1023,8 +1043,13 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         const cell_kinds = try arena.alloc(round.FloorKind, @as(usize, most) + 1);
         for (cell_kinds, 0..) |*k, i| {
             const attribute = rom[attributes + i];
-            if (attribute > 1) return error.BadData;
-            k.* = .{ .height = u16be(rom, heights + 2 * @as(u32, @intCast(i))), .floor = attribute == 1 };
+            if (attribute > 3) return error.BadData;
+            const carry: i8 = switch (attribute) {
+                2 => 1,
+                3 => -1,
+                else => 0,
+            };
+            k.* = .{ .height = u16be(rom, heights + 2 * @as(u32, @intCast(i))), .floor = attribute != 0, .carry = carry };
         }
         if (floor.len % row_width != 0) return error.BadData;
         const rows = try arena.alloc([]const u8, floor.len / row_width);
@@ -1055,8 +1080,8 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .load = if (n <= measured_loads.len) measured_loads[n - 1] else null,
         .camera = camera,
         .players = .{
-            .provenance = "a life starts at the camera's X, at the depth and height of ROM 0x01E60 and 0x01E66 (move.w #N,($14,a0), ($18,a0)); player 2's depth less ROM 0x01EA6 (subi.w #N,($14,a0)) (0x1E0E)",
-            .x = 0,
+            .provenance = "a life starts at the camera's X, at the depth and height of ROM 0x01E60 and 0x01E66 (move.w #N,($14,a0), ($18,a0)); player 2's depth less ROM 0x01EA6 (subi.w #N,($14,a0)) (0x1E0E); by the round (0x1E50): round 8 farther across by ROM 0x01E5A, round 7 by ROM 0x01E74 (addi.w #N,($10,a0)), round 6 deeper by ROM 0x01E84 (addi.w #N,($14,a0))",
+            .x = start_x,
             .depth = .{ @intCast(depth), @as(i32, @intCast(depth)) - @as(i32, @intCast(second_less)) },
             .height = @intCast(height),
         },

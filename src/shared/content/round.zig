@@ -149,6 +149,9 @@ pub const Spawn = struct {
     height: ?i32 = null,
     /// Placed: how a drifting piece of scenery moves.
     drift: ?Drift = null,
+    /// Placed: its place among the round's things of its kind (a press: the cells of the plane
+    /// it shakes).
+    place: ?u8 = null,
     /// A boss's: its entry in the status bar's names and bars.
     bar: ?u8 = null,
     /// A reserve's: its kind's art streamed in from its call.
@@ -417,7 +420,10 @@ pub const Floor = struct {
     }
 };
 
-pub const FloorKind = struct { height: i32, floor: bool };
+/// A kind of the floor's cells: its height (0: a wall, nothing stands there), whether it has a
+/// floor (a hole has none), and a conveyor's carry across a tick (whole pixels: 1 to the right,
+/// -1 to the left; 0 none).
+pub const FloorKind = struct { height: i32, floor: bool, carry: i8 = 0 };
 
 /// A part of a round's planes it animates by itself (round 3's waves): every `every` ticks of
 /// play (the special attack's too), the next of its `steps` (after the last, the first again),
@@ -528,6 +534,7 @@ fn spawnValue(arena: std.mem.Allocator, s: *const Spawn, where: Where) !json.Val
     try f.append(arena, .{ .key = "depth", .value = json.Value.num(s.depth) });
     if (s.height) |h| try f.append(arena, .{ .key = "height", .value = json.Value.num(h) });
     if (s.drift) |d| try f.append(arena, .{ .key = "drift", .value = .{ .str = @tagName(d) } });
+    if (s.place) |p| try f.append(arena, .{ .key = "place", .value = json.Value.num(p) });
     if (where == .wave) try f.append(arena, .{ .key = "after", .value = json.Value.num(s.after) });
     if (where == .reserve) try f.append(arena, .{ .key = "arrives_after", .value = json.Value.num(s.arrives_after) });
     if (s.level != 0) try f.append(arena, .{ .key = "level", .value = json.Value.num(s.level) });
@@ -662,6 +669,7 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         for (kinds, fl.kinds) |*v, k| v.* = try obj(arena, &.{
             .{ .key = "height", .value = json.Value.num(k.height) },
             .{ .key = "floor", .value = .{ .bool = k.floor } },
+            .{ .key = "carry", .value = json.Value.num(k.carry) },
         });
         const rows = try arena.alloc(json.Value, fl.rows.len);
         for (rows, fl.rows) |*v, row| v.* = .{ .str = row };
@@ -739,7 +747,7 @@ fn readPair(n: json.Node, comptime T: type) Error![2]T {
 fn spawnFields(comptime where: Where) []const []const u8 {
     const common = [_][]const u8{ "kind", "depth", "level", "two_players", "entrance", "offset", "offset_nibbles", "strength", "holds", "bar", "colours", "art" };
     const own: []const []const u8 = switch (where) {
-        .placed => &.{ "x", "height", "drift" },
+        .placed => &.{ "x", "height", "drift", "place" },
         .wave => &.{ "side", "after" },
         .reserve => &.{ "side", "arrives_after", "streamed", "reserve_boss" },
     };
@@ -767,6 +775,7 @@ fn readSpawn(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Erro
             s.x = try (try n.get("x")).int(i32);
             if (try n.opt("height")) |h| s.height = try h.int(i16);
             if (try n.opt("drift")) |d| s.drift = std.meta.stringToEnum(Drift, try d.string()) orelse return d.fail("not still, drifts, stops or waves");
+            if (try n.opt("place")) |p| s.place = try p.int(u8);
         },
         .wave, .reserve => {
             const side = try n.get("side");
@@ -962,8 +971,9 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         if (kinds.len == 0 or kinds.len > 16) return kn.fail("not 1 to 16 kinds");
         for (kinds, 0..) |*k, i| {
             const n = try kn.at(i);
-            try n.only(&.{ "height", "floor" });
+            try n.only(&.{ "height", "floor", "carry" });
             k.* = .{ .height = try (try n.get("height")).int(i32), .floor = try (try n.get("floor")).boolean() };
+            if (try n.opt("carry")) |cn| k.carry = try cn.int(i8);
         }
         const rn = try fl.get("rows");
         const rows = try arena.alloc([]const u8, try rn.len());
