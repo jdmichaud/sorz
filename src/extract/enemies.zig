@@ -1355,6 +1355,7 @@ pub fn jugglerKnife(arena: std.mem.Allocator, rom: []const u8) Error!entity.Defi
     try d.number("flight_from", try immediate(rom, 0x97E8, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x097E8: cmpi.w #N,(40,a0), less 0xAF6E's offset (0xFFC4)");
     try d.number("flight_to", try immediate(rom, 0x97F0, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x097F0: cmpi.w #N,(40,a0), less 0xAF6E's offset (excluded)");
     try d.number("fall_most", try immediate(rom, 0x974E, &.{ 0x0C, 0xA8 }, 4), "ROM 0x0974E: cmpi.l #N,(36,a0)");
+    try d.number("grab_height", try comparedWord(rom, 0xAAF6), "ROM 0x0AAF6: cmpi.w #N,d2 (a reach that meets it within this height, 0xAA22)");
     return .{
         .name = "juggler_knife",
         .provenance = try std.fmt.allocPrint(arena, "the juggler's knives, type $28 (handler 0xFC14): the juggler's animation set at ROM 0x{X:0>5} (0x27032), its knives' animations $18 and $1C (0xFC82, 0xFC94), the boxes (0x1A68E, 0x1AB8E); gravity ROM 0x0973E: addi.l #N,(36,a0){s}", .{ set, d.number_notes.items }),

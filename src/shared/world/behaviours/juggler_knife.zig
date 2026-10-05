@@ -105,6 +105,8 @@ pub const Numbers = struct {
     flight_from: i16,
     flight_to: i16,
     fall_most: Fixed,
+    /// A player's reach meets it within this height of the player's.
+    grab_height: i16,
 };
 
 pub const Tables = struct {
@@ -530,11 +532,15 @@ pub fn blowLanded(a: Actor, target: Handle) void {
     if (a.mind.state == .flying) a.remove();
 }
 
-/// A player's reach meeting it is knocked down by it (in flight, it is gone); it is not held.
+/// A player's reach meeting it near the player's height is knocked down by it (in flight, it is
+/// gone); it is not held.
 pub fn grabbable(a: Actor, by: Handle) bool {
     const m = a.mind;
     const live = m.state == .juggled or (m.state == .flying and m.back);
     if (!live) return false;
+    // The reach meets it only near the player's height (the original's grab test).
+    const p = a.other(by) orelse return false;
+    if (@abs(p.position.height.whole() - a.entity.position.height.whole()) > a.numbers().grab_height) return false;
     _ = a.tick.struck(by, .{ .attacker = a.handle, .damage = m.power, .reaction = .knock_down, .push = .zero, .missile = true });
     if (m.state == .flying) a.remove();
     return false;
