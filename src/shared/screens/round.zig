@@ -534,8 +534,9 @@ pub const Round = struct {
         if (was == .setup or self.split) return null;
         const sb = &a.screen.status_bar;
         var f: transfers.Frame = .{ .play = true, .colours = self.colours_due, .status_rows = sb.image_rows, .status_cells = sb.image_cells };
-        // The round ended at this tick: its next frame is the next scene's, without the bar.
-        if (self.done) f.status_rows = 0;
+        // The round ended at this tick: its next frame is the next scene's set-up's, without the
+        // bar after a game over; the clear's writes the bar, without the bosses' bars.
+        if (self.done and self.outcome != .cleared) f.status_rows = 0;
         self.colours_due = false;
         for (&self.art_due) |*due| {
             for (due) |tiles| f.tiles.add(tiles * transfers.words_per_tile);
@@ -544,7 +545,7 @@ pub const Round = struct {
         // The bosses' bars' rectangle, written whole while they show; their partial cells built
         // at every frame from a boss's first tick, but at a frame that builds player 2's (the
         // original returns before them then).
-        if (self.shown_bar.bosses != null) {
+        if (self.shown_bar.bosses != null and !self.done) {
             f.bosses_rows = @intCast(a.bosses_bars.height);
             f.bosses_cells = @intCast(@as(u32, a.bosses_bars.width) * a.bosses_bars.height);
         }
@@ -864,6 +865,8 @@ pub const Round = struct {
         }
         const w = &self.play.world;
         g.timer = w.timer.seconds;
+        g.boss_bars = 0;
+        for (w.bosses) |h| g.boss_bars += @intFromBool(h != null);
         for (&g.players, w.players) |*gp, wp| gp.* = .{
             .in_play = wp.entity != null,
             .score = wp.score,

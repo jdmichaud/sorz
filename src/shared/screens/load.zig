@@ -1,7 +1,8 @@
 //! A load (DESIGN.md 10.2, T4): where the original stopped its picture to set up the next screen,
 //! the screen stays dark for the wait it measured, over the new scene, which waits too. The
 //! original's loads also hold its sound's driver (the music holds its notes) and read no pad, and
-//! the game does the same.
+//! the game does the same; a load that leaves the interrupts on (the round's clear's) runs the
+//! driver alone at each of its ticks.
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
 const render = @import("../render/root.zig");
@@ -21,11 +22,12 @@ pub const Load = struct {
     pub const layout: view.Layout = .{};
 
     pub fn tick(self: *Load, turn: *scene.Turn, _: *const Assets) ?flow.Exit {
-        if (self.sound_held) turn.sound_driver = false;
+        turn.sound_driver = !self.sound_held;
+        turn.lag = if (self.sound_held) .none else .load;
         if (self.driver_once) {
             self.driver_once = false;
             turn.sound_driver = true;
-            turn.lag = true;
+            turn.lag = .middle;
         }
         turn.read_pads = false;
         self.left -|= 1;

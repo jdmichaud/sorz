@@ -14,7 +14,8 @@
 //! player later in the frame (`work`, in the sound processor's cycles: sor-remaster's fit of the
 //! original's timing, audio/clock.zig): the frame's start, its drawing (play's way or a screen's),
 //! each transfer's set-up, the status bar's rows of play, the planes' strips as the camera moves,
-//! the health bars' partial cells, the screens' first line's scroll; and in play, the art the
+//! the health bars' partial cells, the screens' first line's scroll, the cells the round's clear
+//! writes one by one; and in play, the art the
 //! round streams in, which every frame decodes a little of (`streamWork`), the middle of a
 //! logic tick's too.
 const std = @import("std");
@@ -52,6 +53,10 @@ pub const Frame = struct {
     strip_rows: u8 = 0,
     /// The health bars' partial cells built.
     bar_parts: u8 = 0,
+    /// Cells written one by one after the status bar (the round's clear's scores, and the line,
+    /// header or digits it writes), and the rows of the rectangles among them.
+    cell_rows: u8 = 0,
+    cells: u16 = 0,
 };
 
 /// Transfers of tiles, each its length in words (16 a tile).
@@ -191,6 +196,8 @@ pub fn work(f: ?Frame) i32 {
     b.spend(costs.row * @as(i32, x.bosses_rows));
     for (0..x.bosses_cells) |_| b.writes(costs.cell, 1);
     for (0..x.bar_parts) |_| b.writes(costs.bar_part, 16);
+    b.spend(costs.row * @as(i32, x.cell_rows));
+    for (0..x.cells) |_| b.writes(costs.cell, 1);
     return b.work;
 }
 

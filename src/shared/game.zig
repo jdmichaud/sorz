@@ -76,8 +76,10 @@ pub const Due = struct {
 /// and the pads' reading hold the sound's processor, unless a load holds the frame's work and
 /// the sound together; and its work. `due` keeps this tick's picture's for the next.
 pub fn transfersOf(due: *Due, turn: *const scene.Turn) Due {
-    // A tick the logic takes in its middle: the driver alone, the frame's for the next.
-    if (turn.lag) return .{ .held = 0, .work = transfers.costs.lag };
+    // A tick that ends no frame of the logic (an interrupt a load left waiting, taken in the
+    // logic's middle; a tick of a load that leaves the interrupts on): the driver alone, the
+    // frame's for the next.
+    if (turn.lag != .none) return .{ .held = 0, .work = transfers.costs.lag };
     var now: Due = .{ .held = 0, .work = due.work };
     if (turn.sound_driver) {
         now.held = due.held + transfers.pads;
@@ -95,7 +97,7 @@ pub fn transfersOf(due: *Due, turn: *const scene.Turn) Due {
 /// (`transfersOf`).
 pub fn tickSound(sound: *sound_out.SoundOut, due: *Due, turn: *const scene.Turn, stretch_ppm: u32) []const i16 {
     const frame = transfersOf(due, turn);
-    return sound.play(stretch_ppm, turn.requests_now.slice(), turn.requests.slice(), turn.sound_driver, turn.sound_restart, turn.lag, frame.held, frame.work);
+    return sound.play(stretch_ppm, turn.requests_now.slice(), turn.requests.slice(), turn.sound_driver, turn.sound_restart, turn.lag == .middle, frame.held, frame.work);
 }
 
 /// Everything that decides what the game does next. Its canonical form (canonical.zig) is what

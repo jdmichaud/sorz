@@ -93,6 +93,9 @@ pub const Requests = struct {
     }
 };
 
+/// A display tick at which the sound's driver runs alone (`Turn.lag`).
+pub const Lag = enum { none, middle, load };
+
 /// What a scene's tick has: the pads and the setup the screens share; and what it gives: the sounds
 /// it asks for, and what it asks of the pads and the sound's driver.
 pub const Turn = struct {
@@ -125,9 +128,11 @@ pub const Turn = struct {
     sound_driver: bool = true,
     /// Whether the pads are read at this tick: a load reads none.
     read_pads: bool = true,
-    /// A display tick the logic takes in its middle (an interrupt a load left waiting): the
-    /// sound's driver runs, but no frame's work.
-    lag: bool = false,
+    /// A display tick that ends no frame of the logic, at which the sound's driver runs alone,
+    /// without a frame's work: `middle`, an interrupt a load left waiting, which the logic takes
+    /// in its middle (the requests of the ticks before come after it); `load`, one of a load that
+    /// leaves the interrupts on (the requests of the set-up before it come first).
+    lag: Lag = .none,
     /// Set by a set-up: every button counts as held, so that none is pressed at the next reading.
     release_pads: bool = false,
     /// Set by the start-up: the sound's driver starts again from its first state (the original

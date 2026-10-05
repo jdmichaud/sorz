@@ -8,6 +8,10 @@
 //! The bonuses (the original's): the clear's for the round and for each special attack the
 //! players in play have left, the time's for each second the timer has left, the level's for
 //! the options' LEVEL. What the picture shows is the tick before's, as in play.
+//!
+//! Its load (flow.zig) leaves the sound's driver running. Each of its frames writes the status
+//! bar, the scores of the players in play, and what the tick asked for: a line or the header, the
+//! digits of the bonus counted (transfers.zig, the sound's time).
 const std = @import("std");
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
@@ -19,6 +23,7 @@ const records = @import("../content/screens.zig");
 const setup_mod = @import("../setup.zig");
 const Colours = @import("colours.zig").Colours;
 const round_screen = @import("round.zig");
+const transfers = @import("transfers.zig");
 const Setup = setup_mod.Setup;
 
 /// A step of the clear, each at least a tick: the waits last the record's ticks after their
@@ -123,6 +128,11 @@ pub const RoundClear = struct {
     now: Shown = .{},
     shown: Shown = .{},
     colours: Colours = .{},
+    /// What the tick asks its frame to write besides the status bar and the scores: a line's or
+    /// the header's rows and cells, the counted bonus's digits.
+    writes: Writes = .{},
+
+    pub const Writes = struct { rows: u8 = 0, cells: u16 = 0 };
 
     pub const Assets = struct {
         screen: *const records.Round,
@@ -168,18 +178,22 @@ pub const RoundClear = struct {
     pub fn tick(self: *RoundClear, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
         self.colours.latch();
         self.shown = self.now;
+        self.writes = .{};
+        defer turn.frame = self.frameOf(&turn.setup.progress, a);
+        // The set-up's tick goes on to the first step (the original's set-up ends with the
+        // clear's first tick).
         if (!self.set_up) {
             turn.releasePads();
             self.setUp(turn, a);
-            return null;
         }
         const c = &a.screen.clear;
         const g = &turn.setup.progress;
-        if (program[self.act].counting and startHeld(turn, g)) self.skip(g, a.screen.status_bar.score_most);
+        if (program[self.act].counting and startHeld(turn, g)) self.skip(g, c, a.screen.status_bar.score_most);
         switch (program[self.act].act) {
             .fade_in, .fade_out => if (self.colours.stepFade()) self.next(),
             .header => {
                 self.now.header = true;
+                self.writes = .{ .rows = @intCast(a.header.height), .cells = @intCast(@as(u32, a.header.width) * a.header.height) };
                 self.next();
             },
             .wait => if (!self.waiting) {
@@ -194,14 +208,17 @@ pub const RoundClear = struct {
             },
             .line => |k| {
                 self.now.lines[k] = .{ .shown = true, .digits = if (self.bonuses[k] != 0) self.bonuses[k] else null };
+                self.writes = lineWrites(c, k);
                 self.next();
             },
             .counted => |k| {
                 self.now.lines[k] = .{ .shown = true, .counted = true, .digits = self.bonuses[k] };
+                self.writes = lineWrites(c, k);
                 self.next();
             },
             .normal => |k| {
                 self.now.lines[k] = .{ .shown = true };
+                self.writes = lineWrites(c, k);
                 self.next();
             },
             .count => |k| {
@@ -219,6 +236,7 @@ pub const RoundClear = struct {
                     for (&g.players) |*p| if (p.in_play) addScore(p, n, a.screen.status_bar.score_most);
                     turn.play(a.tick);
                     self.now.lines[k].digits = self.bonuses[k];
+                    self.writes.cells += digitsOf(c, k);
                 }
             },
             .done => {
@@ -235,6 +253,23 @@ pub const RoundClear = struct {
         if (program[self.act].act == .fade_out) self.colours.startFade(.black);
     }
 
+    /// The frame that shows the tick: the colours when the tick touched them, the status bar's
+    /// rows, the partial cells of the round's bosses' bars, the scores of the players in play,
+    /// cell by cell, and what the tick wrote.
+    fn frameOf(self: *const RoundClear, g: *const setup_mod.Progress, a: *const Assets) transfers.Frame {
+        const sb = &a.screen.status_bar;
+        var players: u16 = 0;
+        for (g.players) |p| players += @intFromBool(p.in_play);
+        return .{
+            .colours = self.colours.copy,
+            .status_rows = sb.image_rows,
+            .status_cells = sb.image_cells,
+            .bar_parts = g.boss_bars,
+            .cell_rows = self.writes.rows,
+            .cells = players * round_screen.digitsOf(sb.score_most) + self.writes.cells,
+        };
+    }
+
     /// START held on the pad of a player in play.
     fn startHeld(turn: *const scene.Turn, g: *const setup_mod.Progress) bool {
         if (g.players[0].in_play and turn.pads.pad1.start) return true;
@@ -245,11 +280,15 @@ pub const RoundClear = struct {
     /// START held: what is left of the bonuses goes to the scores at once (held at `most`), the
     /// lines are drawn again with their own zeros (the original's from the ROM), and the
     /// counting ends.
-    fn skip(self: *RoundClear, g: *setup_mod.Progress, most: u32) void {
+    fn skip(self: *RoundClear, g: *setup_mod.Progress, c: *const records.Clear, most: u32) void {
         var left: u32 = 0;
         for (self.bonuses) |b| left += b;
         for (&g.players) |*p| if (p.in_play) addScore(p, left, most);
-        for (&self.now.lines) |*l| l.* = .{ .shown = true };
+        for (&self.now.lines, 0..) |*l, k| {
+            l.* = .{ .shown = true };
+            // Their letters written cell by cell.
+            self.writes.cells += @intCast(c.lines[k].text.len);
+        }
         // The timer shows 00 from then on: the original draws it from the other byte of the
         // timer's count, which a round's timer leaves at 0.
         g.timer = 0;
@@ -321,12 +360,22 @@ fn drawLine(v: *view.View, a: *const RoundClear.Assets, k: usize, l: Line) !void
     const look: render.Look = .{ .palette = if (l.counted) c.counted else c.normal };
     try v.write(.a, a.text, line.at.x, line.at.y, line.text, look);
     if (l.digits) |d| {
-        // As many digits as the line's zeros there.
-        var width: u8 = 0;
-        while (c.digits + width < line.text.len and line.text[c.digits + width] == '0') width += 1;
         var buf: [10]u8 = undefined;
-        try v.write(.a, a.text, line.at.x + c.digits, line.at.y, round_screen.digits(&buf, d, width), look);
+        try v.write(.a, a.text, line.at.x + c.digits, line.at.y, round_screen.digits(&buf, d, digitsOf(c, k)), look);
     }
+}
+
+/// A bonus's digits: as many as its line's zeros there.
+fn digitsOf(c: *const records.Clear, k: usize) u8 {
+    const text = c.lines[k].text;
+    var width: u8 = 0;
+    while (c.digits + width < text.len and text[c.digits + width] == '0') width += 1;
+    return width;
+}
+
+/// A bonus's line written: a row of its letters.
+fn lineWrites(c: *const records.Clear, k: usize) RoundClear.Writes {
+    return .{ .rows = 1, .cells = @intCast(c.lines[k].text.len) };
 }
 
 /// `points` to a player's score, which holds at `most` (play's record's `score_most`).
@@ -358,7 +407,11 @@ test "START held at the counting's first wait: the bonuses at once, held at the 
     var g: setup_mod.Progress = .{ .round = 1, .timer = 45 };
     g.players[0] = .{ .in_play = true, .score = 995_000 };
     g.players[1] = .{ .in_play = false, .score = 100 };
-    r.skip(&g, 999_900);
+    const line: records.ClearLine = .{ .text = "CLEAR BONUS  000000 PTS", .at = .{ .x = 8, .y = 12 } };
+    const c: records.Clear = .{ .header = "", .header_at = .{ .x = 7, .y = 7 }, .number = .{ .x = 13, .y = 0 }, .lines = @splat(line), .digits = 13, .normal = 1, .counted = 2, .wait = 32, .clear_bonus = 10000, .time_bonus = 100, .level_bonus = 10000, .count = 100, .colours = "" };
+    r.skip(&g, &c, 999_900);
+    // The lines written again, letter by letter.
+    try std.testing.expectEqual(@as(u16, 3 * 23), r.writes.cells);
     try std.testing.expectEqual(@as(u32, 999_900), g.players[0].score);
     try std.testing.expectEqual(@as(u32, 100), g.players[1].score);
     try std.testing.expectEqual(@as(u8, skip_to), r.act);

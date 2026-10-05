@@ -107,7 +107,9 @@ pub const original: Graph = .{
         .{ .from = .menu, .exit = .options, .to = .options },
         .{ .from = .options, .exit = .done, .to = .menu, .load = 3 },
         .{ .from = .select, .exit = .chosen, .to = .round, .load = 53 },
-        .{ .from = .round, .exit = .cleared, .to = .round_clear },
+        // The clear's set-up clears the planes with the picture off, its interrupts left on: the
+        // sound's driver runs through its load.
+        .{ .from = .round, .exit = .cleared, .to = .round_clear, .load = 18, .sound_held = false },
         .{ .from = .round, .exit = .game_over, .to = .high_scores, .load = 4, .driver_once = true },
         .{ .from = .round_clear, .exit = .done, .to = .next_round },
     },
