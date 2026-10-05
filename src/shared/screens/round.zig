@@ -15,10 +15,11 @@
 //!   a logic tick's start pauses, and at any tick of the pause resumes (each time the pause's
 //!   sound; the pause's text while it lasts). The time running out is the time over: its sound
 //!   and text for its ticks, then the round's music again, and each player in play loses its
-//!   health. A player dies, and its next life drops in (world/lives.zig); out of lives, it asks
-//!   the continue's question on its part of the status bar; out of the game, its part shows its
-//!   name, its score and a blinking GAME OVER; the last one out counts the game over down, its
-//!   text over the picture;
+//!   health. A player dies, and its next life drops in (world/lives.zig); out of lives, it enters
+//!   its name on its part of the status bar when its score enters the high-score table (the
+//!   table takes its entry), then asks the continue's question there; out of the game, its part
+//!   shows its name, its score and a blinking GAME OVER; the last one out counts the game over
+//!   down, its text over the picture;
 //! - the end: the round won (its boss beaten), the screen fades out, and the round's clear
 //!   follows, the game under way kept; or the game over, the screen fades out, and the high
 //!   scores follow.
@@ -43,7 +44,9 @@ const world = @import("../world/root.zig");
 const setup_mod = @import("../setup.zig");
 const Colours = @import("colours.zig").Colours;
 const transfers = @import("transfers.zig");
+const HighScores = @import("high_scores.zig").HighScores;
 const Setup = setup_mod.Setup;
+const Score = setup_mod.Score;
 
 /// The palette cycles of a round's colours at most.
 const max_cycles = library.Rounds.most_cycles;
@@ -82,12 +85,17 @@ pub const PlayerBar = union(enum) {
     /// Not in the game: the bar's own cells.
     none,
     playing: Playing,
+    /// Out of lives, its score in the high-score table: its name entered.
+    naming: Naming,
     /// Out of lives: the continue's question.
     asking: Asking,
     /// Out of the game.
     out: Out,
 
     pub const Playing = struct { score: u32, lives: u8, specials: u8, health: u8 };
+    /// Its score, and the letter each place of the name shows (a number of the name entry's
+    /// letters; null: none).
+    pub const Naming = struct { score: u32, places: [world.behaviours.player_waiting.places]?u8 };
     /// The continues left, the second answer (NEW GAME, or GAME OVER), the cursor (null: hidden
     /// by its blink).
     pub const Asking = struct { continues: u8, new_game: bool, cursor: ?Answer };
@@ -243,6 +251,7 @@ pub const Round = struct {
         pause_text: *const art.Frame,
         time_over_text: *const art.Frame,
         game_over_text: *const art.Frame,
+        first_scores: *const records.HighScores,
         sounds: *const library.Sounds,
         stop: library.Sound,
         pause: library.Sound,
@@ -270,6 +279,7 @@ pub const Round = struct {
             .pause_text = "play/pause",
             .time_over_text = "play/time_over",
             .game_over_text = "play/game_over",
+            .first_scores = "screens/high_scores",
             .sounds = "sound",
             .stop = "stop",
             .pause = "pause",
@@ -306,9 +316,41 @@ pub const Round = struct {
     }
 
     /// The plan of the round's script the world follows: the script, the options' level, the
-    /// lives a continue gives (the options').
+    /// lives a continue gives (the options'), the high-score table's last entry.
     fn plan(self: *const Round, setup: *const Setup, a: *const Assets) world.script.Plan {
-        return .{ .round = self.stage(a).script, .level = @intCast(@min(setup.level, 3)), .lives = setup_mod.Progress.livesOf(setup) };
+        const table = scoreTable(setup, a);
+        const last = table[table.len - 1];
+        return .{
+            .round = self.stage(a).script,
+            .level = @intCast(@min(setup.level, 3)),
+            .lives = setup_mod.Progress.livesOf(setup),
+            .last_score = .{ .score = last.score, .level = last.level, .round = last.round },
+        };
+    }
+
+    /// The high-score table as the game keeps it: the content's first one until a game changes
+    /// it.
+    fn scoreTable(setup: *const Setup, a: *const Assets) [setup_mod.high_scores]Score {
+        return setup.high_scores orelse HighScores.firstTable(a.first_scores);
+    }
+
+    /// The tick's rankings in the high-score table: a player ranked loses its marks there; a name
+    /// entered makes its entry in the last one's place (the player's score, the round, the
+    /// options' level, the name; marked as its player's new entry), and the table is sorted again.
+    fn rank(self: *const Round, setup: *Setup, a: *const Assets, rankings: []const world.output.Ranking) void {
+        if (rankings.len == 0) return;
+        var table = scoreTable(setup, a);
+        const was = table;
+        for (rankings) |r| {
+            const entry: ?Score = if (r.name) |name| .{
+                .score = self.play.world.players[r.player].score,
+                .round = self.number,
+                .name = nameOf(a.screen.name_entry.letters, name),
+                .level = setup.level,
+            } else null;
+            rankIn(&table, r.player, entry);
+        }
+        if (setup.high_scores != null or !std.meta.eql(table, was)) setup.high_scores = table;
     }
 
     /// One display tick.
@@ -622,6 +664,7 @@ pub const Round = struct {
             self.stream_at = 0;
         }
         self.noteTransfers(a.kinds, out);
+        self.rank(turn.setup, a, out.rankings.slice());
         if (out.colours) self.colours_due = true;
         self.noteStrips(self.stage(a).script, camera_before, self.play.world.camera);
         // The players' sounds are the logic tick's first half's (the original updates its players
@@ -776,8 +819,12 @@ pub const Round = struct {
             o.* = switch (e.mind) {
                 .player => .{ .playing = .{ .score = p.score, .lives = p.lives, .specials = p.specials, .health = healthOf(a, e) } },
                 .player_waiting => |m| switch (m.state) {
-                    // Its first tick: the bar as it was (the question still, after a NO).
-                    .begin => if (m.answered_no) .{ .asking = .{ .continues = m.count, .new_game = new_game, .cursor = if (m.shown) m.cursor else null } } else playing,
+                    // Its first tick: the bar as it was (the question still, after a NO; the name,
+                    // the tick it was entered).
+                    .begin => if (m.answered_no)
+                        .{ .asking = .{ .continues = m.count, .new_game = new_game, .cursor = if (m.shown) m.cursor else null } }
+                    else if (m.named) naming(p, &m) else playing,
+                    .name_entry => naming(p, &m),
                     .continue_choose, .continue_chosen => .{ .asking = .{ .continues = m.count, .new_game = new_game, .cursor = if (m.shown) m.cursor else null } },
                     // The tick it went out its part is cleared: its name comes at the next.
                     .countdown, .game_over => .{ .out = .{ .name = m.state != .countdown or m.music, .score = p.score, .game_over = ob.shown } },
@@ -834,6 +881,39 @@ pub const Round = struct {
         if (self.shown_game_over) try v.sprites.append(v.gpa, .of(a.game_over_text, 0, 0));
     }
 };
+
+/// A player entering its name, as its part of the bar shows it.
+fn naming(p: world.Player, m: *const world.behaviours.player_waiting.Mind) PlayerBar {
+    var x: PlayerBar.Naming = .{ .score = p.score, .places = undefined };
+    for (&x.places, 0..) |*q, k| q.* = world.behaviours.player_waiting.shownAt(m, k);
+    return .{ .naming = x };
+}
+
+/// A player ranked in the high-score table: its marks leave it; its entry, when it entered its
+/// name, takes the last one's place, marked as its player's new one, and the table is sorted
+/// again.
+pub fn rankIn(table: []Score, player: u1, entry: ?Score) void {
+    for (table) |*e| if (e.new == player) {
+        e.new = null;
+    };
+    var x = entry orelse return;
+    x.new = player;
+    table[table.len - 1] = x;
+    HighScores.sort(table);
+}
+
+/// A name entered (the numbers of the name entry's `letters` taken at its places) as the
+/// high-score table keeps it: letters of the font; none taken, and the end mark (the last
+/// letter), a space.
+pub fn nameOf(letters: []const []const u8, name: [world.behaviours.player_waiting.places]?u8) [3]u8 {
+    var out: [3]u8 = @splat(' ');
+    for (&out, name) |*c, letter| {
+        const l = letter orelse continue;
+        if (@as(usize, l) + 1 >= letters.len) continue;
+        if (letters[l].len == 1) c.* = letters[l][0];
+    }
+    return out;
+}
 
 /// A fighter's health as its bar shows it: none to its kind's most.
 fn healthOf(a: *const Round.Assets, e: *const world.Entity) u8 {
@@ -933,6 +1013,23 @@ pub fn drawPlayer(v: *view.View, a: anytype, k: usize, now: PlayerBar, was: ?Pla
             if (before == null or before.?.lives != x.lives) try bigDigit(board, a, p.lives, x.lives);
             if (before == null or before.?.specials != x.specials) try bigDigit(board, a, p.specials, x.specials);
             if (before == null or before.?.health != x.health) try healthBar(board, a, if (k == 0) a.health_1 else a.health_2, p.health, x.health);
+        },
+        .naming => |x| {
+            const before: ?PlayerBar.Naming = if (was) |w| w.naming else null;
+            const ne = &a.screen.name_entry;
+            const at = &ne.players[k];
+            if (before == null) {
+                try v.write(.window, a.text, p.name_at.x, p.name_at.y, p.name, .{});
+                try writeWords(v, a, at.label, ne.label);
+                if (ne.letters.len != 0) try v.write(.window, a.text, at.mark.x, at.mark.y, ne.letters[ne.letters.len - 1], .{});
+            }
+            if (before == null or before.?.score != x.score) try drawScore(v, a, p.score, x.score);
+            for (x.places, 0..) |letter, q| {
+                if (before) |b| if (std.meta.eql(b.places[q], letter)) continue;
+                const cell: records.Cell = .{ .x = at.first.x + @as(u8, @intCast(q)), .y = at.first.y };
+                restore(board, a, cell, 1);
+                if (letter) |l| if (l < ne.letters.len) try v.write(.window, a.text, cell.x, cell.y, ne.letters[l], .{});
+            }
         },
         .asking => |x| {
             const before: ?PlayerBar.Asking = if (was) |w| w.asking else null;
@@ -1057,6 +1154,26 @@ pub fn putCell(board: *render.Board, map: *const art.TileMap, mx: usize, my: usi
     const c = map.cell(mx, my);
     if (c.isEmpty()) return;
     try board.put(x, y, &map.tiles[c.tile], .{ .palette = c.palette, .flip_x = c.flip_x, .flip_y = c.flip_y, .priority = c.priority });
+}
+
+test "a name entered in the high-score table: the last entry's place, marked, sorted" {
+    var t: [setup_mod.high_scores]Score = undefined;
+    for (&t, 0..) |*e, k| e.* = .{ .score = @intCast(10_000 * (10 - k)), .round = 1, .level = 1 };
+    t[3].new = 0;
+    t[4].new = 1;
+    const letters = [_][]const u8{ "A", "B", "C", "(ED)" };
+    const name = nameOf(&letters, .{ 2, 3, null });
+    try std.testing.expectEqualStrings("C  ", &name);
+    rankIn(&t, 0, .{ .score = 55_000, .round = 2, .level = 1, .name = name });
+    try std.testing.expectEqual(@as(u32, 55_000), t[5].score);
+    try std.testing.expectEqual(@as(?u1, 0), t[5].new);
+    try std.testing.expectEqual(@as(?u1, null), t[3].new);
+    try std.testing.expectEqual(@as(?u1, 1), t[4].new);
+    try std.testing.expectEqual(@as(u32, 20_000), t[9].score);
+    // Ranked without an entry: its marks only leave.
+    rankIn(&t, 1, null);
+    try std.testing.expectEqual(@as(?u1, null), t[4].new);
+    try std.testing.expectEqual(@as(?u1, 0), t[5].new);
 }
 
 test "a number's digits: its last ones, zeros first" {

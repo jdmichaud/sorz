@@ -54,6 +54,12 @@ pub const Hit = struct { attacker: ?Handle, target: Handle, damage: i16 };
 /// A weapon or an item picked up, by whom.
 pub const Pickup = struct { item: Handle, kind: entity.KindId, by: Handle };
 
+/// A player out of lives and the high-score table: its score was ranked against the table at its
+/// last life's end (`name` null: its marks leave the table's entries), or its name was entered
+/// (the table takes its entry: its score, the round, the options' level and `name`, the letters'
+/// numbers at its places, null where none was taken).
+pub const Ranking = struct { player: u1, name: ?[3]?u8 = null };
+
 /// The frame an entity showed at the tick, and whether mirrored.
 pub const Shown = struct { frame: *const art.Frame, mirrored: bool };
 
@@ -66,6 +72,9 @@ pub const Output = struct {
     sounds: List(SoundRequest, sound_most) = .{},
     hits: List(Hit, 32) = .{},
     pickups: List(Pickup, 16) = .{},
+    /// The high-score table's changes the round makes from the tick's rankings (the table is the
+    /// game's, outside the world).
+    rankings: List(Ranking, 4) = .{},
     /// By the entities' places in the pool: the frame each showed (the animation system).
     shown: [capacity]?Shown = @splat(null),
     /// The entities whose frame started at this tick (the game copies a player's art for its new
@@ -97,6 +106,7 @@ pub const Output = struct {
         self.sounds.clear();
         self.hits.clear();
         self.pickups.clear();
+        self.rankings.clear();
         @memset(&self.shown, null);
         @memset(&self.new_frames, false);
         self.colours = false;

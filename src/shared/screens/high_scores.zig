@@ -84,7 +84,7 @@ pub const HighScores = struct {
     }
 
     /// The content's table, as the game keeps it.
-    fn firstTable(first: *const records.HighScores) [setup_mod.high_scores]Score {
+    pub fn firstTable(first: *const records.HighScores) [setup_mod.high_scores]Score {
         var t: [setup_mod.high_scores]Score = @splat(.{});
         for (first.first[0..@min(first.first.len, t.len)], 0..) |e, i| {
             t[i] = .{ .score = e.score, .round = e.round, .level = e.level };

@@ -38,6 +38,28 @@ pub const Plan = struct {
     level: u2 = 1,
     /// The lives a continue gives (the options' lives).
     lives: u8 = 3,
+    /// The high-score table's last entry, which the score of a player out of lives must beat for
+    /// its name to be entered (lives.zig); null: no table, no name entry.
+    last_score: ?Ranked = null,
+};
+
+/// An entry of the high-score table as a score is ranked against it: its score, its level and
+/// its round.
+pub const Ranked = struct {
+    score: u32,
+    level: u8,
+    round: u8,
+
+    /// Whether `score` beats the entry: a higher score, or the same one whose last four digits
+    /// beat the entry's level, or equal it and beat its round. (The original compares the score's
+    /// last four digits there, as it codes them, with the level's and the round's numbers: the
+    /// same as comparing their values while those are under 10, as they are.)
+    pub fn beatenBy(self: Ranked, score: u32) bool {
+        if (score != self.score) return score > self.score;
+        const last = score % 10_000;
+        if (last != self.level) return last > self.level;
+        return last > self.round;
+    }
 };
 
 pub const Stage = enum {

@@ -1,7 +1,8 @@
 //! A player's lives (PLAN item 13), as the original counts them: a life is lost as the player
 //! dies; when it has lain dead its time, its next life drops in where the camera is, or, its
-//! lives out, it waits to continue (`player_waiting`, behaviours/player_waiting.zig): YES spends
-//! a continue and gives it the lives of a new game, its score cleared, and a new life.
+//! lives out, it waits to continue (`player_waiting`, behaviours/player_waiting.zig), its name
+//! entered first when its score enters the high-score table: YES spends a continue and gives it
+//! the lives of a new game, its score cleared, and a new life.
 //!
 //! A new life (the original's start of a life, after a death): the player's entity is
 //! its fighter again, its record cleared (it blinks from its first tick); it drops in at the
@@ -15,9 +16,22 @@ const player = @import("behaviours/player.zig");
 
 const Tick = tick_mod.Tick;
 const Handle = entity.Handle;
+const World = @import("world.zig").World;
 
 /// The kind a player out of lives becomes.
 pub const waiting_kind = "player_waiting";
+
+/// Whether player `k` is in play, as the original counts its players in play (whom its enemies go
+/// after): while it plays as a fighter; out of lives, at the tick its last life ended (its wait
+/// has not begun) and at the tick its name is entered, not otherwise (nor after a NO).
+pub fn inPlay(w: *const World, k: u1) bool {
+    const e = w.getConst(w.players[k].entity orelse return false) orelse return false;
+    return switch (e.mind) {
+        .player => true,
+        .player_waiting => |m| m.state == .begin and !m.answered_no,
+        else => false,
+    };
+}
 
 /// A life is lost: the player of `h` dies.
 pub fn lose(t: *Tick, h: Handle) void {
@@ -38,7 +52,18 @@ pub fn lifeOver(t: *Tick, h: Handle) void {
         t.world.remove(h);
         return;
     };
+    // Its score is ranked against the high-score table: when it beats the last entry, the player
+    // enters its name before the continue's question.
+    var enters = false;
+    if (t.plan) |plan| if (plan.last_score) |last| {
+        enters = last.beatenBy(t.world.players[k].score);
+        t.out.rankings.append(.{ .player = k });
+    };
     t.world.morph(t.kinds, h, kind);
+    switch (t.world.get(h).?.mind) {
+        .player_waiting => |*m| m.entering = enters,
+        else => {},
+    }
     // The original clears its record: at the level's corner, which the camera's keeping the
     // players in view then moves (it stays hidden there).
     // TODO(PLAN item 23, exact): the original draws its shadow object one display tick more, at

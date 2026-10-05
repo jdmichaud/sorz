@@ -19,6 +19,7 @@ const systems = @import("systems.zig");
 const tick_mod = @import("tick.zig");
 const behaviours = @import("behaviours.zig");
 const script = @import("script.zig");
+const lives = @import("lives.zig");
 const content_round = @import("../content/round.zig");
 
 const Fixed = fixed.Fixed;
@@ -504,7 +505,7 @@ const special_fire_fixture =
 
 const waiting =
     \\{"family": "player", "team": "neutral", "behaviour": "player_waiting",
-    \\ "numbers": {"cursor_blink": 8, "out_wait": 250},
+    \\ "numbers": {"cursor_blink": 8, "out_wait": 250, "name_blink": 12, "letters": 27},
     \\ "sounds": {"cursor": "menu move", "game_over": "game over music"}}
 ;
 
@@ -1071,6 +1072,113 @@ test "the continue's NO, or none left: out of the game, the game over's count" {
     var ticks: usize = 0;
     while (!std.mem.eql(u8, r2.state(), "game_over")) : (ticks += 1) r2.stepPlan(.{}, &plan);
     try testing.expectEqual(@as(usize, 250), ticks);
+}
+
+/// The waiting player's mind.
+fn waitingMind(r: *Round) *behaviours.player_waiting.Mind {
+    return &r.player().mind.player_waiting;
+}
+
+/// Ticks until the waiting player's name entry, the rankings seen on the way.
+fn toNameEntry(r: *Round, plan: *const script.Plan) !usize {
+    var ranked: usize = 0;
+    for (0..200) |_| {
+        r.stepPlan(.{}, plan);
+        for (r.out.rankings.slice()) |k| {
+            try testing.expectEqual(@as(u1, 0), k.player);
+            try testing.expect(k.name == null);
+            ranked += 1;
+        }
+        if (std.mem.eql(u8, r.state(), "name_entry")) return ranked;
+    }
+    return error.TestUnexpectedResult;
+}
+
+test "out of lives, its score past the table's last: the name entered first, then the question" {
+    const level = testing.log_level;
+    testing.log_level = .err;
+    defer testing.log_level = level;
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &lives_round, .lives = 3, .last_score = .{ .score = 10_000, .level = 1, .round = 1 } };
+    script.start(&r.w, &plan);
+    r.w.players[0].lives = 1;
+    r.w.players[0].score = 10_500;
+    r.player().health = 0;
+    // Ranked once, as its last life ends; the entry from the waiting player's second tick. In
+    // play as its last life ends, not while it enters its name.
+    try testing.expectEqual(@as(usize, 1), try toNameEntry(&r, &plan));
+    try testing.expect(!lives.inPlay(&r.w, 0));
+    const m = waitingMind(&r);
+    try testing.expectEqual(@as(u8, 0), m.place);
+    try testing.expectEqual(@as(?u8, 0), behaviours.player_waiting.shownAt(m, 0));
+    try testing.expectEqual(@as(?u8, null), behaviours.player_waiting.shownAt(m, 1));
+    // Right: B; C takes it, the cursor on the second place; left from A wraps to the end mark.
+    r.stepPlan(.{ .pad1 = .{ .right = true } }, &plan);
+    try testing.expectEqual(@as(u8, 1), m.letter);
+    r.stepPlan(c_pad, &plan);
+    try testing.expectEqual(@as(u8, 1), m.place);
+    try testing.expectEqual(@as(?u8, 1), m.name[0]);
+    try testing.expectEqual(@as(?u8, 1), behaviours.player_waiting.shownAt(m, 0));
+    r.stepPlan(.{ .pad1 = .{ .left = true } }, &plan);
+    try testing.expectEqual(@as(u8, 26), m.letter);
+    // B: back to the first place, its letter B; the second keeps the end mark it showed.
+    r.stepPlan(b_pad, &plan);
+    try testing.expectEqual(@as(u8, 0), m.place);
+    try testing.expectEqual(@as(u8, 1), m.letter);
+    try testing.expectEqual(@as(?u8, 26), behaviours.player_waiting.shownAt(m, 1));
+    // Right held (no new press): a letter more at the end of each showing of the blink, every
+    // 24 ticks.
+    for (0..48) |_| r.step(.{ .pad1 = .{ .right = true } });
+    try testing.expectEqual(@as(u8, 3), m.letter);
+    // START ends it: the round enters the name (B, nothing taken after it); in play for that
+    // tick; the question next.
+    r.stepPlan(.{ .pad1 = .{ .start = true } }, &plan);
+    try testing.expectEqualStrings("begin", r.state());
+    try testing.expect(lives.inPlay(&r.w, 0));
+    try testing.expectEqual(@as(usize, 1), r.out.rankings.len);
+    const entered = r.out.rankings.slice()[0].name.?;
+    try testing.expectEqual(@as(?u8, 1), entered[0]);
+    try testing.expectEqual(@as(?u8, null), entered[1]);
+    try testing.expectEqual(@as(?u8, null), entered[2]);
+    r.stepPlan(.{}, &plan);
+    try testing.expectEqualStrings("continue_choose", r.state());
+    try testing.expect(!lives.inPlay(&r.w, 0));
+}
+
+test "the name entry ends at the end mark taken, or the last place's letter" {
+    const level = testing.log_level;
+    testing.log_level = .err;
+    defer testing.log_level = level;
+    const plan: script.Plan = .{ .round = &lives_round, .lives = 3, .last_score = .{ .score = 10_000, .level = 1, .round = 1 } };
+    for ([_]bool{ true, false }) |end_mark| {
+        var r = try Round.init();
+        defer r.deinit();
+        script.start(&r.w, &plan);
+        r.w.players[0].lives = 1;
+        r.w.players[0].score = 20_000;
+        r.player().health = 0;
+        _ = try toNameEntry(&r, &plan);
+        if (end_mark) {
+            r.stepPlan(c_pad, &plan);
+            r.stepPlan(.{ .pad1 = .{ .left = true } }, &plan);
+            r.stepPlan(.{ .pad1 = .{ .a = true } }, &plan);
+        } else for (0..3) |_| r.stepPlan(c_pad, &plan);
+        try testing.expectEqualStrings("begin", r.state());
+        const m = waitingMind(&r);
+        try testing.expect(m.named);
+        if (end_mark) {
+            try testing.expectEqual(@as(?u8, 26), m.name[1]);
+            try testing.expectEqual(@as(?u8, 26), behaviours.player_waiting.shownAt(m, 1));
+        } else for (0..3) |q| try testing.expectEqual(@as(?u8, 0), behaviours.player_waiting.shownAt(m, q));
+    }
+
+    // A score equal to the last entry's: its last four digits against the entry's level.
+    try testing.expect(!(script.Ranked{ .score = 10_000, .level = 1, .round = 1 }).beatenBy(10_000));
+    try testing.expect((script.Ranked{ .score = 10_500, .level = 1, .round = 1 }).beatenBy(10_500));
+    try testing.expect(!(script.Ranked{ .score = 10_001, .level = 1, .round = 1 }).beatenBy(10_001));
+    try testing.expect((script.Ranked{ .score = 10_001, .level = 1, .round = 0 }).beatenBy(10_001));
+    try testing.expect(!(script.Ranked{ .score = 20_000, .level = 0, .round = 1 }).beatenBy(19_900));
 }
 
 test "held from behind: free after the hold's frame; C jumps out, held again with a moment for B" {
