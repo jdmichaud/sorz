@@ -648,15 +648,16 @@ fn countEnemies(t: *Tick) u8 {
 }
 
 /// When the camera reaches the wall, the enemies left behind it come back to its left edge, at
-/// the depth the round gives, and their behaviours are told.
+/// the depth the round gives, and their behaviours are told. Only their whole pixels move: the
+/// fractions stay, as the original writes its places' whole words.
 fn bringBack(t: *Tick, r: *const Round) void {
     const back = t.world.camera.x.whole() + r.camera.left_behind[0];
     for (&t.world.entities, 0..) |*e, i| {
         const kind = e.kind orelse continue;
         if (t.kinds.get(kind).family() != .enemy) continue;
         if (e.position.x.whole() > back) continue;
-        e.position.x = .pixels(back);
-        e.position.depth = .pixels(r.camera.left_behind[1]);
+        e.position.x = .parts(@intCast(back), e.position.x.frac());
+        e.position.depth = .parts(@intCast(r.camera.left_behind[1]), e.position.depth.frac());
         t.leftBehind(t.world.handleAt(i).?);
     }
 }
