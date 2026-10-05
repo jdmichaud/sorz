@@ -103,6 +103,7 @@ fn start(a: Actor) void {
     m.body.taken = a.numbers().uses;
     if (m.part == .cloud) {
         a.animate(.cloud);
+        a.entity.flags.hidden = false;
         m.state = .cloud;
         return;
     }
@@ -168,6 +169,8 @@ fn bursts(a: Actor) bool {
     const s = a.tick.world.get(h).?;
     s.mind.pepper.part = .cloud;
     s.mind.pepper.timer = n.cloud_ticks;
+    // Unseen until its start (the original draws nothing with no animation set yet).
+    s.flags.hidden = true;
     s.mind.pepper.body.taken = n.uses;
     return true;
 }
