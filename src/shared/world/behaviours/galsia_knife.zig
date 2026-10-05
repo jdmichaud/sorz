@@ -91,9 +91,10 @@ pub const Tables = enemy.Tables(struct {});
 /// The kind of its knife.
 const knife = "knife";
 
+/// Choosing its way (a tick, getting up or let out), it takes no blow: the original's choice
+/// has no test of the blows.
 pub fn hurtable(state: State) bool {
-    _ = state;
-    return true;
+    return state != .choose;
 }
 
 pub fn begin(a: Actor) void {
