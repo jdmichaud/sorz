@@ -219,10 +219,12 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
   the one held (`x` toward the side the holder faces, `height` downward), as it vaults around
   it. With `loop` the first frame follows the last; without, the last stays.
 - `moves`: a blow or an action: its `animation` (by name); the `damage` its blow does; the
-  `reaction` of the one it strikes, `reel` or `knock_down`, and of one held, `thrown` (it flies
-  off where the hold lets it go) or `slammed` (it is slammed down there, and knocked down a
-  moment later); the speed it gives that one, `push` (`x` away from the striker, `height`
-  negative upward); the `sound` asked for when it starts and the `hit_sound` when its blow
+  `reaction` of the one it strikes, `reel`, `knock_down` or `lift` (reeling, it is lifted: it
+  rises and falls again, and reels on; a blow that knocks down while it is up knocks it off,
+  flying across: Adam's third blow), and of one held, `thrown` (it flies off where the hold lets
+  it go) or `slammed` (it is slammed down there, and knocked down a moment later); the speed it
+  gives that one, `push` (`x` away from the striker, `height` negative upward: a throw's, which
+  Blaze's makes faster); the `sound` asked for when it starts and the `hit_sound` when its blow
   lands.
 
 The optional fields are written only when they are not their defaults, so a file read and

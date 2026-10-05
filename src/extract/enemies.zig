@@ -168,6 +168,26 @@ fn commonNumbers(d: *Def, kind: u8) Error!void {
     try d.number("thrown_damage", @as(i32, rom[0xA9F2] >> 1) & 7, "ROM 0x0A9F2: subq.w #N,(50,a0) (a thrown body's hit)");
     try d.number("flipped_x", try immediate(rom, 0xA218, &.{ 0x31, 0x7C }, 2) << 16, "ROM 0x0A218: move.w #N,(28,a0)");
     try d.number("flipped_up", try immediate(rom, 0xA21E, &.{ 0x21, 0x7C }, 4), "ROM 0x0A21E: move.l #N,(36,a0)");
+    if (u16be(rom, 0xA1E4) != 10) return error.BadData;
+    try d.number("flipped_frame", try immediate(rom, 0xA1E0, &.{ 0x0C, 0x29 }, 2), "ROM 0x0A1E0: cmpi.b #N,(10,a1) (the holder's frame it is flipped over at)");
+    // Lifted in a reel (0x9C50): up a little at once (0x9C58: subq.w #N,(24,a0)), at a speed up
+    // by the game's tick (0x9C7E, 0x9C8C at an even tick: 0x9C84), in its knock-down's pose, or
+    // the pose of one thrown for the kinds of the set 0x9C68 compares; down again, it reels still
+    // a while (0x9CBA). Knocked off it (0x9CE2), it flies across (0x9AD6) a while, then falls.
+    if (u16be(rom, 0x9C58) & 0xF1FF != 0x5168 or u16be(rom, 0x9C5A) != 0x18) return error.BadData;
+    try d.number("lift_start", @as(i32, (u16be(rom, 0x9C58) >> 9) & 7), "ROM 0x09C58: subq.w #N,(24,a0)");
+    if (u16be(rom, 0x9C82) != 0x24 or u16be(rom, 0x9C90) != 0x24 or u16be(rom, 0x9C84) != 0x0838 or u16be(rom, 0x9C88) != 0xFB09) return error.BadData;
+    try d.number("lift_up", try immediate(rom, 0x9C7E, &.{ 0x31, 0x7C }, 2) << 16, "ROM 0x09C7E: move.w #N,(36,a0) (at an odd tick)");
+    try d.number("lift_up_even", try immediate(rom, 0x9C8C, &.{ 0x31, 0x7C }, 2) << 16, "ROM 0x09C8C: move.w #N,(36,a0) (at an even tick, 0x09C84)");
+    if (u16be(rom, 0x9C6E) != 4) return error.BadData;
+    try d.number("lift_thrown", @intFromBool(d.set == @as(u32, @bitCast(try immediate(rom, 0x9C68, &.{ 0x0C, 0xA8 }, 4)))), "ROM 0x09C68: cmpi.l #N,(4,a0) (its animation set: lifted in the pose of one thrown, 1)");
+    try d.number("lifted_reel", try moveByte(rom, 0x9CBA, 80), "ROM 0x09CBA: move.b #N,(80,a0)");
+    if (u16be(rom, 0x9CE6) != 0x24) return error.BadData;
+    try d.number("knocked_off_up", try immediate(rom, 0x9CE2, &.{ 0x31, 0x7C }, 2) << 16, "ROM 0x09CE2: move.w #N,(36,a0)");
+    if (u16be(rom, 0x9AFE) != 0x1C) return error.BadData;
+    try d.number("knocked_off_x", try immediate(rom, 0x9AFA, &.{ 0x31, 0x7C }, 2) << 16, "ROM 0x09AFA: move.w #N,(28,a0)");
+    try d.number("knocked_off_ticks", try moveByte(rom, 0x9B00, 80), "ROM 0x09B00: move.b #N,(80,a0)");
+    try d.number("knocked_off_slowing", try immediate(rom, 0x9B1E, &.{ 0x30, 0x3C }, 2) << 16, "ROM 0x09B1E: move.w #N,d0");
     try d.number("thrown_x", try immediate(rom, 0xA26C, &.{ 0x20, 0x3C }, 4), "ROM 0x0A26C: move.l #N,d0");
     try d.number("thrown_up", try immediate(rom, 0xA272, &.{ 0x22, 0x3C }, 4), "ROM 0x0A272: move.l #N,d1");
     try d.number("thrown_slide", try moveByte(rom, 0xA2C4, 80), "ROM 0x0A2C4: move.b #N,(80,a0)");

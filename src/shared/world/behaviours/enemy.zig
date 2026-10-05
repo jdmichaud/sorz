@@ -42,8 +42,9 @@ const Fixed = fixed.Fixed;
 const Handle = entity.Handle;
 const Entity = entity.Entity;
 
-/// How a knock-down goes on: flying (and bouncing), sliding after a throw, lying.
-pub const Down = enum { flying, sliding, lying };
+/// How a knock-down goes on: flying (and bouncing), sliding after a throw, lying; knocked off a
+/// lift, flying across before it falls.
+pub const Down = enum { flying, sliding, lying, knocked_off };
 
 /// The memory every enemy keeps for its common states.
 pub const Body = struct {
@@ -74,6 +75,11 @@ pub const Body = struct {
     /// A third blow of the combo settles the reel at its pose, at the tick after the next.
     settling: bool = false,
     settle_wait: bool = false,
+    /// A blow that lifts (`lift`): the lift is due at the tick after the next, or under way; it
+    /// reels on still once it has come down.
+    lift_due: bool = false,
+    lifted: bool = false,
+    reel_still: bool = false,
     /// Knocked down: how it goes on, its bounces, its flight slowing.
     down: Down = .flying,
     bounces: u8 = 0,
@@ -248,6 +254,23 @@ pub const Common = struct {
     knocked_back_up: Fixed,
     flipped_x: Fixed,
     flipped_up: Fixed,
+    /// Lifted in a reel: up `lift_start` pixels at once, at the speed `lift_up` (`lift_up_even`
+    /// at an even tick of the game), in its knock-down's pose (or, `lift_thrown`, the pose of
+    /// one thrown); down again, it reels still `lifted_reel` ticks.
+    lift_start: u8,
+    lift_up: Fixed,
+    lift_up_even: Fixed,
+    lift_thrown: u8,
+    lifted_reel: u8,
+    /// Knocked off a lift: its speed up then, across (whole pixels) for `knocked_off_ticks`
+    /// ticks, then slower by `knocked_off_slowing` as it falls.
+    knocked_off_up: Fixed,
+    knocked_off_x: Fixed,
+    knocked_off_ticks: u8,
+    knocked_off_slowing: Fixed,
+    /// Flipped over at this frame of its holder's move (a last knee's), whether its blow is
+    /// under way then (Axel's, Adam's) or not (Blaze's, which leaps later).
+    flipped_frame: u8,
     thrown_x: Fixed,
     thrown_up: Fixed,
     thrown_slide: u8,
@@ -724,19 +747,25 @@ pub fn Of(comptime M: type) type {
             const b = body(a);
             if (!b.reel_taken) return false;
             b.touched = true;
+            if (b.lifted) return struckLifted(a, blow);
             if (b.touch_taken) return false;
             b.touch_taken = true;
             b.other = blow.attacker;
             // A missile knocks a reeling one down, its health spared.
             if (blow.missile) {
                 enterAtBlow(a, .knocked_down);
-                a.setFrame(a.frame() ^ 1);
+                shake(a);
                 return true;
             }
             if (takeReelBlow(a, blow.damage, blow.reaction == .knock_down, true)) b.settle_wait = true;
             // Knocked down, it still shakes at this tick: its knock-down starts at the next.
-            if (a.mind.state == .knocked_down) a.setFrame(a.frame() ^ 1);
+            if (a.mind.state == .knocked_down) shake(a);
             return true;
+        }
+
+        /// A tick of its reel shakes it (but after a lift, when it reels still).
+        fn shake(a: A) void {
+            if (!body(a).reel_still) a.setFrame(a.frame() ^ 1);
         }
 
         /// A blow taken in a reel: the health it costs; the last health, or a blow that knocks
@@ -753,9 +782,15 @@ pub fn Of(comptime M: type) type {
                 return false;
             }
             // The original reads the striker's state.
-            if (b.other) |o| if (a.other(o)) |s| if (thirdBlow(a, s)) {
-                b.settling = true;
-                return true;
+            if (b.other) |o| if (a.other(o)) |s| {
+                if (lifts(a, s)) {
+                    b.lift_due = true;
+                    return true;
+                }
+                if (thirdBlow(a, s)) {
+                    b.settling = true;
+                    return true;
+                }
             };
             const back: i32 = if (a.entity.facingLeft()) 1 else -1;
             a.entity.position.x = a.entity.position.x.add(Fixed.pixels(n.reel_nudge).times(back));
@@ -769,15 +804,27 @@ pub fn Of(comptime M: type) type {
             return std.mem.eql(u8, a.tick.kindOf(s).definition.moves[m].name, "attack3");
         }
 
+        /// Whether `s` (its striker) strikes with a blow that lifts (Adam's third: the original's
+        /// reel takes the third blow to the step of the striker's character, the lift's for his).
+        fn lifts(a: A, s: *const Entity) bool {
+            const m = s.move orelse return false;
+            return a.tick.kindOf(s).definition.moves[m].reaction == .lift;
+        }
+
         pub fn reel(a: A) void {
             const b = body(a);
             if (!b.reel_taken) {
                 b.reel_taken = true;
                 b.touch_taken = true;
+                b.lifted = false;
+                b.lift_due = false;
+                b.reel_still = false;
                 _ = faceStriker(a);
                 a.animate(.reel);
                 a.pause(true);
                 const s = if (b.other) |o| a.other(o) else null;
+                // A blow that lifts lifts at once, its damage spared.
+                if (s) |x| if (lifts(a, x)) return lift(a);
                 // Struck by a combo's third blow, it settles first, in its pose, the blow not
                 // taken: while the blow touches it still at its next tick, it is taken then.
                 if (s) |x| if (thirdBlow(a, x)) {
@@ -792,10 +839,15 @@ pub fn Of(comptime M: type) type {
                 b.timer -%= 1;
                 return;
             }
+            if (b.lifted) return lifted(a);
             if (b.settle_wait) {
                 b.settle_wait = false;
-                a.setFrame(a.frame() ^ 1);
+                shake(a);
                 return;
+            }
+            if (b.lift_due) {
+                b.lift_due = false;
+                return lift(a);
             }
             if (b.settling) {
                 b.settling = false;
@@ -803,9 +855,67 @@ pub fn Of(comptime M: type) type {
                 b.timer = a.numbers().reel;
                 return;
             }
-            a.setFrame(a.frame() ^ 1);
+            shake(a);
             b.timer -%= 1;
             if (b.timer == 0) enter(a, M.fights);
+        }
+
+        /// The lift starts: a little up at once, facing the striker in its knock-down's pose (or
+        /// one thrown's), at its speed up (the game's tick decides it); it rises from this tick.
+        fn lift(a: A) void {
+            const n = a.numbers();
+            const b = body(a);
+            b.lifted = true;
+            a.entity.position.height = a.entity.position.height.sub(.pixels(n.lift_start));
+            _ = faceStriker(a);
+            if (n.lift_thrown != 0) {
+                a.animate(.thrown);
+                a.setFrame(2);
+            } else a.animate(.down);
+            a.pause(true);
+            const up = if (a.tick.world.tick & 1 == 0) n.lift_up_even else n.lift_up;
+            a.entity.velocity.height = .parts(@intCast(up.whole()), a.entity.velocity.height.frac());
+            lifted(a);
+        }
+
+        /// Lifted: it rises and falls by its gravity, in height alone (its place across stays);
+        /// down on the ground (at once, but in its knock-down's pose: the original's enemies fall
+        /// through the air in that pose alone), it reels on still a while, in the pose of one
+        /// thrown.
+        fn lifted(a: A) void {
+            const n = a.numbers();
+            const b = body(a);
+            gravity(a);
+            a.entity.position.height = a.entity.position.height.add(a.entity.velocity.height);
+            if (a.playing(.down) and a.entity.position.height.lessThan(a.tick.world.ground)) return;
+            a.entity.position.height = .parts(@intCast(a.tick.world.ground.whole()), a.entity.position.height.frac());
+            b.lifted = false;
+            b.reel_still = true;
+            b.timer = n.lifted_reel;
+            _ = faceStriker(a);
+            a.animate(.thrown);
+            a.pause(true);
+            a.setFrame(2);
+        }
+
+        /// A blow meets it lifted: the striker's blow lands at each tick it touches (the reel's
+        /// touch going on is not taken back, as it is standing); a new touch of a blow that knocks
+        /// down knocks it off the lift, its health spared: it flies across, a thrown body, from
+        /// its next tick.
+        fn struckLifted(a: A, blow: tick.Blow) bool {
+            const n = a.numbers();
+            const b = body(a);
+            if (b.touch_taken or blow.reaction != .knock_down) return true;
+            b.touch_taken = true;
+            b.other = blow.attacker;
+            b.lifted = false;
+            a.entity.velocity.height = .parts(@intCast(n.knocked_off_up.whole()), a.entity.velocity.height.frac());
+            a.mind.state = .knocked_down;
+            b.fresh = false;
+            b.waits = b.thought != a.tick.world.tick;
+            b.down = .knocked_off;
+            b.timer = 0;
+            return true;
         }
 
         // Knocked down ------------------------------------------------------------------------
@@ -857,7 +967,38 @@ pub fn Of(comptime M: type) type {
                     go(a);
                 },
                 .lying => lie(a),
+                .knocked_off => knockedOff(a),
             }
+        }
+
+        /// Knocked off a lift: at its first tick, a thrown body facing its striker, in the
+        /// second pose of its knock-down, its speed across set away from the striker (its
+        /// fraction kept); it flies across, its height kept, a while, then falls on as a
+        /// knock-down's flight, slower across, not slowing.
+        fn knockedOff(a: A) void {
+            const n = a.numbers();
+            const b = body(a);
+            if (b.timer == 0) {
+                a.sound(.hurt);
+                a.entity.missile = .{ .by = b.other orelse a.handle, .damage = n.thrown_damage };
+                _ = faceStriker(a);
+                a.animate(.down);
+                a.pause(true);
+                a.setFrame(1);
+                b.timer = n.knocked_off_ticks;
+                const v: Fixed = .parts(@intCast(n.knocked_off_x.whole()), a.entity.velocity.x.frac());
+                a.entity.velocity.x = if (a.entity.facingLeft()) v else v.neg();
+            }
+            a.entity.position.x = a.entity.position.x.add(a.entity.velocity.x);
+            b.timer -%= 1;
+            if (b.timer != 0) return;
+            const v = a.entity.velocity.x;
+            const slower: i32 = if (v.raw < 0) n.knocked_off_slowing.whole() else -n.knocked_off_slowing.whole();
+            a.entity.velocity.x = .parts(@intCast(v.whole() + slower), v.frac());
+            b.down = .flying;
+            b.slowing = false;
+            b.bounces = 0;
+            a.entity.flags.airborne = true;
         }
 
         /// Lying: a while drawn at its first tick, then it gets up.
@@ -1036,7 +1177,7 @@ pub fn Of(comptime M: type) type {
                 b.timer = 0;
                 return holdLook(a, holder);
             };
-            if (m.reaction == .knock_down and f != null and f.?.blow) {
+            if (m.reaction == .knock_down and holder.animation.frame == n.flipped_frame) {
                 // Flipped over: knocked down where it is, off the hold.
                 a.mind.state = .knocked_down;
                 b.fresh = false;
@@ -1138,9 +1279,10 @@ pub fn Of(comptime M: type) type {
                     a.animate(.thrown);
                     a.pause(true);
                     a.setFrame(1);
+                    // Its speeds: the throw's push (its holder's: Blaze throws farther), or its own.
                     const away: i32 = if (a.entity.position.x.lessThan(h.position.x)) -1 else 1;
-                    a.entity.velocity.x = n.thrown_x.times(away);
-                    a.entity.velocity.height = n.thrown_up;
+                    a.entity.velocity.x = (if (m.push_x != 0) Fixed.of(m.push_x) else n.thrown_x).times(away);
+                    a.entity.velocity.height = if (m.push_height != 0) Fixed.of(m.push_height) else n.thrown_up;
                     a.entity.flags.airborne = true;
                     a.takeDamage(holder, n.thrown_hurt);
                     b.down = .sliding;

@@ -127,6 +127,9 @@ pub const Reaction = enum {
     thrown,
     /// Held, it is slammed down where the hold lets it go, and knocked down a moment later.
     slammed,
+    /// Reeling, it is lifted: it rises and falls again, and reels on; a blow that knocks down
+    /// while it is up knocks it off, flying across.
+    lift,
 };
 
 /// A blow or an action: an animation, and what its blow does when it lands.

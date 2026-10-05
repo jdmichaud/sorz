@@ -151,7 +151,9 @@ fn pb(comptime ticks: []const u8) []const u8 {
 /// The numbers every enemy has (enemy.zig's common states), round 1's Galsias'.
 const enemy_numbers =
     \\"appears_from": -16, "appears_to": 335, "blink": 3, "blinks": 8, "bounce_most": 393216,
-    \\ "bounce_slowing": 16384, "fall_most": 1048576, "first_blink": 16, "flipped_up": -327680,
+    \\ "bounce_slowing": 16384, "fall_most": 1048576, "first_blink": 16, "flipped_frame": 1, "flipped_up": -327680,
+    \\ "lift_start": 2, "lift_up": -524288, "lift_up_even": -720896, "lift_thrown": 0, "lifted_reel": 12,
+    \\ "knocked_off_up": 65536, "knocked_off_x": 655360, "knocked_off_ticks": 10, "knocked_off_slowing": 131072,
     \\ "flipped_x": 196608, "gets_up_frame": 4, "grab_height": 8, "knocked_out_x": 655360,
     \\ "knocked_slowing": 21504, "knocked_up": -589824, "knocked_x": 458752, "lying": 16,
     \\ "knocked_back_x": 262144, "knocked_back_up": -458752,
