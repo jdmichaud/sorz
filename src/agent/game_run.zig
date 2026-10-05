@@ -9,8 +9,8 @@
 //!
 //! The trace: the scenes, as sor-remaster's trace names them; in a round, play's phases, the
 //! world at each display tick of the round's scenes but at each logic tick in play (the scene's
-//! tick `t` the round's), the scenes' sounds. The runner reads the game's state and never writes
-//! it.
+//! tick `t` the round's), the scenes' sounds; the probe (the fighters' frames and boxes) as the
+//! trace observes the round's world. The runner reads the game's state and never writes it.
 const std = @import("std");
 const sorz = @import("sorz");
 const scenario = @import("scenario.zig");
@@ -125,6 +125,8 @@ pub const Run = struct {
     out: world.Output = .{},
     body: scenario.Body,
     trace: ?*world.trace.Writer,
+    /// The probe, written with the trace (its entities' ids are the trace's).
+    probe: ?*scenario.Probe = null,
     stage: Stage = .to_menu,
     /// The display ticks into the stage, and into the tap under way (its button and pad).
     in_stage: u64 = 0,
@@ -369,6 +371,7 @@ pub const Run = struct {
             try tw.observeAt(v, r.trace_t, &r.play.world, &self.content.kinds, &self.out);
             try self.sounds(turn);
             self.noteIds(&r.play.world);
+            if (self.probe) |p| try p.observe(v, r.trace_t, &r.play.world, &self.content.kinds, &self.ids);
             return;
         }
         const tw = self.trace orelse return;
@@ -429,7 +432,7 @@ pub const Run = struct {
                 self.ids[i] = @as(u32, p) + 1;
                 continue;
             }
-            if (self.ids[i] != 0) continue;
+            // Asked again each tick: a place freed and taken in the same tick has a new entity.
             if (self.trace) |tw| self.ids[i] = tw.idOf(i, e.generation) orelse 0;
         }
     }

@@ -66,12 +66,12 @@ const usage =
     \\                   program's probe of the same run (the frames its entities show);
     \\                   --game-tick gives the round's clock (the other program's tick counter at
     \\                   the script's start, its `script_game_tick`); --trace-events writes its
-    \\                   semantic trace, --probe (with a situation) the fighters' frames, boxes
-    \\                   and power; a condition that does not come in time ends the run with
-    \\                   status 1; from power-on, --reload reads the state back from its
-    \\                   canonical form at each display tick and goes on from the state read
-    \\                   (a round trip: it must be the state written), --form-sizes writes the
-    \\                   form's size at each (tick, scene, entities, bytes)
+    \\                   semantic trace, --probe the fighters' frames, boxes and power (from
+    \\                   power-on, with the trace); a condition that does not come in time ends
+    \\                   the run with status 1; from power-on, --reload reads the state back
+    \\                   from its canonical form at each display tick and goes on from the state
+    \\                   read (a round trip: it must be the state written), --form-sizes writes
+    \\                   the form's size at each (tick, scene, entities, bytes)
     \\  trace-compare    compare two semantic traces (sor-remaster's docs/traces.md): the first
     \\                   difference and the counts per kind of event; events match within
     \\                   --ticks M ticks, positions and speeds within --pos PIXELS, a field

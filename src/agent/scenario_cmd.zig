@@ -2,8 +2,9 @@
 //! scenario's run, its trace and its probe written, and one JSON line: the scenario's end
 //! (`done`, or what stopped it, with the `line` of a condition that did not come in time), the
 //! display tick of the script's tick 0 and the kinds the situation had that the content does not
-//! define. Without a situation, the whole game runs from power-on (game_run.zig: no probe);
-//! with one, the round's world alone from that situation (scenario.zig). A scenario that stops
+//! define. Without a situation, the whole game runs from power-on (game_run.zig: its probe needs
+//! its trace, whose ids it has); with one, the round's world alone from that situation
+//! (scenario.zig). A scenario that stops
 //! early exits with status 1, its trace written up to there.
 const std = @import("std");
 const sorz = @import("sorz");
@@ -140,8 +141,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
 
 /// The scenario from power-on: the whole game, its start through the screens (game_run.zig).
 fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, options: Options, script: *const scenario.Script, out: *std.Io.Writer) !bool {
-    if (options.probe != null) {
-        std.log.err("a run from power-on writes no probe (--probe needs --situation)", .{});
+    if (options.probe != null and options.trace == null) {
+        std.log.err("a run from power-on writes its probe with its trace (--probe needs --trace-events)", .{});
         return error.BadOptions;
     }
     var diag: sorz.formats.json.Diagnostic = .{};
@@ -183,7 +184,18 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
             return error.BadScenario;
         };
     }
+    var probe_file: ?std.Io.File = null;
+    defer if (probe_file) |f| f.close(io);
+    var probe_buf: [1 << 16]u8 = undefined;
+    var probe_writer: std.Io.File.Writer = undefined;
+    var probe: scenario.Probe = undefined;
+    if (options.probe) |path| {
+        probe_file = try cwd.createFile(io, path, .{});
+        probe_writer = probe_file.?.writerStreaming(io, &probe_buf);
+        probe = .{ .w = &probe_writer.interface };
+    }
     var r: game_run.Run = .init(c, &assets_found, script, pads, if (options.trace != null) &tw else null);
+    if (options.probe != null) r.probe = &probe;
     var sound: ?game_run.Sound = if (options.wav != null) try .init(gpa, &c.sounds) else null;
     defer if (sound) |*s| s.deinit();
     if (sound) |*s| r.sound = s;
@@ -210,6 +222,7 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
         try tw.end();
         try trace_writer.interface.flush();
     }
+    if (options.probe != null) try probe_writer.interface.flush();
     if (sound) |*s| try agent_wav.write(gpa, io, options.wav.?, s.pcm.items, sorz.sound_out.channels, sorz.sound_out.rate);
     if (options.form_sizes != null) try sizes_writer.interface.flush();
     try out.print("{{\"scenario\":\"{s}\"", .{r.failure orelse "done"});

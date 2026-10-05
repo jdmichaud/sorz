@@ -764,6 +764,8 @@ pub const Run = struct {
     /// The trace ids of the entities, by their place in the world (the situation's, then the
     /// trace's own), for the conditions.
     ids: [world.entity.capacity]u32 = @splat(0),
+    /// The generation each id is of: a place freed and taken in the same tick has a new entity.
+    generations: [world.entity.capacity]u16 = @splat(0),
     /// What stopped the run before the script's end, and the kinds the situation had that the
     /// content does not.
     failure: ?[]const u8 = null,
@@ -885,6 +887,7 @@ pub const Run = struct {
             const h = m.h;
             const e = m.e;
             r.ids[h.index] = e.id;
+            r.generations[h.index] = h.generation;
             if (trace) |tw| tw.assignId(h.index, h.generation, e.id);
             var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
             t.takeUp(h, @intCast(situation.t -| e.since));
@@ -1131,6 +1134,7 @@ pub const Run = struct {
             if (e.health) |hp| x.health = @intCast(hp);
             if (x.team == .enemy) takeUpSpawn(self.kinds, x, e, self.round, &self.used);
             self.ids[h.index] = e.id;
+            self.generations[h.index] = h.generation;
             if (self.trace) |tw| tw.assignId(h.index, h.generation, e.id);
             var t: world.tick.Tick = .{ .world = w, .kinds = self.kinds, .random = &self.random, .out = &self.out };
             t.takeUp(h, 0);
@@ -1145,8 +1149,9 @@ pub const Run = struct {
                 self.ids[i] = 0;
                 continue;
             }
-            if (self.ids[i] != 0) continue;
+            if (self.ids[i] != 0 and self.generations[i] == e.generation) continue;
             const h = w.handleAt(i).?;
+            self.generations[i] = e.generation;
             self.ids[i] = if (self.trace) |tw| tw.idOf(i, e.generation) orelse 0 else 0;
             if (self.ids[i] == 0) if (w.playerOf(h)) |p| {
                 self.ids[i] = @as(u32, p) + 1;
