@@ -452,6 +452,57 @@ fn continueQuestion(arena: std.mem.Allocator, rom: []const u8) !records.Continue
     };
 }
 
+/// The name entry of a player out of lives whose score enters the high-score table (0x56E6: its
+/// start 0x56F6, its tick 0x57D2), on its part of the status bar: its name's row and score where
+/// play shows them (0x5768: the rows at 0x57C2 and 0x57CA, which are the bar's, from the bar's
+/// name cell); "NAME" (the two longs of tiles at 0x5728 and 0x572E, from lea $FF605A at 0x5710),
+/// the end mark's tile after the three places (move.w #$7E8,(8,a2) at 0x5734, past the label's
+/// 8 bytes), the letters' first place (lea $FF6064 at 0x58E0); player 2's places 52 bytes on (lea
+/// (52,a2) at 0x5720 and 0x58EC); the letters a place goes through, the table at 0x5904 (a code
+/// of the font each; as many as cmpi.w #N,d1 at 0x58AA says, the last the end mark), and three
+/// places (cmpi.w #6,(96,a0) at 0x583E).
+fn nameEntry(arena: std.mem.Allocator, rom: []const u8, players: *const [2]records.BarPlayer) !records.NameEntry {
+    if (u16be(rom, 0x5768) != 0x45F9 or u32be(rom, 0x576A) != 0xFF0000 + image_ram + 0x0A) return error.BadData;
+    for ([_]u32{ 0x57C2, 0x57CA }, players) |row, *p| if (!std.mem.eql(u8, try rowText(arena, rom, row), p.name)) return error.BadData;
+    _ = try leaCell(rom, 0x5710, 0x45F9);
+    const label_offset: u16 = u16be(rom, 0x5714) - image_ram;
+    var label: std.ArrayList(u8) = .empty;
+    for ([_]u32{ 0x5728, 0x572E }) |at| {
+        if (u16be(rom, at) != 0x24FC) return error.BadData;
+        for (0..2) |k| try label.appendSlice(arena, try glyphOf(u16be(rom, at + 2 + 2 * @as(u32, @intCast(k)))));
+    }
+    if (u16be(rom, 0x5734) != 0x357C) return error.BadData;
+    const mark_tile = u16be(rom, 0x5736);
+    const mark_offset = label_offset + 8 + u16be(rom, 0x5738);
+    if (u16be(rom, 0x58E0) != 0x45F9 or u16be(rom, 0x58E2) != 0xFF) return error.BadData;
+    const first_offset = u16be(rom, 0x58E4) - image_ram;
+    for ([_]u32{ 0x5720, 0x58EC }) |at| if (u16be(rom, at) != 0x45EA or u16be(rom, at + 2) != 52) return error.BadData;
+    const count = try immediate(rom, 0x58AA, &.{ 0x0C, 0x41 }, 2);
+    if (try immediate(rom, 0x5832, &.{ 0x0C, 0x68 }, 2) != count - 1 or rom[0x58B8] != 0x72 or rom[0x58B9] != count - 1) return error.BadData;
+    if (try immediate(rom, 0x583E, &.{ 0x0C, 0x68 }, 2) != 2 * 3) return error.BadData;
+    const letters = try arena.alloc([]const u8, count);
+    for (letters, 0..) |*l, k| l.* = try glyphOf(font_base + @as(u16, rom[0x5904 + k]));
+    if (font_base + @as(u16, rom[0x5904 + count - 1]) != mark_tile) return error.BadData;
+    var places: [2]records.NamePlaces = undefined;
+    for (&places, 0..) |*p, k| {
+        const second: u16 = @intCast(52 * k);
+        p.* = .{ .label = cellAt(label_offset + second), .first = cellAt(first_offset + second), .mark = cellAt(mark_offset + second) };
+    }
+    return .{
+        .provenance = "the name entry (0x56E6: its start 0x056F6, its tick 0x057D2): the player's part cleared (0x05620, 0x0563E), its name's row and score where play has them (0x05768: the rows at 0x057C2 and 0x057CA); the label's tiles (move.l at 0x05728 and 0x0572E, lea $FF605A at 0x05710), the end mark's after the places (move.w #N,(8,a2) at 0x05734), the letters' first place (lea $FF6064 at 0x058E0), player 2's 52 bytes on (lea (52,a2) at 0x05720 and 0x058EC); the letters, the font's codes of the table at 0x05904, as many as cmpi.w #N,d1 at 0x058AA (the last the end mark: cmpi.w #N,(98,a0) at 0x05832); three places (cmpi.w #6,(96,a0) at 0x0583E)",
+        .label = label.items,
+        .letters = letters,
+        .players = places,
+    };
+}
+
+/// The glyph of the game's font that tile `tile` (from the font's base) draws.
+fn glyphOf(tile: u16) ![]const u8 {
+    if (tile < font_base) return error.BadData;
+    for (fonts.main_glyphs) |g| if (g.tile == tile - font_base) return g.text;
+    return error.BadData;
+}
+
 /// The enemies' bars' over-full looks (0x11876): from the pixels compared (cmpi.w #N,d0), the
 /// cell's word the ten cells take (move.l #N,d1, the word twice).
 const Over = struct { from: [2]u16, tiles: [2]u16 };
@@ -682,6 +733,7 @@ pub fn extract(b: *Builder) !records.Round {
             .bosses = try bosses(arena, rom, over.from),
         },
         .continue_question = try continueQuestion(arena, rom),
+        .name_entry = try nameEntry(arena, rom, &players),
         .clear = clear,
     };
 }

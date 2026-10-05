@@ -727,12 +727,16 @@ pub fn playerWaiting(arena: std.mem.Allocator, rom: []const u8) Error!entity.Def
     if (blink >> 8 != blink & 0xFF) return error.BadData;
     try d.number("cursor_blink", blink & 0xFF, "ROM 0x054B6 (move.w #N,($60,a0): the cursor's ticks shown and hidden)");
     try d.number("out_wait", try immediate(rom, 0x5488, &.{ 0x11, 0x7C }, 2), "ROM 0x05488 (move.b #N,($60,a0): the game over's ticks when no continue is left)");
+    // The name entry (0x56E6), which a player whose score enters the high-score table makes first.
+    if (u16be(rom, 0x574C) != 0x217C or u16be(rom, 0x574E) != u16be(rom, 0x5750) or u16be(rom, 0x5752) != 0x64) return error.BadData;
+    try d.number("name_blink", u16be(rom, 0x574E), "ROM 0x0574C (move.l #N,($64,a0): the name entry's letter's ticks shown and hidden, and the first count)");
+    try d.number("letters", try immediate(rom, 0x58AA, &.{ 0x0C, 0x41 }, 2), "ROM 0x058AA (cmpi.w #N,d1: the letters a place goes through, the last the end mark)");
     if (rom[0x52CA] != 0x7E or rom[0x5288] != 0x7E) return error.BadData;
     try d.sound("cursor", rom[0x52CB]);
     try d.sound("game_over", rom[0x5289]);
     return .{
         .name = "player_waiting",
-        .provenance = try std.fmt.allocPrint(arena, "the waiting player (type $F, 0x5218): the continue's question (0x52AE), the game over's count (0x5278); its sounds ROM 0x052CA and 0x05288 (moveq #N,d7); the count after a NO, 256 ticks (its timer cleared, 0x5256){s}", .{d.number_notes.items}),
+        .provenance = try std.fmt.allocPrint(arena, "the waiting player (type $F, 0x5218): the continue's question (0x52AE), the game over's count (0x5278); its sounds ROM 0x052CA and 0x05288 (moveq #N,d7); the count after a NO, 256 ticks (its timer cleared, 0x5256); marked at its death for the high scores (0x2B48, 0x12730), the name entry first (0x56E6: its start 0x56F6, its tick 0x57D2, its end 0x5846 and the table's entry 0x12784){s}", .{d.number_notes.items}),
         .family = .player,
         .team = .neutral,
         .behaviour = "player_waiting",

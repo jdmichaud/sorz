@@ -1,8 +1,9 @@
 //! The fonts (graphics port map 2.5): which tile of a font's sheet draws which character. The
 //! game's font (the Nemesis stream 0x1CEC0) codes a character by its tile: blank 0, A-Z 1-26,
-//! 0-9 27-36, and its signs 37-48, read off the glyphs; its italic face (the Kosinski block
-//! 0x389A0) has the same tiles. The profiles' font (0x38BB0) shares the letters, and has its
-//! signs and digits after them.
+//! 0-9 27-36, and its signs 37-48, read off the glyphs (40 is the name entry's end mark, "ED"
+//! drawn as one sign: the entry's table at 0x5904 gives it after Z); its italic face (the
+//! Kosinski block 0x389A0) has the same tiles. The profiles' font (0x38BB0) shares the letters,
+//! and has its signs and digits after them.
 const std = @import("std");
 const sorz = @import("sorz");
 const art = sorz.content.art;
@@ -24,10 +25,10 @@ fn digits(comptime first: u16) [10]Glyph {
 }
 
 pub const main_glyphs = [_]Glyph{.{ .text = " ", .tile = 0 }} ++ letters ++ digits(27) ++ [_]Glyph{
-    .{ .text = "x", .tile = 37 },   .{ .text = "-", .tile = 38 },  .{ .text = "->", .tile = 39 },
-    .{ .text = "(c)", .tile = 40 }, .{ .text = ".", .tile = 41 },  .{ .text = ",", .tile = 42 },
-    .{ .text = "'", .tile = 43 },   .{ .text = "\"", .tile = 44 }, .{ .text = "?", .tile = 45 },
-    .{ .text = "!", .tile = 46 },   .{ .text = ":", .tile = 47 },  .{ .text = ";", .tile = 48 },
+    .{ .text = "x", .tile = 37 },    .{ .text = "-", .tile = 38 },  .{ .text = "->", .tile = 39 },
+    .{ .text = "(ED)", .tile = 40 }, .{ .text = ".", .tile = 41 },  .{ .text = ",", .tile = 42 },
+    .{ .text = "'", .tile = 43 },    .{ .text = "\"", .tile = 44 }, .{ .text = "?", .tile = 45 },
+    .{ .text = "!", .tile = 46 },    .{ .text = ":", .tile = 47 },  .{ .text = ";", .tile = 48 },
 };
 
 pub const intro_glyphs = [_]Glyph{.{ .text = " ", .tile = 0 }} ++ letters ++ [_]Glyph{

@@ -132,7 +132,7 @@ Every field is optional. The kinds of asset are separate: a sheet and a map may 
   tiles the game copies to show the frame, a copy each (a player's frames: the parts of the
   players' art it has, 34 and 32 tiles), whose time holds the sound's processor (A4).
 - **Fonts.** `tiles` is the full name of the font's sheet; `glyphs` maps each glyph's text to its
-  tile. A glyph may be several characters (`"->"`, `"(c)"`); a text is read longest glyph first.
+  tile. A glyph may be several characters (`"->"`, `"(ED)"`); a text is read longest glyph first.
 
 ### Why a sprite frame is one picture
 
@@ -227,8 +227,8 @@ The optional fields are written only when they are not their defaults, so a file
 written again keeps its bytes. The extractor writes Axel (`axel`, behaviour `player`), round 1's
 Galsia (`galsia`), a stand-in for the special attack's police car (`police_car`), the GO arrow
 a section's opening shows (`go_arrow`) and a player out of lives (`player_waiting`: no art, the
-continue's question's numbers and sounds); the other characters and enemies come with PLAN items
-12 to 15. Their numbers are read from the ROM's
+name entry's and the continue's question's numbers and sounds); the other characters and enemies
+come with PLAN items 12 to 15. Their numbers are read from the ROM's
 tables and from the immediate values of the code that uses them, each with its place in the
 definition's provenance, but the car's times, which the original's car, camera and shells make
 together: those are measured in sor-remaster and said so.
@@ -291,7 +291,12 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   part, and each player's places (`players`: the first cell `cleared` of each row, the
   `question`, the `answer`, the cursor's `yes` and `no`, and `out`, where a player out of the game
   has `game_over` blink); `frame`, the game over's text over the picture while the last player
-  counts the game over down. `clear`, the round's clear: the `header` ("ROUND n CLEAR", a map of
+  counts the game over down. `name_entry`, the name entry of a player out of lives whose score
+  enters the high-score table, on its part of the bar (cleared; its name and score where play
+  shows them): the `label` and, for each player (`players`), the label's cell (`label`), the
+  first of the name's three places (`first`) and the end mark's cell after them (`mark`); the
+  `letters` a place goes through, the last the end mark, which ends the entry (a high-score
+  entry shows it as a space). `clear`, the round's clear: the `header` ("ROUND n CLEAR", a map of
   the `round_end` set) on plane A from `header_at`, the round's number a big digit at its cell
   `number`; the bonuses' `lines` (the clear's, the time's, the level's: each a `text` from its
   cell `at` of plane A), a bonus's digits over the line's zeros from its `digits`th letter, in the `normal`

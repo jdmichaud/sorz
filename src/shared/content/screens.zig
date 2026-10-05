@@ -196,6 +196,22 @@ pub const Continue = struct {
     frame: []const u8,
 };
 
+/// A player's places of the name entry: the label's first cell, the first letter's (the others
+/// follow it), the end mark's after them.
+pub const NamePlaces = struct { label: Cell, first: Cell, mark: Cell };
+
+/// The name entry of a player out of lives whose score enters the high-score table, on its part
+/// of the status bar: its part cleared, its name and score where play shows them, then on the
+/// second row the label, the name's letters and the end mark after them. Texts of `fonts/main`.
+pub const NameEntry = struct {
+    provenance: []const u8 = "",
+    label: []const u8,
+    /// The letters a place goes through, in their order; the last is the end mark, which ends the
+    /// entry (the table shows it as a space).
+    letters: []const []const u8,
+    players: [2]NamePlaces,
+};
+
 /// A line of the round's clear: its text (`fonts/main`) from its cell of plane A.
 pub const ClearLine = struct { text: []const u8, at: Cell };
 
@@ -233,6 +249,7 @@ pub const Round = struct {
     time_over: TimeOver,
     status_bar: StatusBar,
     continue_question: Continue,
+    name_entry: NameEntry,
     clear: Clear,
 };
 
@@ -468,7 +485,44 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
             .{ .key = "players", .value = .{ .array = places } },
             .{ .key = "frame", .value = .{ .str = cq.frame } },
         }) },
+        .{ .key = "name_entry", .value = try nameEntryValue(arena, &r.name_entry) },
     });
+}
+
+fn nameEntryValue(arena: std.mem.Allocator, ne: *const NameEntry) !json.Value {
+    const places = try arena.alloc(json.Value, 2);
+    for (places, &ne.players) |*o, *p| o.* = try obj(arena, &.{
+        .{ .key = "label", .value = try cellValue(arena, p.label) },
+        .{ .key = "first", .value = try cellValue(arena, p.first) },
+        .{ .key = "mark", .value = try cellValue(arena, p.mark) },
+    });
+    return withProvenance(arena, ne.provenance, &.{
+        .{ .key = "label", .value = .{ .str = ne.label } },
+        .{ .key = "letters", .value = try strings(arena, ne.letters) },
+        .{ .key = "players", .value = .{ .array = places } },
+    });
+}
+
+fn readNameEntry(arena: std.mem.Allocator, n: json.Node) Error!NameEntry {
+    try n.only(&.{ "provenance", "label", "letters", "players" });
+    const l = try n.get("letters");
+    const letters = try arena.alloc([]const u8, try l.len());
+    for (letters, 0..) |*o, k| o.* = try (try l.at(k)).string();
+    if (letters.len == 0) return l.fail("no letters");
+    const ps = try n.get("players");
+    if (try ps.len() != 2) return ps.fail("not the two players'");
+    var places: [2]NamePlaces = undefined;
+    for (&places, 0..) |*o, k| {
+        const e = try ps.at(k);
+        try e.only(&.{ "label", "first", "mark" });
+        o.* = .{ .label = try readCell(try e.get("label")), .first = try readCell(try e.get("first")), .mark = try readCell(try e.get("mark")) };
+    }
+    return .{
+        .provenance = if (try n.opt("provenance")) |x| try x.string() else "",
+        .label = try (try n.get("label")).string(),
+        .letters = letters,
+        .players = places,
+    };
 }
 
 /// The JSON of record `name` of `s`.
@@ -596,7 +650,7 @@ fn readFrame(n: json.Node, a: ?*const art.Art) Error![]const u8 {
 }
 
 fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!Round {
-    try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue", "clear" });
+    try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue", "name_entry", "clear" });
     const b = try n.get("banner");
     try b.only(&.{ "provenance", "left", "numbers", "right", "fade", "in", "in_ticks", "wait", "out", "out_ticks", "after" });
     const ns = try b.get("numbers");
@@ -666,6 +720,7 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
             .players = places,
             .frame = try readFrame(try c.get("frame"), a),
         },
+        .name_entry = try readNameEntry(arena, try n.get("name_entry")),
         .banner = .{
             .provenance = if (try b.opt("provenance")) |x| try x.string() else "",
             .left = try readFrame(try b.get("left"), a),
@@ -855,6 +910,14 @@ test "the screens' records write and read back the same" {
                     .{ .cleared = .{ .{ .x = 21, .y = 1 }, .{ .x = 21, .y = 2 } }, .question = .{ .x = 29, .y = 1 }, .answer = .{ .x = 29, .y = 2 }, .yes = .{ .x = 27, .y = 1 }, .no = .{ .x = 27, .y = 2 }, .out = .{ .x = 27, .y = 2 } },
                 },
                 .frame = "play/game_over",
+            },
+            .name_entry = .{
+                .label = "NAME",
+                .letters = &.{ "A", "B", "(ED)" },
+                .players = .{
+                    .{ .label = .{ .x = 1, .y = 2 }, .first = .{ .x = 6, .y = 2 }, .mark = .{ .x = 9, .y = 2 } },
+                    .{ .label = .{ .x = 27, .y = 2 }, .first = .{ .x = 32, .y = 2 }, .mark = .{ .x = 35, .y = 2 } },
+                },
             },
             .clear = .{
                 .header = "round_end/header",
