@@ -483,10 +483,15 @@ fn enemyRecord(rom: []const u8, s: *round.Spawn, t: u8, variant: u8, offsets: u8
         s.bar = offsets;
         return;
     }
-    // Round 3's boss (type $30, 0x144D2): a variant by its byte's low nibble (bit 0: no helper
-    // of its own), its bar.
+    // Round 3's boss (type $30, 0x144D2): a variant by its byte (bit 0: no helper of its own,
+    // and the low nibble a variant: 0x1527A, 0x152C0, as one), its bar; by its palette byte's
+    // high nibble, at his knockout's end (0x15444), his beating the round's end (0) or he goes
+    // as an enemy (1: round 5's reserves, $14; 2, the helper with him and more health, in no
+    // script). The palette byte's low nibble is a reserve's boss's colours (reserveBoss).
     if (t == 0x30) {
-        if (variant & 0xF != 0) s.traits.insert(.twin);
+        if (variant > 1 or palette >> 4 > 1) return error.BadData;
+        if (variant != 0) s.traits.insert(.twin);
+        if (palette >> 4 == 1) s.traits.insert(.goes_as_enemy);
         s.bar = offsets;
         return;
     }

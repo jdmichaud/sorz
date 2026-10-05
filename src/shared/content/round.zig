@@ -49,6 +49,9 @@ pub const Trait = enum {
     stirs,
     /// A juggler juggles the other knives.
     knives_b,
+    /// A boss whose beating is not the round's end: he goes as an enemy (round 5's round 3's
+    /// bosses).
+    goes_as_enemy,
 };
 
 pub const Traits = std.EnumSet(Trait);

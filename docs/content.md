@@ -510,11 +510,12 @@ A record of `placed`, `wave` or `reserve` is one entity:
   `true` when it has it (`waits_for_camera`: it stays hidden until the camera has reached its
   place, not only until its place is on the screen; `slow`, `closes_in_after_lurking`, `pipe_b`,
   `slides`, `flips_away`, `drops_in`, `flips_at_close_range`, `unflinching`, `walks_off`,
-  `twin`, a boss's: round 3's boss a variant); `offset`, where it keeps from its target (`x` away
-  from it, `depth`); `offset_nibbles`, the indices of that offset in its kind's `offsets` table
-  (across in the high nibble, in depth in the low), for a kind that counts on from them (the
-  acrobat trio's others: role 1 one on in depth); `strength`, its
-  row of strength and colours (0 when absent): its health, its blows' damage and its points are
+  `twin`, a boss's: round 3's boss a variant; `goes_as_enemy`, a boss's whose beating is not the
+  round's end: he goes as an enemy, round 5's round 3's bosses); `offset`, where it keeps from
+  its target (`x` away from it, `depth`); `offset_nibbles`, the indices of that offset in its
+  kind's `offsets` table (across in the high nibble, in depth in the low), for a kind that counts
+  on from them (the acrobat trio's others: role 1 one on in depth); `strength`, its row of
+  strength and colours (0 when absent): its health, its blows' damage and its points are
   its kind's tables' `strength_health`, `strength_power` and `strength_points` at it; `colours`,
   its colours by number (`enemy_colours`); `art`, its art by number (the art slots hold it).
 - A breakable's (an oil drum's too): `holds`, the kind of the item it leaves. A boss's: `bar`,

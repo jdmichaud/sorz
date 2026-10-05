@@ -172,7 +172,9 @@ pub const Traits = packed struct(u16) {
     stirs: bool = false,
     /// A juggler juggles the other knives.
     knives_b: bool = false,
-    _: u3 = 0,
+    /// A boss whose beating is not the round's end: he goes as an enemy.
+    goes_as_enemy: bool = false,
+    _: u2 = 0,
 };
 
 /// A thing flying or swung as a blow: a body thrown, a weapon in the hand or thrown. What its

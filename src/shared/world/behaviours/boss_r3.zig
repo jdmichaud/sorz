@@ -17,7 +17,9 @@
 //!   is thrown (`thrown`), thrown over (`thrown_over`) and slammed (`slammed`); the hold breaks
 //!   after a while;
 //! - `knocked_out`: his health gone, the fight is over: the section's enemies knocked down, he
-//!   rises, sits, drops, his points, he blinks out, and the round is won.
+//!   rises, sits, drops, his points, he blinks out, and the round is won; one whose beating is
+//!   not the round's end (`goes_as_enemy`: round 5's, a variant, which blinks out at once) goes
+//!   as an enemy, counted off as a boss (script.zig's `bossCountedOff`).
 //! A player's new life knocks him away; the special attack holds him still and costs him health
 //! at its end. His numbers, animations and sounds are his definition's (`entities/boss_r3.json`).
 const std = @import("std");
@@ -1480,8 +1482,9 @@ fn knockedOut(a: Actor) void {
     }
 }
 
-/// After his knockout: with a helper left he is done (the helper clears him); else the round is
-/// won and his part goes.
+/// After his knockout: with a helper left he is done (the helper clears him); else his part
+/// goes, and the round is won, or (one whose beating is not the round's end) he goes as an
+/// enemy, counted off as a boss.
 fn ended(a: Actor) void {
     const m = a.mind;
     if (helperOf(a) != null) {
@@ -1490,6 +1493,10 @@ fn ended(a: Actor) void {
     }
     if (m.part) |p| if (a.other(p) != null) a.tick.world.remove(p);
     m.part = null;
+    if (a.entity.spawn.traits.goes_as_enemy) {
+        a.remove();
+        return script.bossCountedOff(a.tick);
+    }
     if (m.step != 6) a.tick.roundWon();
     m.step = 6;
 }
