@@ -27,9 +27,9 @@ pub const capacity = entity.capacity;
 pub const Command = struct {
     held: input.Pad = .{},
     pressed: input.Pad = .{},
-    /// The presses of the logic tick's first display tick alone (those a player waiting to
-    /// continue reads, as the original's reads its pad there).
-    first: input.Pad = .{},
+    /// The presses of the last read alone (those a player waiting to continue reads, as the
+    /// original's reads its pad there).
+    last: input.Pad = .{},
 };
 
 /// The most a player's score holds (six digits, the last two always 0).

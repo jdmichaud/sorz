@@ -1,5 +1,5 @@
 //! A player out of lives (the original's waiting player): hidden, it reads the
-//! presses of its pad at the logic tick's first display tick. While it has continues left it asks
+//! presses of its pad's last read (schedule.zig). While it has continues left it asks
 //! the continue's question on the status bar: up or down moves the cursor between YES and the
 //! other answer (with its sound), the cursor blinks, A, B, C or START answers at the next tick.
 //! YES spends a continue and its player plays again
@@ -51,7 +51,7 @@ pub fn control(a: Actor, c: Command) void {
     switch (a.mind.state) {
         .begin => begin(a),
         .continue_choose => {
-            const p = c.first;
+            const p = c.last;
             if (p.up or p.down) {
                 a.mind.cursor = if (a.mind.cursor == .yes) .no else .yes;
                 a.sound(.cursor);

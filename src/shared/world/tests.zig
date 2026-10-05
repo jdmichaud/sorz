@@ -574,6 +574,12 @@ test "play: the logic at every other display tick, with both display ticks' pads
     try testing.expect(!play.displayTick(&f.kinds, &rng, .{}, &out));
     try testing.expectEqual(@as(usize, 1), out.sprites.len);
     try testing.expectEqualStrings("punch_0", out.sprites.items[0].frame.name);
+    // C only at a second display tick: the logic tick then does not see it; the next one does.
+    try testing.expect(play.displayTick(&f.kinds, &rng, .{ .pad1 = .{ .c = true } }, &out));
+    try testing.expect(!play.world.players[0].command.pressed.c);
+    try testing.expect(!play.displayTick(&f.kinds, &rng, .{}, &out));
+    try testing.expect(play.displayTick(&f.kinds, &rng, .{}, &out));
+    try testing.expect(play.world.players[0].command.pressed.c);
     // A screen at 60 a second runs its logic at each display tick, with that tick's pads twice.
     var screen: schedule.Play = .{ .schedule = .{ .rate = .display } };
     _ = try withHero(&f, &screen.world);

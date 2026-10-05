@@ -178,6 +178,9 @@ pub const Round = struct {
     shown_banner: i16 = 0,
     shown_bar: Bar = .{},
     shown_game_over: bool = false,
+    /// The pause's text shows: in the pause, and a display tick after it ended (`resumed`).
+    shown_pause: bool = false,
+    resumed: bool = false,
     join: Join = .{},
     out_blinks: [2]OutBlink = .{ .{}, .{} },
     /// The last player out of the game is at its game over: the round ends at the next tick.
@@ -265,6 +268,8 @@ pub const Round = struct {
     pub fn tick(self: *Round, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
         self.colours.latch();
         self.shown_phase = self.phase;
+        self.shown_pause = self.phase == .paused or self.resumed;
+        self.resumed = false;
         self.shown_banner = self.banner;
         self.shown_bar = self.bar();
         self.shown_game_over = self.gameOver() != null;
@@ -326,12 +331,14 @@ pub const Round = struct {
                 self.phase = .play;
                 self.play.schedule = .{ .rate = .play };
             },
-            .play => return self.playTick(turn, a),
+            .play => return self.playTick(turn, a, true),
+            // START in the pause ends it (its text shows a display tick longer).
             .paused => if (self.startPressed(turn)) {
                 self.phase = .play;
+                self.resumed = true;
                 turn.play(a.pause);
                 self.play.schedule = .{ .rate = .play };
-                return self.playTick(turn, a);
+                return self.playTick(turn, a, false);
             },
             .time_over => {
                 if (self.left == a.screen.time_over.ticks) turn.play(a.time_up);
@@ -393,11 +400,11 @@ pub const Round = struct {
         return null;
     }
 
-    /// A display tick of play: START is heard (a pause at the next logic tick's start), and at
-    /// a logic tick's end the world's sounds go out, the colours cycle, and the time running out,
-    /// the round won, end play.
-    fn playTick(self: *Round, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
-        if (self.startPressed(turn)) self.start_pressed = true;
+    /// A display tick of play: START is heard (`hear_start`: not at the tick a pause ends; a pause
+    /// at the next logic tick's start), and at a logic tick's end the world's sounds go out, the
+    /// colours cycle, and the time running out, the round won, the game over end play.
+    fn playTick(self: *Round, turn: *scene.Turn, a: *const Assets, hear_start: bool) ?flow.Exit {
+        if (hear_start and self.startPressed(turn)) self.start_pressed = true;
         if (self.play.schedule.into == 0 and self.start_pressed) {
             self.start_pressed = false;
             self.phase = .paused;
@@ -586,10 +593,10 @@ pub const Round = struct {
                 try v.sprites.append(v.gpa, .of(a.banner_number, 0, self.shown_banner));
                 try v.sprites.append(v.gpa, .of(a.banner_right, -self.shown_banner, 0));
             },
-            .paused => try v.sprites.append(v.gpa, .of(a.pause_text, 0, 0)),
             .time_over => try v.sprites.append(v.gpa, .of(a.time_over_text, 0, 0)),
             else => {},
         }
+        if (self.shown_pause) try v.sprites.append(v.gpa, .of(a.pause_text, 0, 0));
         if (self.shown_game_over) try v.sprites.append(v.gpa, .of(a.game_over_text, 0, 0));
     }
 };

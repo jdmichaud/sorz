@@ -1,8 +1,10 @@
 //! Time (DESIGN.md 10.2, T1, T2, decision D13): which display ticks run the logic, in one place.
 //! The display tick is the console's frame, 59.92 a second; presentation, fades and the sound
 //! count display ticks. In play the original runs its logic every other display tick (30 a
-//! second), reading the pads at both, and draws what the last logic tick left at each; screens
-//! that run at 60 a second run their logic every display tick.
+//! second), and draws what the last logic tick left at each; screens that run at 60 a second
+//! run their logic every display tick. It reads the pads at both: its players act on the read of
+//! the logic tick's first display tick, with the buttons the read of the display tick before (the
+//! last tick's second) had; the read of a logic tick's second display tick counts at the next.
 //!
 //! `Play` is a round's world on that clock: the scene that plays a round (PLAN item 13) holds it
 //! in its state and gives it each display tick's pads, and draws the output's sprites at every
@@ -50,12 +52,14 @@ pub const Schedule = struct {
 pub const Play = struct {
     world: world_mod.World = .{},
     schedule: Schedule = .{ .rate = .play },
-    /// The pads read at the first display tick of the logic tick under way.
+    /// The pads read at the first display tick of the logic tick under way, and at the second
+    /// display tick of the last one.
     first: input.Pads = .{},
+    second: input.Pads = .{},
 
     /// One display tick with its pads: at the end of a logic tick, the world's systems run with
-    /// the pads of its two display ticks, and `out` takes the tick's output. Returns whether the
-    /// logic ran.
+    /// the pads its players act on (the last logic tick's second display tick's, then its first
+    /// display tick's), and `out` takes the tick's output. Returns whether the logic ran.
     pub fn displayTick(self: *Play, kinds: *const kinds_mod.Kinds, rng: *random.Random, pads: input.Pads, out: *output.Output) bool {
         return self.roundTick(kinds, rng, pads, out, null);
     }
@@ -67,8 +71,12 @@ pub const Play = struct {
             self.first = pads;
             return false;
         }
-        const first = if (self.schedule.rate == .play) self.first else pads;
-        systems.runRound(&self.world, kinds, rng, .{ .pads = .{ first, pads } }, out, plan);
+        const in: tick_mod.Input = switch (self.schedule.rate) {
+            .play => .{ .pads = .{ self.second, self.first } },
+            .display => .steady(pads),
+        };
+        self.second = pads;
+        systems.runRound(&self.world, kinds, rng, in, out, plan);
         return true;
     }
 };

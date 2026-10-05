@@ -104,7 +104,7 @@ fn commands(t: *Tick) void {
         p.command = .{
             .held = @bitCast((last & directions) | ((first | last) & buttons)),
             .pressed = @bitCast((last_new & directions) | ((first_new | last_new) & buttons)),
-            .first = @bitCast(first_new),
+            .last = @bitCast(last_new),
         };
         p.last = @bitCast(last);
     }

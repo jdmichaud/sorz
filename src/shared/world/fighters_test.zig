@@ -243,9 +243,10 @@ const Round = struct {
         systems.run(&r.w, &r.f.kinds, &r.rng, tick_mod.Input.steady(pads), &r.out);
     }
 
-    /// A tick of the round's world following `plan` (its script, its timer, its lives).
+    /// A tick of the round's world following `plan` (its script, its timer, its lives); the
+    /// buttons pressed at its last read (as the waiting player reads them).
     fn stepPlan(r: *Round, pads: input.Pads, plan: *const script.Plan) void {
-        systems.runRound(&r.w, &r.f.kinds, &r.rng, tick_mod.Input.steady(pads), &r.out, plan);
+        systems.runRound(&r.w, &r.f.kinds, &r.rng, .{ .pads = .{ .{}, pads } }, &r.out, plan);
     }
 
     fn player(r: *Round) *entity.Entity {

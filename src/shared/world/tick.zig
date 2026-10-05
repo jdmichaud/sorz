@@ -30,8 +30,9 @@ const Command = world_mod.Command;
 const Output = output.Output;
 const capacity_ = entity.capacity;
 
-/// The pads of a logic tick, as read at its two display ticks in play, in their order (the
-/// systems' `commands` says how a player reads them).
+/// The pads of a logic tick, as read at two display ticks in play, in their order: the last
+/// logic tick's second, and its own first (schedule.zig; the systems' `commands` says how a
+/// player reads them).
 pub const Input = struct {
     pads: [2]input.Pads = .{ .{}, .{} },
 
