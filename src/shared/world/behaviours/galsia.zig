@@ -509,7 +509,7 @@ fn wait(a: Actor) void {
         const t = Common.target(a) orelse return;
         if (@abs(t.position.x.whole() - a.entity.position.x.whole()) >= n.wait_near) return;
     }
-    a.entity.spawn = .{ .offset_x = a.entity.spawn.offset_x, .offset_depth = a.entity.spawn.offset_depth, .strength = a.entity.spawn.strength };
+    a.entity.spawn = .{ .entrance = .close_in, .offset_x = a.entity.spawn.offset_x, .offset_depth = a.entity.spawn.offset_depth, .strength = a.entity.spawn.strength };
     Common.enter(a, fights);
 }
 
