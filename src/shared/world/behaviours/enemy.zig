@@ -326,6 +326,12 @@ pub fn Of(comptime M: type) type {
             return true;
         }
 
+        /// A set-up that takes its whole tick: the state's own tick begins at the next.
+        pub fn setUpOnly(a: A) void {
+            body(a).left = true;
+            body(a).landed = false;
+        }
+
         /// The set-up of the common states.
         pub fn setUp(a: A) void {
             switch (a.mind.state) {

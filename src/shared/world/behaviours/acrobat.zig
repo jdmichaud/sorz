@@ -61,6 +61,8 @@ pub const Mind = struct {
     stops: u8 = 0,
     turns: u8 = 0,
     seen_speed: i32 = 0,
+    /// Knocked down, it has looked whether to flip away.
+    looked: bool = false,
 };
 
 pub const Animation = enum { walk, down, reel, stand, thrown, slammed, punch, jump_kick, flip };
@@ -131,6 +133,7 @@ pub fn hurtable(state: State) bool {
 }
 
 pub fn begin(a: Actor) void {
+    if (looks(a)) return;
     if (!Common.setUpDue(a)) return;
     const was = a.mind.state;
     switch (was) {
@@ -166,6 +169,20 @@ pub fn think(a: Actor) void {
         .enter, .flip_away => Common.enter(a, .approach),
         else => {},
     }
+}
+
+/// Knocked down (by a blow, a throw, a new life's knock-back), its first tick it only looks
+/// whether to flip away (a trait not in round 1, left for the rounds that place it): it falls
+/// from the next, a tick behind the others.
+fn looks(a: Actor) bool {
+    if (a.mind.state != .knocked_down) {
+        a.mind.looked = false;
+        return false;
+    }
+    if (a.mind.looked or a.mind.body.waits) return false;
+    a.mind.looked = true;
+    Common.setUpOnly(a);
+    return true;
 }
 
 /// It enters a state with its set-up's flags.
@@ -364,14 +381,16 @@ fn somersault(a: Actor) void {
 
 /// The dash straight at its target until near across, then back the way it came (its speed
 /// across turned, up in depth) a while; then it takes up the fight again. Dashing back after a
-/// somersault, it turns at once.
+/// somersault, it turns at once, which takes that tick.
 fn dashSetUp(a: Actor) void {
     const n = a.numbers();
     a.pause(false);
     Common.faceTarget(a);
     a.animate(.walk);
     a.pace(n.dash_pace, 1);
-    if (a.mind.turned) turnBack(a);
+    if (!a.mind.turned) return;
+    turnBack(a);
+    Common.setUpOnly(a);
 }
 
 fn dash(a: Actor) void {
@@ -477,8 +496,10 @@ pub fn letGoBy(a: Actor, holder: Handle) void {
     Common.letGoBy(a, holder);
 }
 
+/// A new life's knock-back knocks it down anew, also when it was down: it looks again.
 pub fn knockedBack(a: Actor) void {
     Common.knockedBack(a);
+    if (a.mind.state == .knocked_down) a.mind.looked = false;
 }
 
 pub fn specialCalled(a: Actor) void {
