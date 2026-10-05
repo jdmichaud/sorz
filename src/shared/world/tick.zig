@@ -488,24 +488,23 @@ pub const Tick = struct {
     /// police car and the shot, and knocks the enemies down).
     pub const special_kind = "special_knockdown";
 
-    /// A player calls the special attack: unless one is under way, the police car comes (its
-    /// behaviour runs the attack) and every entity on the screen is told (`specialCalled`).
-    /// Returns whether it came.
+    /// A player calls the special attack: unless one is under way, its own comes, at the world's
+    /// origin, never drawn (its behaviour runs the attack), and every entity on the screen is
+    /// told (`specialCalled`). Returns whether it came.
     pub fn callSpecial(t: *Tick, by: Handle) bool {
         if (t.world.special) return false;
         const kind = t.kinds.find(special_kind) orelse return false;
         t.world.special_by = by;
-        const c = t.world.camera;
         const places = behaviours.special_knockdown.places;
-        const car = t.world.spawnWithin(t.kinds, kind, places.from, places.to, .{ .x = c.x, .depth = .zero, .height = t.world.ground }, .right) catch return false;
-        if (t.world.get(car)) |e| e.flags.on_screen = false;
+        const own = t.world.spawnWithin(t.kinds, kind, places.from, places.to, .zero, .right) catch return false;
+        if (t.world.get(own)) |e| e.flags.on_screen = false;
         t.world.special = true;
-        dispatch(t, car, "specialCalled", void, {}, .{});
+        dispatch(t, own, "specialCalled", void, {}, .{});
         var buf: [capacity_]u8 = undefined;
         for (t.world.updateOrder(&buf)) |i| {
             const h = t.world.handleAt(i) orelse continue;
             const e = t.world.get(h).?;
-            if (e.flags.hidden or h.eql(car) or h.eql(by)) continue;
+            if (e.flags.hidden or h.eql(own) or h.eql(by)) continue;
             dispatch(t, h, "specialCalled", void, {}, .{});
         }
         return true;

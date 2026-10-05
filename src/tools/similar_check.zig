@@ -11,18 +11,17 @@
 //! (agent/scenario.zig), and writes its own. Then, per run:
 //!
 //! - the traces from that start (agent/trace_compare.zig), with what sorz does not have yet left
-//!   out: the effects the special attack's stand-in car does not draw (`ignored_kinds`), the
-//!   round's timer (PLAN item 13), and the speed up and down (`vh`): after a knock-down's last
-//!   landing the original's Galsia keeps its last bounce's, which nothing reads, where sorz's
-//!   landing clears it (the places it would move, compared, are equal);
+//!   out: the hit sparks (`ignored_kinds`), the round's timer (PLAN item 13), and the speed up
+//!   and down (`vh`): after a knock-down's last landing the original's Galsia keeps its last
+//!   bounce's, which nothing reads, where sorz's landing clears it (the places it would move,
+//!   compared, are equal);
 //! - the probes, tick by tick: each fighter's boxes and power, the frame's index within its
 //!   animation and the ticks frames start (where sorz composes an animation of another's frames,
 //!   `composed`, its frames are taken as that other's);
 //! - the catalogue's measurements of each move (its tools' m_player, m_combo, m_grab, m_hit),
 //!   recomputed from both runs and compared within `Tolerance`s: the ticks of start-up, active
 //!   and recovery, the states and their ticks, the damage, the health, the pushes and the arcs,
-//!   the speeds, the boxes and the power equal; the special attack's times (its car a stand-in)
-//!   within a tick.
+//!   the speeds, the boxes, the power and the special attack's times equal.
 //!
 //! Prints a line per move, `equal`, `within tolerance` or `different`, with sorz's numbers (and
 //! the reference's where they differ) and why; writes the same into OUT_DIR/report.txt; exits
@@ -67,9 +66,8 @@ pub const scenarios = [_]Scenario{
     .{ .name = "player-special-enemies-axel", .kind = .special_enemies, .move = "special attack on enemies" },
 };
 
-/// The effects sorz's special attack does not draw (its car is a stand-in, PLAN item 11), and
-/// the hit sparks (PLAN item 12): their events are left out of the traces' comparison.
-const ignored_kinds = [_][]const u8{ "hit_spark", "police_car", "special_blast", "special_knockdown" };
+/// The hit sparks (PLAN item 12): their events are left out of the traces' comparison.
+const ignored_kinds = [_][]const u8{"hit_spark"};
 const ignored_events = [_][]const u8{"timer"};
 const ignored_fields = [_][]const u8{"vh"};
 
@@ -77,20 +75,16 @@ const ignored_fields = [_][]const u8{"vh"};
 const Tolerance = enum {
     /// Equal: DESIGN.md V3's frame data, damage, pushes, speeds and arcs, and the rest.
     exact,
-    /// The special attack's times: its car is a stand-in, timed from measurements.
-    stand_in,
 
     fn within(t: Tolerance) f64 {
         return switch (t) {
             .exact => 0,
-            .stand_in => 1,
         };
     }
 
     fn why(t: Tolerance) []const u8 {
         return switch (t) {
             .exact => "",
-            .stand_in => "the special attack's car is a stand-in timed from measurements: 1 tick",
         };
     }
 };
@@ -621,8 +615,8 @@ fn special(r: *const Run, m: *Measures) !void {
     const pa = try firstPress(r, 'A');
     const start = firstPhase(r, "special", pa - 1) orelse return error.Unmeasured;
     const end = firstPhase(r, "play", start) orelse return error.Unmeasured;
-    try m.numIn("phase special from the press", start - pa, .stand_in);
-    try m.numIn("phase special ticks", end - start, .stand_in);
+    try m.numIn("phase special from the press", start - pa, .exact);
+    try m.numIn("phase special ticks", end - start, .exact);
     var before: ?i64 = null;
     var after: ?i64 = null;
     var after_t: ?i64 = null;
@@ -647,7 +641,7 @@ fn special(r: *const Run, m: *Measures) !void {
         try ticks.num(e.t - pa);
         try names.text(str(e.object, "sound") orelse "");
     }
-    try m.add("sounds' ticks", ticks.list.items, .stand_in);
+    try m.add("sounds' ticks", ticks.list.items, .exact);
     try m.add("sounds", names.list.items, .exact);
 }
 
@@ -676,7 +670,7 @@ fn firstPhase(r: *const Run, phase: []const u8, after: i64) ?i64 {
 fn specialOnEnemies(r: *const Run, m: *Measures) !void {
     const pa = try firstPress(r, 'A');
     const end = firstPhase(r, "play", pa) orelse return error.Unmeasured;
-    try m.numIn("phase ticks", end - pa, .stand_in);
+    try m.numIn("phase ticks", end - pa, .exact);
     var hits: Values = .{ .arena = r.arena };
     var struck: std.ArrayList(i64) = .empty;
     for (try r.events("hit", pa, end + 60)) |h| {
@@ -689,7 +683,7 @@ fn specialOnEnemies(r: *const Run, m: *Measures) !void {
         try hits.text(str(h.object, "reaction") orelse "");
         if (std.mem.indexOfScalar(i64, struck.items, e) == null) try struck.append(r.arena, e);
     }
-    try m.add("hits (tick, entity, damage, health, reaction)", hits.list.items, .stand_in);
+    try m.add("hits (tick, entity, damage, health, reaction)", hits.list.items, .exact);
     for (struck.items) |e| {
         const tl = try r.timeline(e);
         var states: Values = .{ .arena = r.arena };
@@ -703,7 +697,7 @@ fn specialOnEnemies(r: *const Run, m: *Measures) !void {
                 state = s;
             }
         }
-        try m.add(try std.fmt.allocPrint(r.arena, "entity {d}'s states from the press", .{e}), states.list.items, .stand_in);
+        try m.add(try std.fmt.allocPrint(r.arena, "entity {d}'s states from the press", .{e}), states.list.items, .exact);
     }
 }
 
@@ -1228,10 +1222,10 @@ pub fn main(init: std.process.Init) !void {
     try w.writeAll(
         \\similar-check: Axel's moves in sorz against sor-remaster's, scenario by scenario (DESIGN.md V3).
         \\Tolerances: start-up, active and recovery ticks, states and their ticks, damage, health,
-        \\pushes, arcs, speeds, frames, boxes and power: equal; the special attack's times: 1 tick
-        \\(its car is a stand-in). Left out of the traces: the special attack's and the hits' effects,
-        \\the round's timer, the speed up and down (a Galsia keeps its last bounce's once it lies in
-        \\the original, which nothing reads; the places are compared).
+        \\pushes, arcs, speeds, frames, boxes, power and the special attack's times: equal. Left out
+        \\of the traces: the hits' effects, the round's timer, the speed up and down (a Galsia keeps
+        \\its last bounce's once it lies in the original, which nothing reads; the places are
+        \\compared).
         \\
         \\
     );

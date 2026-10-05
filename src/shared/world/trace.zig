@@ -336,7 +336,15 @@ pub const Writer = struct {
         var spawned: [capacity]bool = @splat(false);
         var morphed: [capacity]bool = @splat(false);
         for (&self.seen, &now, 0..) |was, *is, i| {
-            const same = was.live and is.live and was.generation == is.generation;
+            // A place an effect or a piece of scenery of the same kind took again since the last
+            // observation holds the same entity, as sor-remaster's observer, which sees the
+            // places only, has it (fighters and things start over in their first state, which it
+            // sees).
+            const again = was.kind == is.kind and switch (is.family) {
+                .scenery, .effect, .screen => true,
+                else => false,
+            };
+            const same = was.live and is.live and (was.generation == is.generation or again);
             removed[i] = was.live and !same;
             spawned[i] = is.live and !same;
             if (same) {
