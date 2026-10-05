@@ -11,6 +11,8 @@
 //!   of everything without it;
 //! - among the sprites, one given later covers one given earlier, whatever their priorities; the
 //!   pixel in front then takes its priority against the layers.
+//! The console's limits on sprites (80 a picture, 20 or 320 pixels a line) are not reproduced
+//! (decision D4): every sprite is drawn, as sor-remaster draws them.
 const std = @import("std");
 const art = @import("../content/art.zig");
 const palettes = @import("palettes.zig");
@@ -86,43 +88,6 @@ pub const Sprite = struct {
         return .{ .frame = frame, .x = x, .y = y, .palette = frame.palette, .priority = frame.priority };
     }
 };
-
-/// The console's limits on sprites (decision D4: not reproduced; the checks that compare pictures
-/// leave out the lines where the original's go past them): 80 hardware sprites a picture, 20 a
-/// line, 320 sprite pixels a line.
-pub const sprite_limits = struct {
-    pub const total = 80;
-    pub const a_line = 20;
-    pub const pixels_a_line = 320;
-};
-
-/// The lines where `sprites` (in their order, as the frames' `pieces`, the hardware sprites the
-/// original drew them with) go past the console's limits: a line with too many sprites or too many
-/// of their pixels, and the lines of the sprites past the 80th. Returns how many lines.
-pub fn spriteLimitLines(sprites: []const Sprite, lines: *[height]bool) usize {
-    @memset(lines, false);
-    var count: [height]u16 = @splat(0);
-    var pixels: [height]u16 = @splat(0);
-    var total: usize = 0;
-    for (sprites) |s| for (s.frame.pieces) |p| {
-        total += 1;
-        const h: i32 = @as(i32, p.height) * cell;
-        const top = if (s.flip_y) s.y - p.y - h else s.y + p.y;
-        var y = @max(top, 0);
-        while (y < @min(top + h, height)) : (y += 1) {
-            const line: usize = @intCast(y);
-            if (total > sprite_limits.total) lines[line] = true;
-            count[line] += 1;
-            pixels[line] += @as(u16, p.width) * cell;
-        }
-    };
-    var n: usize = 0;
-    for (lines, count, pixels) |*l, c, px| {
-        if (c > sprite_limits.a_line or px > sprite_limits.pixels_a_line) l.* = true;
-        if (l.*) n += 1;
-    }
-    return n;
-}
 
 /// A colour of the palettes: palette `palette`'s colour `colour`.
 pub const ColourIndex = struct {

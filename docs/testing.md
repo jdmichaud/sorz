@@ -205,7 +205,8 @@ events and conditions by logic tick. The catalogue's scenarios of each character
   tick (the entities numbered by their order of appearance), its sound sample by sample, its
   pictures pixel by pixel from four ticks before its first round on; its line gives the reach,
   the first display tick where any differs, and the first picture that differs beside the
-  reference's; `-Dround-every-tick-min=TICK` fails a reach below it.
+  reference's; `-Dround-every-tick-min=TICK` fails a reach below it. The pictures are compared
+  whole: neither program reproduces the console's sprite limits (decision D4).
 
 ## The variants
 

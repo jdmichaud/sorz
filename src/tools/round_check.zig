@@ -196,7 +196,7 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
         if (sound.last) |l| {
             if (l + 1 < common) try w.print("differs from display tick {d} to {d} (sorz's own sound before the take-up), then equal to {d}\n", .{ ticksOf(sound.first.?), ticksOf(l), ticksOf(common) }) else try w.print("differs from display tick {d} to the end ({d})\n", .{ ticksOf(sound.first.?), ticksOf(common) });
         } else try w.print("equal, to display tick {d}\n", .{ticksOf(common)});
-        try w.print("  the pictures: {d} of {d} differ ({d} lines past the sprites' limits left out)", .{ pictures.differing, pictures.compared, pictures.lines_left_out });
+        try w.print("  the pictures: {d} of {d} differ", .{ pictures.differing, pictures.compared });
         if (pictures.first) |f| try w.print(", the first after display tick {d} ({d} pixels: {s}/{s}-z-{d}.png, its -ref- and -diff-); after display ticks {any}", .{ f.tick, f.pixels, c.out_path, sc.name, f.tick, pictures.ticks[0..@min(pictures.differing, pictures.ticks.len)] });
         try w.writeAll("\n");
         return true;
@@ -225,7 +225,7 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
         return above;
     }
     if (result.differences == 0 and frames.first == null and sound_same and pictures.first == null) {
-        try w.print("{s}: equal, {d} events, {d} entities' frames, the sound's {d} display ticks, {d} pictures ({d} lines past the sprites' limits left out) ({s})\n", .{ sc.name, events, frames.entities, ticksOf(common), pictures.compared, pictures.lines_left_out, sc.what });
+        try w.print("{s}: equal, {d} events, {d} entities' frames, the sound's {d} display ticks, {d} pictures ({s})\n", .{ sc.name, events, frames.entities, ticksOf(common), pictures.compared, sc.what });
         return true;
     }
     if (pictures.first) |f| try w.print("{s}: {d} of {d} pictures differ, the first after display tick {d} ({d} pixels: {s}/{s}-z-{d}.png, its -ref- and -diff-); after display ticks {any}\n", .{ sc.name, pictures.differing, pictures.compared, f.tick, f.pixels, c.out_path, sc.name, f.tick, pictures.ticks[0..@min(pictures.differing, pictures.ticks.len)] });
@@ -278,7 +278,7 @@ fn everyTick(c: *const Context, sc: *const Scenario, scn: []const u8, a_full: *c
     const sound_at: ?u64 = if (sound.first) |f| ticksOf(f) else null;
     try w.writeAll("  the sound: ");
     if (sound_at) |v| try w.print("equal before display tick {d} of {d}, {d} frames differ, by {d} at most\n", .{ v, common, sound.differing, sound.largest }) else try w.print("equal, {d} display ticks\n", .{common});
-    try w.print("  the pictures: {d} compared ({d} lines past the sprites' limits left out), ", .{ pictures.compared, pictures.lines_left_out });
+    try w.print("  the pictures: {d} compared, ", .{pictures.compared});
     if (pictures.first) |f| {
         try w.print("equal before display tick {d} ({d} pixels: {s}/{s}-z-{d}.png, its -ref- and -diff-); {d} differ, after display ticks", .{ f.tick, f.pixels, c.out_path, sc.name, f.tick, pictures.differing });
         for (pictures.spans[0..pictures.span_count]) |span| {
@@ -369,7 +369,6 @@ fn everyPicture(c: *const Context, sc: *const Scenario, scn: []const u8, ref: *c
         const r = taker.result;
         total.first = r.first;
         total.compared += r.compared;
-        total.lines_left_out += r.lines_left_out;
         for (r.spans[0..r.span_count]) |span| {
             var t = span[0];
             while (t <= span[1]) : (t += 1) total.note(t);
@@ -392,8 +391,6 @@ const Pictures = struct {
     first: ?struct { tick: u64, pixels: usize } = null,
     /// The first display ticks whose pictures differ.
     ticks: [12]u64 = undefined,
-    /// The pictures' lines left out (past the sprites' limits).
-    lines_left_out: usize = 0,
     /// The runs of display ticks whose pictures differ (the first `spans.len`), as they come.
     spans: [24][2]u64 = undefined,
     span_count: usize = 0,
@@ -478,7 +475,7 @@ const PictureTaker = struct {
         return self.wanted.contains(frame);
     }
 
-    fn take(ctx: *anyopaque, frame: u64, picture: sorz.platform.RgbaFrame, over_limits: *const [sorz.render.height]bool) anyerror!void {
+    fn take(ctx: *anyopaque, frame: u64, picture: sorz.platform.RgbaFrame) anyerror!void {
         const self: *PictureTaker = @ptrCast(@alignCast(ctx));
         const c = self.c;
         const gpa = c.gpa;
@@ -498,12 +495,6 @@ const PictureTaker = struct {
             const want = ref.palette[ref.pixels[y * picture.width + x]];
             const got = picture.pixels[y * picture.stride + x * 4 ..][0..3];
             const d = diff[(y * picture.width + x) * 4 ..][0..4];
-            // A line past the sprites' limits: the original's drops sprites there (D4).
-            if (y < over_limits.len and over_limits[y]) {
-                if (x == 0) self.result.lines_left_out += 1;
-                d.* = .{ 0, 0, 255, 255 };
-                continue;
-            }
             if (std.mem.eql(u8, &want, got)) {
                 d.* = .{ want[0] / 3, want[1] / 3, want[2] / 3, 255 };
             } else {

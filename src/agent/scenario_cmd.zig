@@ -26,7 +26,7 @@ pub const Shot = struct { frame: u64, path: []const u8 };
 pub const Pictures = struct {
     ctx: *anyopaque,
     wanted: *const fn (ctx: *anyopaque, frame: u64) bool,
-    take: *const fn (ctx: *anyopaque, frame: u64, picture: sorz.platform.RgbaFrame, over_limits: *const [sorz.render.height]bool) anyerror!void,
+    take: *const fn (ctx: *anyopaque, frame: u64, picture: sorz.platform.RgbaFrame) anyerror!void,
 };
 
 pub const Options = struct {
@@ -269,11 +269,7 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
                 try cwd.writeFile(io, .{ .sub_path = s.path, .data = bytes });
                 shots_written += 1;
             };
-            if (options.pictures) |p| if (p.wanted(p.ctx, ticks)) {
-                var over: [sorz.render.height]bool = undefined;
-                _ = sorz.render.screen.spriteLimitLines(v.sprites.items, &over);
-                try p.take(p.ctx, ticks, v.frame(), &over);
-            };
+            if (options.pictures) |p| if (p.wanted(p.ctx, ticks)) try p.take(p.ctx, ticks, v.frame());
         }
     } else r.failure = "the run reached its most ticks";
     if (shots_written != options.shots.len) r.failure = r.failure orelse "a picture asked for was past the run's end";
