@@ -1167,6 +1167,7 @@ pub fn Of(comptime M: type) type {
                 // The one whose blow or hold it took last (or who threw or swung what struck
                 // it) scores, else the player it went after.
                 const by = scorer(a);
+                script.countOff(a.tick, a.entity);
                 const st = a.entity.spawn.strength;
                 if (by) |h| a.tick.score(h, if (st == 0) n.points else a.tables().strength_points[st]);
                 return a.remove();

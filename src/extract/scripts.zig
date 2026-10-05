@@ -380,6 +380,8 @@ fn enemyRecord(rom: []const u8, s: *round.Spawn, t: u8, variant: u8, offsets: u8
         return;
     }
     if (!commonEnemy(t)) return;
+    // Its art, by its type (0xA4E): the art slots hold it by that number.
+    s.art = rom[art_of_type + @as(u32, t - 0x20)];
     const d = try spawns.decode(rom, t, variant, offsets, palette);
     s.entrance = d.entrance;
     s.traits = d.traits;
@@ -556,6 +558,14 @@ fn animation(arena: std.mem.Allocator, rom: []const u8, r: u32) Error!?round.Ani
         .every = every,
         .steps = steps,
     };
+}
+
+/// The first of the enemies' art slots a waiting enemy's art may take (0x966: its search from
+/// slot 0, but from slot 1 in round 1: `tst.w ($FFFF02)`, then `moveq #1,d1`).
+fn artFrom(rom: []const u8, r: u32) Error!u8 {
+    if (u16be(rom, 0x998) != 0x7C02 or u16be(rom, 0x99A) != 0x7200 or u32be(rom, 0x99C) != 0x4A78FF02 or u16be(rom, 0x9A0) != 0x6604 or u16be(rom, 0x9A2) != 0x7C01 or u16be(rom, 0x9A4) != 0x7201) return error.BadData;
+    if (u16be(rom, 0x9EC) != 0xFA63) return error.BadData;
+    return if (r == 0) 1 else 0;
 }
 
 /// The pieces the round's start places itself after the first section's groups (0xEF0: for the
@@ -759,6 +769,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
             .streamed = try stream.schedule(arena, loads.items),
             .again = try againStream(arena, rom, kinds),
             .colours = try sectionColours(rom, art_at),
+            .art = kinds,
             .placed = placed.items,
             .wave = try wave(arena, rom, &l),
             .reserve = try reserve(arena, rom, &l),
@@ -794,6 +805,8 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .again = try againStream(arena, rom, kinds),
         .section_colours = try sectionColours(rom, entryAt(rom, part, section_count)),
         .colours = try palettes.bossColoursName(arena, rom, u32be(rom, round_bosses + 6 * r)) orelse return error.BadData,
+        // The section's art kinds, the boss's in the last slot (0x59C: its art load).
+        .art = kinds,
         .wave = try wave(arena, rom, &l),
         .reserve = try reserve(arena, rom, &l),
     };
@@ -844,6 +857,8 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .boss = boss_section,
         .own_sound = try ownSound(arena, rom, r),
         .animation = try animation(arena, rom, r),
+        .art_from = try artFrom(rom, r),
+        .boss_art_full = @intCast(try immediate(rom, 0x9E8, &.{ 0x0C, 0x38, 0x00 }, 1)),
     };
 }
 

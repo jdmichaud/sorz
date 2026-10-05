@@ -448,9 +448,16 @@ play).
   seconds (the first section's wall and timer are the round's own). When the camera reaches the
   wall, the `wave` comes in, each record `after` ticks after the one before (the first, after the
   camera reached the wall) at the screen's edge on its `side`. Once the wave is in, each of the
-  section's enemies that goes calls the next of the `reserve`, which comes in `arrives_after`
-  ticks later (two are called at once if none is left then). The section is cleared when the
-  last of its enemies goes.
+  section's enemies that goes calls one of the `reserve`, which comes in `arrives_after` ticks
+  later (two are called at once if none is left then): the first still to come whose art and
+  colours can be had. A section's `art` is the art its slots hold as it begins (the enemies'
+  three and the boss's, by number; a boss's section's too); a reserve record's art takes the
+  slot that holds it, else one no enemy shows (from the round's `art_from`th, round 1's second;
+  in the boss's fight the first only, none with the boss's art `boss_art_full`), its colours
+  those that hold them, else ones no enemy shows on (in the boss's fight the second's, never a
+  kind's own). The enemies each slot shows are tallied as the original does: those in the world
+  as the reserve begins, one more as each arrives, one less as each is knocked out while it
+  runs. The section is cleared when the last of its enemies goes.
 - `boss`: after the last section's clear, the camera stops where it is and `fade` is asked for;
   `music_after` ticks after the clear, the boss's `music`; `wave_after` ticks after the music,
   its `wave` and `reserve` as a section's. A beaten boss ends the round.
@@ -500,7 +507,8 @@ A record of `placed`, `wave` or `reserve` is one entity:
   `slides`, `flips_away`, `drops_in`, `flips_at_close_range`, `unflinching`, `walks_off`,
   `twin`); `offset`, where it keeps from its target (`x` away from it, `depth`); `strength`, its
   row of strength and colours (0 when absent): its health, its blows' damage and its points are
-  its kind's tables' `strength_health`, `strength_power` and `strength_points` at it; `colours`, its colours by number (`enemy_colours`).
+  its kind's tables' `strength_health`, `strength_power` and `strength_points` at it; `colours`,
+  its colours by number (`enemy_colours`); `art`, its art by number (the art slots hold it).
 - A breakable's (an oil drum's too): `holds`, the kind of the item it leaves. A boss's: `bar`,
   its entry in the status bar's names and bars.
 - A piece of scenery's (placed): `height`, the height it takes as it starts (on a wall; placed

@@ -196,6 +196,8 @@ pub const Spawn = struct {
     height: ?i16 = null,
     /// How a drifting piece of scenery moves.
     drift: Drift = .still,
+    /// An enemy's art, by its number (script.zig's art slots).
+    art: ?u8 = null,
 };
 
 /// How a drifting piece of scenery moves (content/round.zig's `Drift`).

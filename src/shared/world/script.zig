@@ -209,6 +209,19 @@ pub const State = struct {
     held: Held = .{},
     /// The colours the arriving enemy takes.
     taking: ?u2 = null,
+    /// The enemies' art the art slots hold by number (`Section.art`: the three enemies' slots,
+    /// the boss's, and one more), and how many enemies show each, as the original tallies them
+    /// (and its colours' counts, `Held`): the enemies in the world as the reserve begins, one more
+    /// as each arrives, one less as each is knocked out while it runs; never cleared.
+    art: [5]u8 = @splat(0),
+    art_counts: [5]u8 = @splat(0),
+    /// The reserve runs: from its wave's end to the section's clear.
+    waiting: bool = false,
+    /// The reserve's records brought or left out (a bit each), the one arriving and the art
+    /// slot its art takes (null: none of the enemies').
+    taken: u32 = 0,
+    chosen: u8 = 0,
+    chosen_art: ?u3 = null,
     /// The round's own sound (`Round.own_sound`): its times left, the ticks to the next.
     own_sound: struct { left: u8 = 0, ticks: u8 = 0 } = .{},
     /// The round's animation (`Round.animation`): the step it shows, the ticks to the next.
@@ -376,9 +389,12 @@ pub fn run(t: *Tick) void {
             s.ticks -|= 1;
             if (s.ticks != 0) return;
             s.stage = .reserve;
-            s.next = 0;
-            nextReserve(p, s);
-            countColours(t, p);
+            s.waiting = true;
+            s.taken = 0;
+            for (reserveOf(r, s.part), 0..) |*rec, k| {
+                if (!comes(p, s, rec)) s.taken |= @as(u32, 1) << @intCast(k);
+            }
+            tally(t, p);
             // None left: two are called at once.
             s.calls = if (s.enemies == 0) 2 else 0;
             s.arriving = 0;
@@ -388,32 +404,33 @@ pub fn run(t: *Tick) void {
             s.calls +|= went;
             const list = reserveOf(r, s.part);
             if (s.arriving != 0) {
+                const rec = &list[s.chosen];
                 // The arriving enemy's colours, at its arrival's first tick.
-                if (s.arriving == @max(list[s.next].arrives_after, 1)) {
+                if (s.arriving == @max(rec.arrives_after, 1)) {
                     t.out.colours = true;
-                    if (list[s.next].colours) |c| if (s.taking) |into| t.out.colour_loads.append(.{ .enemies = .{ .colours = c, .into = into } });
+                    if (rec.colours) |c| if (s.taking) |into| t.out.colour_loads.append(.{ .enemies = .{ .colours = c, .into = into } });
                 }
                 s.arriving -= 1;
                 if (s.arriving != 0) return;
-                if (list[s.next].colours) |c| if (s.taking) |into| {
+                if (rec.colours) |c| if (s.taking) |into| {
                     s.held.colours[into] = c;
-                    s.held.counts[into] +|= 1;
+                    s.held.counts[into] +%= 1;
                 };
-                bring(t, p, &list[s.next]);
-                s.next += 1;
+                if (s.chosen_art) |slot| if (rec.art) |a| {
+                    s.art[slot] = a;
+                    s.art_counts[slot] +%= 1;
+                };
+                bring(t, p, rec);
+                s.taken |= @as(u32, 1) << @intCast(s.chosen);
                 s.calls -|= 1;
-                nextReserve(p, s);
                 s.enemies = countEnemies(t);
-            } else if (s.calls != 0 and s.next < list.len) {
-                s.arriving = @max(list[s.next].arrives_after, 1);
-                // The colours it takes. TODO(PLAN item 15): none to be had, the original brings
-                // the first waiting record whose colours (and art) can be had; round 1's always
-                // can.
-                s.taking = if (list[s.next].colours) |c| s.held.take(c, p.ownColours(c)) else null;
+            } else if (s.calls != 0) if (chooseWaiting(t, p, list)) |k| {
+                s.chosen = k;
+                s.arriving = @max(list[k].arrives_after, 1);
                 // Its kind's art is loaded as it is called.
-                if (list[s.next].streamed.len != 0) t.out.streamed = .{ .part = s.part, .record = s.next };
+                if (list[k].streamed.len != 0) t.out.streamed = .{ .part = s.part, .record = k };
                 return;
-            }
+            };
             clearIfDone(t, p);
         },
         .boss_opening => {
@@ -474,10 +491,81 @@ fn nextWave(t: *Tick, p: *const Plan) void {
     s.ticks = 2;
 }
 
-/// The reserve's next record that comes.
-fn nextReserve(p: *const Plan, s: *State) void {
-    const list = reserveOf(p.round, s.part);
-    while (s.next < list.len and !comes(p, s, &list[s.next])) s.next += 1;
+/// The first of the reserve's records still to come whose art and colours can be had (0x936):
+/// it takes their slots (`chosen_art`, `taking`).
+fn chooseWaiting(t: *Tick, p: *const Plan, list: []const Spawn) ?u8 {
+    const s = &t.world.script;
+    for (list, 0..) |*rec, k| {
+        if (s.taken & (@as(u32, 1) << @intCast(k)) != 0) continue;
+        const art = artSlot(t.world, p, rec) orelse continue;
+        const colours = coloursSlot(t.world, p, rec) orelse continue;
+        s.chosen_art = art.slot;
+        s.taking = colours.slot;
+        return @intCast(k);
+    }
+    return null;
+}
+
+const Slot = struct { slot: ?u3 };
+const ColoursSlot = struct { slot: ?u2 };
+
+/// Whether a waiting record's art can be had (0x966), and the art slot it takes: its art's own,
+/// else one no enemy shows (round 1's from its second); in the boss's fight (or a section that
+/// holds a boss's art) only the first, and none with a boss's art that leaves no slot. A record
+/// without the enemies' art takes none.
+fn artSlot(w: anytype, p: *const Plan, rec: *const Spawn) ?Slot {
+    const s = &w.script;
+    const a = rec.art orelse return .{ .slot = null };
+    if (bossFight(w, p) or s.art[3] != 0) {
+        if (s.art[3] == p.round.boss_art_full) return null;
+        if (s.art[0] == a or s.art_counts[0] == 0) return .{ .slot = 0 };
+        return null;
+    }
+    const from = p.round.art_from;
+    for (from..3) |i| if (s.art[i] == a) return .{ .slot = @intCast(i) };
+    for (from..3) |i| if (s.art_counts[i] == 0) return .{ .slot = @intCast(i) };
+    return null;
+}
+
+/// Whether a waiting record's colours can be had (0xA66), and those it takes (`Held.take`); in
+/// the boss's fight (or a section that holds a boss's art) only the second's, never a kind's own.
+fn coloursSlot(w: anytype, p: *const Plan, rec: *const Spawn) ?ColoursSlot {
+    const s = &w.script;
+    const c = rec.colours orelse return .{ .slot = null };
+    const own = p.ownColours(c);
+    if (bossFight(w, p) or s.art[3] != 0) {
+        if (own) return null;
+        if (s.held.colours[Held.second] == c or s.held.counts[Held.second] == 0) return .{ .slot = Held.second };
+        return null;
+    }
+    return .{ .slot = s.held.take(c, own) orelse return null };
+}
+
+/// An enemy knocked out while the reserve runs is counted off its art's slot and its colours'
+/// (0x9DC0): its art's among the slots a waiting record may take (none: the last of them), its
+/// colours' where they are held.
+pub fn countOff(t: *Tick, e: *const entity.Entity) void {
+    const p = t.plan orelse return;
+    const s = &t.world.script;
+    if (!s.waiting) return;
+    if (e.spawn.art) |a| {
+        const from = p.round.art_from;
+        var slot: usize = 2;
+        for (from..3) |i| if (s.art[i] == a) {
+            slot = i;
+            break;
+        };
+        s.art_counts[slot] -%= 1;
+    }
+    const c = e.spawn.colours orelse return;
+    const h = &s.held;
+    if (p.ownColours(c)) {
+        if (h.colours[Held.other] == c) h.counts[Held.other] -%= 1;
+    } else if (h.colours[Held.first] == c) {
+        h.counts[Held.first] -%= 1;
+    } else if (h.colours[Held.second] == c) {
+        h.counts[Held.second] -%= 1;
+    }
 }
 
 /// The section is cleared when nothing more is to come and its last enemy has gone: the next
@@ -485,7 +573,8 @@ fn nextReserve(p: *const Plan, s: *State) void {
 fn clearIfDone(t: *Tick, p: *const Plan) void {
     const s = &t.world.script;
     const r = p.round;
-    if (s.next < reserveOf(r, s.part).len or s.arriving != 0 or s.enemies != 0) return;
+    const all = (@as(u64, 1) << @intCast(reserveOf(r, s.part).len)) - 1;
+    if (s.taken != all or s.arriving != 0 or s.enemies != 0) return;
     if (s.part >= r.sections.len) {
         // The boss's section with nothing left and no boss: the content does not have him yet
         // (his kind skipped as the wave brought him). The round is won rather than left without
@@ -498,6 +587,8 @@ fn clearIfDone(t: *Tick, p: *const Plan) void {
     if (r.boss == null) return;
     // The boss's section opens as a section does: its colours; its art loads.
     holdColours(t, r.boss.?.section_colours);
+    @memcpy(s.art[0..4], &r.boss.?.art);
+    s.waiting = false;
     t.out.streamed = .{ .part = k };
     s.part = k;
     s.stage = .boss_opening;
@@ -510,6 +601,8 @@ fn beginSection(t: *Tick, p: *const Plan, k: u8) void {
     const sec = &p.round.sections[k];
     // A section's art's colours are set as it begins, and its art loads.
     holdColours(t, sec.colours);
+    @memcpy(s.art[0..4], &sec.art);
+    s.waiting = false;
     t.out.streamed = .{ .part = k };
     s.part = k;
     s.stage = .opening;
@@ -546,16 +639,19 @@ fn bossColours(t: *Tick) void {
     t.world.script.held.colours[Held.first] = null;
 }
 
-/// As the reserve begins (0x810), the enemies that show on each of the colours held: by the line
-/// each took (those not yet out are not counted).
-fn countColours(t: *Tick, p: *const Plan) void {
-    const h = &t.world.script.held;
-    h.counts = .{ 0, 0, 0 };
+/// As the reserve begins (0x810), the enemies in the world are added to the tallies: each to
+/// its art's slot (art none holds: uncounted) and to the colours it shows on, by the line it
+/// took (those not yet out are not counted).
+fn tally(t: *Tick, p: *const Plan) void {
+    const s = &t.world.script;
     for (&t.world.entities) |*e| {
         if (!e.alive() or e.flags.hidden) continue;
         const c = e.spawn.colours orelse continue;
+        if (e.spawn.art) |a| if (a & 0x80 == 0) {
+            if (std.mem.indexOfScalar(u8, &s.art, a)) |i| s.art_counts[i] +%= 1;
+        };
         const part: u2 = if (p.ownColours(c)) Held.other else if (e.palette == p.colour_lines[Held.first]) Held.first else if (e.palette == p.colour_lines[Held.second]) Held.second else continue;
-        h.counts[part] +|= 1;
+        s.held.counts[part] +%= 1;
     }
 }
 
@@ -637,6 +733,7 @@ pub fn placing(rec: *const Spawn) entity.Spawn {
     if (rec.drift) |d| sp.drift = switch (d) {
         inline else => |x| @field(entity.Drift, @tagName(x)),
     };
+    sp.art = rec.art;
     return sp;
 }
 
