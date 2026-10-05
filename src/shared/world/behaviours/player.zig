@@ -296,10 +296,21 @@ pub fn takeUp(a: Actor, elapsed: u32) void {
     begin(a, a.mind.state);
     a.entity.velocity = v;
     for (0..@min(elapsed, 255)) |_| _ = a.step();
+    const n = a.numbers();
+    const gone: u8 = @intCast(@min(elapsed, 255));
     switch (a.mind.state) {
         .attack1, .attack2, .attack3, .attack4 => a.mind.chain = a.mind.state,
+        // Its count since it entered the state, as the state's first tick set it.
+        .hurt => a.mind.timer = n.hurt -| gone,
+        .down => a.mind.timer = n.down -| gone,
+        .lying_dead => a.mind.timer = n.dead -| gone,
         else => {},
     }
+}
+
+/// Taken up, it bounced `times` times in its fall.
+pub fn takeUpBounces(a: Actor, times: u8) void {
+    a.mind.bounces = times;
 }
 
 /// Taken up, its blow in this state landed `ago` ticks before (null: at the situation's tick):
@@ -992,7 +1003,8 @@ fn thrown(a: Actor) void {
     placeFromHolder(a);
 }
 
-/// At a new frame of a throw, it is placed from its holder by the frame's place.
+/// At a new frame of a throw, it is placed from its holder by the frame's place: its whole
+/// pixels the holder's and the place's, its own fractions kept.
 fn placeFromHolder(a: Actor) void {
     const h = a.entity.holder orelse return;
     const f = a.currentFrame() orelse return;
@@ -1000,9 +1012,11 @@ fn placeFromHolder(a: Actor) void {
     if (a.mind.placed_frame == a.frame()) return;
     a.mind.placed_frame = a.frame();
     const holder = a.other(h) orelse return;
-    a.entity.position.x = holder.position.x.add(Fixed.pixels(p.x).times(a.entity.facing.sign()));
-    a.entity.position.height = holder.position.height.add(.pixels(p.height));
-    a.entity.position.depth = holder.position.depth;
+    const at = holder.position;
+    const e = a.entity;
+    e.position.x = .parts(@intCast(at.x.whole() + @as(i32, p.x) * e.facing.sign()), e.position.x.frac());
+    e.position.height = .parts(@intCast(at.height.whole() + p.height), e.position.height.frac());
+    e.position.depth = .parts(@intCast(at.depth.whole()), e.position.depth.frac());
 }
 
 fn throwFall(a: Actor) void {

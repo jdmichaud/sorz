@@ -575,6 +575,10 @@ pub fn takeUp(a: Actor, elapsed: u32) void {
     Common.takeUp(a, elapsed);
 }
 
+pub fn takeUpBounces(a: Actor, times: u8) void {
+    Common.takeUpBounces(a, times);
+}
+
 pub fn takeUpStruck(a: Actor, ago: u32, striking: bool) void {
     Common.takeUpStruck(a, ago, striking);
 }

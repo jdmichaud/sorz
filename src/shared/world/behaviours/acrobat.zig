@@ -514,6 +514,22 @@ pub fn takeUp(a: Actor, elapsed: u32) void {
     Common.takeUp(a, elapsed);
 }
 
+/// Taken up dashing at the speed of a dash back (back across, up in depth), it has turned back
+/// since the speed came, its ticks back counted down since.
+pub fn takeUpCourse(a: Actor, ago: u32) void {
+    const n = a.numbers();
+    if (a.mind.state != .dash or a.entity.velocity.depth.raw != n.dash_back_depth.raw) return;
+    a.mind.turned = true;
+    a.mind.body.fresh = false;
+    a.animate(.walk);
+    a.pace(n.dash_pace, 1);
+    a.mind.body.timer = n.dash_back_ticks -| @as(u8, @intCast(@min(ago, 255)));
+}
+
+pub fn takeUpBounces(a: Actor, times: u8) void {
+    Common.takeUpBounces(a, times);
+}
+
 pub fn takeUpStruck(a: Actor, ago: u32, striking: bool) void {
     Common.takeUpStruck(a, ago, striking);
 }

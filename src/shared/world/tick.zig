@@ -206,6 +206,16 @@ pub const Tick = struct {
         dispatch(t, h, "takeUp", void, {}, .{elapsed});
     }
 
+    /// Taken up from a situation, the entity bounced `times` times in its state.
+    pub fn takeUpBounces(t: *Tick, h: Handle, times: u8) void {
+        dispatch(t, h, "takeUpBounces", void, {}, .{times});
+    }
+
+    /// Taken up from a situation, the entity's speed has been what it is for `ago` ticks.
+    pub fn takeUpCourse(t: *Tick, h: Handle, ago: u32) void {
+        dispatch(t, h, "takeUpCourse", void, {}, .{ago});
+    }
+
     /// Taken up from a situation, the entity's blow cost another health `ago` ticks before
     /// (null: at the situation's tick, felt at its next).
     pub fn takeUpLanded(t: *Tick, h: Handle, ago: ?u32) void {

@@ -384,6 +384,10 @@ pub const Situation = struct {
         slot: ?u8 = null,
         /// A player's: the ticks whose thinks saw B newly pressed in its state.
         presses: []const u64 = &.{},
+        /// The tick its speed became what it is; the bounces it made in its state (its speed
+        /// down turned up).
+        course_since: u64 = 0,
+        bounces: u8 = 0,
     };
 };
 
@@ -455,6 +459,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
                 .spawned_at = .{ x >> 16, d >> 16 },
                 .states = state orelse "",
                 .since = @intCast(int(o, "t") orelse 0),
+                .course_since = @intCast(int(o, "t") orelse 0),
                 .slot = if (int(o, "_slot")) |sl| @intCast(sl) else null,
             });
             s.next_id = @max(s.next_id, e + 1);
@@ -470,6 +475,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             if (x.state == null or !std.mem.eql(u8, x.state.?, state)) {
                 x.since = @intCast(int(o, "t") orelse 0);
                 x.presses = &.{};
+                x.bounces = 0;
             }
             x.state = try arena.dupe(u8, state);
             if (str(o, "facing")) |f| x.left = std.mem.eql(u8, f, "left");
@@ -478,7 +484,10 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             if (x.player != null and in_round) try players_x.append(arena, .{ .t = @intCast(int(o, "t") orelse 0), .x = @intCast((int(o, "x") orelse 0) >> 16) });
             x.position = .{ @intCast(int(o, "x") orelse 0), @intCast(int(o, "d") orelse 0), @intCast(int(o, "h") orelse 0) };
-            x.velocity = .{ @intCast(int(o, "vx") orelse 0), @intCast(int(o, "vd") orelse 0), @intCast(int(o, "vh") orelse 0) };
+            const speed: [3]i32 = .{ @intCast(int(o, "vx") orelse 0), @intCast(int(o, "vd") orelse 0), @intCast(int(o, "vh") orelse 0) };
+            if (!std.mem.eql(i32, &speed, &x.velocity)) x.course_since = @intCast(int(o, "t") orelse 0);
+            if (x.velocity[2] > 0 and speed[2] < 0) x.bounces +|= 1;
+            x.velocity = speed;
         } else if (std.mem.eql(u8, ev, "hit")) {
             const by: ?u32 = if (int(o, "by")) |b| @intCast(b) else null;
             if (by) |b| if (seen.getPtr(b)) |s_| {
@@ -646,6 +655,16 @@ fn int(o: std.json.ObjectMap, name: []const u8) ?i64 {
 
 // The run ----------------------------------------------------------------------------------------
 
+/// The states in which a fighter holds another, as the traces name them.
+const holding_states = [_][]const u8{ "grab", "grab_behind", "knee", "knee_last", "grab_blow", "vault", "vault_land", "throw", "throw_back", "hold" };
+
+/// Whether `state` is one of `names`.
+fn stateIn(state: ?[]const u8, names: []const []const u8) bool {
+    const st = state orelse return false;
+    for (names) |n| if (std.mem.eql(u8, st, n)) return true;
+    return false;
+}
+
 /// A scenario's run: the world taken up from the situation, its ticks with the script's pads,
 /// the trace and the probe written at each tick's end.
 pub const Run = struct {
@@ -764,6 +783,32 @@ pub const Run = struct {
                 t.takeUpWeapon(o.h, m.h);
             }
         }
+        // A fighter held, and its holder: the nearest across at its depth in a state that holds
+        // (the traces do not say who holds whom); they hold as a grab would make them.
+        for (made) |m_| {
+            const m = m_ orelse continue;
+            if (!stateIn(m.e.state, &.{ "held", "held_behind" }) or m.e.holder != null) continue;
+            const x = w.get(m.h) orelse continue;
+            if (x.holder != null) continue;
+            var best: ?world.Handle = null;
+            var best_dx: i32 = std.math.maxInt(i32);
+            for (made) |o_| {
+                const o = o_ orelse continue;
+                if (o.h.eql(m.h) or !stateIn(o.e.state, &holding_states)) continue;
+                const y = w.get(o.h) orelse continue;
+                if (y.holding != null) continue;
+                if (@abs(y.position.depth.whole() - x.position.depth.whole()) > 2) continue;
+                const dx: i32 = @intCast(@abs(y.position.x.whole() - x.position.x.whole()));
+                if (dx >= best_dx) continue;
+                best = o.h;
+                best_dx = dx;
+            }
+            const hh = best orelse continue;
+            w.get(hh).?.holding = m.h;
+            x.holder = hh;
+            var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
+            t.grabbed(hh, m.h);
+        }
         for (made) |m_| {
             const m = m_ orelse continue;
             const h = m.h;
@@ -773,6 +818,8 @@ pub const Run = struct {
             var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
             t.takeUp(h, @intCast(situation.t -| e.since));
             if (e.taken != 0) t.takeUpTaken(h, e.taken);
+            t.takeUpCourse(h, @intCast(situation.t -| e.course_since));
+            if (e.bounces != 0) t.takeUpBounces(h, e.bounces);
             // Its blow that cost another health in its state: at the situation's tick (the
             // trace tells it at the next), or so many ticks before.
             if (e.landed) |at| if (at > e.since) t.takeUpLanded(h, if (at > situation.t) null else @intCast(situation.t - at));

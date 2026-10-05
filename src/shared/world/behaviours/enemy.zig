@@ -1354,11 +1354,13 @@ pub fn Of(comptime M: type) type {
             if (elapsed >= 1 and @hasDecl(M, "countdowns")) {
                 for (M.countdowns) |st| if (a.mind.state == st) {
                     takeUpTarget(a);
+                    const v = a.entity.velocity;
                     body(a).fresh = true;
                     body(a).waits = false;
                     a.animate(.walk);
                     M.begin(a);
                     body(a).timer -|= @intCast(@min(elapsed, 255));
+                    takeUpOffsets(a, v);
                     return;
                 };
             }
@@ -1432,6 +1434,29 @@ pub fn Of(comptime M: type) type {
 
         /// Taken up out of hiding: the one whose blow it took last, and the player it goes after
         /// (chosen now, its state kept, when the situation did not say).
+        /// Taken up, it bounced `times` times in its fall.
+        pub fn takeUpBounces(a: A, times: u8) void {
+            body(a).bounces = times;
+        }
+
+        /// Its place beside its target in depth may have been turned over since its record (a
+        /// wait not level with its target turns it): heading at speed `v` (the trace's, from
+        /// its place before its last move), it heads for the side that speed tells.
+        fn takeUpOffsets(a: A, v: fixed.Vec3) void {
+            if (v.x.raw == 0 and v.depth.raw == 0) return;
+            const t = target(a) orelse return;
+            const was = a.entity.position.sub(.{ .x = v.x, .depth = v.depth });
+            for (0..2) |_| {
+                const off: i32 = a.entity.spawn.offset_depth;
+                var d = t.position.depth.whole() + off;
+                if (d < 0 or d >= a.numbers().walk_depth_most) d -= 2 * off;
+                const side: i32 = if (t.position.x.whole() < was.x.whole()) a.entity.spawn.offset_x else -@as(i32, a.entity.spawn.offset_x);
+                const h = fixed.heading(t.position.x.whole() + side - was.x.whole(), d - was.depth.whole(), body(a).speed);
+                if (h.x.raw == v.x.raw and h.depth.raw == v.depth.raw) return;
+                a.entity.spawn.offset_depth = -a.entity.spawn.offset_depth;
+            }
+        }
+
         fn takeUpTarget(a: A) void {
             if (a.mind.state == .appear) return;
             body(a).other = a.entity.struck_by;
