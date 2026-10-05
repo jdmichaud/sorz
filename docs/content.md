@@ -257,8 +257,8 @@ plays a move its own way: each definition holds its own numbers and frames then)
 Galsia (`galsia`), a stand-in for the special attack's police car (`police_car`), the GO arrow
 a section's opening shows (`go_arrow`) and a player out of lives (`player_waiting`: no art, the
 name entry's and the continue's question's numbers and sounds), round 2's scenery (the oil drums,
-`knockable`); the other characters and enemies come with PLAN items 12 to 15. Their numbers
-are read from the ROM's
+`knockable`; the `drip`s); the other characters and enemies come with PLAN items 12 to 15.
+Their numbers are read from the ROM's
 tables and from the immediate values of the code that uses them, each with its place in the
 definition's provenance, but the car's times, which the original's car, camera and shells make
 together: those are measured in sor-remaster and said so.

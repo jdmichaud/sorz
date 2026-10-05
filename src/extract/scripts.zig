@@ -381,6 +381,11 @@ fn entry(rom: []const u8, type_byte: u8, bytes: [3]u8, y: u8) Error!round.Spawn 
             }
             return s;
         },
+        // A drip: its code reads none of the bytes.
+        0x14 => {
+            if (!std.mem.allEqual(u8, &bytes, 0)) return error.BadData;
+            return s;
+        },
         else => {},
     }
     try enemyRecord(rom, &s, t, bytes[0], bytes[1], bytes[2]);

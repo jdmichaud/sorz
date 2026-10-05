@@ -391,6 +391,16 @@ const knockable_fixture =
     \\ }}
 ;
 
+/// A drip: its five frames, which its behaviour shows.
+const drip_fixture =
+    \\{"family": "scenery", "team": "neutral", "behaviour": "drip",
+    \\ "numbers": {"height": 80, "hang": 20, "frame_ticks": 4, "fall": 196608, "gravity": 22528,
+    \\   "probe": 24},
+    \\ "animations": {
+++ anim("drip", bare("1", "") ++ "," ++ bare("1", "") ++ "," ++ bare("1", "") ++ "," ++ bare("1", "") ++ "," ++ bare("1", "")) ++
+    \\ }}
+;
+
 /// A gold bar: 5000 points.
 const gold =
     \\{"family": "item", "team": "neutral", "behaviour": "item",
@@ -714,6 +724,7 @@ const Fixture = struct {
             .{ .name = "special_fire", .text = special_fire_fixture },
             .{ .name = "player_waiting", .text = waiting },
             .{ .name = "knockable", .text = knockable_fixture },
+            .{ .name = "drip", .text = drip_fixture },
         };
         var defs: [sources.len]content_entity.Definition = undefined;
         var diag: json.Diagnostic = .{};
@@ -1790,6 +1801,31 @@ test "an oil drum stands solid; a blow knocks it away the way the striker faces,
     try testing.expectEqual(@as(i32, 870 + 23 * 4), r.w.get(d).?.position.x.whole());
     r.step(.{});
     try testing.expect(r.w.get(d) == null);
+}
+
+test "a drip hangs, swells, falls until the ground is below it, splashes, and hangs again" {
+    var r = try Round.init();
+    defer r.deinit();
+    const d = try r.w.spawnWithin(&r.f.kinds, r.f.kinds.find("drip").?, 2, 34, .pixels(900, 0, 160), .right);
+    r.step(.{});
+    try testing.expectEqual(@as(i32, 80), r.w.get(d).?.position.height.whole());
+    try testing.expectEqualStrings("s1", behaviours.traceName(&r.w.get(d).?.mind).?);
+    for (0..20) |_| r.step(.{});
+    try testing.expectEqualStrings("s2", behaviours.traceName(&r.w.get(d).?.mind).?);
+    try testing.expectEqual(@as(u8, 1), r.w.get(d).?.animation.frame);
+    for (0..5) |_| r.step(.{});
+    try testing.expectEqualStrings("s4", behaviours.traceName(&r.w.get(d).?.mind).?);
+    var falls: usize = 0;
+    while (r.w.get(d).?.mind.drip.state == .fall) : (falls += 1) r.step(.{});
+    try testing.expectEqual(@as(usize, 12), falls);
+    try testing.expectEqual(@as(u8, 3), r.w.get(d).?.animation.frame);
+    try testing.expect(r.w.get(d).?.position.height.whole() + 24 >= 160);
+    for (0..4) |_| r.step(.{});
+    try testing.expectEqualStrings("s6", behaviours.traceName(&r.w.get(d).?.mind).?);
+    r.step(.{});
+    try testing.expectEqualStrings("s0", behaviours.traceName(&r.w.get(d).?.mind).?);
+    try testing.expectEqual(@as(i32, 80), r.w.get(d).?.position.height.whole());
+    try testing.expectEqual(@as(u8, 0), r.w.get(d).?.animation.frame);
 }
 
 test "an item picked up gives what it gives and goes: health up to the most, points" {

@@ -5,6 +5,8 @@
 //! - The oil drum (type $19, its handler 0x6C84, sor-remaster's obj/knockable.zig): it stands
 //!   solid until a player's blow or a thing thrown knocks it away; it leaves the item it holds
 //!   (0x7E54), flies off to the side the one that struck it faces, bouncing, and goes.
+//! - The drip (type $14, 0x6D40, obj/drip.zig): it hangs, swells, falls to the floor, splashes,
+//!   and hangs again.
 const std = @import("std");
 const sorz = @import("sorz");
 const entity = sorz.content.entity;
@@ -79,7 +81,33 @@ fn knockable(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition 
     };
 }
 
+/// The drip (type $14): its five frames (entry 0, shown by its code: hanging, swelling, falling,
+/// the splash, none), how long it hangs and each frame after, its fall.
+fn drip(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set: u32 = @bitCast(try immediate(rom, 0x6D68, &.{ 0x43, 0xF9 }, 4));
+    var d = try def(arena, rom, "drip", set);
+    const frames = try entryFrames(&d, "drip", 0, null, true);
+    if (frames.len != 5) return error.BadData;
+    try d.animations.append(arena, .{ .name = "drip", .loop = true, .frames = frames });
+    try d.number("height", try moveWord(rom, 0x6D56, 24), "ROM 0x06D56: move.w #N,(24,a0)");
+    try d.number("hang", try moveByte(rom, 0x6D62, 71), "ROM 0x06D62: move.b #N,(71,a0)");
+    try d.number("frame_ticks", try moveByte(rom, 0x6D78, 71), "ROM 0x06D78: move.b #N,(71,a0)");
+    try d.number("fall", (try moveWord(rom, 0x6D88, 36)) << 16, "ROM 0x06D88: move.w #N,(36,a0), whole pixels");
+    try d.number("gravity", try immediate(rom, 0x6D94, &.{ 0x06, 0xA8 }, 4), "ROM 0x06D94: addi.l #N,(36,a0)");
+    try d.number("probe", try moveq(rom, 0x6DA0, 3), "ROM 0x06DA0: moveq #N,d3 (below its place, 0xAD24: a cell with an attribute)");
+    return .{
+        .name = "drip",
+        .provenance = try std.fmt.allocPrint(arena, "round 2's drips, type $14 (handler 0x6D40): the animation set at ROM 0x{X:0>5}{s}", .{ set, d.number_notes.items }),
+        .family = .scenery,
+        .team = .neutral,
+        .behaviour = "drip",
+        .numbers = d.numbers.items,
+        .animations = d.animations.items,
+    };
+}
+
 /// The definitions this module writes, appended to `out`.
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
     try out.append(arena, try knockable(arena, rom));
+    try out.append(arena, try drip(arena, rom));
 }
