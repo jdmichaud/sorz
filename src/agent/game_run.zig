@@ -226,7 +226,7 @@ pub const Run = struct {
             // scene's start's, as sor-remaster's trace has them.
             if (r.phase == .leaving and r.colours.fade == null) return self.holdSounds(turn);
             if (serial != self.seen_serial or !std.mem.eql(u8, name, self.seen_scene)) {
-                tw.startScene(.{ .name = name, .round = 1, .demo = false });
+                tw.startScene(.{ .name = name, .round = r.number, .demo = false });
                 self.seen_serial = serial;
                 self.seen_scene = name;
                 self.seen_t = r.trace_t;

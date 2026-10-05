@@ -89,7 +89,8 @@ pub const Cell = struct { x: u8, y: u8 };
 pub const Banner = struct {
     provenance: []const u8 = "",
     left: []const u8,
-    number: []const u8,
+    /// The round's number, a frame by round (round 1's first).
+    numbers: []const []const u8,
     right: []const u8,
     fade: u8,
     in: u8,
@@ -368,7 +369,7 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
     return obj(arena, &.{
         .{ .key = "banner", .value = try withProvenance(arena, b.provenance, &.{
             .{ .key = "left", .value = .{ .str = b.left } },
-            .{ .key = "number", .value = .{ .str = b.number } },
+            .{ .key = "numbers", .value = try strings(arena, b.numbers) },
             .{ .key = "right", .value = .{ .str = b.right } },
             .{ .key = "fade", .value = json.Value.num(b.fade) },
             .{ .key = "in", .value = json.Value.num(b.in) },
@@ -532,10 +533,15 @@ fn readFrame(n: json.Node, a: ?*const art.Art) Error![]const u8 {
     return f;
 }
 
-fn readRound(n: json.Node, a: ?*const art.Art) Error!Round {
+fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!Round {
     try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue", "clear" });
     const b = try n.get("banner");
-    try b.only(&.{ "provenance", "left", "number", "right", "fade", "in", "in_ticks", "wait", "out", "out_ticks", "after" });
+    try b.only(&.{ "provenance", "left", "numbers", "right", "fade", "in", "in_ticks", "wait", "out", "out_ticks", "after" });
+    const ns = try b.get("numbers");
+    const count = try ns.len();
+    if (count == 0 or count > 8) return ns.fail("not a number for each of 1 to 8 rounds");
+    const numbers = try arena.alloc([]const u8, count);
+    for (numbers, 0..) |*o, k| o.* = try readFrame(try ns.at(k), a);
     const p = try n.get("pause");
     try p.only(&.{ "provenance", "frame" });
     const t = try n.get("time_over");
@@ -599,7 +605,7 @@ fn readRound(n: json.Node, a: ?*const art.Art) Error!Round {
         .banner = .{
             .provenance = if (try b.opt("provenance")) |x| try x.string() else "",
             .left = try readFrame(try b.get("left"), a),
-            .number = try readFrame(try b.get("number"), a),
+            .numbers = numbers,
             .right = try readFrame(try b.get("right"), a),
             .fade = try (try b.get("fade")).int(u8),
             .in = try (try b.get("in")).int(u8),
@@ -634,7 +640,7 @@ fn readRound(n: json.Node, a: ?*const art.Art) Error!Round {
 /// Reads record `name` (its file's parsed `root`) into `into`; frames are checked against `a`.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art, into: *Screens) Error!void {
     if (std.mem.eql(u8, name, "round")) {
-        into.round = try readRound(root, a);
+        into.round = try readRound(arena, root, a);
         return;
     }
     if (std.mem.eql(u8, name, "options")) {
@@ -756,7 +762,7 @@ test "the screens' records write and read back the same" {
         .high_scores = .{ .first = &.{.{ .score = 100000, .round = 1, .name = "AAA", .level = 1 }} },
         .select = .{ .adam = poses, .axel = poses, .blaze = blaze },
         .round = .{
-            .banner = .{ .left = "play/l", .number = "play/n", .right = "play/r", .fade = 17, .in = 4, .in_ticks = 35, .wait = 96, .out = 6, .out_ticks = 24, .after = 48 },
+            .banner = .{ .left = "play/l", .numbers = &.{"play/n"}, .right = "play/r", .fade = 17, .in = 4, .in_ticks = 35, .wait = 96, .out = 6, .out_ticks = 24, .after = 48 },
             .pause = .{ .frame = "play/pause" },
             .time_over = .{ .provenance = "synthetic", .frame = "play/time_over", .ticks = 256, .health = 80, .seconds = 55 },
             .status_bar = .{

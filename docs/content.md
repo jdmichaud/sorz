@@ -255,7 +255,8 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   frames, a second of 32: what the copies cost the sound's processor, DESIGN.md A4). (They are the players' animations in the original's sets; the
   characters' own definitions will hold them with their moves, PLAN 11.)
 - `round`, play's screen: `banner`, the round's banner, three frames drawn at the screen's
-  top-left (`left`, the round's `number`, `right`); the status bar's first `fade` colours fade in,
+  top-left (`left`, the round's number, `right`; `numbers`, a frame by round from round 1's, the
+  eight rounds' all made from the status bar's art); the status bar's first `fade` colours fade in,
   then the parts slide in (the left part right, the number down, the right part left) by `in`
   pixels a tick for `in_ticks` ticks, stay `wait` ticks (the round's music at their start), slide
   back out by `out` for `out_ticks` ticks, and the round starts `after` ticks later; `pause.frame`,
@@ -326,8 +327,9 @@ editing it.
 The units are pixels of the level (x across, depth on the ground) and logic ticks (30 a second in
 play).
 
-- `art`: the art set of the round's planes (`plane_a`, `plane_b`), colours and cycles. `music`:
-  the round's music, a name of the sound content. `ground`: the ground's height, where the
+- `art`: the art set of the round's planes (`plane_a`, `plane_b`), colours (`colours`) and
+  cycles (8 at most); the round's scene draws and colours its round from them, its size the
+  planes'. `music`: the round's music, a name of the sound content. `ground`: the ground's height, where the
   enemies stand and the players land (heights grow downward, as the screen's lines).
 - `camera`: the view's top-left corner at the start (`at`), how far back it may go at the start
   (`x_min`; it never goes back after), its limits down (`y`), and plane B's scroll across,
@@ -429,7 +431,7 @@ screens' palette steps: `segalogo/sweep`, `intro/lights`, `title/steps`. The rou
 
 Not in the tree yet, each with the item that needs it: the endings' texts (PLAN 16); the
 Japanese story and its kana (the game plays outside Japan, decision D5); the rounds' bands and
-floors, the scripts and banners of rounds 2 to 8 (PLAN 15).
+floors, the scripts of rounds 2 to 8 (PLAN 15).
 
 ## Extracting and checking
 

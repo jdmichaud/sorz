@@ -31,7 +31,10 @@ pub const Error = screens.Error || error{BadData};
 // The tiles the game makes, each set of them a block of its own: its key (the routine that makes
 // it) and its sheet.
 const letters_block: blocks.Block = .{ .name = "play/letters", .pack = .made, .source = 0x10E42, .what = "the banner's and the texts' big letters, the game's big font masked to one colour (0x10E42): the letters of the list at 0x10F5C, four tiles each by the table at 0x6EE52" };
-const number_block: blocks.Block = .{ .name = "play/round_number", .pack = .made, .source = 0x10E62, .what = "the round's number on the banner: its two tiles of the status bar's art, kept to colours 1, 12 and 13 (0x10E42)" };
+const number_block: blocks.Block = .{ .name = "play/round_number", .pack = .made, .source = 0x10E62, .what = "the rounds' numbers on the banner: each round's two tiles of the status bar's art (from its tile 3, two a round), kept to colours 1, 12 and 13 (0x10E42)" };
+
+/// The rounds (their numbers on the banner).
+const round_count = 8;
 const bars_block: blocks.Block = .{ .name = "play/bar_tiles", .pack = .made, .source = 0x11156, .what = "the bars' tiles the game builds from rows (0x11156, 0x11090): three rows of colour 2, five of a colour, then colour 2" };
 const fills_block: blocks.Block = .{ .name = "play/fills", .pack = .made, .source = 0x11072, .what = "the bars' partial cells (0x11072): a player's, a row of colour 2, five rows of its fill by the eighths of the cell (0x4F2C), two of colour 2; an enemy's, three rows of colour 2 and five of its fill (0x11930)" };
 
@@ -74,11 +77,12 @@ fn madeTiles(b: *Builder) !void {
         }
     }
     try b.lib.made(letters_block, letters.items);
-    // The round's number: two tiles of the status bar's art from its tile 3 (round 1), kept to
-    // colours 1, 12 and 13 (0x10F6A).
+    // The rounds' numbers: two tiles of the status bar's art a round from its tile 3 (0x10E42:
+    // $FF8060 plus the round from 0 times 64), kept to colours 1, 12 and 13 (0x10F6A).
     const bar = try b.lib.byName("play/status_bar");
-    const number = try arena.alloc(u8, 64);
-    for (number, bar.bytes[96..][0..64]) |*o, byte| o.* = keep(byte >> 4) << 4 | keep(byte & 0xF);
+    if (bar.bytes.len < 96 + 64 * round_count) return error.BadData;
+    const number = try arena.alloc(u8, 64 * round_count);
+    for (number, bar.bytes[96..][0 .. 64 * round_count]) |*o, byte| o.* = keep(byte >> 4) << 4 | keep(byte & 0xF);
     try b.lib.made(number_block, number);
     // The bars' tiles (0x11156): full and empty enemy cells, a colour-15 and a colour-1 cell.
     var bars: std.ArrayList(u8) = .empty;
@@ -476,7 +480,17 @@ pub fn extract(b: *Builder) !records.Round {
     const arena = b.arena;
     const v = try vram(b);
     try textFrame(b, v, "play/banner_left", banner_list, banner_left, "the round's banner, its left part (0x10780)");
-    try textFrame(b, v, "play/banner_number", banner_list + 8 * banner_left, 1, "the round's banner, the round's number (0x10780)");
+    // Each round's number, its tiles at $DFC0 as its set-up leaves them (round 1's last, as the
+    // rest of play's video memory is).
+    const numbers = try arena.alloc([]const u8, round_count);
+    const number_tiles = try b.lib.get(number_block.source);
+    var n: usize = round_count;
+    while (n > 0) : (n -= 1) {
+        try v.writeTiles(0xDFC0, number_block.source, @intCast(2 * (n - 1)), number_tiles.bytes[64 * (n - 1) ..][0..64]);
+        numbers[n - 1] = try std.fmt.allocPrint(arena, "play/banner_number_{d}", .{n});
+        const why = try std.fmt.allocPrint(arena, "the round's banner, round {d}'s number (0x10780; its tiles 0x10E42)", .{n});
+        try textFrame(b, v, numbers[n - 1], banner_list + 8 * banner_left, 1, why);
+    }
     try textFrame(b, v, "play/banner_right", banner_list + 8 * (banner_left + 1), banner_left, "the round's banner, its right part (0x10780)");
     try textFrame(b, v, "play/pause", pause_list, pause_entries, "the pause's text (0x10948)");
     try textFrame(b, v, "play/time_over", time_over_list, time_over_entries, "the time over's text (0x10976)");
@@ -545,7 +559,7 @@ pub fn extract(b: *Builder) !records.Round {
         .banner = .{
             .provenance = try std.fmt.allocPrint(arena, "the round's banner (0x10780, its steps 0x11A50): the status bar's first {d} colours fade in (ROM 0x11A69); its parts slide in by {d} pixels a tick (ROM 0x11A7C) until its last entry's place (ROM 0x{X:0>5}) is below ${X} (ROM 0x11AA2), {d} ticks; it stays ROM 0x11AAE's ticks (the round's music at their start); it slides out by ROM 0x11ACC's until ${X} (ROM 0x11AF2), {d} ticks; then ROM 0x11AFE's ticks", .{ fade, in, banner_list + 86, stop, in_ticks, gone, out_ticks }),
             .left = "play/banner_left",
-            .number = "play/banner_number",
+            .numbers = numbers,
             .right = "play/banner_right",
             .fade = @intCast(fade),
             .in = in,

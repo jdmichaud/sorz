@@ -75,6 +75,66 @@ pub const Text = struct {
 /// for by name.
 pub const Sounds = audio.content.Content;
 
+/// A round of the content and what its record names (docs/content.md): its script, its art set's
+/// planes (`plane_a`, `plane_b`), colours (`colours`) and cycles, its music; and its number on the
+/// banner (play's record's `banner.numbers`, by the round).
+pub const RoundAssets = struct {
+    script: *const content.round.Round,
+    set: *const art.ArtSet,
+    plane_a: *const art.TileMap,
+    plane_b: *const art.TileMap,
+    colours: *const art.Palette,
+    music: Sound,
+    number: *const art.Frame,
+};
+
+/// The rounds of the content (`rounds`), by their numbers from 1; round 1 is needed.
+pub const Rounds = struct {
+    pub const most = 8;
+    /// The most palette cycles a round's art set may have (the round scene keeps each one's
+    /// place).
+    pub const most_cycles = 8;
+    items: [most]?RoundAssets = @splat(null),
+
+    /// Round `number`, if the content has it.
+    pub fn of(self: *const Rounds, number: u8) ?*const RoundAssets {
+        if (number == 0 or number > most) return null;
+        return if (self.items[number - 1]) |*r| r else null;
+    }
+};
+
+/// Each round of the content, its record's names found.
+fn findRounds(c: *const Content, diag: *json.Diagnostic) LoadError!Rounds {
+    const a = &c.tree.art;
+    var out: Rounds = .{};
+    const play = if (c.tree.screens.round) |*r| r else return refuse(diag, "screens/round", "the rounds need play's record (their banners' numbers)");
+    for (c.tree.rounds) |*r| {
+        var buf: [16]u8 = undefined;
+        const name = content.round.nameOf(&buf, r.number);
+        if (r.number == 0 or r.number > Rounds.most) return refuse(diag, name, "a round the game does not have (1 to 8)");
+        if (out.items[r.number - 1] != null) return refuse(diag, name, "a round twice");
+        const set = a.set(r.art) orelse return refuse(diag, r.art, "a round's art set, not in the art");
+        if (set.cycles.len > Rounds.most_cycles) return refuse(diag, r.art, "more palette cycles than a round takes");
+        if (r.number > play.banner.numbers.len) return refuse(diag, name, "a round with no number on the banner (screens/round's banner.numbers)");
+        var bufs: [3][64]u8 = undefined;
+        const parts = [3][]const u8{ "plane_a", "plane_b", "colours" };
+        var full: [3][]const u8 = undefined;
+        for (&full, &bufs, parts) |*f, *b, part| f.* = std.fmt.bufPrint(b, "{s}/{s}", .{ r.art, part }) catch return refuse(diag, r.art, "an art set's name too long");
+        const number = play.banner.numbers[r.number - 1];
+        out.items[r.number - 1] = .{
+            .script = r,
+            .set = set,
+            .plane_a = a.map(full[0]) orelse return refuse(diag, full[0], "a round's plane, not in its art set"),
+            .plane_b = a.map(full[1]) orelse return refuse(diag, full[1], "a round's plane, not in its art set"),
+            .colours = a.palette(full[2]) orelse return refuse(diag, full[2], "a round's colours, not in its art set"),
+            .music = c.sounds.find(r.music) orelse return refuse(diag, r.music, "a round's music, not in sound/sounds.json"),
+            .number = a.frame(number) orelse return refuse(diag, number, "a banner's number, not in the art"),
+        };
+    }
+    if (out.items[0] == null) return refuse(diag, "rounds/round1", "no round 1");
+    return out;
+}
+
 /// The content tree in memory, owned by its arena.
 pub const Content = struct {
     arena: std.heap.ArenaAllocator,
@@ -171,6 +231,7 @@ fn findOne(comptime F: type, c: *const Content, name: []const u8, diag: *json.Di
             if (std.mem.startsWith(u8, name, "rounds/") and std.mem.eql(u8, name["rounds/".len..], content.round.nameOf(&buf, r.number))) break r;
         } else null,
         *const records.Round => if (std.mem.eql(u8, name, "screens/round")) if (c.tree.screens.round) |*r| r else null else null,
+        Rounds => if (std.mem.eql(u8, name, "rounds")) try findRounds(c, diag) else null,
         *const art.ArtSet => a.set(name),
         Poses => blk: {
             if (!std.mem.eql(u8, name, "screens/select")) break :blk null;

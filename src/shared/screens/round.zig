@@ -23,6 +23,9 @@
 //!   follows, the game under way kept; or the game over, the screen fades out, and the high
 //!   scores follow.
 //!
+//! The round it plays is the game under way's; its script, planes, colours and music are the ones
+//! its record in the content names (`library.Rounds`), so that every round is data.
+//!
 //! The semantic traces see two scenes: `round_intro` (the set-up to the banner's end) and
 //! `round` (from the fade in), whose ticks are display ticks but in play, where a tick is a
 //! logic tick (`trace_scene`, `trace_t`).
@@ -34,7 +37,6 @@ const view = @import("../view.zig");
 const render = @import("../render/root.zig");
 const input = @import("../input.zig");
 const art = @import("../content/art.zig");
-const content_round = @import("../content/round.zig");
 const records = @import("../content/screens.zig");
 const world = @import("../world/root.zig");
 const setup_mod = @import("../setup.zig");
@@ -42,7 +44,7 @@ const Colours = @import("colours.zig").Colours;
 const Setup = setup_mod.Setup;
 
 /// The palette cycles of a round's colours at most.
-const max_cycles = 8;
+const max_cycles = library.Rounds.most_cycles;
 
 pub const Phase = enum(u8) {
     setup,
@@ -156,6 +158,9 @@ pub const Join = struct {
 
 pub const Round = struct {
     phase: Phase = .setup,
+    /// The round played (the game under way's at the set-up), and its planes' sizes in cells.
+    number: u8 = 0,
+    planes: [2]?view.Size = .{ null, null },
     /// The phase's ticks left (a wait, a slide).
     left: u16 = 0,
     /// The banner's parts' moves from their places, in pixels.
@@ -188,12 +193,8 @@ pub const Round = struct {
 
     pub const Assets = struct {
         kinds: *const world.Kinds,
-        script: *const content_round.Round,
+        rounds: library.Rounds,
         screen: *const records.Round,
-        plane_a: *const art.TileMap,
-        plane_b: *const art.TileMap,
-        round_set: *const art.ArtSet,
-        round_colours: *const art.Palette,
         play_colours: *const art.Palette,
         players_colours: *const art.Palette,
         status_bar: *const art.TileMap,
@@ -204,24 +205,18 @@ pub const Round = struct {
         fills: *const art.TileSheet,
         text: library.Text,
         banner_left: *const art.Frame,
-        banner_number: *const art.Frame,
         banner_right: *const art.Frame,
         pause_text: *const art.Frame,
         time_over_text: *const art.Frame,
         game_over_text: *const art.Frame,
         sounds: *const library.Sounds,
-        music: library.Sound,
         stop: library.Sound,
         pause: library.Sound,
         time_up: library.Sound,
         pub const names = .{
             .kinds = "entities",
-            .script = "rounds/round1",
+            .rounds = "rounds",
             .screen = "screens/round",
-            .plane_a = "round1/plane_a",
-            .plane_b = "round1/plane_b",
-            .round_set = "round1",
-            .round_colours = "round1/colours",
             .play_colours = "play/colours",
             .players_colours = "play/players",
             .status_bar = "play/status_bar",
@@ -232,24 +227,27 @@ pub const Round = struct {
             .fills = "play/fills",
             .text = "fonts/main",
             .banner_left = "play/banner_left",
-            .banner_number = "play/banner_number",
             .banner_right = "play/banner_right",
             .pause_text = "play/pause",
             .time_over_text = "play/time_over",
             .game_over_text = "play/game_over",
             .sounds = "sound",
-            .music = "round 1 music",
             .stop = "stop",
             .pause = "pause",
             .time_up = "time up",
         };
     };
 
-    pub const layout: view.Layout = .{
-        .a = .{ .width = 672, .height = 32 },
-        .b = .{ .width = 672, .height = 32 },
-        .window = .{ .width = 40, .height = 4 },
-    };
+    /// The boards: the round's planes' (none before its set-up), the status bar's.
+    pub fn layoutOf(self: *const Round) view.Layout {
+        return .{ .a = self.planes[0], .b = self.planes[1], .window = .{ .width = 40, .height = 4 } };
+    }
+
+    /// The round played's content. The flow plays only a round the content has (round 1, then
+    /// the next round's stand-in after its clear, until PLAN item 15).
+    fn stage(self: *const Round, a: *const Assets) *const library.RoundAssets {
+        return a.rounds.of(self.number).?;
+    }
 
     /// The status bar's lines (the fixed layer's), above the sprites'.
     const bar_lines = 32;
@@ -260,8 +258,8 @@ pub const Round = struct {
 
     /// The plan of the round's script the world follows: the script, the options' level, the
     /// lives a continue gives (the options').
-    fn plan(setup: *const Setup, a: *const Assets) world.script.Plan {
-        return .{ .round = a.script, .level = @intCast(@min(setup.level, 3)), .lives = setup_mod.Progress.livesOf(setup) };
+    fn plan(self: *const Round, setup: *const Setup, a: *const Assets) world.script.Plan {
+        return .{ .round = self.stage(a).script, .level = @intCast(@min(setup.level, 3)), .lives = setup_mod.Progress.livesOf(setup) };
     }
 
     /// One display tick.
@@ -298,7 +296,7 @@ pub const Round = struct {
                 if (self.left != 0) return null;
                 self.phase = .banner_wait;
                 self.left = b.wait;
-                turn.play(a.music);
+                turn.play(self.stage(a).music);
             },
             .banner_wait => {
                 self.left -|= 1;
@@ -417,7 +415,7 @@ pub const Round = struct {
             scratch = .{};
             break :blk &scratch;
         };
-        const p = plan(turn.setup, a);
+        const p = self.plan(turn.setup, a);
         if (!self.play.roundTick(a.kinds, turn.random.?, turn.pads, out, &p)) return null;
         self.logic_ran = true;
         self.trace_t += 1;
@@ -445,7 +443,7 @@ pub const Round = struct {
     /// play's health lost (its behaviour then dies); play goes on.
     fn timeOverEnds(self: *Round, turn: *scene.Turn, a: *const Assets) void {
         const t = &a.screen.time_over;
-        turn.play(a.music);
+        turn.play(self.stage(a).music);
         const w = &self.play.world;
         w.timer.seconds = t.seconds;
         for (w.players, 0..) |pl, k| {
@@ -490,16 +488,22 @@ pub const Round = struct {
         const setup = turn.setup;
         const g = &setup.progress;
         if (g.round == 0) g.* = .new(setup);
+        self.number = g.round;
+        const s = self.stage(a);
+        self.planes = .{
+            .{ .width = s.plane_a.width, .height = s.plane_a.height },
+            .{ .width = s.plane_b.width, .height = s.plane_b.height },
+        };
         const w = &self.play.world;
         w.* = .{};
-        w.ground = .pixels(a.script.ground);
-        const p = plan(setup, a);
+        w.ground = .pixels(s.script.ground);
+        const p = self.plan(setup, a);
         world.script.start(w, &p);
         var scratch: world.Output = .{};
         const out = turn.world_out orelse &scratch;
         out.* = .{};
         var t: world.tick.Tick = .{ .world = w, .kinds = a.kinds, .random = turn.random.?, .out = out, .plan = &p };
-        const r = a.script;
+        const r = s.script;
         for (&w.players, g.players, 0..) |*wp, gp, k| {
             wp.* = .{ .lives = gp.lives, .specials = gp.specials, .score = gp.score, .continues = gp.continues };
             if (!gp.in_play) continue;
@@ -519,17 +523,16 @@ pub const Round = struct {
         world.systems.picture(&t);
         self.join = .{ .ticks = a.screen.status_bar.join.blink };
         self.colours.palettes = .{};
-        self.colours.aim(a.round_colours);
+        self.colours.aim(s.colours);
         self.colours.aim(a.play_colours);
         self.colours.aim(a.players_colours);
-        const n = @min(a.round_set.cycles.len, max_cycles);
-        for (a.round_set.cycles[0..n], self.cycles[0..n]) |c, *s| s.* = .{ .countdown = c.period };
+        for (s.set.cycles, self.cycles[0..s.set.cycles.len]) |c, *x| x.* = .{ .countdown = c.period };
     }
 
     /// The round's colour cycles, a step every period of logic ticks.
     fn cycle(self: *Round, a: *const Assets) void {
-        const n = @min(a.round_set.cycles.len, max_cycles);
-        for (a.round_set.cycles[0..n], self.cycles[0..n]) |c, *s| {
+        const set = self.stage(a).set;
+        for (set.cycles, self.cycles[0..set.cycles.len]) |c, *s| {
             s.countdown -|= 1;
             if (s.countdown != 0) continue;
             s.countdown = c.period;
@@ -572,14 +575,15 @@ pub const Round = struct {
 
     pub fn draw(self: *const Round, prev: ?*const Round, v: *view.View, a: *const Assets) !void {
         const now = self.shown_bar;
+        const s = self.stage(a);
         if (prev == null) {
-            try v.board(.a).drawMap(a.plane_a, 0, 0);
-            try v.board(.b).drawMap(a.plane_b, 0, 0);
+            try v.board(.a).drawMap(s.plane_a, 0, 0);
+            try v.board(.b).drawMap(s.plane_b, 0, 0);
             try v.board(.window).drawMapAtPlace(a.status_bar);
             try drawBar(v, a, now, null);
         } else try drawBar(v, a, now, prev.?.shown_bar);
         const c = self.play.world.camera;
-        const r = a.script;
+        const r = s.script;
         v.screen.plane_a.x = c.x.whole();
         v.screen.plane_a.y = c.y.whole();
         v.screen.plane_b.x = @divFloor(c.x.whole() * r.camera.plane_b[0], r.camera.plane_b[1]);
@@ -591,7 +595,7 @@ pub const Round = struct {
         switch (self.shown_phase) {
             .banner_in, .banner_wait, .banner_out => {
                 try v.sprites.append(v.gpa, .of(a.banner_left, self.shown_banner, 0));
-                try v.sprites.append(v.gpa, .of(a.banner_number, 0, self.shown_banner));
+                try v.sprites.append(v.gpa, .of(s.number, 0, self.shown_banner));
                 try v.sprites.append(v.gpa, .of(a.banner_right, -self.shown_banner, 0));
             },
             .time_over => try v.sprites.append(v.gpa, .of(a.time_over_text, 0, 0)),
