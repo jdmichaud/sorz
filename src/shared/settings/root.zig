@@ -1,6 +1,7 @@
-//! The port's settings (DESIGN.md 7): the record (`record.zig`). The screen that changes it is a
-//! scene of the game (DESIGN.md 10.4, PLAN item 19).
+//! The port's settings (DESIGN.md 7): the record (`record.zig`) and the screen that changes it in
+//! the game (`screen.zig`), an overlay over the game's scenes (DESIGN.md 10.4 S3, game.zig).
 pub const record = @import("record.zig");
+pub const screen = @import("screen.zig");
 pub const Settings = record.Settings;
 
 test {

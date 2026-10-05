@@ -162,9 +162,11 @@ pub const Assets = struct {
     }
 };
 
-/// The scenes that go over another and hold it by their own rule (S3), by kind: the flow's loads
-/// (TODO(PLAN item 19): the settings screen and the network messages). An overlay ends by itself
-/// (a load when its ticks are over), and is taken off.
+/// The scenes of the game that go over another and hold it by their own rule (S3), by kind: the
+/// flow's loads. An overlay ends by itself (a load when its ticks are over), and is taken off. The
+/// overlays of one machine (the settings screen, network play's notice that the other player is in
+/// theirs, a notice about the settings record) are not the game's: they are not in its canonical
+/// state, which the two machines of network play share, but over it (overlay.zig, game.zig).
 pub const Overlay = union(enum) {
     load: Load,
 

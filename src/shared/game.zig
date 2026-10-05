@@ -21,14 +21,16 @@
 //! clock) by up to 0.5 %. A new session starts the game from power-on; a state mismatch stops it.
 //! Without a session, nothing of this runs.
 //!
-//! Variants (DESIGN.md 10.7, variant.zig): the game starts with its variant (`variant`, which the
-//! host chooses; in network play the host's start is both games'), part of its canonical state.
-//!
 //! Settings (DESIGN.md 7): the record, read from the storage at the start, gives the controls'
-//! layout, the sound's volume and the SDL host's window. OPTIONS' VOLUME line (variant.zig) is the
-//! record's volume of the machine whose player 1 moves it. A damaged record is repaired and kept
-//! aside (settings/record.zig), and `notice` says so for the host and, once the game draws text,
-//! the player (TODO(PLAN item 19): the settings screen and its notices).
+//! layout, the sound's volume and the SDL host's window. The settings screen changes it: an
+//! overlay of this machine over the game's scenes (overlay.zig), opened by the game menu's
+//! SETTINGS on the machine of the player who chose it, by the settings key in any scene, or by the
+//! browser page's menu before the game starts (`openSettings`). While it is open the game holds:
+//! no tick, the picture dimmed under it, the game's sound faded out and the pause's jingle played.
+//! In network play the other machine holds too, says why (unless its host says it: the browser's
+//! page) and plays the jingle. A damaged record is repaired and kept aside (settings/record.zig),
+//! and a notice tells the player for a few seconds. OPTIONS' VOLUME line (variant.zig) is the
+//! record's volume of the machine whose player 1 moves it.
 const std = @import("std");
 const platform = @import("platform.zig");
 const input = @import("input.zig");
@@ -46,6 +48,8 @@ const transfers = @import("screens/transfers.zig");
 const Setup = @import("setup.zig").Setup;
 const world = @import("world/root.zig");
 const variant = @import("variant.zig");
+const overlay = @import("overlay.zig");
+const panel_mod = @import("panel.zig");
 
 pub const page_width = picture.width;
 pub const page_height = picture.height;
@@ -57,15 +61,7 @@ pub const UpdateResult = enum { running, finished };
 pub const Pacing = enum { clock, per_update };
 
 /// What the game has to tell about its settings record.
-pub const Notice = enum {
-    none,
-    /// The record was damaged: the rest was kept, and the damaged one kept aside.
-    damaged,
-    /// The storage did not give the record: the defaults stand.
-    unreadable,
-    /// The record could not be written.
-    not_saved,
-};
+pub const Notice = overlay.Notice;
 
 /// Everything that decides what the game does next. Its canonical form (canonical.zig) is what
 /// the tests and network play compare: the same pads from power-on give the same state on every
@@ -185,6 +181,26 @@ pub const Game = struct {
     pattern_drawn: scene.TestPattern.Drawn = .{},
     /// Whether the picture may have changed since it was last drawn (a tick ran).
     redraw: bool = true,
+    /// This machine's scenes over the game's (overlay.zig): the settings, the other player's, a
+    /// notice; and what they are drawn with (the content's font and menu colours).
+    overlays: overlay.Stack = .{},
+    panel: ?*panel_mod.Panel = null,
+    /// The overlays were drawn over the last frame presented (the frame is the panel's), and
+    /// whether they need drawing again (they changed, or the picture under them did).
+    overlay_shown: bool = false,
+    overlay_dirty: bool = true,
+    /// The settings' arrow as last drawn (it blinks while they wait for a key).
+    arrow_shown: bool = true,
+    /// The host says network play's messages itself (the browser's page): the game does not draw
+    /// the other player's being in the settings.
+    host_messages: bool = false,
+    /// The pause's jingle that the settings play over a held game (made with the sound, before it
+    /// is wanted), and where its playing is.
+    jingle: []i16 = &.{},
+    jingle_at: ?usize = null,
+    /// The game's sound faded out for a hold; the next tick's sound fades in.
+    faded: bool = false,
+    fade_buffer: []i16 = &.{},
 
     update_count: u64 = 0,
     frames_presented: u64 = 0,
@@ -213,6 +229,12 @@ pub const Game = struct {
         }
         if (self.sound) |*s| s.deinit(self.allocator);
         self.allocator.free(self.volume_buffer);
+        self.allocator.free(self.fade_buffer);
+        self.allocator.free(self.jingle);
+        if (self.panel) |p| {
+            p.deinit();
+            self.allocator.destroy(p);
+        }
         if (self.view) |*v| v.deinit();
         if (self.content) |c| {
             c.destroy();
@@ -230,6 +252,16 @@ pub const Game = struct {
         self.content = c;
         self.scene_assets = scene.Assets.find(c, &diag) catch |e| return self.refuse(e, &diag);
         self.view = try View.init(self.allocator);
+        // The overlays' look: the game's font and its menu's colours (the game menu's assets).
+        const a = &self.scene_assets.?.menu;
+        const p = try self.allocator.create(panel_mod.Panel);
+        p.init(self.allocator, a.text.font, a.text.sheet, a.one_pad) catch |e| {
+            self.allocator.destroy(p);
+            if (e == error.OutOfMemory) return error.OutOfMemory;
+            std.log.err("the game's content is refused: fonts/main has no arrow (->)", .{});
+            return error.BadContent;
+        };
+        self.panel = p;
     }
 
     fn refuse(_: *Game, e: library.LoadError, diag: *const json.Diagnostic) InitError {
@@ -277,7 +309,7 @@ pub const Game = struct {
         if (!loaded.damaged()) return;
         if (loaded.unreadable) {
             std.log.warn("the settings record cannot be read; the defaults stand", .{});
-            self.notice = .unreadable;
+            self.tell(.unreadable);
             return;
         }
         std.log.warn("the settings record was damaged ({f}); the rest is kept, the damaged record is kept as {s}{s}", .{
@@ -285,7 +317,14 @@ pub const Game = struct {
             settings_mod.record.damaged_name,
             if (loaded.repair_failed) ", and the repaired one could not be written" else "",
         });
-        self.notice = .damaged;
+        self.tell(.damaged);
+    }
+
+    /// A notice about the record: for the host (`notice`) and over the picture for a few seconds.
+    fn tell(self: *Game, n: Notice) void {
+        self.notice = n;
+        self.overlays.push(.{ .notice = .{ .what = n } });
+        self.overlay_dirty = true;
     }
 
     /// Writes `settings` as the record; a failure is told, and the settings stay for this run.
@@ -293,7 +332,7 @@ pub const Game = struct {
         const storage = self.storage orelse return;
         settings_mod.record.save(storage, settings) catch |err| {
             std.log.warn("the settings cannot be saved: {s}", .{@errorName(err)});
-            self.notice = .not_saved;
+            self.tell(.not_saved);
             return;
         };
         self.saves_written += 1;
@@ -331,11 +370,18 @@ pub const Game = struct {
         return np.peerInSettings();
     }
 
-    /// Whether the game takes `key` now: a pad's key or the settings key (the browser's page keeps
-    /// the other keys for itself).
+    /// Whether the game takes `key` now: a pad's key or the settings key, or any key while the
+    /// settings are open (the browser's page keeps the other keys for itself).
     pub fn usesKey(self: *const Game, key: platform.Key) bool {
         if (key == .unknown) return false;
+        if (self.settingsOpen()) return true;
         return key == self.settings.settings_key or self.controls.uses(key);
+    }
+
+    /// Whether the settings screen is open (the hosts follow its window's settings).
+    pub fn settingsOpen(self: *const Game) bool {
+        for (self.overlays.items[0..self.overlays.len]) |o| if (o == .settings) return true;
+        return false;
     }
 
     /// Whether this machine plays player `who` (0 or 1): both without network play.
@@ -348,6 +394,80 @@ pub const Game = struct {
     /// machine's player 1 moves it.
     fn volumeIsLine(self: *const Game) bool {
         return self.start().volume != null and self.plays(0);
+    }
+
+    /// Opens the settings screen over the game, which holds while it is open; the controls let go,
+    /// and once the game runs, the pause's jingle plays. A notice goes.
+    fn showSettings(self: *Game) void {
+        if (self.settingsOpen() or self.panel == null) return;
+        self.overlays.remove(.notice);
+        self.overlays.push(.{ .settings = .open(&self.settings, .{ .one_player = self.controls.one_player, .volume = !self.volumeIsLine() }) });
+        self.overlay_dirty = true;
+        self.controls.release();
+        if (self.started) self.jingle_at = 0;
+    }
+
+    /// The settings screen closed: the controls take the keys; SAVE AND EXIT writes the record
+    /// (left without saving, the screen gave back the settings it opened with).
+    fn closeSettings(self: *Game, how: settings_mod.screen.Result) void {
+        self.overlays.remove(.settings);
+        self.overlay_dirty = true;
+        self.controls.layout = self.settings.layout;
+        if (how == .save_and_exit) self.writeSettings(&self.settings);
+    }
+
+    /// An event while the settings are open: they take the presses; the controls still see the
+    /// controllers come and go, and the focus.
+    fn settingsEvent(self: *Game, e: platform.Event) void {
+        switch (e.payload) {
+            .quit => self.finished = true,
+            .key_down, .controller_button_down => {
+                const screen = &self.overlays.find(.settings).?.settings;
+                const result = screen.handle(&self.settings, e);
+                self.overlay_dirty = true;
+                if (result != .stay) self.closeSettings(result);
+            },
+            else => _ = self.controls.handle(e),
+        }
+    }
+
+    /// The browser page's menu opens the settings before the game's first update: `updateSettings`
+    /// then runs them alone, over a black picture, until the player leaves them. Nothing of the
+    /// game runs, so the page can still start network play after. False without the content.
+    pub fn openSettings(self: *Game) bool {
+        std.debug.assert(!self.started);
+        self.showSettings();
+        return self.settingsOpen();
+    }
+
+    /// One update of the settings that `openSettings` opened: their events, then their picture
+    /// while they are open. Returns whether they still are; once they close, the controls let go:
+    /// until the game starts, the page's menu has the keys.
+    pub fn updateSettings(self: *Game, p: *platform.Platform) !bool {
+        std.debug.assert(!self.started);
+        _ = try p.start();
+        try p.setResolution(page_width, page_height);
+        var buf: [32]platform.Event = undefined;
+        while (true) {
+            const n = p.pollEvents(&buf);
+            if (n == 0) break;
+            for (buf[0..n]) |e| {
+                self.events_consumed += 1;
+                if (self.settingsOpen()) self.settingsEvent(e);
+            }
+        }
+        if (self.finished and self.settingsOpen()) {
+            const screen = &self.overlays.find(.settings).?.settings;
+            self.settings = screen.before;
+            self.closeSettings(.exit_without_saving);
+        }
+        if (!self.settingsOpen()) {
+            self.controls.release();
+            return false;
+        }
+        try p.present(try self.overlaid(p.nowNs(), null));
+        self.frames_presented += 1;
+        return true;
     }
 
     /// The events, the ticks due, the picture.
@@ -378,10 +498,16 @@ pub const Game = struct {
             for (buf[0..n]) |e| {
                 self.events_consumed += 1;
                 if (self.netplay) |np| if (np.handle(p, e)) continue;
+                if (self.settingsOpen()) {
+                    self.settingsEvent(e);
+                    continue;
+                }
                 switch (e.payload) {
                     .quit => self.finished = true,
                     .key_down => |k| if (k.key == .escape) {
                         self.finished = true;
+                    } else if (k.key == self.settings.settings_key and !k.repeat) {
+                        self.showSettings();
                     } else {
                         _ = self.controls.handle(e);
                     },
@@ -390,22 +516,52 @@ pub const Game = struct {
             }
         }
         if (self.finished) {
+            // Quitting with the settings open writes nothing, as leaving them without saving.
+            if (self.overlays.find(.settings)) |o| {
+                self.settings = o.settings.before;
+                self.closeSettings(.exit_without_saving);
+            }
             if (self.netplay) |np| np.quit(p);
             return .finished;
         }
         if (self.netplay) |np| {
+            np.inSettings(p, self.settingsOpen());
             np.update(p);
+            self.peerOverlay(np);
             if (np.epoch != self.net_epoch) {
                 self.net_epoch = np.epoch;
                 self.powerOn(p);
             }
         }
-        switch (self.pacing) {
+        if (self.overlays.holds()) {
+            self.hold(p);
+        } else switch (self.pacing) {
             .per_update => _ = self.runTick(p),
             .clock => self.runDue(p),
         }
+        self.playJingle(p);
         try self.present(p);
         return .running;
+    }
+
+    /// The other player's being in the settings, as the session says it: both games hold, and both
+    /// hear the pause's jingle.
+    fn peerOverlay(self: *Game, np: *const net.Netplay) void {
+        const in = np.peerInSettings();
+        const shown = self.overlays.find(.peer_settings) != null;
+        if (in == shown) return;
+        self.overlay_dirty = true;
+        if (!in) return self.overlays.remove(.peer_settings);
+        self.overlays.push(.{ .peer_settings = @intFromBool(np.role == .host) });
+        self.jingle_at = 0;
+    }
+
+    /// The overlays hold the game: no tick runs, the clock does not run ahead, and the sound fades
+    /// out, to fade in with the next tick.
+    fn hold(self: *Game, p: *platform.Platform) void {
+        self.clock_base_ns = p.nowNs();
+        self.clock_ticks = 0;
+        self.fadeOut(p);
     }
 
     /// The ticks due: while the platform plays sound, those that keep its queue full enough;
@@ -418,7 +574,11 @@ pub const Game = struct {
             if (st.running and !st.suspended) {
                 const target = queue_ticks * s.maxFrames();
                 while (n < max_ticks_per_update and p.audioStatus().queued_frames < target) : (n += 1) {
-                    if (!self.runTick(p)) break;
+                    if (!self.runTick(p)) {
+                        // A hold: the sound fades out rather than breaks.
+                        self.fadeOut(p);
+                        break;
+                    }
                 }
                 self.clock_base_ns = now;
                 self.clock_ticks = 0;
@@ -439,9 +599,8 @@ pub const Game = struct {
         const due: u64 = (now -| self.clock_base_ns) * 1000 / stretched(ppm);
         while (n < max_ticks_per_update and self.clock_ticks < due) : (n += 1) {
             if (!self.runTick(p)) {
-                // A hold: the clock does not run ahead of it.
-                self.clock_base_ns = now;
-                self.clock_ticks = 0;
+                // A hold: the clock does not run ahead of it, and the sound fades out.
+                self.hold(p);
                 return;
             }
             self.clock_ticks += 1;
@@ -470,14 +629,16 @@ pub const Game = struct {
         return !self.controls.one_player or self.netplay != null;
     }
 
-    /// One tick, and its sound. In network play the pads are the session's; false when it holds
-    /// for the other player's, and nothing ran. TODO(PLAN item 18): a hold fades the sound out,
-    /// and the next tick fades it in (DESIGN.md 9).
+    /// One tick, and its sound. In network play the pads are the session's; false when the game
+    /// holds (an overlay, or the other player's pads not in), and nothing ran. A tick whose game
+    /// menu chose SETTINGS opens them, on the machine of the player who chose.
     fn runTick(self: *Game, p: *platform.Platform) bool {
+        if (self.overlays.holds()) return false;
         var pads = self.controls.pads();
         if (self.netplay) |np| pads = np.pads(p, pads.pad1) orelse return false;
         const turn = self.state.stepWith(pads, self.secondPad(), if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
         self.redraw = true;
+        if (turn.settings) |who| if (self.plays(who)) self.showSettings();
         // OPTIONS' VOLUME line is the record's volume of player 1's machine.
         if (self.state.setup.volume) |v| if (self.volumeIsLine() and v != self.settings.sound.volume) {
             self.settings.sound.volume = v;
@@ -493,7 +654,11 @@ pub const Game = struct {
         if (turn.frame) |f| self.transfers_due = transfers.hold(f);
         if (self.sound) |*s| {
             const frames = s.play(self.stretchPpm(), turn.requests.slice(), turn.sound_driver, turn.sound_restart, held);
-            _ = p.audioQueue(self.atVolume(frames)) catch {};
+            // After a hold, the sound fades in, and the jingle of the hold stops.
+            const shaped = if (self.faded) self.fade(frames, .in) else frames;
+            if (self.faded) self.jingle_at = null;
+            self.faded = false;
+            _ = p.audioQueue(self.atVolume(shaped)) catch {};
         }
         if (self.netplay) |np| {
             np.ran();
@@ -516,6 +681,7 @@ pub const Game = struct {
         if (self.view) |*v| v.shows = null;
         self.clock_base_ns = p.nowNs();
         self.clock_ticks = 0;
+        self.faded = false;
         if (self.sound) |*s| {
             s.reset(self.allocator) catch |err| {
                 std.log.warn("no sound: {s}", .{@errorName(err)});
@@ -543,6 +709,54 @@ pub const Game = struct {
             p.audioClose();
             return;
         };
+        // The settings' jingle, made now rather than when the player opens them.
+        if (sounds) |c| if (sound_out.alone(self.allocator, c, "pause", fmt.sample_rate)) |frames| {
+            self.jingle = frames orelse &.{};
+        } else |err| std.log.warn("no jingle for the settings: {s}", .{@errorName(err)});
+    }
+
+    /// A hold: once the device's queue runs low, the chips sound on for one more tick, without the
+    /// sequencer, fading to silence, so that the sound fades rather than breaks.
+    fn fadeOut(self: *Game, p: *platform.Platform) void {
+        if (self.faded) return;
+        const s = if (self.sound) |*s| s else return;
+        if (p.audioStatus().queued_frames > s.maxFrames()) return;
+        _ = p.audioQueue(self.atVolume(self.fade(s.play(self.stretchPpm(), &.{}, false, false, 0), .out))) catch {};
+        self.faded = true;
+    }
+
+    /// The jingle's next frames, while a hold has faded the game's sound out: a tick's worth at a
+    /// time, as the device's queue runs low. A hold that ends stops it.
+    fn playJingle(self: *Game, p: *platform.Platform) void {
+        var at = self.jingle_at orelse return;
+        if (!self.faded) return;
+        const s = if (self.sound) |*s| s else return;
+        const tick_frames = 2 * @as(usize, s.maxFrames());
+        while (at < self.jingle.len and p.audioStatus().queued_frames < s.maxFrames() * 2) {
+            const n = @min(self.jingle.len - at, tick_frames);
+            _ = p.audioQueue(self.atVolume(self.jingle[at..][0..n])) catch {};
+            at += n;
+        }
+        self.jingle_at = if (at < self.jingle.len) at else null;
+    }
+
+    /// `frames` with a linear ramp, in the fade buffer.
+    fn fade(self: *Game, frames: []const i16, direction: enum { in, out }) []const i16 {
+        if (self.fade_buffer.len < frames.len) {
+            self.allocator.free(self.fade_buffer);
+            self.fade_buffer = self.allocator.alloc(i16, frames.len) catch {
+                self.fade_buffer = &.{};
+                return frames;
+            };
+        }
+        const out = self.fade_buffer[0..frames.len];
+        const n: i32 = @intCast(@max(frames.len / 2, 1));
+        for (0..frames.len / 2) |i| {
+            const k: i32 = @intCast(i);
+            const gain = if (direction == .in) k else n - k;
+            for (0..2) |c| out[2 * i + c] = @intCast(@divTrunc(@as(i32, frames[2 * i + c]) * gain, n));
+        }
+        return out;
     }
 
     /// `frames` at the settings' volume: themselves at full volume, else scaled in the volume
@@ -566,10 +780,12 @@ pub const Game = struct {
     }
 
     /// The frame, drawn again only where it may have changed: a host that updates more often than
-    /// the ticks run (a display above 60 Hz) presents the same frame in between.
+    /// the ticks run (a display above 60 Hz) presents the same frame in between. The overlays go
+    /// over the scenes' picture, drawn again when they or the picture changed.
     fn present(self: *Game, p: *platform.Platform) !void {
         if (self.redraw) {
             self.redraw = false;
+            self.overlay_dirty = true;
             if (self.state.scenes.topKind() == .test_pattern) {
                 self.state.scenes.base.test_pattern.draw(self.state.tick, &self.pic, &self.pattern_drawn);
             } else {
@@ -578,14 +794,66 @@ pub const Game = struct {
                 _ = try v.compose();
             }
         }
-        try p.present(self.frame());
+        const f = if (self.overlays.len != 0) try self.overlaid(p.nowNs(), self.scenesFrame()) else blk: {
+            self.overlay_shown = false;
+            break :blk self.scenesFrame();
+        };
+        try p.present(f);
         self.frames_presented += 1;
     }
 
-    /// The last frame drawn: the scenes', or the test pattern's.
-    pub fn frame(self: *const Game) platform.RgbaFrame {
+    /// The settings' arrow blinks while they wait for a key: on and off every 16 ticks' time.
+    const blink_ns: u64 = 16 * sound_out.tick_ps / 1000;
+
+    /// The overlays over `under` (null: a black screen), drawn again when they changed; a notice
+    /// whose time is over goes. The frame is the panel's.
+    fn overlaid(self: *Game, now_ns: u64, under: ?platform.RgbaFrame) !platform.RgbaFrame {
+        const p = self.panel orelse return under orelse self.pic.frame();
+        if (self.overlays.find(.notice)) |o| {
+            const until = o.notice.until_ns orelse now_ns + overlay.notice_ns;
+            o.notice.until_ns = until;
+            if (now_ns >= until) {
+                self.overlays.remove(.notice);
+                self.notice = .none;
+                self.overlay_dirty = true;
+            }
+        }
+        var waiting = false;
+        if (self.overlays.find(.settings)) |o| waiting = o.settings.waiting;
+        const arrow = !waiting or (now_ns / blink_ns) % 2 == 0;
+        if (arrow != self.arrow_shown) self.overlay_dirty = true;
+        self.arrow_shown = arrow;
+        // The other player's being in the settings is the page's to say, where it says network
+        // play's messages.
+        var drawn: usize = 0;
+        for (self.overlays.slice()) |*o| drawn += @intFromBool(!(o.* == .peer_settings and self.host_messages));
+        if (drawn == 0) {
+            self.overlay_shown = false;
+            return under orelse self.pic.frame();
+        }
+        if (self.overlay_dirty or !self.overlay_shown) {
+            self.overlay_dirty = false;
+            p.begin();
+            for (self.overlays.slice()) |*o| {
+                if (o.* == .peer_settings and self.host_messages) continue;
+                try o.draw(p, &self.settings, arrow);
+            }
+            _ = try p.finish(under, self.overlays.dims());
+        }
+        self.overlay_shown = true;
+        return self.frame();
+    }
+
+    /// The scenes' last picture, or the test pattern's.
+    fn scenesFrame(self: *const Game) platform.RgbaFrame {
         if (self.view) |*v| if (v.shows != null) return v.frame();
         return self.pic.frame();
+    }
+
+    /// The last frame presented: the overlays', or the scenes'.
+    pub fn frame(self: *const Game) platform.RgbaFrame {
+        if (self.overlay_shown) return .{ .width = panel_mod.width, .height = panel_mod.height, .stride = panel_mod.width * 4, .pixels = self.panel.?.rgba };
+        return self.scenesFrame();
     }
 
     /// The hash of the last frame presented (0 before the first). It is worked out when asked.
@@ -659,4 +927,22 @@ test "the volume scales the sound unless the host applies it" {
     try testing.expectEqualSlices(i16, &.{ 0, 0, 0, 0 }, game.atVolume(&frames));
     game.host_volume = true;
     try testing.expectEqualSlices(i16, &frames, game.atVolume(&frames));
+}
+
+test "a hold's sound fades out, and the next tick's fades in" {
+    var game = try Game.init(testing.allocator, null, null);
+    defer game.deinit();
+    // Four stereo frames: the ramp's gains are 4/4 to 1/4 out, 0/4 to 3/4 in.
+    const frames = [_]i16{ 400, -400, 400, -400, 400, -400, 400, -400 };
+    try testing.expectEqualSlices(i16, &.{ 400, -400, 300, -300, 200, -200, 100, -100 }, game.fade(&frames, .out));
+    try testing.expectEqualSlices(i16, &.{ 0, 0, 100, -100, 200, -200, 300, -300 }, game.fade(&frames, .in));
+}
+
+test "without the content's look, no settings screen; without network play, both players here" {
+    var game = try Game.init(testing.allocator, null, null);
+    defer game.deinit();
+    game.showSettings();
+    try testing.expect(!game.settingsOpen() and game.usesKey(.f1));
+    try testing.expect(game.plays(0) and game.plays(1));
+    try testing.expect(game.volumeIsLine() == (game.start().volume != null));
 }

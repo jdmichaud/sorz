@@ -180,8 +180,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
         }
         if (backend.event_log != null) try out.flush();
         if (result == .finished) break;
-        // TODO(PLAN item 19): whether the settings screen is open, once the game has it.
-        if (window.follow(game.settings.window, false)) |mode| backend.setWindowMode(mode.scale, mode.fullscreen);
+        if (window.follow(game.settings.window, game.settingsOpen())) |mode| backend.setWindowMode(mode.scale, mode.fullscreen);
         const now = p.nowNs();
         if (deadline_limit) |limit| {
             // The deadline starts when the platform is up, so a slow start does not use log time.
