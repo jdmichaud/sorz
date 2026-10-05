@@ -90,7 +90,20 @@
 
 ## F5 — The whole game
 
-- [ ] **14 — Adam and Blaze, two players** — Depends: 13.
+- [x] **14 — Adam and Blaze, two players** — Depends: 13.
+  - Adam's and Blaze's definitions from the ROM, played by the player's behaviour (each
+    character's own ways as data); each player's choice at the select reaching the round; two
+    players in the round: player 2's status bar, their blows on each other, the enemies' choice
+    between them, each one's special attack, the script's two-player records.
+  - Gate: similar to sor-remaster in each of Adam's and Blaze's catalogue moves, and in the two
+    players' blows, the enemies' choice and the special attacks; a round from power-on with Blaze,
+    and one with two players, equal in trace, frames and sound; the user plays them.
+  - [x] Checked 2026-10-05: `similar-check` (Adam's 16 moves and Blaze's 16 equal, Axel's 18
+    still, the two players' 6), `round-check` (`blaze`, `two`, and `join` as Adam), the SDL build
+    under Xvfb with XTEST keys (Adam, Blaze, two players on one keyboard). The user's play is
+    pending.
+  - [ ] Open: the players' grabs of each other (in the original a walk into the other grabs it:
+    the hold, its knees, the throw that sends the other flying over), not played yet.
 - [ ] **15 — Rounds 2 to 8** — Depends: 13.
   - Their enemies, bosses and set pieces (the ship, the lift, the offer, Mr. X).
 - [ ] **16 — Endings, high scores and name entry** — Depends: 15.
