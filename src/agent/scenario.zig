@@ -329,6 +329,8 @@ pub const Situation = struct {
     camera_stop: [3]i32 = .{ 0, 0, 0 },
     lives: [2][2]u8 = .{ .{ 0, 0 }, .{ 0, 0 } },
     scores: [2]u32 = .{ 0, 0 },
+    /// The players' pads as last read by then (their next read's presses are new against them).
+    pads: [2]sorz.input.Pad = .{ .{}, .{} },
     next_id: u32 = 3,
     /// The random generator's draws from power-on, and whether its state was set otherwise
     /// (then `last_values` are the last tick's first draws, which tell its state).
@@ -535,6 +537,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             const p: usize = @intCast((int(o, "pad") orelse 1) - 1);
             if (p >= 2) continue;
             const b = std.mem.indexOfScalar(u8, str(o, "held") orelse "", 'B') != null;
+            s.pads[p] = padOf(str(o, "held") orelse "");
             if (b and !held_b[p]) for (seen.values()) |*x| if (x.player != null and x.player.? == p + 1) {
                 const seen_at = @as(u64, @intCast(int(o, "t") orelse 0)) + 1;
                 x.presses = try std.mem.concat(arena, u64, &.{ x.presses, &.{seen_at} });
@@ -630,6 +633,23 @@ pub fn framesOf(situation: *Situation, arena: std.mem.Allocator, probe_text: []c
             x.frame = f;
         };
     }
+}
+
+/// A pad holding the buttons a trace's letters name (`U D L R A B C S`).
+fn padOf(letters: []const u8) sorz.input.Pad {
+    var pad: sorz.input.Pad = .{};
+    for (letters) |c| switch (c) {
+        'U' => pad.up = true,
+        'D' => pad.down = true,
+        'L' => pad.left = true,
+        'R' => pad.right = true,
+        'A' => pad.a = true,
+        'B' => pad.b = true,
+        'C' => pad.c = true,
+        'S' => pad.start = true,
+        else => {},
+    };
+    return pad;
 }
 
 /// The kinds the round's script places: its enemies, its boss, its breakables.
@@ -777,7 +797,7 @@ pub const Run = struct {
             if (e.health) |hp| x.health = @intCast(hp);
             if (e.state) |st| _ = world.behaviours.setState(&x.mind, st);
             if (e.player) |p| {
-                w.players[p - 1] = .{ .entity = h, .character = kind, .lives = situation.lives[p - 1][0], .specials = situation.lives[p - 1][1], .score = situation.scores[p - 1] };
+                w.players[p - 1] = .{ .entity = h, .character = kind, .lives = situation.lives[p - 1][0], .specials = situation.lives[p - 1][1], .score = situation.scores[p - 1], .last = situation.pads[p - 1] };
                 // The camera follows from where the situation's tick drew the player.
                 w.camera.drawn[p - 1] = x.position.x;
             }
