@@ -659,7 +659,8 @@ fn slash(a: Actor) void {
 /// His claws, in the first free place after his (none: none), placed at once.
 fn spawnClaws(a: Actor) void {
     const kind = a.tick.kinds.find(claws_kind) orelse return;
-    const h = a.tick.world.spawnWithin(a.tick.kinds, kind, a.handle.index + 1, 51, a.entity.position, .right) catch return;
+    // A new object of the original's (no fractions), placed at once.
+    const h = a.tick.world.spawnWithin(a.tick.kinds, kind, a.handle.index + 1, 51, .zero, .right) catch return;
     const claws = @import("boss_r2_claws.zig");
     if (a.tick.actor(claws, h)) |c| {
         c.mind.boss = a.handle;
