@@ -34,6 +34,8 @@ pub const Drawn = struct {
     view: *sorz.view.View,
     /// The frame of the shadows on the ground, when the content has one.
     shadow: ?*const sorz.content.art.Frame,
+    /// The kinds of entity: their frames tell a sprite's kind.
+    kinds: *const sorz.world.Kinds,
 
     pub fn picture(self: Drawn) sorz.platform.RgbaFrame {
         return self.view.frame();
@@ -292,7 +294,7 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
                 try cwd.writeFile(io, .{ .sub_path = s.path, .data = bytes });
                 shots_written += 1;
             };
-            if (options.pictures) |p| if (p.wanted(p.ctx, ticks)) try p.take(p.ctx, ticks, .{ .view = v, .shadow = c.kinds.shadow });
+            if (options.pictures) |p| if (p.wanted(p.ctx, ticks)) try p.take(p.ctx, ticks, .{ .view = v, .shadow = c.kinds.shadow, .kinds = &c.kinds });
         }
     } else r.failure = "the run reached its most ticks";
     if (shots_written != options.shots.len) r.failure = r.failure orelse "a picture asked for was past the run's end";

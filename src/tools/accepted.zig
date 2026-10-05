@@ -1,42 +1,108 @@
-//! The accepted differences of the pictures: where sorz's pictures differ from sor-remaster's
-//! (the original's) on purpose, by the user's choice. The exact step (PLAN item 23) revisits
-//! them. Each has its name, its reason, and how to recognise it: sorz's sprites reordered as the
-//! original would draw them (`redraw`). A pixel that differs belongs to the difference when
-//! sorz's picture, drawn again with those sprites, shows there what the reference shows. A
-//! picture whose differing pixels all belong to accepted differences is reported as such; it is
-//! not a difference, and the reach goes on past it.
+//! The accepted differences: where sorz differs from sor-remaster (the original) on purpose, by the
+//! user's choice. The exact step (PLAN item 23) revisits them. Each has its name, its reason, and
+//! how to recognise it:
+//! - in the pictures, sorz's sprites drawn again as the original would draw them (`redraws`, each
+//!   a way): a pixel that differs belongs to the difference when one of those pictures shows
+//!   there what the reference shows. A picture whose differing pixels all belong to accepted
+//!   differences is reported as such; it is not a difference, and the reach goes on past it;
+//! - in the traces, the entities whose own events the comparison leaves out (`leaves_out`: by
+//!   their spawn's kind and state), so that they neither differ nor take the numbers the others
+//!   are compared by.
 const std = @import("std");
 const sorz = @import("sorz");
 
 const Sprite = sorz.render.Sprite;
 const Frame = sorz.content.art.Frame;
+const Kinds = sorz.world.Kinds;
+
+/// What a redraw knows of sorz's picture besides its sprites.
+pub const Context = struct {
+    /// The frame of the shadows on the ground.
+    shadow: ?*const Frame,
+    /// The kinds of entity: their frames tell a sprite's kind.
+    kinds: *const Kinds,
+};
+
+/// sorz's sprites (`sprites`, back to front) as the original would draw them, into `out` (as
+/// many at most): their count.
+pub const Redraw = *const fn (sprites: []const Sprite, c: Context, out: []Sprite) usize;
+
+/// The entities a trace's comparison leaves out: those spawned of `kind` in `state`.
+pub const LeftOut = struct { kind: []const u8, state: []const u8 };
 
 pub const Accepted = struct {
     name: []const u8,
     reason: []const u8,
-    /// sorz's sprites (`sprites`, back to front) as the original would draw them, into `out`
-    /// (as many); `shadow` is the frame of the shadows on the ground.
-    redraw: *const fn (sprites: []const Sprite, shadow: ?*const Frame, out: []Sprite) void,
+    redraws: []const Redraw,
+    leaves_out: ?LeftOut = null,
 };
 
 pub const list = [_]Accepted{
     .{
         .name = "shadows over sprites",
         .reason = "sorz draws a shadow just behind its entity; the original's shadow is an object of its own, drawn at its entity's depth in its place's order, so it may cover another entity (a thrown Galsia's hand and feet on the ground). sorz's way is the user's choice (2026-10-05)",
-        .redraw = shadowsInFront,
+        .redraws = &.{shadowsInFront},
+    },
+    .{
+        .name = "objects past a band's 15",
+        .reason = "the original draws at most 15 objects in a band of depths, and one past them neither shows nor steps its animation at that tick (decision D4): round 3's raindrops, about twenty in one band, blink out of step there, and its shadows, objects of their own, take places the raindrops then miss. sorz draws every raindrop and its shadows take no place: more correct, the user's rule (2026-10-05)",
+        .redraws = &.{ withoutRaindrops, raindropsShown },
+        .leaves_out = .{ .kind = raindrop_kind, .state = raindrop_state },
     },
 };
 
 /// The shadows in front of every other sprite: the pixels where sorz shows a sprite and the
 /// reference shows a shadow over it.
-fn shadowsInFront(sprites: []const Sprite, shadow: ?*const Frame, out: []Sprite) void {
+fn shadowsInFront(sprites: []const Sprite, c: Context, out: []Sprite) usize {
     var n: usize = 0;
     for ([_]bool{ false, true }) |shadows| for (sprites) |s| {
-        const is_shadow = if (shadow) |f| s.frame == f else false;
+        const is_shadow = if (c.shadow) |f| s.frame == f else false;
         if (is_shadow != shadows) continue;
         out[n] = s;
         n += 1;
     };
+    return n;
+}
+
+/// The raindrops: entities of the rain's kind, made in its falling state (the rain itself is
+/// the same kind, in its others); their frames, none then the drops.
+const raindrop_kind = "rain";
+const raindrop_state = "s3";
+
+/// The raindrop's frames (its animation's: none, the drops), if the content has the rain.
+fn raindropFrames(c: Context) ?[2]*const Frame {
+    const id = c.kinds.find(raindrop_kind) orelse return null;
+    const k = c.kinds.get(id);
+    if (k.frames.len == 0 or k.frames[0].len != 2) return null;
+    return .{ k.frames[0][0], k.frames[0][1] };
+}
+
+/// Without the raindrops: the pixels where sorz shows a raindrop the reference does not.
+fn withoutRaindrops(sprites: []const Sprite, c: Context, out: []Sprite) usize {
+    const frames = raindropFrames(c) orelse return copy(sprites, out);
+    var n: usize = 0;
+    for (sprites) |s| {
+        if (s.frame == frames[0] or s.frame == frames[1]) continue;
+        out[n] = s;
+        n += 1;
+    }
+    return n;
+}
+
+/// Every raindrop in its drops' frame: the pixels where the reference shows a raindrop that
+/// sorz shows in its blank frame.
+fn raindropsShown(sprites: []const Sprite, c: Context, out: []Sprite) usize {
+    const frames = raindropFrames(c) orelse return copy(sprites, out);
+    for (sprites, out[0..sprites.len]) |s, *o| {
+        o.* = s;
+        if (s.frame == frames[0]) o.frame = frames[1];
+    }
+    return sprites.len;
+}
+
+fn copy(sprites: []const Sprite, out: []Sprite) usize {
+    @memcpy(out[0..sprites.len], sprites);
+    return sprites.len;
 }
 
 test "shadows over sprites: the shadows go in front, the other sprites keep their order" {
@@ -44,6 +110,7 @@ test "shadows over sprites: the shadows go in front, the other sprites keep thei
     const shadow = std.mem.zeroInit(Frame, .{ .name = "shadow", .file = "", .width = 1, .height = 1, .origin_x = 0, .origin_y = 0, .pixels = &[_]u8{1} });
     const sprites = [_]Sprite{ .of(&frame, 1, 0), .of(&shadow, 2, 0), .of(&frame, 3, 0) };
     var out: [3]Sprite = undefined;
-    shadowsInFront(&sprites, &shadow, &out);
+    const kinds: Kinds = .{};
+    try std.testing.expectEqual(@as(usize, 3), shadowsInFront(&sprites, .{ .shadow = &shadow, .kinds = &kinds }, &out));
     try std.testing.expectEqual([3]i32{ 1, 3, 2 }, [3]i32{ out[0].x, out[1].x, out[2].x });
 }

@@ -152,8 +152,8 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     }
 
     var diag: compare.Diagnostic = .{};
-    var a_full = try compare.parse(arena, try cwd.readFileAlloc(c.io, ref_trace, arena, .limited(1 << 30)), &diag);
-    var b_full = try compare.parse(arena, try cwd.readFileAlloc(c.io, z_trace, arena, .limited(1 << 30)), &diag);
+    var a_full = try withoutLeftOut(arena, try compare.parse(arena, try cwd.readFileAlloc(c.io, ref_trace, arena, .limited(1 << 30)), &diag));
+    var b_full = try withoutLeftOut(arena, try compare.parse(arena, try cwd.readFileAlloc(c.io, z_trace, arena, .limited(1 << 30)), &diag));
     if (sc.every_tick) return everyTick(c, sc, scn, &a_full, &b_full, ref_wav, z_wav, w);
     const taken: ?TakenUp = if (sc.take_up) try takenUp(ran.stdout, &a_full) else null;
     // A run taken up is compared to its round's clear's end: the next round, whose load the clear
@@ -565,9 +565,10 @@ const PictureTaker = struct {
         if (same_size) {
             const sprites = try gpa.alloc(sorz.render.Sprite, drawn.sprites().len);
             defer gpa.free(sprites);
-            for (accepted.list, &by) |a, *found| {
-                a.redraw(drawn.sprites(), drawn.shadow, sprites);
-                const again = try drawn.redraw(sprites);
+            const context: accepted.Context = .{ .shadow = drawn.shadow, .kinds = drawn.kinds };
+            for (accepted.list, &by) |a, *found| for (a.redraws) |redraw| {
+                const count = redraw(drawn.sprites(), context, sprites);
+                const again = try drawn.redraw(sprites[0..count]);
                 for (0..picture.height) |y| for (0..picture.width) |x| {
                     const d = diff[(y * picture.width + x) * 4 ..][0..4];
                     if (!std.mem.eql(u8, d, &red)) continue;
@@ -578,7 +579,7 @@ const PictureTaker = struct {
                     found.* = true;
                     n -= 1;
                 };
-            }
+            };
         }
         if (n == 0) {
             for (by, &self.result.accepted) |found, *runs| if (found) runs.note(frame);
@@ -596,6 +597,58 @@ const PictureTaker = struct {
         try cwd.writeFile(c.io, .{ .sub_path = try std.fmt.allocPrint(c.arena, "{s}/{s}-diff-{d}.png", .{ c.out_path, self.sc.name, frame }), .data = diff_png });
     }
 };
+
+/// `trace` without the events of the entities the accepted differences leave out (accepted.zig's
+/// `leaves_out`: by their spawn's kind and state).
+fn withoutLeftOut(arena: std.mem.Allocator, trace: compare.Trace) !compare.Trace {
+    var out_ids: std.AutoHashMapUnmanaged(i64, void) = .empty;
+    for (trace.events) |e| {
+        if (!std.mem.eql(u8, e.ev, "spawn")) continue;
+        const id = fieldInt(e, "e") orelse continue;
+        for (accepted.list) |a| {
+            const lo = a.leaves_out orelse continue;
+            if (std.mem.eql(u8, fieldStr(e, "kind") orelse "", lo.kind) and std.mem.eql(u8, fieldStr(e, "state") orelse "", lo.state)) try out_ids.put(arena, id, {});
+        }
+    }
+    if (out_ids.count() == 0) return trace;
+    var events: std.ArrayList(compare.Event) = .empty;
+    for (trace.events) |e| {
+        // An id is taken again once its entity went: the next spawn of it starts anew.
+        if (fieldInt(e, "e")) |id| if (out_ids.contains(id)) {
+            if (std.mem.eql(u8, e.ev, "spawn") and !leftOutSpawn(e)) {
+                _ = out_ids.remove(id);
+            } else continue;
+        };
+        try events.append(arena, e);
+    }
+    var t = trace;
+    t.events = events.items;
+    return t;
+}
+
+fn leftOutSpawn(e: compare.Event) bool {
+    for (accepted.list) |a| {
+        const lo = a.leaves_out orelse continue;
+        if (std.mem.eql(u8, fieldStr(e, "kind") orelse "", lo.kind) and std.mem.eql(u8, fieldStr(e, "state") orelse "", lo.state)) return true;
+    }
+    return false;
+}
+
+fn fieldInt(e: compare.Event, name: []const u8) ?i64 {
+    const v = e.object.get(name) orelse return null;
+    return switch (v) {
+        .integer => |i| i,
+        else => null,
+    };
+}
+
+fn fieldStr(e: compare.Event, name: []const u8) ?[]const u8 {
+    const v = e.object.get(name) orelse return null;
+    return switch (v) {
+        .string => |s| s,
+        else => null,
+    };
+}
 
 /// The tick of a trace's difference: its earlier event's.
 fn firstTick(d: compare.Difference) i64 {
