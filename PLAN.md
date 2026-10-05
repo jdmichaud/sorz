@@ -182,7 +182,10 @@
 - [x] **D1 — Sound**: the YM2612 (a Zig port of ymfm), the PSG, the DAC and the model 1 output
   stage, carried over from sor-remaster.
 - [x] **D2 — Saves**: the cartridge has none; the port stores only its settings.
-- [ ] **D3 — Slowdown**: the original's dropped frames are not reproduced, pending the user.
+- [x] **D3 — Slowdown**: the original's dropped display ticks (a sound handler outlasting its
+  frame) are not reproduced in the game; the user left the choice to the lead (2026-10-05). A
+  test-only option may model them if a comparison with the original's own play needs it; the
+  comparisons with sor-remaster, which does not reproduce them either, do not.
 - [x] **D4 — Sprite limits**: not reproduced.
 - [x] **D5 — Region**: 60 Hz, English text by default.
 - [x] **D8 — Content**: extracted from the user's ROM into a human-readable tree; `sorz ROM` or
