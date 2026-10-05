@@ -51,6 +51,10 @@ pub const Trait = enum {
 
 pub const Traits = std.EnumSet(Trait);
 
+/// How a drifting piece of scenery moves (round 3's, on the beach): it stays; it drifts away; it
+/// drifts and stops in turn; it rides the waves, rising as each comes and coming back.
+pub const Drift = enum { still, drifts, stops, waves };
+
 pub const Offset = struct { x: i16 = 0, depth: i16 = 0 };
 
 /// A display tick's share of the art the round streams in while it plays (its enemies' and its
@@ -122,6 +126,8 @@ pub const Spawn = struct {
     holds: ?[]const u8 = null,
     /// Placed: the height a piece of scenery takes as it starts (on a wall), placed on the ground.
     height: ?i32 = null,
+    /// Placed: how a drifting piece of scenery moves.
+    drift: ?Drift = null,
     /// A boss's: its entry in the status bar's names and bars.
     bar: ?u8 = null,
     /// A reserve's: its kind's art streamed in from its call.
@@ -333,6 +339,7 @@ fn spawnValue(arena: std.mem.Allocator, s: *const Spawn, where: Where) !json.Val
     }
     try f.append(arena, .{ .key = "depth", .value = json.Value.num(s.depth) });
     if (s.height) |h| try f.append(arena, .{ .key = "height", .value = json.Value.num(h) });
+    if (s.drift) |d| try f.append(arena, .{ .key = "drift", .value = .{ .str = @tagName(d) } });
     if (where == .wave) try f.append(arena, .{ .key = "after", .value = json.Value.num(s.after) });
     if (where == .reserve) try f.append(arena, .{ .key = "arrives_after", .value = json.Value.num(s.arrives_after) });
     if (s.level != 0) try f.append(arena, .{ .key = "level", .value = json.Value.num(s.level) });
@@ -475,7 +482,7 @@ fn readPair(n: json.Node, comptime T: type) Error![2]T {
 fn spawnFields(comptime where: Where) []const []const u8 {
     const common = [_][]const u8{ "kind", "depth", "level", "two_players", "entrance", "offset", "strength", "holds", "bar", "colours" };
     const own: []const []const u8 = switch (where) {
-        .placed => &.{ "x", "height" },
+        .placed => &.{ "x", "height", "drift" },
         .wave => &.{ "side", "after" },
         .reserve => &.{ "side", "arrives_after", "streamed" },
     };
@@ -502,6 +509,7 @@ fn readSpawn(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Erro
         .placed => {
             s.x = try (try n.get("x")).int(i32);
             if (try n.opt("height")) |h| s.height = try h.int(i16);
+            if (try n.opt("drift")) |d| s.drift = std.meta.stringToEnum(Drift, try d.string()) orelse return d.fail("not still, drifts, stops or waves");
         },
         .wave, .reserve => {
             const side = try n.get("side");

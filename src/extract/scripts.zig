@@ -398,8 +398,9 @@ fn entry(rom: []const u8, type_byte: u8, bytes: [3]u8, y: u8) Error!round.Spawn 
         .two_players = type_byte & 0x80 != 0,
     };
     switch (t) {
-        0x11, 0x19 => {
-            // A breakable, an oil drum: the item it holds, an index from 1 (0 for none).
+        0x11, 0x18, 0x19 => {
+            // A breakable, a crate, an oil drum: the item it holds (its byte $41, which 0x7E54
+            // reads), an index from 1 (0 for none).
             if (bytes[1] != 0) {
                 if (bytes[1] > 11) return error.BadData;
                 s.holds = kindName(rom[breakable_items + @as(u32, bytes[1])]) orelse return error.BadData;
@@ -414,8 +415,14 @@ fn entry(rom: []const u8, type_byte: u8, bytes: [3]u8, y: u8) Error!round.Spawn 
             if (bytes[0] != 0) s.traits.insert(.stirs);
             return s;
         },
-        // A drip, a flight: their code reads none of the bytes.
-        0x14, 0x4D => {
+        0x16 => {
+            // A drifter: its way of drifting by its byte $40, a state (0x7238).
+            if (bytes[0] > 3 or bytes[1] != 0 or bytes[2] != 0) return error.BadData;
+            s.drift = @fromBackingInt(@intCast(bytes[0]));
+            return s;
+        },
+        // A drip, the rain, a flight, a lamp: their code reads none of the bytes.
+        0x14, 0x17, 0x4D, 0x4E => {
             if (!std.mem.allEqual(u8, &bytes, 0)) return error.BadData;
             return s;
         },
@@ -458,6 +465,20 @@ fn group(arena: std.mem.Allocator, rom: []const u8, l: *Lists, page: u16, out: *
         const y = try l.byte();
         var s = try entry(rom, t, b, y);
         s.x = (page & 0xFF00) | x_low;
+        try out.append(arena, s);
+    }
+}
+
+/// The pieces the round's start places itself after the first section's groups (0xEF0: for the
+/// round of its `cmpi.w`, two objects, each in the enemies' places (0xE46), of the type and the
+/// place across of its `move.b` and `move.w`, its depth 0): round 3's two lamps.
+fn ownPlaced(arena: std.mem.Allocator, rom: []const u8, r: u32, out: *std.ArrayList(round.Spawn)) Error!void {
+    if (u16be(rom, 0xEF0) != 0x0C78 or u16be(rom, 0xEF4) != 0xFF02 or u16be(rom, 0xEF6) & 0xFF00 != 0x6600) return error.BadData;
+    if (u16be(rom, 0xEF2) != r) return;
+    for ([_]u32{ 0xEF8, 0xF08 }) |at| {
+        if (u16be(rom, at) != 0x4EBA or u16be(rom, at + 4) != 0x137C or u16be(rom, at + 8) != 0 or u16be(rom, at + 10) != 0x337C or u16be(rom, at + 14) != 16) return error.BadData;
+        var s = try entry(rom, @intCast(u16be(rom, at + 6)), .{ 0, 0, 0 }, 0);
+        s.x = u16be(rom, at + 12);
         try out.append(arena, s);
     }
 }
@@ -619,6 +640,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
             try group(arena, rom, &l, page, &placed);
             page +%= page_step * 0x100;
         }
+        if (k == 0) try ownPlaced(arena, rom, r, &placed);
         const art_at = if (k == 0) first + 6 else entryAt(rom, part, @intCast(k));
         const kinds = artKinds(rom, art_at);
         const art = try artTicks(rom, kinds);
@@ -629,7 +651,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         try artLoads(arena, rom, kinds, if (k == 0) 0 else 1, &loads);
         const wall: i32 = if (k == 0) first_wall else u16be(rom, camera_stops + 2 * @as(u32, @intCast(k)));
         s.* = .{
-            .provenance = try std.fmt.allocPrint(arena, "section {d}: its wall {s} 0x{X:0>5}; its entry at ROM 0x{X:0>5} (0x1C1C4), its art kinds {any} loaded in {d} ticks (0xD70, the load lists at 0x8672 streamed by 0x8510){s}; its lists from byte {d} of the spawn lists (Nemesis at ROM 0x{X:0>5})", .{
+            .provenance = try std.fmt.allocPrint(arena, "section {d}: its wall {s} 0x{X:0>5}; its entry at ROM 0x{X:0>5} (0x1C1C4), its art kinds {any} loaded in {d} ticks (0xD70, the load lists at 0x8672 streamed by 0x8510){s}; its lists from byte {d} of the spawn lists (Nemesis at ROM 0x{X:0>5}){s}", .{
                 k,
                 if (k == 0) "the limit at" else "from the walls at",
                 if (k == 0) limits + 6 else camera_stops,
@@ -639,6 +661,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
                 if (k == 0) ", from the round's start, the tick before its first tick of play, then a tick for its turn" else ", from its clear, then 2 ticks for its turn and the camera's",
                 lists_from,
                 lists_at,
+                if (k == 0) "; then the pieces the round's start places itself (0xEF0)" else "",
             }),
             .wall = wall,
             .timer = if (k < later_from) timer_first else timer_later,

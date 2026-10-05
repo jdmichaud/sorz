@@ -485,7 +485,10 @@ A record of `placed`, `wave` or `reserve` is one entity:
   its entry in the status bar's names and bars.
 - A piece of scenery's (placed): `height`, the height it takes as it starts (on a wall; placed
   on the ground, as the original places it); the trait `stirs`: it moves while a flight passes
-  (round 2's posters' corners).
+  (round 2's posters' corners); `drift`, how a drifting piece moves (round 3's): `still`,
+  `drifts` away, drifts and `stops` in turn, or rides the `waves`. A crate holds an item as a
+  breakable does. The first section's placed end with the pieces the round's start places itself
+  (round 3's first two lamps).
 
 The extractor writes the scripts of rounds 1 to 3 (PLAN items 13 and 15; the other rounds, whose
 last sections and set pieces differ, with item 15). The times between the events are the

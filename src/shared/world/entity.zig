@@ -190,7 +190,12 @@ pub const Spawn = struct {
     colours: ?u8 = null,
     /// A piece of scenery's height, which it takes as it starts (on a wall); null: the ground.
     height: ?i16 = null,
+    /// How a drifting piece of scenery moves.
+    drift: Drift = .still,
 };
+
+/// How a drifting piece of scenery moves (content/round.zig's `Drift`).
+pub const Drift = enum { still, drifts, stops, waves };
 
 /// The boxes in use (DESIGN.md W2): those of the frame the entity last showed, or of the first
 /// frame of an animation that started since, by their index in the kind's definition, and

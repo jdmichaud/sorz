@@ -586,6 +586,9 @@ pub fn placing(rec: *const Spawn) entity.Spawn {
     sp.bar = rec.bar;
     sp.colours = rec.colours;
     if (rec.height) |h| sp.height = @intCast(h);
+    if (rec.drift) |d| sp.drift = switch (d) {
+        inline else => |x| @field(entity.Drift, @tagName(x)),
+    };
     return sp;
 }
 
