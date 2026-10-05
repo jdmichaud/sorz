@@ -656,6 +656,12 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             if ((int(o, "t") orelse 0) != s.t + 1) continue;
             const id: u32 = @intCast(int(o, "e") orelse continue);
             const by: u32 = @intCast(int(o, "by") orelse continue);
+            // One held takes its holder's blows at their own tick (a knee, the last knee's
+            // flip): none of them was struck at the situation's tick.
+            const held = for (entities) |*x| {
+                if (x.id == id) break std.mem.eql(u8, x.state orelse "", "held");
+            } else false;
+            if (held) continue;
             for (entities) |*x| {
                 if (x.id == id and x.since == s.t) x.struck_by = by;
                 if (x.id == id) {
