@@ -78,6 +78,11 @@ const tiles_a_display_tick = 5;
 const end_mark = 0x99;
 const wave_end: u16 = 0x0099;
 
+/// The rounds' loads (mode $28, 0x106EA, the picture dark) as the original's last, in display
+/// ticks: measured, sor-remaster's (its load_times.zig, from the captures of the original: round
+/// 1's at VBlank 1139, round 2's at 17526); the others' are the flow's until they are measured.
+const measured_loads = [_]u16{ 53, 49 };
+
 /// The rounds whose scripts the extractor writes (PLAN items 13 and 15: rounds 1 and 2; the others,
 /// whose last sections differ, to come).
 pub const extracted = [_]u8{ 1, 2 };
@@ -677,10 +682,11 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
 
     return .{
         .number = n,
-        .provenance = try std.fmt.allocPrint(arena, "round {d}'s level events (0x436): the spawn lists (Nemesis at ROM 0x{X:0>5}), the sections (0x1C1C4), the walls (0x195D8), the music (0x11B44); its ground the height of the floor map's one kind of cell, everywhere (Kosinski at ROM 0x{X:0>5}, the cells' heights at ROM 0x{X:0>5}, 0x19C04; 0xAD2A probes it)", .{ n, lists_at, floor_at, heights }),
+        .provenance = try std.fmt.allocPrint(arena, "round {d}'s level events (0x436): the spawn lists (Nemesis at ROM 0x{X:0>5}), the sections (0x1C1C4), the walls (0x195D8), the music (0x11B44); its ground the height of the floor map's one kind of cell, everywhere (Kosinski at ROM 0x{X:0>5}, the cells' heights at ROM 0x{X:0>5}, 0x19C04; 0xAD2A probes it); its load's time measured (sor-remaster's load_times.zig)", .{ n, lists_at, floor_at, heights }),
         .art = try std.fmt.allocPrint(arena, "round{d}", .{n}),
         .music = try soundName(rom[round_music + r]),
         .ground = ground orelse return error.BadData,
+        .load = if (n <= measured_loads.len) measured_loads[n - 1] else null,
         .camera = camera,
         .players = .{
             .provenance = "a life starts at the camera's X, at the depth and height of ROM 0x01E60 and 0x01E66 (move.w #N,($14,a0), ($18,a0)); player 2's depth less ROM 0x01EA6 (subi.w #N,($14,a0)) (0x1E0E)",

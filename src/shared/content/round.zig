@@ -248,6 +248,9 @@ pub const Round = struct {
     /// The height of its ground, where its enemies stand and its players land (it grows
     /// downward, as the screen's lines).
     ground: i32,
+    /// The display ticks its load holds the picture dark after its set-up, as the original's
+    /// lasts; null: the flow's.
+    load: ?u16 = null,
     camera: Camera,
     players: Players,
     timer: Timer,
@@ -407,6 +410,7 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         }) },
         .{ .key = "sections", .value = .{ .array = sections } },
     });
+    if (r.load) |l| try fields.append(arena, .{ .key = "load", .value = json.Value.num(l) });
     if (r.special.streamed[0].len != 0 or r.special.streamed[1].len != 0) {
         const both = try arena.alloc(json.Value, 2);
         for (both, r.special.streamed) |*o, list| o.* = try streamedValue(arena, list);
@@ -527,7 +531,7 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "ground", "camera", "players", "timer", "sections", "special", "boss" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
@@ -540,6 +544,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         .timer = undefined,
         .sections = &.{},
     };
+    if (try root.opt("load")) |l| r.load = try l.int(u16);
     var buf: [16]u8 = undefined;
     if (r.number == 0 or !std.mem.eql(u8, nameOf(&buf, r.number), name)) return number.fail("not the round of this file's name");
     if (a) |x| for (x.sets) |s| {

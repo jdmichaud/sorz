@@ -298,7 +298,8 @@ pub fn tick(stack: *Stack, graph: *const flow.Graph, turn: *Turn, assets: ?*cons
     }
     if (stack.next) |n| {
         stack.replace(.start(n.kind, turn.setup));
-        stack.load_after_setup = .{ .left = n.load, .sound_held = n.sound_held, .driver_once = n.driver_once };
+        const load = if (n.kind == .round and assets != null) roundLoad(assets.?, turn.setup) orelse n.load else n.load;
+        stack.load_after_setup = .{ .left = load, .sound_held = n.sound_held, .driver_once = n.driver_once };
         stack.setup_left = setupTicks(n.kind);
         stack.next = null;
     }
@@ -334,6 +335,15 @@ pub fn tick(stack: *Stack, graph: *const flow.Graph, turn: *Turn, assets: ?*cons
         return;
     };
     stack.next = .{ .kind = edge.to, .load = edge.load, .sound_held = edge.sound_held, .driver_once = edge.driver_once };
+}
+
+/// The load of the round about to start (the game's next, or the options' first round of a new
+/// game), when its content gives one (each round's art takes the original its own time).
+fn roundLoad(a: *const Assets, setup: *const Setup) ?u16 {
+    const g = setup.progress;
+    const number: u8 = if (g.round == 0) setup.first_round + 1 else g.round;
+    const r = a.round.rounds.of(number) orelse return null;
+    return r.script.load;
 }
 
 /// The scenes at power-on: the flow's first scene, its set-up at the first tick, and the original's
