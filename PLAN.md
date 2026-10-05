@@ -84,7 +84,8 @@
   - Their definitions, behaviours and AI; weapons and food.
   - Gate: similar in their measurements and AI timings.
 - [ ] **13 — Round 1's script and the round's screens** — Depends: 12, 09.
-  - The map, the camera's stops, the waves, the status bar, the timer, pause, continue, game over.
+  - The map, the camera's stops, the waves, the status bar, the timer, pause, continue, game over,
+    and the name entry of a score that enters the high-score table as its player's lives run out.
   - Gate: similar for round 1 end to end; the user plays it.
 
 ## F5 — The whole game
@@ -93,6 +94,7 @@
 - [ ] **15 — Rounds 2 to 8** — Depends: 13.
   - Their enemies, bosses and set pieces (the ship, the lift, the offer, Mr. X).
 - [ ] **16 — Endings, high scores and name entry** — Depends: 15.
+  - The name entry at the endings (play's own is item 13's).
 - [ ] **17 — Whole-game acceptance** — Depends: 14, 15, 16.
   - Gate: similar for every mechanic; the user plays the game through, alone and with two
     players.
