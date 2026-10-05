@@ -527,11 +527,13 @@ pub const Tick = struct {
         dispatch(t, h, "leftBehind", void, {}, .{});
     }
 
-    /// A player's new life drops in: the enemies on the screen (out of hiding, not held by a
-    /// player) are knocked back (their behaviour's `knockedBack`).
+    /// A player's new life drops in: the enemies on the screen (out of hiding, neither held by a
+    /// player nor holding one: the original spares the one a player's hold names) are knocked
+    /// back (their behaviour's `knockedBack`).
     pub fn knockBack(t: *Tick) void {
         for (&t.world.entities, 0..) |*e, i| {
             if (!e.alive() or e.flags.hidden or e.holder != null) continue;
+            if (e.holding) |h| if (t.isPlayer(h)) continue;
             switch (t.kindOf(e).family()) {
                 .enemy, .boss => {},
                 else => continue,
