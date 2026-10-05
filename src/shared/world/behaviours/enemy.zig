@@ -770,7 +770,13 @@ pub fn Of(comptime M: type) type {
             // Lifted, or lifted at this tick (the original's reel takes the lift's step at once,
             // and its blow lands at each tick it touches).
             if (b.lifted or b.lift_due) return struckLifted(a, blow);
-            if (b.touch_taken) return false;
+            // A touch that goes on is not taken, and its striker forgets what it landed at this
+            // tick (the original's reel clears its striker's landing then, the blows of this tick
+            // on others before it too).
+            if (b.touch_taken) {
+                a.tick.landingCleared(blow.attacker);
+                return false;
+            }
             b.touch_taken = true;
             b.other = blow.attacker;
             // A missile knocks a reeling one down, its health spared.
