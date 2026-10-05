@@ -64,7 +64,7 @@ const hero =
     \\{"family": "player", "team": "player", "behaviour": "player", "health": 80, "gravity": 59392,
     \\ "shadow": true,
     \\ "numbers": {"back_attack_ends": 3, "blink": 48, "blow_ends": 3, "combo_window": 10,
-    \\   "diagonal_depth": 131072, "diagonal_x": 147456, "down": 10, "drop": 98304,
+    \\   "diagonal_depth": 131072, "diagonal_x": 147456, "down": 10, "drop": 98304, "wall_height": 160,
     \\   "fall_most": 786432, "getting_up_ends": 4, "grab_blow_ends": 2, "hit_pause": 4,
     \\   "hurry_first": 1, "hurry_later": 2, "jab_walk_frame": 1, "jab_walk_ticks": 2, "hurt": 10, "idle_ends": 2, "jump": -491520,
     \\   "jump_x": 196608, "kick_falling_gravity": 34816, "knee_last_ends": 2,

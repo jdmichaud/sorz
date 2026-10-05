@@ -455,11 +455,13 @@ pub const Numbers = struct {
     vault_off_step: i16,
     /// Walls are looked for this far above its feet: fallen deeper into the ground, its move
     /// across and in depth stops there; across, this far ahead of it (none: under it). Landed on
-    /// a cell with no height, it is put `wall_back` back; in one after its move, it is pushed
-    /// out across, `wall_push` further each way at each step (none: neither).
+    /// a cell with no height, it is put `wall_back` back, at height `wall_height`; in one after
+    /// its move, it is pushed out across, `wall_push` further each way at each step (none:
+    /// neither).
     wall_above: i16,
     wall_ahead: ?i16 = null,
     wall_back: ?i16 = null,
+    wall_height: i16 = 0,
     wall_push: ?i16 = null,
     /// Armed: the frames at which the plain blow and the stab end, and the swing; the plain
     /// blow's frame at which a knife leaves the hand; a knife stabs at a thing ahead within
@@ -1250,8 +1252,11 @@ pub fn fall(a: Actor) void {
     const floor = a.tick.floorUnder(e.position) orelse return;
     if (e.position.height.add(.pixels(reach)).lessThan(floor)) return;
     conveyed(a);
-    offWall(a);
+    const back = offWall(a);
     a.land(.whole);
+    // Put back off a cell with no height, it stands at `wall_height` until its next tick's look
+    // at the floor.
+    if (back) a.entity.position.height = .pixels(n.wall_height);
 }
 
 /// After its move, grounded or not, the walls (the original's are the level's cells, the
@@ -1287,13 +1292,18 @@ pub fn walls(a: Actor) void {
     e.velocity.depth = .zero;
 }
 
-/// On a cell with no height (round 6's machines), it is put `wall_back` back across.
-fn offWall(a: Actor) void {
-    const back = a.numbers().wall_back orelse return;
+/// On a cell with no height (round 6's machines), it is put `wall_back` back across, at height
+/// `wall_height` (the original's landing on such a cell, its fraction cleared). Returns whether it
+/// was.
+fn offWall(a: Actor) bool {
+    const n = a.numbers();
+    const back = n.wall_back orelse return false;
     const e = a.entity;
-    const c = a.tick.cellAt(e.position) orelse return;
-    if (!c.floor or c.height != 0) return;
+    const c = a.tick.cellAt(e.position) orelse return false;
+    if (!c.floor or c.height != 0) return false;
     e.position.x = .parts(@intCast(e.position.x.whole() - back), e.position.x.frac());
+    e.position.height = .pixels(n.wall_height);
+    return true;
 }
 
 /// In a cell with no height after its move, it is pushed across to the nearest one with a
@@ -1812,13 +1822,13 @@ fn thrown(a: Actor) void {
     if (!by_player) placeFromHolder(a);
 }
 
-/// At a new frame of a throw, it is placed from its holder by the frame's place: its whole
-/// pixels the holder's and the place's, its own fractions kept.
+/// At each tick of a throw by an enemy, it is placed from its holder by the frame's place: its
+/// whole pixels the holder's and the place's, its own fractions kept (the original places it so
+/// at each tick, before a conveyor carries it: it stays where the throw puts it).
 fn placeFromHolder(a: Actor) void {
     const h = a.entity.holder orelse return;
     const f = a.currentFrame() orelse return;
     const p = f.place orelse return;
-    if (a.mind.placed_frame == a.frame()) return;
     a.mind.placed_frame = a.frame();
     const holder = a.other(h) orelse return;
     const at = holder.position;
@@ -2036,7 +2046,7 @@ pub fn moved(a: Actor) void {
     // put back.
     if (!a.entity.flags.airborne and !a.entity.flags.landed and a.entity.velocity.height.raw == 0 and a.tick.onFloor(a.entity.position)) {
         conveyed(a);
-        offWall(a);
+        _ = offWall(a);
     }
     pushedOut(a);
     if (a.mind.knee_spark_due) {
