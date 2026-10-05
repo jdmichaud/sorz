@@ -24,7 +24,8 @@ const usage =
     \\                  [--corrupt TICK]
     \\       sorz-agent DIR|ROM --server [ADDRESS:]PORT
     \\       sorz-agent DIR|ROM --scenario FILE [--situation TRACE [--situation-probe PROBE]
-    \\                  [--game-tick N]] [--trace-events OUT] [--probe OUT]
+    \\                  [--game-tick N]] [--trace-events OUT] [--probe OUT] [--reload]
+    \\                  [--form-sizes OUT]
     \\       sorz-agent trace-compare FIRST SECOND [--ticks M] [--pos PIXELS] [--tol FIELD=N]...
     \\                  [--ignore EV[,EV...]] [--scene NAME] [--after TICK] [--ignore-kind K[,K...]]
     \\                  [--ignore-field F[,F...]] [--sounds SOUNDS_JSON] [--renumber] [--close-ids]
@@ -67,7 +68,10 @@ const usage =
     \\                   the script's start, its `script_game_tick`); --trace-events writes its
     \\                   semantic trace, --probe (with a situation) the fighters' frames, boxes
     \\                   and power; a condition that does not come in time ends the run with
-    \\                   status 1
+    \\                   status 1; from power-on, --reload reads the state back from its
+    \\                   canonical form at each display tick and goes on from the state read
+    \\                   (a round trip: it must be the state written), --form-sizes writes the
+    \\                   form's size at each (tick, scene, entities, bytes)
     \\  trace-compare    compare two semantic traces (sor-remaster's docs/traces.md): the first
     \\                   difference and the counts per kind of event; events match within
     \\                   --ticks M ticks, positions and speeds within --pos PIXELS, a field
@@ -116,6 +120,8 @@ pub fn main(init: std.process.Init) !void {
     var game_tick: ?u32 = null;
     var trace_events: ?[]const u8 = null;
     var probe: ?[]const u8 = null;
+    var reload = false;
+    var form_sizes: ?[]const u8 = null;
     var options: native.cli.Options = .{};
     // `iterateAllocator` is the form that Windows needs; the arena keeps the arguments for the
     // whole run.
@@ -161,6 +167,10 @@ pub fn main(init: std.process.Init) !void {
             trace_events = args.next() orelse return fail(io);
         } else if (std.mem.eql(u8, arg, "--probe")) {
             probe = args.next() orelse return fail(io);
+        } else if (std.mem.eql(u8, arg, "--reload")) {
+            reload = true;
+        } else if (std.mem.eql(u8, arg, "--form-sizes")) {
+            form_sizes = args.next() orelse return fail(io);
         } else {
             return fail(io);
         }
@@ -210,6 +220,8 @@ pub fn main(init: std.process.Init) !void {
         sc.trace = trace_events;
         sc.probe = probe;
         sc.wav = wav_path;
+        sc.reload = reload;
+        sc.form_sizes = form_sizes;
         var obuf: [512]u8 = undefined;
         var ow = std.Io.File.stdout().writerStreaming(io, &obuf);
         const done = agent.scenario_cmd.run(gpa, io, assets.?, sc.*, &ow.interface) catch |err| {
@@ -220,7 +232,7 @@ pub fn main(init: std.process.Init) !void {
         if (!done) std.process.exit(1);
         return;
     }
-    if (situation != null or situation_probe != null or game_tick != null or trace_events != null or probe != null) return fail(io);
+    if (situation != null or situation_probe != null or game_tick != null or trace_events != null or probe != null or reload or form_sizes != null) return fail(io);
 
     // Network play: a session over WebSockets, or two games in one process. (`--delay` goes with
     // `--netplay`, or with `--pair`.)

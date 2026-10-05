@@ -549,13 +549,20 @@ test "the world's canonical form names a differing field" {
     var b = a;
     b.entities[0].position.depth = .pixels(7);
     const canonical = @import("../canonical.zig");
-    const buf_a = try testing.allocator.alloc(u8, canonical.size(World));
+    const buf_a = try testing.allocator.alloc(u8, canonical.maxSize(World));
     defer testing.allocator.free(buf_a);
-    const buf_b = try testing.allocator.alloc(u8, canonical.size(World));
+    const buf_b = try testing.allocator.alloc(u8, canonical.maxSize(World));
     defer testing.allocator.free(buf_b);
-    const d = canonical.firstDifference(World, canonical.write(World, &a, buf_a), canonical.write(World, &b, buf_b)).?;
+    const form_a = canonical.write(World, &a, buf_a);
+    const d = canonical.firstDifference(World, form_a, canonical.write(World, &b, buf_b)).?;
     try testing.expectEqualStrings("entities[0].position.depth", d.name());
     try testing.expect(a.hash() != b.hash());
+    // The form carries the entities there are, not the room for them; read, it is the world.
+    try testing.expect(form_a.len < 400);
+    const back = try testing.allocator.create(World);
+    defer testing.allocator.destroy(back);
+    try canonical.read(World, form_a, back);
+    try testing.expect(std.meta.eql(a, back.*));
 }
 
 test "play: the logic at every other display tick, with both display ticks' pads" {

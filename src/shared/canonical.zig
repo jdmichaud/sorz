@@ -1,110 +1,318 @@
-//! The canonical form of a state (DESIGN.md 6): its named fields in the order of their
-//! declarations, each in little-endian byte order, with no padding and no pointer. Two states are
-//! the same exactly when their canonical bytes are: `hash` identifies a state for the tests and for
-//! network play (DESIGN.md 9), and `firstDifference` names the first field whose bytes differ, as
-//! the two peers of a session do when their states part.
+//! The canonical form of a state (DESIGN.md 6): what the game is, and nothing else, as a stream of
+//! bits. Two states are the same exactly when their forms are: `hash` identifies a state for the
+//! tests and for network play (DESIGN.md 9), `read` gives back the state a form was written from
+//! (network play's join carries a game this way), and `firstDifference` names the first field
+//! whose values differ, as the two peers of a session do when their states part.
 //!
-//! The types it takes: booleans (a byte), integers (their whole bytes), enums (their integer),
-//! packed structs (their backing integer), structs and arrays (their parts in order), optionals (a
-//! byte, 1 when there is a value, then the value or zeros) and tagged unions (the tag, then the
-//! active payload, then zeros up to the largest payload). The form of a type has a fixed size, so
-//! a field is at the same place in every state of its type.
+//! Each named field is written in the order of its declaration, with as many bits as its values
+//! need, the low bit first, packed one after the other; the last byte is padded with zeros:
+//! - a boolean is a bit; an integer its bits (its two's complement, signed); an enum the number of
+//!   its value among its values, in the bits their count needs (a non-exhaustive one: its
+//!   integer); a packed struct its fields;
+//! - a struct and an array, their parts in order;
+//! - an optional, a bit (1 with a value), then the value when there is one;
+//! - a tagged union, its tag, then its active payload only.
+//!
+//! A **pool** is an array whose places hold things or are free (the world's entities): its
+//! element type says so with a namespace `canonical_pool` (`inUse`, and what a free place keeps:
+//! `Kept`, `kept`, `free`). Each place is a bit, 1 in use: then its thing; else a bit, 1 when what
+//! the free place keeps is not the default (an entity's place: its generation), then that. So the
+//! form carries the things there are, at their places (which keep the order the world updates
+//! them in), and not the room for them.
+//!
+//! The form's length follows the state: `maxSize` bounds it. A form has one state and a state one
+//! form; `read` refuses bytes that no state writes (an enum's number past its values, a free place
+//! that keeps its default, bits past the end), so that a game read from its form goes on exactly
+//! as the one it was written from.
 const std = @import("std");
 
-/// The bytes of `T`'s canonical form.
-pub fn size(comptime T: type) usize {
-    // The game's state has many fields: room for them all.
-    @setEvalBranchQuota(100_000);
+// --- the sizes ------------------------------------------------------------------------------------
+
+/// The most bits of `T`'s form.
+pub fn maxBits(comptime T: type) usize {
+    @setEvalBranchQuota(1_000_000);
     return comptime switch (@typeInfo(T)) {
         .void => 0,
         .bool => 1,
-        .int => |i| (i.bits + 7) / 8,
-        .@"enum" => |e| size(e.tag_type),
-        .@"struct" => |s| if (s.layout == .@"packed") size(s.backing_integer.?) else blk: {
+        .int => |i| i.bits,
+        .@"enum" => enumBits(T),
+        .@"struct" => |s| blk: {
             var n: usize = 0;
-            for (s.field_types) |F| n += size(F);
+            for (s.field_types) |F| n += maxBits(F);
             break :blk n;
         },
-        .array => |a| a.len * size(a.child),
-        .optional => |o| 1 + size(o.child),
+        .array => |a| if (isPool(a.child))
+            a.len * (1 + @as(usize, @max(maxBits(a.child), 1 + maxBits(a.child.canonical_pool.Kept))))
+        else
+            a.len * maxBits(a.child),
+        .optional => |o| 1 + maxBits(o.child),
         .@"union" => |u| blk: {
             const Tag = u.tag_type orelse @compileError("an untagged union has no canonical form: " ++ @typeName(T));
             var largest: usize = 0;
-            for (u.field_types) |F| largest = @max(largest, size(F));
-            break :blk size(Tag) + largest;
+            for (u.field_types) |F| largest = @as(usize, @max(largest, maxBits(F)));
+            break :blk enumBits(Tag) + largest;
         },
         else => @compileError("no canonical form for " ++ @typeName(T)),
     };
 }
 
-/// Writes the canonical form of `value`, `size(T)` bytes, at the start of `out`, and returns them.
-pub fn write(comptime T: type, value: *const T, out: []u8) []u8 {
-    const n = size(T);
-    std.debug.assert(out.len >= n);
-    var at: usize = 0;
-    put(T, value, out, &at);
-    std.debug.assert(at == n);
-    return out[0..n];
+/// The most bytes of `T`'s form: room for any.
+pub fn maxSize(comptime T: type) usize {
+    return (maxBits(T) + 7) / 8;
 }
 
-fn put(comptime T: type, value: *const T, out: []u8, at: *usize) void {
+/// The bits of an enum: the number of its value among its values (exhaustive), or its integer.
+fn enumBits(comptime E: type) usize {
+    const e = @typeInfo(E).@"enum";
+    if (e.mode == .nonexhaustive) return @typeInfo(e.tag_type).int.bits;
+    if (e.field_names.len <= 1) return 0;
+    return std.math.log2_int_ceil(usize, e.field_names.len);
+}
+
+/// Whether an enum's values are its numbers 0, 1, 2...: its value is then its number.
+fn dense(comptime E: type) bool {
+    const e = @typeInfo(E).@"enum";
+    for (e.field_values, 0..) |v, i| if (v != i) return false;
+    return true;
+}
+
+fn isPool(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum" => @hasDecl(T, "canonical_pool"),
+        else => false,
+    };
+}
+
+/// The bits a value's number takes in an enum's form.
+fn enumNumber(comptime E: type, value: E) u64 {
+    const e = @typeInfo(E).@"enum";
+    const Bits = @Int(.unsigned, @typeInfo(e.tag_type).int.bits);
+    if (e.mode == .nonexhaustive or comptime dense(E)) return @as(Bits, @bitCast(@backingInt(value)));
+    inline for (e.field_names, 0..) |name, i| if (value == @field(E, name)) return i;
+    unreachable;
+}
+
+/// The value of an enum's number in its form, or null for a number past its values.
+fn enumValue(comptime E: type, number: u64) ?E {
+    const e = @typeInfo(E).@"enum";
+    const Tag = e.tag_type;
+    const Bits = @Int(.unsigned, @typeInfo(Tag).int.bits);
+    if (e.mode == .nonexhaustive) return @fromBackingInt(@as(Tag, @bitCast(@as(Bits, @intCast(number)))));
+    if (number >= e.field_names.len) return null;
+    if (comptime dense(E)) return @fromBackingInt(@as(Tag, @intCast(number)));
+    return std.enums.values(E)[@intCast(number)];
+}
+
+// --- writing --------------------------------------------------------------------------------------
+
+/// Bits, the low first, into bytes (`out`, when there is one) and into the form's hash.
+const BitWriter = struct {
+    out: ?[]u8,
+    hasher: std.hash.Fnv1a_64 = .init(),
+    byte: u8 = 0,
+    fill: u4 = 0,
+    len: usize = 0,
+
+    fn put(w: *BitWriter, value: u64, bits: usize) void {
+        var v = value;
+        var n = bits;
+        while (n > 0) {
+            const room: usize = 8 - @as(usize, w.fill);
+            const k = @min(room, n);
+            const part: u8 = @truncate(v & ((@as(u64, 1) << @intCast(k)) - 1));
+            w.byte |= part << @intCast(w.fill);
+            w.fill += @intCast(k);
+            n -= k;
+            v >>= @intCast(k);
+            if (w.fill == 8) w.emit();
+        }
+    }
+
+    fn emit(w: *BitWriter) void {
+        if (w.out) |o| o[w.len] = w.byte;
+        w.hasher.update(&.{w.byte});
+        w.len += 1;
+        w.byte = 0;
+        w.fill = 0;
+    }
+
+    fn finish(w: *BitWriter) void {
+        if (w.fill != 0) w.emit();
+    }
+};
+
+/// Writes the form of `value` at the start of `out` (at least `maxSize(T)` bytes), and returns it.
+pub fn write(comptime T: type, value: *const T, out: []u8) []u8 {
+    std.debug.assert(out.len >= maxSize(T));
+    var w: BitWriter = .{ .out = out };
+    put(T, value, &w);
+    w.finish();
+    return out[0..w.len];
+}
+
+/// The hash of `value`'s form (FNV-1a, 64 bits), made without the form.
+pub fn hash(comptime T: type, value: *const T) u64 {
+    var w: BitWriter = .{ .out = null };
+    put(T, value, &w);
+    w.finish();
+    return w.hasher.final();
+}
+
+/// The bytes of `value`'s form.
+pub fn sizeOf(comptime T: type, value: *const T) usize {
+    var w: BitWriter = .{ .out = null };
+    put(T, value, &w);
+    w.finish();
+    return w.len;
+}
+
+fn put(comptime T: type, value: *const T, w: *BitWriter) void {
     switch (@typeInfo(T)) {
         .void => {},
-        .bool => putInt(u1, @intFromBool(value.*), out, at),
-        .int => putInt(T, value.*, out, at),
-        .@"enum" => |e| putInt(e.tag_type, @backingInt(value.*), out, at),
-        .@"struct" => |s| if (s.layout == .@"packed") {
-            putInt(s.backing_integer.?, @bitCast(value.*), out, at);
-        } else inline for (s.field_names, s.field_types) |name, F| put(F, &@field(value.*, name), out, at),
-        .array => |a| for (value) |*item| put(a.child, item, out, at),
-        .optional => |o| if (value.*) |*v| {
-            putInt(u1, 1, out, at);
-            put(o.child, v, out, at);
-        } else {
-            putInt(u1, 0, out, at);
-            zeros(size(o.child), out, at);
+        .bool => w.put(@intFromBool(value.*), 1),
+        .int => |i| w.put(@as(@Int(.unsigned, i.bits), @bitCast(value.*)), i.bits),
+        .@"enum" => w.put(enumNumber(T, value.*), enumBits(T)),
+        .@"struct" => |s| inline for (s.field_names, s.field_types) |name, F| {
+            // A packed struct's fields have no address of their own: each by its value.
+            const field = if (s.layout == .@"packed") &@as(F, @field(value.*, name)) else &@field(value.*, name);
+            put(F, field, w);
         },
+        .array => |a| if (comptime isPool(a.child)) {
+            const P = a.child.canonical_pool;
+            for (value) |*place| {
+                if (P.inUse(place)) {
+                    w.put(1, 1);
+                    put(a.child, place, w);
+                    continue;
+                }
+                w.put(0, 1);
+                const kept = P.kept(place);
+                if (std.meta.eql(kept, @as(P.Kept, .{}))) {
+                    w.put(0, 1);
+                } else {
+                    w.put(1, 1);
+                    put(P.Kept, &kept, w);
+                }
+            }
+        } else for (value) |*item| put(a.child, item, w),
+        .optional => |o| if (value.*) |*v| {
+            w.put(1, 1);
+            put(o.child, v, w);
+        } else w.put(0, 1),
         .@"union" => |u| {
             const Tag = u.tag_type.?;
-            putInt(@typeInfo(Tag).@"enum".tag_type, @backingInt(std.meta.activeTag(value.*)), out, at);
-            const end = at.* + size(T) - size(Tag);
+            w.put(enumNumber(Tag, std.meta.activeTag(value.*)), enumBits(Tag));
             switch (value.*) {
-                inline else => |*payload| put(@TypeOf(payload.*), payload, out, at),
+                inline else => |*payload| put(@TypeOf(payload.*), payload, w),
             }
-            zeros(end - at.*, out, at);
         },
         else => comptime unreachable,
     }
 }
 
-fn putInt(comptime I: type, v: I, out: []u8, at: *usize) void {
-    const n = comptime size(I);
-    if (n == 0) return;
-    const Bits = @Int(.unsigned, @bitSizeOf(I));
-    const Wide = @Int(.unsigned, n * 8);
-    std.mem.writeInt(Wide, out[at.*..][0..n], @as(Bits, @bitCast(v)), .little);
-    at.* += n;
+// --- reading --------------------------------------------------------------------------------------
+
+pub const ReadError = error{Malformed};
+
+/// Bits from a form, the low first.
+const BitReader = struct {
+    form: []const u8,
+    /// The bit to read next.
+    at: usize = 0,
+
+    fn get(r: *BitReader, bits: usize) ReadError!u64 {
+        if (bits == 0) return 0;
+        if (r.at + bits > r.form.len * 8) return error.Malformed;
+        var v: u64 = 0;
+        var got: usize = 0;
+        while (got < bits) {
+            const byte = r.form[r.at / 8];
+            const shift: u3 = @intCast(r.at % 8);
+            const k = @min(8 - @as(usize, shift), bits - got);
+            const part: u64 = (byte >> shift) & ((@as(u16, 1) << @intCast(k)) - 1);
+            v |= part << @intCast(got);
+            got += k;
+            r.at += k;
+        }
+        return v;
+    }
+
+    /// The form ends here: the last byte's padding is zeros, and nothing follows it.
+    fn end(r: *const BitReader) ReadError!void {
+        if ((r.at + 7) / 8 != r.form.len) return error.Malformed;
+        if (r.at % 8 != 0 and r.form[r.at / 8] >> @intCast(r.at % 8) != 0) return error.Malformed;
+    }
+};
+
+/// Reads into `out` the state whose form is `form`; a form that no state writes is `Malformed`
+/// (`out` then holds part of it).
+pub fn read(comptime T: type, form: []const u8, out: *T) ReadError!void {
+    var r: BitReader = .{ .form = form };
+    try get(T, &r, out);
+    try r.end();
 }
 
-fn zeros(n: usize, out: []u8, at: *usize) void {
-    @memset(out[at.*..][0..n], 0);
-    at.* += n;
+fn get(comptime T: type, r: *BitReader, out: *T) ReadError!void {
+    switch (@typeInfo(T)) {
+        .void => {},
+        .bool => out.* = try r.get(1) == 1,
+        .int => |i| out.* = @bitCast(@as(@Int(.unsigned, i.bits), @intCast(try r.get(i.bits)))),
+        .@"enum" => out.* = enumValue(T, try r.get(enumBits(T))) orelse return error.Malformed,
+        .@"struct" => |s| inline for (s.field_names, s.field_types) |name, F| {
+            if (s.layout == .@"packed") {
+                var field: F = undefined;
+                try get(F, r, &field);
+                @field(out.*, name) = field;
+            } else try get(F, r, &@field(out.*, name));
+        },
+        .array => |a| if (comptime isPool(a.child)) {
+            const P = a.child.canonical_pool;
+            for (out) |*place| {
+                if (try r.get(1) == 1) {
+                    try get(a.child, r, place);
+                    if (!P.inUse(place)) return error.Malformed;
+                    continue;
+                }
+                var kept: P.Kept = .{};
+                if (try r.get(1) == 1) {
+                    try get(P.Kept, r, &kept);
+                    // A free place that keeps its default is written without it.
+                    if (std.meta.eql(kept, @as(P.Kept, .{}))) return error.Malformed;
+                }
+                place.* = P.free(kept);
+            }
+        } else for (out) |*item| try get(a.child, r, item),
+        .optional => |o| if (try r.get(1) == 1) {
+            out.* = @as(o.child, undefined);
+            try get(o.child, r, &out.*.?);
+        } else {
+            out.* = null;
+        },
+        .@"union" => |u| {
+            const Tag = u.tag_type.?;
+            const tag = enumValue(Tag, try r.get(enumBits(Tag))) orelse return error.Malformed;
+            switch (tag) {
+                inline else => |t| {
+                    const name = @tagName(t);
+                    out.* = @unionInit(T, name, undefined);
+                    try get(@FieldType(T, name), r, &@field(out.*, name));
+                },
+            }
+        },
+        else => comptime unreachable,
+    }
 }
 
-/// The hash of `value`'s canonical form (FNV-1a, 64 bits).
-pub fn hash(comptime T: type, value: *const T) u64 {
-    var buf: [size(T)]u8 = undefined;
-    return std.hash.Fnv1a_64.hash(write(T, value, &buf));
-}
+// --- the first difference -------------------------------------------------------------------------
 
-/// The first field whose bytes differ between two canonical forms of one type.
+/// The first field whose values differ between two forms of one type.
 pub const Difference = struct {
     name_buf: [96]u8 = undefined,
     name_len: u8 = 0,
-    /// The field's place in the canonical form, and its bytes.
+    /// The field's place in our form, in bits, and its width in bits.
     offset: u32,
     width: u32,
-    /// The field's value in each form: its bytes as a little-endian number (the first eight).
+    /// The field's value in each form (its first 64 bits).
     ours: u64,
     theirs: u64,
 
@@ -113,13 +321,13 @@ pub const Difference = struct {
     }
 
     pub fn format(d: Difference, w: *std.Io.Writer) std.Io.Writer.Error!void {
-        try w.print("{s} (byte {d}, {d} byte{s}): ours {d}, theirs {d}", .{
+        try w.print("{s} (bit {d}, {d} bit{s}): ours {d}, theirs {d}", .{
             d.name(), d.offset, d.width, if (d.width == 1) "" else "s", d.ours, d.theirs,
         });
     }
 };
 
-/// Names the first difference between two canonical forms of `T`; null when they are the same.
+/// Names the first difference between two forms of `T`; null when they are the same.
 pub const DiffFn = *const fn (ours: []const u8, theirs: []const u8) ?Difference;
 
 pub fn diffFn(comptime T: type) DiffFn {
@@ -130,33 +338,25 @@ pub fn diffFn(comptime T: type) DiffFn {
     }.diff;
 }
 
-/// The first field of `T` whose bytes differ between `ours` and `theirs`, two canonical forms of
-/// `T`, by its path (`scenes.base.test_pattern.markers[1].x`); null when they are the same.
-/// Forms of different lengths differ at the shorter one's end, named `(the length)`; bytes that no
-/// field names (a union's padding, a tag of no field: a form that is not `T`'s) by their place,
-/// `(byte N)`.
+/// The first field of `T` whose values differ between `ours` and `theirs`, two forms of `T`, by
+/// its path (`scenes.base.round.play.world.entities[5].position.x`): the two forms are read side
+/// by side, field by field, so a field is found wherever the things before it put it. A union's
+/// tag or a pool's place that differs is named by the union's or the place's path; an optional's
+/// presence by the optional's. Null when the forms are the same. Forms that end before the
+/// field, or are not `T`'s, are named `(the end)` at the bit where they part.
 pub fn firstDifference(comptime T: type, ours: []const u8, theirs: []const u8) ?Difference {
-    if (ours.len != size(T) or theirs.len != size(T)) {
-        if (ours.len == theirs.len and std.mem.eql(u8, ours, theirs)) return null;
-        var d: Difference = .{ .offset = @intCast(@min(ours.len, theirs.len)), .width = 0, .ours = ours.len, .theirs = theirs.len };
-        const text = "(the length)";
-        @memcpy(d.name_buf[0..text.len], text);
-        d.name_len = text.len;
-        return d;
-    }
     if (std.mem.eql(u8, ours, theirs)) return null;
-    var walk: Walk = .{ .ours = ours, .theirs = theirs };
-    if (walk.visit(T, 0)) return walk.found;
-    const at = std.mem.findDiff(u8, ours, theirs).?;
-    var d: Difference = .{ .offset = @intCast(at), .width = 1, .ours = ours[at], .theirs = theirs[at] };
-    const text = std.fmt.bufPrint(&d.name_buf, "(byte {d})", .{at}) catch unreachable;
-    d.name_len = @intCast(text.len);
-    return d;
+    var walk: Walk = .{ .ours = .{ .form = ours }, .theirs = .{ .form = theirs } };
+    if (walk.visit(T)) |found| {
+        if (found) return walk.found;
+    } else |_| return walk.ended();
+    // The same fields: one form goes on past the other's end.
+    return walk.ended();
 }
 
 const Walk = struct {
-    ours: []const u8,
-    theirs: []const u8,
+    ours: BitReader,
+    theirs: BitReader,
     path: [96]u8 = undefined,
     len: usize = 0,
     found: ?Difference = null,
@@ -170,36 +370,49 @@ const Walk = struct {
         return before;
     }
 
-    /// Whether the field of `n` bytes at `at` differs; the first that does is `found`.
-    fn leaf(w: *Walk, at: usize, n: usize) bool {
-        const a = w.ours[at..][0..n];
-        const b = w.theirs[at..][0..n];
-        if (std.mem.eql(u8, a, b)) return false;
-        var d: Difference = .{ .offset = @intCast(at), .width = @intCast(n), .ours = number(a), .theirs = number(b) };
+    fn named(w: *const Walk, d: *Difference) void {
         @memcpy(d.name_buf[0..w.len], w.path[0..w.len]);
         d.name_len = @intCast(w.len);
+    }
+
+    /// The next `bits` of both forms: true when they differ (then `found`); the value read in
+    /// each goes to `value`.
+    fn leaf(w: *Walk, bits: usize, value: *[2]u64) ReadError!bool {
+        const at = w.ours.at;
+        value[0] = try w.ours.get(bits);
+        value[1] = try w.theirs.get(bits);
+        if (value[0] == value[1]) return false;
+        var d: Difference = .{ .offset = @intCast(at), .width = @intCast(bits), .ours = value[0], .theirs = value[1] };
+        w.named(&d);
         w.found = d;
         return true;
     }
 
-    fn number(bytes: []const u8) u64 {
-        var v: u64 = 0;
-        for (bytes[0..@min(bytes.len, 8)], 0..) |b, i| v |= @as(u64, b) << @intCast(8 * i);
-        return v;
+    /// The forms part where one ends or is not `T`'s: named by the place.
+    fn ended(w: *Walk) Difference {
+        var d: Difference = .{ .offset = @intCast(@min(w.ours.at, w.theirs.at)), .width = 0, .ours = w.ours.form.len, .theirs = w.theirs.form.len };
+        const text = "(the end)";
+        const before = w.len;
+        _ = w.push(if (w.len == 0) text else " " ++ text);
+        w.named(&d);
+        w.len = before;
+        return d;
     }
 
-    fn visit(w: *Walk, comptime T: type, at: usize) bool {
+    fn visit(w: *Walk, comptime T: type) ReadError!bool {
+        var v: [2]u64 = undefined;
         switch (@typeInfo(T)) {
             .void => return false,
-            .bool, .int, .@"enum" => return w.leaf(at, size(T)),
+            .bool => return w.leaf(1, &v),
+            .int => |i| return w.leaf(i.bits, &v),
+            .@"enum" => return w.leaf(enumBits(T), &v),
             .@"struct" => |s| {
-                if (s.layout == .@"packed") return w.leaf(at, size(T));
-                var place = at;
+                // A packed struct of one field (a fixed-point number) is named as a whole.
+                if (s.layout == .@"packed" and s.field_names.len == 1) return w.visit(s.field_types[0]);
                 inline for (s.field_names, s.field_types) |name, F| {
                     const before = w.push(if (w.len == 0) name else "." ++ name);
-                    if (w.visit(F, place)) return true;
+                    if (try w.visit(F)) return true;
                     w.len = before;
-                    place += size(F);
                 }
                 return false;
             },
@@ -207,16 +420,30 @@ const Walk = struct {
                 for (0..a.len) |i| {
                     var buf: [24]u8 = undefined;
                     const before = w.push(std.fmt.bufPrint(&buf, "[{d}]", .{i}) catch unreachable);
-                    if (w.visit(a.child, at + i * size(a.child))) return true;
+                    if (comptime isPool(a.child)) {
+                        // The place: in use or free, then its thing or what it keeps.
+                        if (try w.leaf(1, &v)) return true;
+                        if (v[0] == 1) {
+                            if (try w.visit(a.child)) return true;
+                        } else {
+                            if (try w.leaf(1, &v)) return true;
+                            if (v[0] == 1) {
+                                const kept = w.push(".(free)");
+                                if (try w.visit(a.child.canonical_pool.Kept)) return true;
+                                w.len = kept;
+                            }
+                        }
+                    } else if (try w.visit(a.child)) return true;
                     w.len = before;
                 }
                 return false;
             },
             .optional => |o| {
                 // The flag is the optional's own name; its value follows it.
-                if (w.leaf(at, 1)) return true;
+                if (try w.leaf(1, &v)) return true;
+                if (v[0] == 0) return false;
                 const before = w.push(".?");
-                if (w.visit(o.child, at + 1)) return true;
+                if (try w.visit(o.child)) return true;
                 w.len = before;
                 return false;
             },
@@ -224,18 +451,15 @@ const Walk = struct {
                 // The tag is the union's own name; the payload follows it, named by the tag, which
                 // is the same in both forms once the tag did not differ.
                 const Tag = u.tag_type.?;
-                const TagInt = @typeInfo(Tag).@"enum".tag_type;
-                const tag_size = size(Tag);
-                if (w.leaf(at, tag_size)) return true;
-                // The tag's bits as `put` wrote them, a signed tag's included.
-                const tag = number(w.ours[at..][0..tag_size]);
-                inline for (u.field_names, u.field_types) |name, F| {
-                    const bits: @Int(.unsigned, @bitSizeOf(TagInt)) = @bitCast(@as(TagInt, @backingInt(@field(Tag, name))));
-                    if (tag == bits) {
+                if (try w.leaf(enumBits(Tag), &v)) return true;
+                const tag = enumValue(Tag, v[0]) orelse return error.Malformed;
+                switch (tag) {
+                    inline else => |t| {
+                        const name = @tagName(t);
                         const before = w.push(if (w.len == 0) name else "." ++ name);
-                        if (w.visit(F, at + tag_size)) return true;
+                        if (try w.visit(@FieldType(T, name))) return true;
                         w.len = before;
-                    }
+                    },
                 }
                 return false;
             },
@@ -244,7 +468,7 @@ const Walk = struct {
     }
 };
 
-// --- tests -------------------------------------------------------------------------------------
+// --- tests ----------------------------------------------------------------------------------------
 
 const testing = std.testing;
 
@@ -263,34 +487,106 @@ const Sample = struct {
     items: [2]Item = .{ .{ .count = 7 }, .empty },
 };
 
-test "a state's form: its fields in order, little-endian, without padding" {
-    try testing.expectEqual(@as(usize, 4 + 1 + 1 + 1 + 1 + 2 + 8 + 3 + 2 * 5), size(Sample));
-    var buf: [size(Sample)]u8 = undefined;
+/// A thing of a pool: free when its kind is none; a free place keeps its generation.
+const Thing = struct {
+    generation: u8 = 0,
+    kind: Kind = .none,
+    x: i16 = 0,
+
+    pub const canonical_pool = struct {
+        pub fn inUse(t: *const Thing) bool {
+            return t.kind != .none;
+        }
+        pub const Kept = struct { generation: u8 = 0 };
+        pub fn kept(t: *const Thing) Kept {
+            return .{ .generation = t.generation };
+        }
+        pub fn free(k: Kept) Thing {
+            return .{ .generation = k.generation };
+        }
+    };
+};
+
+const Pooled = struct {
+    count: u8 = 0,
+    things: [4]Thing = @splat(.{}),
+};
+
+fn roundTrip(comptime T: type, value: *const T) !void {
+    var buf: [maxSize(T)]u8 = undefined;
+    const form = write(T, value, &buf);
+    var back: T = undefined;
+    try read(T, form, &back);
+    try testing.expect(std.meta.eql(value.*, back));
+    var again: [maxSize(T)]u8 = undefined;
+    try testing.expectEqualSlices(u8, form, write(T, &back, &again));
+    try testing.expectEqual(hash(T, value), std.hash.Fnv1a_64.hash(form));
+    try testing.expectEqual(form.len, sizeOf(T, value));
+}
+
+test "a state's form: its fields in order, in the bits their values need, packed" {
+    // 32 + 1 + 2 (three kinds) + 8 + 3 + 16 + 64 + 17 (the flag and the value) + 2 * (2 + the
+    // largest payload).
+    try testing.expectEqual(@as(usize, 32 + 1 + 2 + 8 + 3 + 16 + 64 + 17 + 2 * (2 + 32)), maxBits(Sample));
+    var buf: [maxSize(Sample)]u8 = undefined;
     const s: Sample = .{};
     const bytes = write(Sample, &s, &buf);
-    try testing.expectEqualSlices(u8, &.{
-        4, 3, 2, 1, // tick
-        1, // on
-        2, // kind
-        2, // flags: b
-        5, // small
-        254, 255, // signed
-        1, 0, 2, 0, 3, 0, 4, 0, // points
-        0, 0, 0, // maybe: none, zeros
-        1, 7, 0, 0, 0, // items[0]: count 7, then zeros to the largest payload
-        0, 0, 0, 0, 0, // items[1]: empty
-    }, bytes);
+    // The tick's four bytes; then, bit by bit from the low: on 1, kind 2 (10), flags 0b00000010,
+    // small 101, signed -2 (16 bits)...
+    try testing.expectEqualSlices(u8, &.{ 4, 3, 2, 1 }, bytes[0..4]);
+    try testing.expectEqual(@as(u8, 0b0_00010_10_1), bytes[4]);
+    // The empty item is its tag alone: 147 bits, 19 bytes.
+    try testing.expectEqual(@as(usize, (32 + 1 + 2 + 8 + 3 + 16 + 64 + 1 + 2 + 16 + 2 + 7) / 8), bytes.len);
+    try roundTrip(Sample, &s);
     var other = s;
     other.maybe = 9;
     other.items[1] = .{ .place = .{ .x = -1, .y = 2 } };
-    try testing.expectEqualSlices(u8, &.{ 1, 9, 0, 1, 7, 0, 0, 0, 2, 255, 255, 2, 0 }, write(Sample, &other, &buf)[18..]);
+    try roundTrip(Sample, &other);
     try testing.expect(hash(Sample, &s) != hash(Sample, &other));
     try testing.expectEqual(hash(Sample, &s), hash(Sample, &Sample{}));
 }
 
-test "the first differing field is named by its path" {
-    var a_buf: [size(Sample)]u8 = undefined;
-    var b_buf: [size(Sample)]u8 = undefined;
+test "a pool carries its things at their places, and of its free places what they keep" {
+    var p: Pooled = .{ .count = 2 };
+    try testing.expectEqual(@as(usize, 8 + 4 * (1 + @max(8 + 2 + 16, 1 + 8))), maxBits(Pooled));
+    // Four free places at their default: a bit each and a bit for nothing kept.
+    try testing.expectEqual(@as(usize, 2), sizeOf(Pooled, &p));
+    try roundTrip(Pooled, &p);
+    p.things[2] = .{ .generation = 3, .kind = .walker, .x = -5 };
+    p.things[1] = Thing.canonical_pool.free(.{ .generation = 9 });
+    try roundTrip(Pooled, &p);
+    // A form whose free place keeps its default, or whose place in use reads free, is no state's.
+    var buf: [maxSize(Pooled)]u8 = undefined;
+    var back: Pooled = undefined;
+    const empty = write(Pooled, &Pooled{}, &buf);
+    const kept_default = [_]u8{ empty[0], 0b0000_0010, 0 };
+    try testing.expectError(error.Malformed, read(Pooled, &kept_default, &back));
+    const in_use_free = [_]u8{ empty[0], 0b0000_0001, 0, 0, 0 };
+    try testing.expectError(error.Malformed, read(Pooled, &in_use_free, &back));
+}
+
+test "a form that no state writes is refused" {
+    var buf: [maxSize(Sample)]u8 = undefined;
+    const form = write(Sample, &Sample{}, &buf);
+    var back: Sample = undefined;
+    // Cut short, one byte too many, padding that is not zero.
+    try testing.expectError(error.Malformed, read(Sample, form[0 .. form.len - 1], &back));
+    var longer: [maxSize(Sample) + 1]u8 = undefined;
+    @memcpy(longer[0..form.len], form);
+    longer[form.len] = 0;
+    try testing.expectError(error.Malformed, read(Sample, longer[0 .. form.len + 1], &back));
+    var padded = buf;
+    padded[form.len - 1] |= 0x80;
+    try testing.expectError(error.Malformed, read(Sample, padded[0..form.len], &back));
+    // The kind's number past its three values.
+    var odd = buf;
+    odd[4] |= 0b0000_0110;
+    try testing.expectError(error.Malformed, read(Sample, odd[0..form.len], &back));
+}
+
+test "the first differing field is named by its path, wherever the fields before put it" {
+    var a_buf: [maxSize(Sample)]u8 = undefined;
+    var b_buf: [maxSize(Sample)]u8 = undefined;
     const a: Sample = .{};
     var b = a;
     const ours = write(Sample, &a, &a_buf);
@@ -300,40 +596,66 @@ test "the first differing field is named by its path" {
     b.maybe = 3;
     var d = firstDifference(Sample, ours, write(Sample, &b, &b_buf)).?;
     try testing.expectEqualStrings("points[1].y", d.name());
-    try testing.expectEqual(@as(u32, 16), d.offset);
+    try testing.expectEqual(@as(u32, 32 + 1 + 2 + 8 + 3 + 16 + 48), d.offset);
     try testing.expectEqual(@as(u64, 4), d.ours);
     try testing.expectEqual(@as(u64, 40), d.theirs);
     var text: [96]u8 = undefined;
-    try testing.expectEqualStrings("points[1].y (byte 16, 2 bytes): ours 4, theirs 40", try std.fmt.bufPrint(&text, "{f}", .{d}));
+    try testing.expectEqualStrings("points[1].y (bit 110, 16 bits): ours 4, theirs 40", try std.fmt.bufPrint(&text, "{f}", .{d}));
 
     b = a;
     b.maybe = 3;
     try testing.expectEqualStrings("maybe", firstDifference(Sample, ours, write(Sample, &b, &b_buf)).?.name());
+    // A field after a field of another length: found all the same.
+    b.items[1] = .{ .count = 1 };
+    var c = a;
+    c.maybe = 3;
+    const theirs_c = write(Sample, &c, &a_buf);
+    try testing.expectEqualStrings("items[1]", firstDifference(Sample, theirs_c, write(Sample, &b, &b_buf)).?.name());
     b = a;
     b.items[0] = .{ .count = 8 };
-    try testing.expectEqualStrings("items[0].count", firstDifference(Sample, ours, write(Sample, &b, &b_buf)).?.name());
+    const ours_again = write(Sample, &a, &a_buf);
+    try testing.expectEqualStrings("items[0].count", firstDifference(Sample, ours_again, write(Sample, &b, &b_buf)).?.name());
     b.items[0] = .empty;
-    try testing.expectEqualStrings("items[0]", firstDifference(Sample, ours, write(Sample, &b, &b_buf)).?.name());
+    try testing.expectEqualStrings("items[0]", firstDifference(Sample, ours_again, write(Sample, &b, &b_buf)).?.name());
     b = a;
     b.flags.a = true;
-    d = diffFn(Sample)(ours, write(Sample, &b, &b_buf)).?;
-    try testing.expectEqualStrings("flags", d.name());
-    try testing.expectEqual(@as(u64, 3), d.theirs);
-    // Forms of another length: another build's state.
-    try testing.expectEqualStrings("(the length)", firstDifference(Sample, ours, ours[0..10]).?.name());
-    // Bytes no field names: a union's padding, which a form of `Sample` never has.
-    var odd = a_buf;
-    odd[27] = 1; // items[1]'s payload, which `.empty` pads with zeros
-    d = firstDifference(Sample, ours, &odd).?;
-    try testing.expectEqualStrings("(byte 27)", d.name());
+    d = diffFn(Sample)(ours_again, write(Sample, &b, &b_buf)).?;
+    try testing.expectEqualStrings("flags.a", d.name());
     try testing.expectEqual(@as(u64, 1), d.theirs);
+    // A form cut short: named where it ends.
+    try testing.expectEqualStrings("tick (the end)", firstDifference(Sample, ours_again, ours_again[0..2]).?.name());
 }
 
-test "a union with a signed tag names its payload" {
+test "the places of a pool are named, in use or free, and their things' fields" {
+    var a_buf: [maxSize(Pooled)]u8 = undefined;
+    var b_buf: [maxSize(Pooled)]u8 = undefined;
+    var a: Pooled = .{};
+    a.things[1] = .{ .generation = 1, .kind = .walker, .x = 3 };
+    var b = a;
+    b.things[1].x = 4;
+    const ours = write(Pooled, &a, &a_buf);
+    try testing.expectEqualStrings("things[1].x", firstDifference(Pooled, ours, write(Pooled, &b, &b_buf)).?.name());
+    b = a;
+    b.things[0] = .{ .kind = .runner };
+    try testing.expectEqualStrings("things[0]", firstDifference(Pooled, ours, write(Pooled, &b, &b_buf)).?.name());
+    b = a;
+    b.things[3] = Thing.canonical_pool.free(.{ .generation = 2 });
+    try testing.expectEqualStrings("things[3]", firstDifference(Pooled, ours, write(Pooled, &b, &b_buf)).?.name());
+    a.things[3] = Thing.canonical_pool.free(.{ .generation = 5 });
+    const kept = write(Pooled, &a, &a_buf);
+    try testing.expectEqualStrings("things[3].(free).generation", firstDifference(Pooled, kept, write(Pooled, &b, &b_buf)).?.name());
+}
+
+test "a union with a signed tag and an enum of sparse values: their numbers among their values" {
     const Tag = enum(i8) { low = -2, high = 3 };
     const U = union(Tag) { low: u8, high: u16 };
-    var a_buf: [size(U)]u8 = undefined;
-    var b_buf: [size(U)]u8 = undefined;
+    try testing.expectEqual(@as(usize, 1 + 16), maxBits(U));
+    var a_buf: [maxSize(U)]u8 = undefined;
+    var b_buf: [maxSize(U)]u8 = undefined;
     const ours = write(U, &U{ .low = 1 }, &a_buf);
     try testing.expectEqualStrings("low", firstDifference(U, ours, write(U, &U{ .low = 2 }, &b_buf)).?.name());
+    try roundTrip(U, &U{ .high = 700 });
+    const Open = enum(u8) { a = 1, _ };
+    try testing.expectEqual(@as(usize, 8), maxBits(Open));
+    try roundTrip(Open, &@as(Open, @fromBackingInt(200)));
 }

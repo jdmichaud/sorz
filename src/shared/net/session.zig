@@ -751,7 +751,7 @@ fn runBoth(host: *Session, guest: *Session, n: u32) !void {
     }
 }
 
-fn formOf(s: TestState, buf: *[canonical.size(TestState)]u8) []const u8 {
+fn formOf(s: TestState, buf: *[canonical.maxSize(TestState)]u8) []const u8 {
     return canonical.write(TestState, &s, buf);
 }
 
@@ -926,8 +926,8 @@ test "a state mismatch stops both and names the first differing field" {
     var guest = try testSession(.guest, null);
     defer guest.deinit();
     try startPair(&host, &guest);
-    var a_buf: [canonical.size(TestState)]u8 = undefined;
-    var b_buf: [canonical.size(TestState)]u8 = undefined;
+    var a_buf: [canonical.maxSize(TestState)]u8 = undefined;
+    var b_buf: [canonical.maxSize(TestState)]u8 = undefined;
     try runBoth(&host, &guest, check_interval);
     try testing.expect(host.checkDue() and guest.checkDue());
     host.check(1, formOf(.{}, &a_buf));
@@ -971,7 +971,7 @@ test "a mismatch whose state was not kept is noted, and takes no chunk" {
     const long = try testing.allocator.alloc(u8, protocol.max_state_len + 1);
     defer testing.allocator.free(long);
     @memset(long, 0);
-    var b_buf: [canonical.size(TestState)]u8 = undefined;
+    var b_buf: [canonical.maxSize(TestState)]u8 = undefined;
     host.check(1, long);
     guest.check(2, formOf(.{}, &b_buf));
     _ = pump(&guest, &host, 0);

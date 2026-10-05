@@ -290,6 +290,6 @@ test "a bit of the guest's state flipped: both games stop at the next check and 
     try std.testing.expect(try pair(std.testing.allocator, null, @splat(0), 2, 300, &.{}, &.{}, 47, .network, &w));
     const text = w.buffered();
     try std.testing.expect(std.mem.find(u8, text, "\"corrupted_before\":47,\"found_at\":60") != null);
-    try std.testing.expect(std.mem.find(u8, text, "\"difference\":\"tick (byte 0, 4 bytes): ours 60, theirs 124\"") != null);
-    try std.testing.expect(std.mem.find(u8, text, "\"difference\":\"tick (byte 0, 4 bytes): ours 124, theirs 60\"") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"difference\":\"tick (bit 0, 32 bits): ours 60, theirs 124\"") != null);
+    try std.testing.expect(std.mem.find(u8, text, "\"difference\":\"tick (bit 0, 32 bits): ours 124, theirs 60\"") != null);
 }

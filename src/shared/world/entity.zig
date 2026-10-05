@@ -233,6 +233,21 @@ pub const Entity = struct {
         return e.kind != null;
     }
 
+    /// The world's places in the canonical form (canonical.zig, a pool): the entities, each at
+    /// its place; of a free place, its generation alone (the next entity there takes it).
+    pub const canonical_pool = struct {
+        pub fn inUse(e: *const Entity) bool {
+            return e.alive();
+        }
+        pub const Kept = struct { generation: u16 = 0 };
+        pub fn kept(e: *const Entity) Kept {
+            return .{ .generation = e.generation };
+        }
+        pub fn free(k: Kept) Entity {
+            return .{ .generation = k.generation };
+        }
+    };
+
     pub fn facingLeft(e: *const Entity) bool {
         return e.facing == .left;
     }

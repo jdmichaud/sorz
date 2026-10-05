@@ -393,13 +393,12 @@ test "the stack: an overlay pushed over the base and taken off; every scene its 
     try testing.expectError(error.Full, s.push(.{ .load = .{} }));
 }
 
-test "the canonical state holds the largest scene once, and fits a session's state" {
+test "the canonical state's most fits a session's state" {
     const canonical = @import("canonical.zig");
     const protocol = @import("net/protocol.zig");
-    try testing.expectEqual(canonical.size(Scene), canonical.size(@FieldType(Stack, "base")));
-    try testing.expect(canonical.size(Overlay) < 64);
-    // Room for the world to grow: the game's state is under three quarters of the most.
-    try testing.expect(canonical.size(@import("game.zig").State) * 4 < protocol.max_state_len * 3);
+    try testing.expect(canonical.maxSize(Overlay) < 64);
+    // Every place of the world taken, every scene at its largest: still under the most.
+    try testing.expect(canonical.maxSize(@import("game.zig").State) <= protocol.max_state_len);
 }
 
 test "the flow: a set-up, its load over the scene, the scene again; an exit, its edge" {

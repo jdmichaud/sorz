@@ -124,7 +124,7 @@ const Peer = struct {
                 peer.state.score[1] ^= 64;
             };
             if (peer.np.checkDue()) {
-                var form: [canonical.size(FakeState)]u8 = undefined;
+                var form: [canonical.maxSize(FakeState)]u8 = undefined;
                 peer.np.check(&p, peer.state.hash(), canonical.write(FakeState, &peer.state, &form));
             }
         } else peer.held += 1;
@@ -245,7 +245,7 @@ test "a byte corrupted on one side is found within a second and its field is nam
     for ([_]*Peer{ host, guest }) |peer| {
         const d = peer.np.difference.?;
         try std.testing.expectEqualStrings("score[1]", d.name());
-        try std.testing.expectEqual(@as(u32, 18), d.offset);
+        try std.testing.expectEqual(@as(u32, 18 * 8), d.offset);
     }
     try std.testing.expectEqual(host.np.difference.?.ours, guest.np.difference.?.theirs);
     // Both games stopped at once.

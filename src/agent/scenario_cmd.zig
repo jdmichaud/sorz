@@ -25,6 +25,11 @@ pub const Options = struct {
     wav: ?[]const u8 = null,
     /// The most logic ticks the script runs.
     ticks: u64 = 100_000,
+    /// A run from power-on: the state read back from its canonical form at each display tick,
+    /// and the run goes on from it (game_run.zig `Forms`).
+    reload: bool = false,
+    /// A run from power-on: where the form's size at each display tick is written.
+    form_sizes: ?[]const u8 = null,
 };
 
 /// Runs the scenario on the content of `assets`; returns whether it ran to its end.
@@ -98,10 +103,26 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
     // TODO(PLAN item 13): the round's script's records, until its content holds them.
     var r = try scenario.Run.init(gpa, &kinds, &script, &situation, .{ .game_tick = options.game_tick, .round = if (c.rounds.len != 0) &c.rounds[0] else null }, if (options.trace != null) &tw else null, if (options.probe != null) &probe else null);
     defer r.deinit();
+    // The world's canonical form at each logic tick: the round's world alone runs here.
+    var sizes_file: ?std.Io.File = null;
+    defer if (sizes_file) |f| f.close(io);
+    var sizes_buf: [1 << 14]u8 = undefined;
+    var sizes_writer: std.Io.File.Writer = undefined;
+    if (options.form_sizes) |path| {
+        sizes_file = try cwd.createFile(io, path, .{});
+        sizes_writer = sizes_file.?.writerStreaming(io, &sizes_buf);
+    }
     var ticks: u64 = 0;
     while (ticks < options.ticks) : (ticks += 1) {
         if (!try r.step()) break;
+        if (options.form_sizes != null) {
+            const w = &r.play.world;
+            var live: usize = 0;
+            for (&w.entities) |*e| live += @intFromBool(e.alive());
+            try sizes_writer.interface.print("{d} world {d} {d}\n", .{ r.t, live, sorz.canonical.sizeOf(sorz.world.Play, &r.play) });
+        }
     } else r.failure = "the run reached its most ticks";
+    if (options.form_sizes != null) try sizes_writer.interface.flush();
 
     if (options.trace != null) {
         try tw.end();
@@ -166,6 +187,20 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
     var sound: ?game_run.Sound = if (options.wav != null) try .init(gpa, &c.sounds) else null;
     defer if (sound) |*s| s.deinit();
     if (sound) |*s| r.sound = s;
+    var sizes_file: ?std.Io.File = null;
+    defer if (sizes_file) |f| f.close(io);
+    var sizes_buf: [1 << 14]u8 = undefined;
+    var sizes_writer: std.Io.File.Writer = undefined;
+    if (options.form_sizes) |path| {
+        sizes_file = try cwd.createFile(io, path, .{});
+        sizes_writer = sizes_file.?.writerStreaming(io, &sizes_buf);
+    }
+    var forms: ?game_run.Forms = if (options.reload or options.form_sizes != null)
+        try .init(gpa, options.reload, if (options.form_sizes != null) &sizes_writer.interface else null)
+    else
+        null;
+    defer if (forms) |*f| f.deinit();
+    if (forms) |*f| r.forms = f;
     // The start's display ticks, then two a logic tick of the script's.
     var ticks: u64 = 0;
     while (ticks < 2 * options.ticks + 10_000) : (ticks += 1) {
@@ -176,7 +211,9 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
         try trace_writer.interface.flush();
     }
     if (sound) |*s| try agent_wav.write(gpa, io, options.wav.?, s.pcm.items, sorz.sound_out.channels, sorz.sound_out.rate);
+    if (options.form_sizes != null) try sizes_writer.interface.flush();
     try out.print("{{\"scenario\":\"{s}\"", .{r.failure orelse "done"});
+    if (forms) |f| try out.print(",\"form_most\":{d},\"form_most_tick\":{d},\"reloads\":{d}", .{ f.largest, f.largest_at, f.reloads });
     if (r.body.timed_out) |line| try out.print(",\"line\":{d}", .{line});
     try out.print(",\"script_vblank\":{d}", .{r.body_v orelse 0});
     if (r.body_clock) |clock| try out.print(",\"script_game_tick\":{d}", .{clock});

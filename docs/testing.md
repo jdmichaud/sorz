@@ -138,6 +138,11 @@ catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (it
   state, each enemy with the record the round's script placed it by (`rounds/round1.json`,
   matched by where it appeared), the random generator as the trace's draws left it, and the
   round's clock as sor-remaster counts it (`--game-tick`, its `script_game_tick`).
+- With `--reload`, a run from power-on reads the game's state back from its canonical form
+  (canonical.zig) at every display tick and goes on from the state read: the state read must be
+  the one written, and the run's trace and sound must equal those of the run without it (a game
+  loaded from its form goes on as the one it was taken from, DESIGN.md 6). `--form-sizes OUT`
+  writes the form's size at each tick (with a situation: the round's world's, at each logic tick).
 - `sorz-agent trace-compare FIRST SECOND` compares two traces (the first difference, the counts
   per kind of event), from a scene on (`--scene round --after TICK`), with kinds of entity,
   events and fields left out and sor-remaster's sound names translated (`--sounds`); with

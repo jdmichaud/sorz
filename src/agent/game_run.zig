@@ -45,6 +45,76 @@ pub const Sound = struct {
     }
 };
 
+/// The game's canonical form at each display tick (canonical.zig): its size, and, with `reload`,
+/// the state read back from it, which the run goes on from (a round trip: the state read must be
+/// the one written, its form the same bytes).
+pub const Forms = struct {
+    gpa: std.mem.Allocator,
+    reload: bool,
+    /// A line a display tick: the tick, the scene, the world's entities, the form's bytes.
+    sizes: ?*std.Io.Writer,
+    form: []u8,
+    again: []u8,
+    read: *sorz.game.State,
+    /// The largest form, and its tick.
+    largest: usize = 0,
+    largest_at: u32 = 0,
+    reloads: u64 = 0,
+
+    const canonical = sorz.canonical;
+    const State = sorz.game.State;
+
+    pub fn init(gpa: std.mem.Allocator, reload: bool, sizes: ?*std.Io.Writer) !Forms {
+        const form = try gpa.alloc(u8, canonical.maxSize(State));
+        errdefer gpa.free(form);
+        const again = try gpa.alloc(u8, canonical.maxSize(State));
+        errdefer gpa.free(again);
+        return .{ .gpa = gpa, .reload = reload, .sizes = sizes, .form = form, .again = again, .read = try gpa.create(State) };
+    }
+
+    pub fn deinit(self: *Forms) void {
+        self.gpa.free(self.form);
+        self.gpa.free(self.again);
+        self.gpa.destroy(self.read);
+    }
+
+    /// After a display tick: the form's size noted; with `reload`, the state replaced by the one
+    /// read from its form. False when that is not the state written.
+    fn after(self: *Forms, state: *State) !bool {
+        const form = canonical.write(State, state, self.form);
+        if (form.len > self.largest) {
+            self.largest = form.len;
+            self.largest_at = state.tick;
+        }
+        if (self.sizes) |w| {
+            var live: usize = 0;
+            var play: usize = 0;
+            if (state.scenes.base == .round) {
+                const p = &state.scenes.base.round.play;
+                for (&p.world.entities) |*e| live += @intFromBool(e.alive());
+                play = canonical.sizeOf(sorz.world.Play, p);
+            }
+            try w.print("{d} {s} {d} {d} {d}\n", .{ state.tick, @tagName(std.meta.activeTag(state.scenes.base)), live, form.len, play });
+        }
+        if (!self.reload) return true;
+        canonical.read(State, form, self.read) catch |err| {
+            std.log.err("tick {d}: the form does not read: {s}", .{ state.tick, @errorName(err) });
+            return false;
+        };
+        if (!std.meta.eql(self.read.*, state.*)) {
+            std.log.err("tick {d}: the state read from the form is not the state", .{state.tick});
+            return false;
+        }
+        if (!std.mem.eql(u8, form, canonical.write(State, self.read, self.again))) {
+            std.log.err("tick {d}: the state read writes another form", .{state.tick});
+            return false;
+        }
+        state.* = self.read.*;
+        self.reloads += 1;
+        return true;
+    }
+};
+
 pub const Run = struct {
     content: *const library.Content,
     assets: *const scene.Assets,
@@ -67,6 +137,8 @@ pub const Run = struct {
     current: input.Pads = .{},
     /// The sound, when the run keeps it.
     sound: ?*Sound = null,
+    /// The canonical form at each display tick (`--reload`, `--form-sizes`), when the run looks.
+    forms: ?*Forms = null,
     /// The display tick of the body's tick 0.
     body_v: ?u64 = null,
     /// The game's clock as the script's tick 0 begins, as sor-remaster tells it: its value at
@@ -111,6 +183,10 @@ pub const Run = struct {
         if (self.sound) |s| try s.pcm.appendSlice(s.gpa, sorz.game.tickSound(&s.out, &s.due, &turn, 0));
         if (self.trace) |tw| tw.held = .{ pads.pad1, pads.pad2 };
         try self.observe(&turn);
+        if (self.forms) |f| if (!try f.after(&self.state)) {
+            self.failure = "the state read from its form is not the one written";
+            self.stage = .done;
+        };
         return true;
     }
 

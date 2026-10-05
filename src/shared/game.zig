@@ -689,7 +689,7 @@ pub const Game = struct {
             np.ran();
             if (np.checkDue()) {
                 // The state before the session's next tick: its hash and its form.
-                var buf: [canonical.size(State)]u8 = undefined;
+                var buf: [canonical.maxSize(State)]u8 = undefined;
                 const form = canonical.write(State, &self.state, &buf);
                 np.check(p, std.hash.Fnv1a_64.hash(form), form);
             }
