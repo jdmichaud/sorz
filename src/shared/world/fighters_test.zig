@@ -62,7 +62,7 @@ const hero =
     \\   "fall_most": 786432, "getting_up_ends": 4, "grab_blow_ends": 2, "hit_pause": 4,
     \\   "hurry_first": 1, "hurry_later": 2, "hurt": 10, "idle_ends": 2, "jump": -491520,
     \\   "jump_x": 196608, "kick_falling_gravity": 34816, "knee_last_ends": 2,
-    \\   "knocked_down_up": -327680, "knocked_down_x": -147456, "last_blow_ends": 4, "let_go": 3,
+    \\   "knocked_down_up": -327680, "knocked_down_x": -147456, "last_blow_ends": 4, "let_go": 3, "special_beyond": 352,
     \\   "pick_depth": 16, "pick_height": 8, "pick_x": 20, "recover_ends": 2, "steer": 24576,
     \\   "steer_most": 229376, "throw_ends": 6, "vault_ends": 4, "walk_depth": 155648,
     \\   "walk_x": 196608, "dying_x": -262144, "dying_up": -589824, "dead": 38,

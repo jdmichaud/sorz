@@ -532,6 +532,7 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     try d.number("combo_window", try moveByte(rom, 0x2034, 0x5C), "ROM 0x02034: move.b #N,($5C,a0)");
     try d.number("hit_pause", try moveByte(rom, 0x21D8, 0x4F), "ROM 0x021D8: move.b #N,($4F,a0)");
     try d.number("let_go", try moveByte(rom, 0x32CE, 0x63), "ROM 0x032CE: move.b #N,($63,a0)");
+    try d.number("special_beyond", try immediate(rom, 0x40C2, &.{ 0x06, 0x41 }, 2), "ROM 0x040C2: addi.w #N,d1 (from the camera's place across, 0x40A6)");
     try d.number("hurry_first", try moveByte(rom, 0x2060, 13), "ROM 0x02060: move.b #N,(13,a0)");
     try d.number("hurry_later", try moveByte(rom, 0x206E, 13), "ROM 0x0206E: move.b #N,(13,a0)");
     try d.number("idle_ends", try moveq(rom, 0x1F96, 0), "ROM 0x01F96: moveq #N,d0");

@@ -1333,7 +1333,8 @@ pub fn Of(comptime M: type) type {
                 .appear, .knocked_out => return,
                 else => {},
             }
-            if (a.entity.holder) |h| a.tick.letGo(h);
+            // Held, it stays so: its holder lets it go when the special attack's run leaves the
+            // holder behind (player.zig).
             a.endMove();
             // The last whose blow or hold it took is the one the traces name.
             const by = body(a).other;

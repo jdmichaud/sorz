@@ -232,6 +232,9 @@ pub const Numbers = struct {
     hit_pause: u8,
     /// The pushes away that let go of a hold, less one.
     let_go: u8,
+    /// During the special attack, how far ahead of the camera across a player is brought down,
+    /// ready.
+    special_beyond: i16,
     /// A hurried jab: the ticks of its frame at the press (its blow's frame, or another).
     hurry_first: u8,
     hurry_later: u8,
@@ -423,7 +426,7 @@ pub fn control(a: Actor, c: Command) void {
     if (a.mind.window != 0) a.mind.window -= 1;
     // During a special attack it stands still, as it is.
     a.entity.flags.still = a.tick.world.special;
-    if (a.tick.world.special) return;
+    if (a.tick.world.special) return leftBySpecial(a);
     if (c.pressed.a) callSpecial(a);
     feelBlow(a);
     feelCatch(a);
@@ -1041,6 +1044,25 @@ fn throwFall(a: Actor) void {
 }
 
 // The special attack -------------------------------------------------------------------------
+
+/// During the special attack, a player on the ground whom the camera's run back has left beyond
+/// its view's right side is put down there, still, and stands ready: a hold it was in ends (the
+/// special attack itself ends none).
+fn leftBySpecial(a: Actor) void {
+    const n = a.numbers();
+    const e = a.entity;
+    if (e.velocity.height.raw != 0) return;
+    if (e.position.x.whole() < a.tick.world.camera.x.whole() + n.special_beyond) return;
+    e.position.height = .parts(@intCast(a.tick.world.ground.whole()), e.position.height.frac());
+    e.velocity = .zero;
+    e.flags.airborne = false;
+    switch (a.mind.state) {
+        .ready, .idle => return,
+        else => {},
+    }
+    if (e.holding != null or e.holder != null) a.letGo();
+    change(a, .ready);
+}
 
 /// A (the special attack): standing in play (not dropping in), with health and a special left,
 /// it calls the police car.
