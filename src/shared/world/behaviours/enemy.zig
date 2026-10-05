@@ -103,6 +103,9 @@ pub const Body = struct {
     last_walk_off: u32 = 0,
     /// Standing with no player in play: it waits for one to join.
     alone: bool = false,
+    /// Its target stopped fighting (its point not taken again): back to the fight's start at its
+    /// tick's end, unless its tick takes it elsewhere first.
+    back_due: bool = false,
     /// Its blow landed at this tick.
     landed: bool = false,
     /// The weapon in its hand (an armed Galsia's).
@@ -325,6 +328,13 @@ pub fn Of(comptime M: type) type {
         pub fn enter(a: A, state: State) void {
             a.mind.state = state;
             a.mind.body.fresh = true;
+            a.mind.body.back_due = false;
+        }
+
+        /// The end of its tick: back to the fight's start if its target stopped fighting.
+        pub fn endTick(a: A) void {
+            if (!body(a).back_due) return;
+            enter(a, M.fights);
         }
 
         /// Enters `state` at a blow or a grab of this tick, which come before its tick: it
@@ -531,9 +541,10 @@ pub fn Of(comptime M: type) type {
                 return false;
             };
             // A target no longer a fighter (its lives gone, it waits) sends it back to the fight's
-            // start, as the original's does; its point as it was, it walks on this tick.
+            // start at the tick's end, as the original's does; its point as it was, its state's
+            // tick goes on (it walks).
             if (t.mind != .player) {
-                enter(a, M.fights);
+                body(a).back_due = true;
                 return true;
             }
             const n = a.numbers();

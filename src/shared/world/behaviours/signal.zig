@@ -110,6 +110,7 @@ pub fn begin(a: Actor) void {
 }
 
 pub fn think(a: Actor) void {
+    defer Common.endTick(a);
     if (!Common.tickStarts(a)) return;
     // Walking off, it holds a target it walks into too.
     if (a.mind.state == .walk_off and holdsOrWatches(a)) return;

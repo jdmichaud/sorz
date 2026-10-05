@@ -152,6 +152,7 @@ pub fn begin(a: Actor) void {
 }
 
 pub fn think(a: Actor) void {
+    defer Common.endTick(a);
     if (!Common.tickStarts(a)) return;
     if (Common.act(a)) return;
     switch (a.mind.state) {
