@@ -253,6 +253,21 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   players' frames are copied whole as they come, in a part of 34 tiles and, for the larger
   frames, a second of 32: what the copies cost the sound's processor, DESIGN.md A4). (They are the players' animations in the original's sets; the
   characters' own definitions will hold them with their moves, PLAN 11.)
+- `round`, play's screen: `banner`, the round's banner, three frames drawn at the screen's
+  top-left (`left`, the round's `number`, `right`); the status bar's first `fade` colours fade in,
+  then the parts slide in (the left part right, the number down, the right part left) by `in`
+  pixels a tick for `in_ticks` ticks, stay `wait` ticks (the round's music at their start), slide
+  back out by `out` for `out_ticks` ticks, and the round starts `after` ticks later; `pause.frame`,
+  the pause's text; `time_over`, the time over: its `frame`, shown `ticks` ticks, then each player
+  in play loses `health` and the timer shows `seconds`; `status_bar`, the cells of the fixed
+  layer (`[x, y]`, 40 by 4) where each player's parts go (`players`: its `name`, a text of
+  `fonts/main`, and `at` its `name`, `score`, `health` bar, `lives` and `specials` (a digit two
+  cells high) and the `lives_mark` and `specials_mark` before them, and the special attack's
+  `icon`) and the timer's (`time`). The parts' pictures are the `play` set's: `play/status_bar`
+  under them, `play/time_digits` (the big digits, a column of two cells each), `play/health_1`
+  and `_2` and `play/enemy_bar_1` and `_2` (a bar's ten full cells, its partial cell, ten empty:
+  a bar of n full cells shows the ten from the (10 - n)th, and its partial cell is the tile of
+  `play/fills` of its eighths, the players' from 0, the enemies' from 8), `play/police_icon`.
 
 ```json
 {"first": {"provenance": "…", "entries": [{"score": 100000, "round": 1, "name": "AAA", "level": 1}]}}
@@ -371,7 +386,7 @@ The art (PLAN 06), by set:
 | --- | --- |
 | `fonts` | the fonts' sheets (`main`, `italic`, `intro`, `big`) and the glyphs of `main`, `italic`, `intro` |
 | `segalogo`, `intro`, `title`, `menu`, `options`, `select`, `highscores`, `round_end`, `ending`, `boss_ending` | each screen's sheets, maps (with where the original draws them) and palettes |
-| `play` | the status bar's sheet and maps, play's colours, the arrow, sparks and shadow frames |
+| `play` | the status bar's sheet and maps, its parts' maps (`screens/round`), play's colours, the arrow, sparks and shadow frames, the banner's, the pause's and the time over's texts as frames, and the bars' tiles the game makes (`bar_tiles`, `fills`) |
 | `offer` | Mr. X's window in round 8 (and in Japan) |
 | `round1` to `round8` | the round's two art sheets, its planes' whole maps (`plane_a`, `plane_b`), its colours and cycles, its props' frames; round 3's waves (four maps, five palettes) |
 | `axel`, `adam`, `blaze` | the players' frames |
@@ -392,9 +407,8 @@ screens' palette steps: `segalogo/sweep`, `intro/lights`, `title/steps`. The rou
 (PLAN 13): `round1`.
 
 Not in the tree yet, each with the item that needs it: the endings' texts (PLAN 16); the
-Japanese story and its kana (the game plays outside Japan, decision D5); the fixed sprite lists of the round's banner, the pause and the game over, drawn from
-tiles play builds itself (PLAN 13); the rounds' bands and floors, and the scripts of rounds 2 to 8
-(PLAN 15).
+Japanese story and its kana (the game plays outside Japan, decision D5); the rounds' bands and
+floors, the scripts and banners of rounds 2 to 8 (PLAN 15).
 
 ## Extracting and checking
 

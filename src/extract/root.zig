@@ -24,6 +24,7 @@ pub const screen_data = @import("screen_data.zig");
 pub const sound = @import("sound.zig");
 pub const entities = @import("entities.zig");
 pub const scripts = @import("scripts.zig");
+pub const play = @import("play.zig");
 
 /// The extractor's name and version, in the tree's manifest.
 pub const name = "sorz-extract 1";
@@ -63,15 +64,21 @@ pub fn extractUnchecked(gpa: std.mem.Allocator, rom_bytes: []const u8) Error!Tre
     const arena = tree.arena.allocator();
 
     var b = try build(arena, rom_bytes);
+    // Play's screen: its frames and maps, and its record.
+    const round_screen = play.extract(&b) catch |e| return switch (e) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.BadData,
+    };
     const a = try b.finish();
 
     const sets = try arena.alloc([]const u8, a.sets.len);
     for (sets, a.sets) |*n, s| n.* = s.name;
     // The screens' records (docs/content.md), their frames named by the art's origins.
-    const records = screen_data.extract(arena, rom_bytes, &b) catch |e| return switch (e) {
+    var records = screen_data.extract(arena, rom_bytes, &b) catch |e| return switch (e) {
         error.OutOfMemory => error.OutOfMemory,
         else => error.BadData,
     };
+    records.round = round_screen;
     var names_buf: [content.screens.record_names.len][]const u8 = undefined;
     // The kinds of entity (docs/content.md).
     const definitions = entities.all(arena, rom_bytes) catch |e| return switch (e) {

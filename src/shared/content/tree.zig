@@ -456,7 +456,7 @@ pub fn loadManifest(arena: std.mem.Allocator, source: platform.AssetSource, diag
             s.* = try n.string();
             for (screens.record_names) |known| {
                 if (std.mem.eql(u8, known, s.*)) break;
-            } else return n.fail("not a screen's record (high_scores, intro, options, select)");
+            } else return n.fail("not a screen's record (high_scores, intro, options, round, select)");
             if (i != 0 and !std.mem.lessThan(u8, out[i - 1], s.*)) return n.fail("not in name order, or named twice");
         }
         records = out;

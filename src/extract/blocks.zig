@@ -7,7 +7,9 @@ const art = @import("sorz").content.art;
 const nemesis = @import("nemesis.zig");
 const kosinski = @import("kosinski.zig");
 
-pub const Pack = enum { nemesis, kosinski, raw };
+/// How a block is stored: packed (Nemesis, Kosinski), raw tiles of the ROM, or made by the game
+/// itself from others (the extractor makes them as it does, `Library.made`).
+pub const Pack = enum { nemesis, kosinski, raw, made };
 
 pub const Block = struct {
     /// The full name of the sheet the block becomes.
@@ -91,6 +93,9 @@ pub const catalogue = [_]Block{
     .{ .name = "select/frame_map", .pack = .kosinski, .source = 0x71C6C, .what = "the character select's frame (a word rectangle, unpacked by 0x1634)", .data = true },
     .{ .name = "boss_ending/room_map", .pack = .kosinski, .source = 0x1F596, .what = "the boss's room (a word rectangle, unpacked by 0x87C6)", .data = true },
 
+    // A tile of the status bar's health bars, which play's set-up copies from the ROM (0x11564).
+    .{ .name = "play/bar_end", .pack = .raw, .source = 0x1158C, .size = 32, .what = "a tile of the health bars (0x11564 copies it to video memory $DB20)" },
+
     // The players' art: three uncompressed regions the per-frame transfers read (graphics port
     // map 2.7).
     .{ .name = "players/art_1", .pack = .raw, .source = 0x40000, .size = 0x9E40, .what = "the players' art (the transfer tables 0x1A160 and 0x1A53E)" },
@@ -158,9 +163,18 @@ pub const Library = struct {
                 if (b.source + b.size > self.rom.len) return error.BadData;
                 break :blk self.rom[b.source..][0..b.size];
             },
+            // Made tiles are given (`made`), never decoded.
+            .made => return error.UnknownBlock,
         };
         try self.decoded.put(self.arena, b.source, .{ .block = b, .bytes = bytes, .tiles = try tilesOf(self.arena, bytes) });
         return self.decoded.getPtr(b.source).?;
+    }
+
+    /// Tiles the game makes itself (`b.pack` is `made`, its source the routine that makes them),
+    /// as the extractor made them: a block of `bytes`, which screens and frames then draw from.
+    pub fn made(self: *Library, b: Block, bytes: []const u8) Error!void {
+        if (b.pack != .made or self.decoded.contains(b.source)) return error.BadData;
+        try self.decoded.put(self.arena, b.source, .{ .block = b, .bytes = bytes, .tiles = try tilesOf(self.arena, bytes) });
     }
 };
 
@@ -170,6 +184,7 @@ pub fn provenanceOf(arena: std.mem.Allocator, b: Block) ![]const u8 {
         .nemesis => "a Nemesis stream",
         .kosinski => "a Kosinski block",
         .raw => "tiles",
+        .made => return std.fmt.allocPrint(arena, "tiles the game makes, {s}", .{b.what}),
     };
     return std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: {s}, {s}", .{ b.source, kind, b.what });
 }

@@ -78,12 +78,76 @@ pub const Intro = struct {
     provenance: struct { story: []const u8 = "", profiles: []const u8 = "", script: []const u8 = "" } = .{},
 };
 
+/// A cell of the fixed layer (the status bar's): its column and its row.
+pub const Cell = struct { x: u8, y: u8 };
+
+/// The round's banner at its start: three frames drawn at the screen's top-left (its left part,
+/// the round's number, its right part). The status bar's first `fade` colours fade in; then the
+/// parts slide in (the left one right, the number down, the right one left) by `in` pixels a tick
+/// for `in_ticks` ticks, stay `wait` ticks (the round's music at their start), slide back out by
+/// `out` for `out_ticks`, and the round starts `after` ticks later.
+pub const Banner = struct {
+    provenance: []const u8 = "",
+    left: []const u8,
+    number: []const u8,
+    right: []const u8,
+    fade: u8,
+    in: u8,
+    in_ticks: u16,
+    wait: u16,
+    out: u8,
+    out_ticks: u16,
+    after: u16,
+};
+
+/// A fixed text of play, a frame drawn at the screen's top-left.
+pub const Text = struct { provenance: []const u8 = "", frame: []const u8 };
+
+/// The time over: its text shows `ticks` ticks; then each player in play loses `health` and the
+/// timer shows `seconds`.
+pub const TimeOver = struct {
+    provenance: []const u8 = "",
+    frame: []const u8,
+    ticks: u16,
+    health: u8,
+    seconds: u8,
+};
+
+/// A player's parts of the status bar: its name, and the cells of its parts.
+pub const BarPlayer = struct {
+    name: []const u8,
+    name_at: Cell,
+    score: Cell,
+    health: Cell,
+    lives: Cell,
+    lives_mark: Cell,
+    icon: Cell,
+    specials: Cell,
+    specials_mark: Cell,
+};
+
+/// The status bar, on the fixed layer: each player's parts, and the timer's.
+pub const StatusBar = struct {
+    provenance: []const u8 = "",
+    players: [2]BarPlayer,
+    time: Cell,
+};
+
+/// Play's screen (`screens/round`): its fixed texts and its status bar.
+pub const Round = struct {
+    banner: Banner,
+    pause: Text,
+    time_over: TimeOver,
+    status_bar: StatusBar,
+};
+
 /// The screens' records a tree has.
 pub const Screens = struct {
     options: ?Options = null,
     high_scores: ?HighScores = null,
     select: ?Select = null,
     intro: ?Intro = null,
+    round: ?Round = null,
 
     /// The names of the records it has, in name order (the manifest's `screens`).
     pub fn names(self: *const Screens, out: *[record_names.len][]const u8) []const []const u8 {
@@ -99,7 +163,7 @@ pub const Screens = struct {
 };
 
 /// The records' names, in name order: their files are `screens/NAME.json`.
-pub const record_names = [_][]const u8{ "high_scores", "intro", "options", "select" };
+pub const record_names = [_][]const u8{ "high_scores", "intro", "options", "round", "select" };
 
 pub fn path(arena: std.mem.Allocator, name: []const u8) error{OutOfMemory}![]const u8 {
     return std.fmt.allocPrint(arena, "screens/{s}.json", .{name});
@@ -140,8 +204,64 @@ fn steps(arena: std.mem.Allocator, xs: []const Step) !json.Value {
     return .{ .array = out };
 }
 
+fn cellValue(arena: std.mem.Allocator, c: Cell) !json.Value {
+    return .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(c.x), json.Value.num(c.y) }) };
+}
+
+fn withProvenance(arena: std.mem.Allocator, provenance: []const u8, rest: []const json.Field) !json.Value {
+    var fields: std.ArrayList(json.Field) = .empty;
+    if (provenance.len != 0) try fields.append(arena, .{ .key = "provenance", .value = .{ .str = provenance } });
+    try fields.appendSlice(arena, rest);
+    return .{ .object = fields.items };
+}
+
+fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
+    const b = &r.banner;
+    const players = try arena.alloc(json.Value, 2);
+    for (players, &r.status_bar.players) |*o, *p| o.* = try obj(arena, &.{
+        .{ .key = "name", .value = .{ .str = p.name } },
+        .{ .key = "at", .value = try obj(arena, &.{
+            .{ .key = "name", .value = try cellValue(arena, p.name_at) },
+            .{ .key = "score", .value = try cellValue(arena, p.score) },
+            .{ .key = "health", .value = try cellValue(arena, p.health) },
+            .{ .key = "lives", .value = try cellValue(arena, p.lives) },
+            .{ .key = "lives_mark", .value = try cellValue(arena, p.lives_mark) },
+            .{ .key = "icon", .value = try cellValue(arena, p.icon) },
+            .{ .key = "specials", .value = try cellValue(arena, p.specials) },
+            .{ .key = "specials_mark", .value = try cellValue(arena, p.specials_mark) },
+        }) },
+    });
+    const t = &r.time_over;
+    return obj(arena, &.{
+        .{ .key = "banner", .value = try withProvenance(arena, b.provenance, &.{
+            .{ .key = "left", .value = .{ .str = b.left } },
+            .{ .key = "number", .value = .{ .str = b.number } },
+            .{ .key = "right", .value = .{ .str = b.right } },
+            .{ .key = "fade", .value = json.Value.num(b.fade) },
+            .{ .key = "in", .value = json.Value.num(b.in) },
+            .{ .key = "in_ticks", .value = json.Value.num(b.in_ticks) },
+            .{ .key = "wait", .value = json.Value.num(b.wait) },
+            .{ .key = "out", .value = json.Value.num(b.out) },
+            .{ .key = "out_ticks", .value = json.Value.num(b.out_ticks) },
+            .{ .key = "after", .value = json.Value.num(b.after) },
+        }) },
+        .{ .key = "pause", .value = try withProvenance(arena, r.pause.provenance, &.{.{ .key = "frame", .value = .{ .str = r.pause.frame } }}) },
+        .{ .key = "time_over", .value = try withProvenance(arena, t.provenance, &.{
+            .{ .key = "frame", .value = .{ .str = t.frame } },
+            .{ .key = "ticks", .value = json.Value.num(t.ticks) },
+            .{ .key = "health", .value = json.Value.num(t.health) },
+            .{ .key = "seconds", .value = json.Value.num(t.seconds) },
+        }) },
+        .{ .key = "status_bar", .value = try withProvenance(arena, r.status_bar.provenance, &.{
+            .{ .key = "players", .value = .{ .array = players } },
+            .{ .key = "time", .value = try cellValue(arena, r.status_bar.time) },
+        }) },
+    });
+}
+
 /// The JSON of record `name` of `s`.
 pub fn value(arena: std.mem.Allocator, s: *const Screens, name: []const u8) error{OutOfMemory}!json.Value {
+    if (std.mem.eql(u8, name, "round")) return roundValue(arena, &s.round.?);
     if (std.mem.eql(u8, name, "options")) {
         const o = s.options.?;
         const entries = try arena.alloc(json.Value, o.sound_test.len);
@@ -242,8 +362,90 @@ fn readSteps(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error![
     return out;
 }
 
+fn readCell(n: json.Node) Error!Cell {
+    if (try n.len() != 2) return n.fail("not [x, y]");
+    const c: Cell = .{ .x = try (try n.at(0)).int(u8), .y = try (try n.at(1)).int(u8) };
+    if (c.x >= 40 or c.y >= 4) return n.fail("not a cell of the status bar (40 x 4)");
+    return c;
+}
+
+/// A frame's name, checked against the art when given.
+fn readFrame(n: json.Node, a: ?*const art.Art) Error![]const u8 {
+    const f = try n.string();
+    if (a) |x| if (x.frame(f) == null) return n.fail("no frame of this name in the art");
+    return f;
+}
+
+fn readRound(n: json.Node, a: ?*const art.Art) Error!Round {
+    try n.only(&.{ "banner", "pause", "time_over", "status_bar" });
+    const b = try n.get("banner");
+    try b.only(&.{ "provenance", "left", "number", "right", "fade", "in", "in_ticks", "wait", "out", "out_ticks", "after" });
+    const p = try n.get("pause");
+    try p.only(&.{ "provenance", "frame" });
+    const t = try n.get("time_over");
+    try t.only(&.{ "provenance", "frame", "ticks", "health", "seconds" });
+    const s = try n.get("status_bar");
+    try s.only(&.{ "provenance", "players", "time" });
+    const ps = try s.get("players");
+    if (try ps.len() != 2) return ps.fail("not the two players'");
+    var players: [2]BarPlayer = undefined;
+    for (&players, 0..) |*o, k| {
+        const e = try ps.at(k);
+        try e.only(&.{ "name", "at" });
+        const at = try e.get("at");
+        try at.only(&.{ "name", "score", "health", "lives", "lives_mark", "icon", "specials", "specials_mark" });
+        o.* = .{
+            .name = try (try e.get("name")).string(),
+            .name_at = try readCell(try at.get("name")),
+            .score = try readCell(try at.get("score")),
+            .health = try readCell(try at.get("health")),
+            .lives = try readCell(try at.get("lives")),
+            .lives_mark = try readCell(try at.get("lives_mark")),
+            .icon = try readCell(try at.get("icon")),
+            .specials = try readCell(try at.get("specials")),
+            .specials_mark = try readCell(try at.get("specials_mark")),
+        };
+    }
+    const r: Round = .{
+        .banner = .{
+            .provenance = if (try b.opt("provenance")) |x| try x.string() else "",
+            .left = try readFrame(try b.get("left"), a),
+            .number = try readFrame(try b.get("number"), a),
+            .right = try readFrame(try b.get("right"), a),
+            .fade = try (try b.get("fade")).int(u8),
+            .in = try (try b.get("in")).int(u8),
+            .in_ticks = try (try b.get("in_ticks")).int(u16),
+            .wait = try (try b.get("wait")).int(u16),
+            .out = try (try b.get("out")).int(u8),
+            .out_ticks = try (try b.get("out_ticks")).int(u16),
+            .after = try (try b.get("after")).int(u16),
+        },
+        .pause = .{ .provenance = if (try p.opt("provenance")) |x| try x.string() else "", .frame = try readFrame(try p.get("frame"), a) },
+        .time_over = .{
+            .provenance = if (try t.opt("provenance")) |x| try x.string() else "",
+            .frame = try readFrame(try t.get("frame"), a),
+            .ticks = try (try t.get("ticks")).int(u16),
+            .health = try (try t.get("health")).int(u8),
+            .seconds = try (try t.get("seconds")).int(u8),
+        },
+        .status_bar = .{
+            .provenance = if (try s.opt("provenance")) |x| try x.string() else "",
+            .players = players,
+            .time = try readCell(try s.get("time")),
+        },
+    };
+    if (r.banner.fade == 0 or r.banner.fade > 64) return (try b.get("fade")).fail("not 1 to 64 colours");
+    if (r.banner.in_ticks == 0 or r.banner.out_ticks == 0 or r.banner.wait == 0 or r.banner.after == 0) return b.fail("a part of no ticks");
+    if (r.time_over.ticks == 0) return (try t.get("ticks")).fail("not 1 or more");
+    return r;
+}
+
 /// Reads record `name` (its file's parsed `root`) into `into`; frames are checked against `a`.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art, into: *Screens) Error!void {
+    if (std.mem.eql(u8, name, "round")) {
+        into.round = try readRound(root, a);
+        return;
+    }
     if (std.mem.eql(u8, name, "options")) {
         try root.only(&.{ "sound_test", "levels", "controls" });
         var o: Options = .{ .sound_test = &.{}, .levels = &.{}, .controls = &.{} };
@@ -362,6 +564,15 @@ test "the screens' records write and read back the same" {
         },
         .high_scores = .{ .first = &.{.{ .score = 100000, .round = 1, .name = "AAA", .level = 1 }} },
         .select = .{ .adam = poses, .axel = poses, .blaze = blaze },
+        .round = .{
+            .banner = .{ .left = "play/l", .number = "play/n", .right = "play/r", .fade = 17, .in = 4, .in_ticks = 35, .wait = 96, .out = 6, .out_ticks = 24, .after = 48 },
+            .pause = .{ .frame = "play/pause" },
+            .time_over = .{ .provenance = "synthetic", .frame = "play/time_over", .ticks = 256, .health = 80, .seconds = 55 },
+            .status_bar = .{
+                .players = @splat(.{ .name = "1UP-", .name_at = .{ .x = 1, .y = 1 }, .score = .{ .x = 5, .y = 1 }, .health = .{ .x = 1, .y = 2 }, .lives = .{ .x = 12, .y = 1 }, .lives_mark = .{ .x = 11, .y = 2 }, .icon = .{ .x = 14, .y = 1 }, .specials = .{ .x = 17, .y = 1 }, .specials_mark = .{ .x = 16, .y = 2 } }),
+                .time = .{ .x = 19, .y = 1 },
+            },
+        },
     };
     var names_buf: [record_names.len][]const u8 = undefined;
     for (s.names(&names_buf)) |name| {
