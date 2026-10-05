@@ -107,7 +107,7 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
         const e = &w.entities[i];
         const shown = out.shown[i].?;
         const p = screenPlace(w, e);
-        if (t.kinds.shadow) |shadow| if (t.kindOf(e).definition.shadow and e.position.height.lessThan(w.ground)) {
+        if (t.kinds.shadow) |shadow| if (t.kindOf(e).definition.shadow and !e.flags.shadowless and e.position.height.lessThan(w.ground)) {
             var y = (e.position.depth.whole() >> 1) + w.ground.whole();
             if (!e.flags.on_screen) y -= w.camera.y.whole();
             out.sprites.append(.{ .frame = shadow, .x = p.x, .y = y, .palette = shadow.palette, .priority = shadow.priority or e.flags.in_front });

@@ -142,6 +142,8 @@ pub fn ShutterEntry(comptime M: type) type {
             a.tick.putUpShutter(a.handle);
             e.position.x = e.position.x.add(.pixels(n.shutter_beside));
             e.position.height = e.position.height.sub(.pixels(n.shutter_above));
+            // No shadow until it lands.
+            e.flags.shadowless = true;
         }
 
         pub fn wait(a: A) void {
@@ -161,8 +163,9 @@ pub fn ShutterEntry(comptime M: type) type {
             e.position.height = .parts(@intCast(ground), e.position.height.frac());
             b.let_out = false;
             b.dropping = false;
+            e.flags.shadowless = false;
             const plain: entity.Entrance = if (@hasDecl(M, "plain_entrance")) M.plain_entrance else .close_in;
-            e.spawn = .{ .offset_x = e.spawn.offset_x, .offset_depth = e.spawn.offset_depth, .strength = e.spawn.strength, .entrance = plain };
+            e.spawn = .{ .offset_x = e.spawn.offset_x, .offset_depth = e.spawn.offset_depth, .strength = e.spawn.strength, .entrance = plain, .colours = e.spawn.colours };
             Of(M).enter(a, M.fights);
         }
 
