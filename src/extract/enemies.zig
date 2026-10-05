@@ -368,6 +368,12 @@ fn lineOfArt(rom: []const u8, at: u32) Error!u2 {
     return @intCast((u16be(rom, at + 2) >> 13) & 3);
 }
 
+/// The palette line of an object's art word written to another (`move.w #N,(14,a1)`).
+fn lineOfArtGiven(rom: []const u8, at: u32) Error!u2 {
+    if (u16be(rom, at) != 0x337C or u16be(rom, at + 4) != 14) return error.BadData;
+    return @intCast((u16be(rom, at + 2) >> 13) & 3);
+}
+
 // --- The rolling shutter ---------------------------------------------------------------------------
 
 /// Round 1's rolling shutter (type $54, its handler 0x101C8, sor-remaster's obj/shutter.zig): its
@@ -1160,6 +1166,9 @@ pub fn bossR2Claws(arena: std.mem.Allocator, rom: []const u8) Error!entity.Defin
         .family = .projectile,
         .team = .enemy,
         .behaviour = "boss_r2_claws",
+        .palette = try lineOfArtGiven(rom, 0x16C46),
+        // Every object of the original's play below its shadows' places has a shadow (0xB132).
+        .shadow = true,
         .numbers = d.numbers.items,
         .sounds = d.sounds.items,
         .boxes = d.boxes.items,
@@ -1186,6 +1195,8 @@ pub fn bossR2Trail(arena: std.mem.Allocator, rom: []const u8) Error!entity.Defin
         .family = .effect,
         .team = .neutral,
         .behaviour = "boss_r2_trail",
+        .palette = try lineOfArtGiven(rom, 0x16BDE),
+        .shadow = true,
         .numbers = d.numbers.items,
         .boxes = d.boxes.items,
         .animations = d.animations.items,
@@ -1362,6 +1373,8 @@ pub fn jugglerKnife(arena: std.mem.Allocator, rom: []const u8) Error!entity.Defi
         .family = .projectile,
         .team = .enemy,
         .behaviour = "juggler_knife",
+        // Every object of the original's play below its shadows' places has a shadow (0xB132).
+        .shadow = true,
         .gravity = try immediate(rom, 0x973E, &.{ 0x06, 0xA8 }, 4),
         .numbers = d.numbers.items,
         .tables = d.tables.items,
