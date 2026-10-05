@@ -1322,7 +1322,11 @@ pub fn Of(comptime M: type) type {
             b.bounces = 0;
             b.slowing = false;
             a.entity.facing = .left;
+            // Its knock-down's frames from the first, the first's ticks those left of the frame
+            // it showed (the original sets the frame, not its count).
+            const left = a.entity.animation.left;
             a.animate(.down);
+            a.entity.animation.left = left;
             a.pause(false);
             const v = a.entity.velocity;
             a.entity.velocity.x = .parts(@intCast(n.knocked_back_x.whole()), v.x.frac());
