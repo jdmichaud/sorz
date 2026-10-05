@@ -102,8 +102,11 @@
     still, the two players' 6), `round-check` (`blaze`, `two`, and `join` as Adam), the SDL build
     under Xvfb with XTEST keys (Adam, Blaze, two players on one keyboard). The user's play is
     pending.
-  - [ ] Open: the players' grabs of each other (in the original a walk into the other grabs it:
-    the hold, its knees, the throw that sends the other flying over), not played yet.
+  - [x] The players' holds of each other (2026-10-05): a walk into the other holds it; the
+    knees, the throw that lifts the other over into its spin and fall, C's lift over the one
+    held, the back drop, the jump back over it, the jump out and the counter, each one placed
+    from the other by its definition's `partners`. `similar-check`'s 12 scenarios of them equal
+    (three pairs of characters, either player holding).
 - [ ] **15 — Rounds 2 to 8** — Depends: 13.
   - Their enemies, bosses and set pieces (the ship, the lift, the offer, Mr. X).
 - [ ] **16 — Endings, high scores and name entry** — Depends: 15.
