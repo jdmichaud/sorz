@@ -433,7 +433,7 @@ fn blowsOn(t: *Tick, xh: Handle) void {
     for (order) |i| {
         const ah = t.world.handleAt(i) orelse continue;
         if (ah.eql(xh)) continue;
-        if (t.world.get(ah).?.missile != null) missileOn(t, ah, xh);
+        if (t.world.get(ah).?.missile != null) _ = missileOn(t, ah, xh);
     }
     for (order) |i| {
         const ah = t.world.handleAt(i) orelse continue;
@@ -486,7 +486,8 @@ fn onPlayers(t: *Tick, xh: Handle, dealt: ?Dealt) void {
         }
         if (reachesBody(t, th, x)) continue;
         if (thrown) {
-            missileOn(t, xh, th);
+            const knocks = x.missile.?.reaction == .knock_down;
+            if (missileOn(t, xh, th)) heldStruck(t, xh, th, knocks);
             continue;
         }
         const landed = if (dealt) |d| dealtOn(t, xh, th, d) else blow(t, xh, th);
@@ -613,25 +614,38 @@ fn strike(t: *Tick, ah: Handle, th: Handle) bool {
 /// land on (a player's on the enemies and the breakables; with `on_players`, the players but its
 /// thrower too; with `on_enemies`, the enemies): the struck one's behaviour takes the blow, its
 /// damage and its reaction the missile's (knocking down, or the pepper's sneeze).
-fn missileOn(t: *Tick, ah: Handle, th: Handle) void {
-    const a = t.world.get(ah) orelse return;
-    const m = a.missile orelse return;
-    const attack = a.boxes.attack orelse return;
-    if (th.eql(m.by)) return;
-    const target = t.world.get(th) orelse return;
-    const body = target.boxes.body orelse return;
+fn missileOn(t: *Tick, ah: Handle, th: Handle) bool {
+    const a = t.world.get(ah) orelse return false;
+    const m = a.missile orelse return false;
+    const attack = a.boxes.attack orelse return false;
+    if (th.eql(m.by)) return false;
+    const target = t.world.get(th) orelse return false;
+    const body = target.boxes.body orelse return false;
     const by_team = if (t.world.getConst(m.by)) |b| b.team else a.team;
     const lands = switch (target.team) {
         .player => m.on_players or by_team == .enemy,
         .enemy => m.on_enemies or by_team == .player,
         .neutral => by_team == .player,
     };
-    if (!lands) return;
-    if (!meet(a, &t.kindOf(a).definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return;
+    if (!lands) return false;
+    if (!meet(a, &t.kindOf(a).definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return false;
     const damage = if (target.team == .player) m.player_damage orelse m.damage else m.damage;
     const b: tick_mod.Blow = .{ .attacker = ah, .damage = damage, .reaction = m.reaction, .push = .zero, .missile = true };
-    if (!t.struck(th, b)) return;
+    if (!t.struck(th, b)) return false;
     t.blowLanded(ah, th);
+    return true;
+}
+
+/// A thing thrown struck a player who holds an enemy: as an enemy's blow, it writes the player's
+/// request over (the original's thrown thing sets the player's reaction), which the one held reads
+/// at its turn still to come: one that knocks down leaves a plain hold in front (`heldInFront`),
+/// another lets it go.
+fn heldStruck(t: *Tick, xh: Handle, th: Handle, knocks: bool) void {
+    if (knocks) return heldInFront(t, xh, th);
+    const p = t.world.get(th) orelse return;
+    const held = p.holding orelse return;
+    if (t.isPlayer(held) or held.index < xh.index) return;
+    t.letGo(th);
 }
 
 /// Whether box `ab` of `a` meets box `bb` of `b`: on each axis, their spans from where the
