@@ -6,9 +6,10 @@
 //!
 //! Each named field is written in the order of its declaration, with as many bits as its values
 //! need, the low bit first, packed one after the other; the last byte is padded with zeros:
-//! - a boolean is a bit; an integer its bits (its two's complement, signed); an enum the number of
-//!   its value among its values, in the bits their count needs (a non-exhaustive one: its
-//!   integer); a packed struct its fields;
+//! - a boolean is a bit; an integer its bits (its two's complement, signed; one of the platform's
+//!   width, usize, has none, as its forms would differ from one platform to another); an enum the
+//!   number of its value among its values, in the bits their count needs (a non-exhaustive one:
+//!   its integer); a packed struct its fields;
 //! - a struct and an array, their parts in order;
 //! - an optional, a bit (1 with a value), then the value when there is one;
 //! - a tagged union, its tag, then its active payload only.
@@ -38,7 +39,8 @@ pub fn maxBits(comptime T: type) usize {
     return comptime switch (@typeInfo(T)) {
         .void => 0,
         .bool => 1,
-        .int => |i| i.bits,
+        // An integer of the platform's width: its forms would differ from one platform to another.
+        .int => |i| if (T == usize or T == isize) @compileError("no canonical form for " ++ @typeName(T) ++ ": its width is the platform's") else i.bits,
         .@"enum" => enumBits(T),
         .@"struct" => |s| blk: {
             var n: usize = 0;
