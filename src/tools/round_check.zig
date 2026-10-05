@@ -171,7 +171,7 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
         return above;
     }
     if (result.differences == 0 and frames.first == null and sound_same and pictures.first == null) {
-        try w.print("{s}: equal, {d} events, {d} entities' frames, the sound's {d} display ticks, {d} pictures ({s})\n", .{ sc.name, events, frames.entities, ticksOf(common), pictures.compared, sc.what });
+        try w.print("{s}: equal, {d} events, {d} entities' frames, the sound's {d} display ticks, {d} pictures ({d} lines past the sprites' limits left out) ({s})\n", .{ sc.name, events, frames.entities, ticksOf(common), pictures.compared, pictures.lines_left_out, sc.what });
         return true;
     }
     if (pictures.first) |f| try w.print("{s}: {d} of {d} pictures differ, the first after display tick {d} ({d} pixels: {s}/{s}-z-{d}.png, its -ref- and -diff-); after display ticks {any}\n", .{ sc.name, pictures.differing, pictures.compared, f.tick, f.pixels, c.out_path, sc.name, f.tick, pictures.ticks[0..@min(pictures.differing, pictures.ticks.len)] });
@@ -191,6 +191,8 @@ const Pictures = struct {
     first: ?struct { tick: u64, pixels: usize } = null,
     /// The first display ticks whose pictures differ.
     ticks: [12]u64 = undefined,
+    /// The pictures' lines left out (past the sprites' limits).
+    lines_left_out: usize = 0,
 };
 
 /// The pictures compared (`picture_before`, `picture_after`, `picture_every`): sor-remaster's run
@@ -257,7 +259,7 @@ const PictureTaker = struct {
         return self.wanted.contains(frame);
     }
 
-    fn take(ctx: *anyopaque, frame: u64, picture: sorz.platform.RgbaFrame) anyerror!void {
+    fn take(ctx: *anyopaque, frame: u64, picture: sorz.platform.RgbaFrame, over_limits: *const [sorz.render.height]bool) anyerror!void {
         const self: *PictureTaker = @ptrCast(@alignCast(ctx));
         const c = self.c;
         const gpa = c.gpa;
@@ -277,6 +279,12 @@ const PictureTaker = struct {
             const want = ref.palette[ref.pixels[y * picture.width + x]];
             const got = picture.pixels[y * picture.stride + x * 4 ..][0..3];
             const d = diff[(y * picture.width + x) * 4 ..][0..4];
+            // A line past the sprites' limits: the original's drops sprites there (D4).
+            if (y < over_limits.len and over_limits[y]) {
+                if (x == 0) self.result.lines_left_out += 1;
+                d.* = .{ 0, 0, 255, 255 };
+                continue;
+            }
             if (std.mem.eql(u8, &want, got)) {
                 d.* = .{ want[0] / 3, want[1] / 3, want[2] / 3, 255 };
             } else {
