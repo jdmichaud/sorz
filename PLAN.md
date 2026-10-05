@@ -117,14 +117,14 @@
 - [x] **18 — Network play** — Depends: 02, 13.
   - Each machine its own front end; the players meet in the game: the second player's 2 PLAYERS
     joins the first's at the select or mid-round, the host's canonical form loaded by the guest
-    (a loadable form), then lockstep; leaving, a dropped connection, a third turned away; A1 and
-    A2's checks (DESIGN.md section 9).
+    (a loadable form), the host's sound beside it, then lockstep; leaving, a dropped connection, a
+    third turned away; A1 and A2's checks (DESIGN.md section 9).
   - [x] Checked 2026-10-05 on round 1 as it is: `netplay-check -Drom` (own menus; joins at the
-    select and mid-round, the states and pictures equal on; a guest leaving and another joining;
-    a third turned away; a dropped connection back in time and not; a planted difference named;
-    two processes over WebSockets, the guest joining mid-round), `browser-check -Drom` (a page
-    joining a native host's round; two pages through the relay, the first alone before the second
-    joins; a third turned away; the guest leaving).
+    select and mid-round, the states, pictures and sound equal on; a guest leaving and another
+    joining; a third turned away; a dropped connection back in time and not; a planted difference
+    named; two processes over WebSockets, the guest joining mid-round, the same sound since the
+    join), `browser-check -Drom` (a page joining a native host's round; two pages through the
+    relay, the first alone before the second joins; a third turned away; the guest leaving).
   - [ ] Open: two real machines under `netem`'s latency and loss (A1), and the user's play.
 - [x] **19 — Settings and variants** — Depends: 08.
   - The settings scene, reached from OPTIONS' ADVANCED SETTINGS and from START during play (the

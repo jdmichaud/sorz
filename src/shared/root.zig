@@ -30,6 +30,7 @@ pub const screens = struct {
 };
 pub const picture = @import("picture.zig");
 pub const sound_out = @import("sound_out.zig");
+pub const sound_form = @import("sound_form.zig");
 pub const net = @import("net/root.zig");
 pub const network_play = @import("network_play.zig");
 pub const overlay = @import("overlay.zig");

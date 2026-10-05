@@ -4,8 +4,9 @@
 # (`--netplay`) and the guest (`--join`), each running its own front end with its own keys. The
 # host's player chooses 2 PLAYERS and Axel and plays round 1 alone; the guest's chooses 2 PLAYERS
 # later, a character on its own select while the host plays (Axel taken), and joins mid-round: the
-# host's game crosses, and both run it. At the session's tick 600 both are in the round with two
-# players, in the same state, one session. The flows in one process (the joins at the select,
+# host's game crosses, its sound beside it, and both run it. At the session's tick 600 both are in
+# the round with two players, in the same state, one session, and both played the same sound since
+# the join, frame by frame (the round's music going on from the host's place). The flows in one process (the joins at the select,
 # leaving, a dropped connection, a planted difference) are src/tools/netplay_check.zig's.
 set -eu
 bin="${1:?usage: check_netplay.sh AGENT ROM}"
@@ -38,6 +39,8 @@ wait "$host" || fail "the host failed: $(cat "$dir/host.json") $(tail -3 "$dir/h
 h="$(cat "$dir/host.json")"
 g="$(cat "$dir/guest.json")"
 [ "$(field "$h" state_hash)" = "$(field "$g" state_hash)" ] || fail "the two processes' states differ: $h $g"
+[ "$(field "$h" sound_frames)" -gt 0 ] && [ "$(field "$h" sound_peak)" -gt 1000 ] || fail "no sound in the session: $h"
+[ "$(field "$h" sound_frames)" = "$(field "$g" sound_frames)" ] && [ "$(field "$h" sound_hash)" = "$(field "$g" sound_hash)" ] || fail "the two processes' sounds differ since the join: $h $g"
 for line in "$h" "$g"; do
   [ "$(field "$line" session_tick)" = $ticks ] || fail "a game did not reach the session's tick $ticks: $line"
   [ "$(field "$line" scene)" = round ] || fail "a game is not in the round: $line"
@@ -49,4 +52,4 @@ for line in "$h" "$g"; do
 done
 # The guest joined mid-round: the host had played alone a while.
 [ "$(field "$h" ticks)" -gt $((ticks + 1500)) ] || fail "the guest did not join mid-round: $h"
-echo "check_netplay: two processes, the guest joined the host's round; the same state at the session's tick $ticks: $(field "$h" state_hash)"
+echo "check_netplay: two processes, the guest joined the host's round; the same state at the session's tick $ticks: $(field "$h" state_hash); the same sound since the join: $(field "$h" sound_frames) frames, $(field "$h" sound_hash)"

@@ -28,7 +28,8 @@
 //! the host says what its game is (`status`: its front end, the character select, play, and
 //! player 1's character there), and the guest asks to join it (`join`, with the character its
 //! player chose, or none at the select). The host answers with its game (`game`: the session's
-//! id and delay, then its canonical form, canonical.zig, in chunks of `chunk_size`); the guest
+//! id and delay, then its join, in chunks of `chunk_size`: the game's canonical form,
+//! canonical.zig, and the host's sound as it plays beside it, game.zig `joinForm`); the guest
 //! loads it, and from that tick on both run the same game in lockstep. A hello with a session the
 //! host still plays resumes it (`welcome` with that session). `pads` carries the sender's pads
 //! (input.Pad's byte) from tick `first`, with `ack`, the first of the receiver's pads the sender

@@ -6,8 +6,9 @@
 //!   a second player may join, or play, with player 1's character). When a guest asks to join, its
 //!   game takes it at the next tick it can (`State.joining`): the select's second cursor, or the
 //!   round's drop-in, at once; between two rounds, later; in play without a character, the guest
-//!   is asked to choose first. Its game's canonical form then crosses (`Netplay.begin`), and from
-//!   that tick on both games run in lockstep. A guest that leaves, or does not come back in time
+//!   is asked to choose first. Its game's canonical form then crosses (`Netplay.begin`), its
+//!   sound as it plays beside it (`Game.joinForm`), and from that tick on both games run in
+//!   lockstep. A guest that leaves, or does not come back in time
 //!   after its connection dropped, leaves the game (`State.dropOut`), and the host plays on.
 //! - **The guest** (player 2) plays its own front end too; its player's 2 PLAYERS goes to its own
 //!   character select, where it asks to join: at once when the host's game is at its select; once
@@ -26,7 +27,6 @@ const platform = @import("platform.zig");
 const net = @import("net/root.zig");
 const overlay = @import("overlay.zig");
 const setup_mod = @import("setup.zig");
-const canonical = @import("canonical.zig");
 const game_mod = @import("game.zig");
 
 const protocol = net.protocol;
@@ -70,8 +70,8 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     switch (g.state.joining(character)) {
         .now => {
             g.state.join(character, &g.scene_assets.?);
-            var buf: [canonical.maxSize(State)]u8 = undefined;
-            np.begin(p, canonical.write(State, &g.state, &buf));
+            var buf: [Game.join_max]u8 = undefined;
+            np.begin(p, g.joinForm(&buf));
             // The guest's game starts from this state: the host's next tick is the session's
             // first.
             g.redraw = true;

@@ -20,6 +20,10 @@
 //! form carries the things there are, at their places (which keep the order the world updates
 //! them in), and not the room for them.
 //!
+//! A struct may leave fields out of its form, naming them in `canonical_skip`: what refers to
+//! something outside the value (the content, by address), what is made from that, a scratch of
+//! its own. Reading a form leaves them as they were; whoever reads it sets them (sound_form.zig).
+//!
 //! The form's length follows the state: `maxSize` bounds it. A form has one state and a state one
 //! form; `read` refuses bytes that no state writes (an enum's number past its values, a free place
 //! that keeps its default, bits past the end), so that a game read from its form goes on exactly
@@ -38,7 +42,9 @@ pub fn maxBits(comptime T: type) usize {
         .@"enum" => enumBits(T),
         .@"struct" => |s| blk: {
             var n: usize = 0;
-            for (s.field_types) |F| n += maxBits(F);
+            for (s.field_names, s.field_types) |name, F| {
+                if (!skipped(T, name)) n += maxBits(F);
+            }
             break :blk n;
         },
         .array => |a| if (isPool(a.child))
@@ -74,6 +80,13 @@ fn dense(comptime E: type) bool {
     const e = @typeInfo(E).@"enum";
     for (e.field_values, 0..) |v, i| if (v != i) return false;
     return true;
+}
+
+/// Whether struct `T` leaves its field `name` out of its form (`canonical_skip`).
+fn skipped(comptime T: type, comptime name: []const u8) bool {
+    if (!@hasDecl(T, "canonical_skip")) return false;
+    for (T.canonical_skip) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
 }
 
 fn isPool(comptime T: type) bool {
@@ -173,6 +186,7 @@ fn put(comptime T: type, value: *const T, w: *BitWriter) void {
         .int => |i| w.put(@as(@Int(.unsigned, i.bits), @bitCast(value.*)), i.bits),
         .@"enum" => w.put(enumNumber(T, value.*), enumBits(T)),
         .@"struct" => |s| inline for (s.field_names, s.field_types) |name, F| {
+            if (comptime skipped(T, name)) continue;
             // A packed struct's fields have no address of their own: each by its value.
             const field = if (s.layout == .@"packed") &@as(F, @field(value.*, name)) else &@field(value.*, name);
             put(F, field, w);
@@ -259,6 +273,7 @@ fn get(comptime T: type, r: *BitReader, out: *T) ReadError!void {
         .int => |i| out.* = @bitCast(@as(@Int(.unsigned, i.bits), @intCast(try r.get(i.bits)))),
         .@"enum" => out.* = enumValue(T, try r.get(enumBits(T))) orelse return error.Malformed,
         .@"struct" => |s| inline for (s.field_names, s.field_types) |name, F| {
+            if (comptime skipped(T, name)) continue;
             if (s.layout == .@"packed") {
                 var field: F = undefined;
                 try get(F, r, &field);
@@ -410,6 +425,7 @@ const Walk = struct {
                 // A packed struct of one field (a fixed-point number) is named as a whole.
                 if (s.layout == .@"packed" and s.field_names.len == 1) return w.visit(s.field_types[0]);
                 inline for (s.field_names, s.field_types) |name, F| {
+                    if (comptime skipped(T, name)) continue;
                     const before = w.push(if (w.len == 0) name else "." ++ name);
                     if (try w.visit(F)) return true;
                     w.len = before;
@@ -507,6 +523,13 @@ const Thing = struct {
     };
 };
 
+/// A struct with a reference that its form leaves out.
+const Referring = struct {
+    name: []const u8 = "",
+    count: u8 = 0,
+    pub const canonical_skip = [_][]const u8{"name"};
+};
+
 const Pooled = struct {
     count: u8 = 0,
     things: [4]Thing = @splat(.{}),
@@ -544,6 +567,18 @@ test "a state's form: its fields in order, in the bits their values need, packed
     try roundTrip(Sample, &other);
     try testing.expect(hash(Sample, &s) != hash(Sample, &other));
     try testing.expectEqual(hash(Sample, &s), hash(Sample, &Sample{}));
+}
+
+test "the fields a struct skips are not in its form, and reading leaves them" {
+    try testing.expectEqual(@as(usize, 8), maxBits(Referring));
+    const r: Referring = .{ .name = "here", .count = 7 };
+    var buf: [maxSize(Referring)]u8 = undefined;
+    const form = write(Referring, &r, &buf);
+    try testing.expectEqualSlices(u8, &.{7}, form);
+    var back: Referring = .{ .name = "there" };
+    try read(Referring, form, &back);
+    try testing.expectEqualStrings("there", back.name);
+    try testing.expectEqual(@as(u8, 7), back.count);
 }
 
 test "a pool carries its things at their places, and of its free places what they keep" {

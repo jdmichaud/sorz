@@ -51,6 +51,7 @@ const variant = @import("variant.zig");
 const overlay = @import("overlay.zig");
 const panel_mod = @import("panel.zig");
 const network_play = @import("network_play.zig");
+const sound_form = @import("sound_form.zig");
 
 pub const page_width = picture.width;
 pub const page_height = picture.height;
@@ -516,20 +517,47 @@ pub const Game = struct {
         if (m) |x| self.tellNetwork(x);
     }
 
-    /// The game this machine loads from another's canonical form (network play's guest joining
+    /// The most bytes of a join (`joinForm`).
+    pub const join_max = 4 + canonical.maxSize(State) + sound_form.max_size;
+
+    /// What network play's join carries (DESIGN.md 9), into `out` (`join_max` bytes): the game's
+    /// canonical form, its length first (four bytes, the low first), and beside it this machine's
+    /// sound as it plays (sound_form.zig), none without one.
+    pub fn joinForm(self: *const Game, out: []u8) []u8 {
+        const form = canonical.write(State, &self.state, out[4..]);
+        std.mem.writeInt(u32, out[0..4], @intCast(form.len), .little);
+        var n = 4 + form.len;
+        if (self.sound) |*so| if (sound_form.write(so, self.transfers_due, out[n..])) |sound| {
+            n += sound.len;
+        };
+        return out[0..n];
+    }
+
+    /// The game this machine loads from another's join (`joinForm`, network play's guest joining
     /// the host's): from the next tick on, it goes on as that game. What is this machine's own is
-    /// made again from it: the picture whole, the scenes' music from its start, the sound's queue;
-    /// its own set-up kept for its menu, should it go back to it.
-    pub fn load(self: *Game, p: *platform.Platform, form: []const u8) !void {
+    /// made again from it: the picture whole; the sound from the other machine's, at the same
+    /// place (or, without it, the scenes' music from its start); its own set-up kept for its
+    /// menu, should it go back to it.
+    pub fn load(self: *Game, p: *platform.Platform, join: []const u8) !void {
+        if (join.len < 4) return error.Malformed;
+        const n = std.mem.readInt(u32, join[0..4], .little);
+        if (n > join.len - 4) return error.Malformed;
         const s = try self.allocator.create(State);
         defer self.allocator.destroy(s);
-        try canonical.read(State, form, s);
+        try canonical.read(State, join[4..][0..n], s);
         if (self.own_setup == null) self.own_setup = self.state.setup;
         self.state = s.*;
         self.seat = 0;
         self.rebuild(p);
         if (self.view) |*v| if (self.scene_assets) |*a| scene.redrawOutput(&self.state.scenes, &v.world_out, a);
-        if (self.sound) |*so| if (self.scene_assets) |*a| if (scene.music(&self.state.scenes, a)) |m| so.ask(m);
+        if (self.sound) |*so| {
+            const sound = join[4 + n ..];
+            const carried = sound.len != 0 and if (sound_form.load(so, &self.transfers_due, sound)) true else |err| blk: {
+                std.log.warn("the other machine's sound does not load ({s}): the music starts again", .{@errorName(err)});
+                break :blk false;
+            };
+            if (!carried) if (self.scene_assets) |*a| if (scene.music(&self.state.scenes, a)) |m| so.ask(m);
+        }
         self.loads_done += 1;
     }
 
@@ -743,8 +771,11 @@ pub const Game = struct {
         return sound_out.tick_ps + sound_out.tick_ps * ppm / 1_000_000;
     }
 
-    /// The stretch of the ticks that network play's balancing asks for (0 without a session).
+    /// The stretch of the ticks that network play's balancing asks for (0 without a session). A
+    /// game paced a tick an update (the agent host's) is paced by its caller, not by its sound:
+    /// a stretch would only change its frames, not its pace.
     fn stretchPpm(self: *const Game) u32 {
+        if (self.pacing == .per_update) return 0;
         const np = self.netplay orelse return 0;
         return np.stretchPpm();
     }

@@ -126,6 +126,10 @@ pub const Track = struct {
     /// The register tweak to write again after each volume change.
     tweak: ?content.Tweak = null,
 
+    /// The events are the content's: a machine's sound in its form names their track instead
+    /// (sound_form.zig).
+    pub const canonical_skip = [_][]const u8{"events"};
+
     fn kind(t: *const Track, index: usize) Kind {
         if (index == drum_track) return .drums;
         return if (t.channel.isPsg()) .psg else .fm;
@@ -191,6 +195,10 @@ pub const Sequencer = struct {
     /// Held cycles of the current update.
     held: u32 = 0,
     fault: ?Fault = null,
+
+    /// Out of a machine's sound in its form (sound_form.zig): the content, the samples' timings
+    /// made from it, an update's writes and what it met (each update's own).
+    pub const canonical_skip = [_][]const u8{ "sounds", "timings", "tick", "fault" };
 
     pub fn init(c: *const content.Content) Sequencer {
         var s: Sequencer = .{ .sounds = c };

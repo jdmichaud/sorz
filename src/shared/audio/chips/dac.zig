@@ -27,7 +27,7 @@ pub const Dac = struct {
     values: []const u8 = &.{},
     steps: []const u16 = &.{},
     /// The next value to write.
-    index: usize = 0,
+    index: u32 = 0,
     /// The master cycle of the next event.
     next: u64 = 0,
     stage: Stage = .idle,
@@ -36,6 +36,10 @@ pub const Dac = struct {
     pending: ?Write = null,
 
     const Stage = enum { idle, enable, pan, value };
+
+    /// The sample's values and steps are the content's: a machine's sound in its form names the
+    /// sample instead (sound_form.zig).
+    pub const canonical_skip = [_][]const u8{ "values", "steps" };
 
     /// Starts `values` at master cycle `now` (the time of the request), replacing a sample that
     /// plays. `steps[i]` is the number of Z80 cycles from value i to value i + 1. With

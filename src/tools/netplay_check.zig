@@ -10,12 +10,14 @@
 //! - select: the host's 2 PLAYERS, its select alone; the guest's 2 PLAYERS joins it there: both
 //!   selects with two players, each player's cursor its own; both choose, round 1 with two
 //!   players; the two games the same at the same ticks (state and picture), the guest's sound the
-//!   round's music, the session's checks finding no difference; player 1's START in play opens its
+//!   host's from the join on (its frames the same), the session's checks finding no difference;
+//!   player 1's START in play opens its
 //!   settings in place of the pause: both games hold, the guest says why, and both go on once
 //!   player 1 leaves them.
 //! - round: the host plays round 1 alone a while; the guest's player chooses a character on its
 //!   own select (the host's taken), joins mid-round as it, and drops in; the same state and
-//!   picture after the join and on; the guest quits: the host plays on, player 2 out of the game;
+//!   picture after the join and on, and the same sound: the round's music going on from where the
+//!   host's was; the guest quits: the host plays on, player 2 out of the game;
 //!   a new guest joins later, the same again; a third game is turned away and plays alone; the
 //!   host quits: the guest plays on alone, as player 2, player 1 out of the game.
 //! - away: the connection drops in the round: both hold, the host says it waits; the guest back in
@@ -43,6 +45,8 @@ const Machine = struct {
     game: sorz.Game,
     /// Frozen: no update (a machine whose player walked away, its connection with it).
     frozen: bool = false,
+    /// The sound's frames since the session began (none outside one).
+    pcm: *std.ArrayList(i16) = undefined,
 
     fn create(gpa: std.mem.Allocator, assets: platform.AssetSource, network: *net.memory.Network, role: net.netplay.Role) !*Machine {
         const m = try gpa.create(Machine);
@@ -51,6 +55,8 @@ const Machine = struct {
         m.storage = sorz.memory.MemoryStorage.init(gpa);
         m.game = try sorz.Game.init(gpa, assets, m.storage.storage());
         m.frozen = false;
+        m.backend.audio.record = true;
+        m.pcm = &m.backend.audio.pcm;
         m.game.pacing = .per_update;
         m.game.variant = .network;
         m.backend.transport = (try network.endpoint()).transport();
@@ -75,8 +81,18 @@ const Machine = struct {
     fn update(m: *Machine) !void {
         if (m.frozen) return;
         var p = m.backend.asPlatform();
+        const was = m.inSession();
+        const before = m.pcm.items.len;
         _ = try m.game.update(&p);
         m.backend.advance(frame_ns);
+        // The sound's frames from the session's first tick (an update starts it before its tick).
+        if (!m.inSession()) {
+            m.pcm.clearRetainingCapacity();
+        } else if (!was) {
+            const n = m.pcm.items.len - before;
+            std.mem.copyForwards(i16, m.pcm.items[0..n], m.pcm.items[before..]);
+            m.pcm.shrinkRetainingCapacity(n);
+        }
     }
 
     fn key(m: *Machine, k: Key, down: bool) !void {
@@ -291,6 +307,17 @@ fn sameFor(f: *Flow, r: *Room, a: *Machine, b: *Machine, n: usize) !void {
     try f.check(a.np().difference == null and b.np().difference == null and a.np().phase() == .playing, "the session's checks agree");
 }
 
+/// The two machines' sound since the session began: the same frames, as far as both played,
+/// not silence.
+fn sameSound(f: *Flow, a: *Machine, b: *Machine) !void {
+    const n = @min(a.pcm.items.len, b.pcm.items.len);
+    var peak: u32 = 0;
+    for (a.pcm.items[0..n]) |v| peak = @max(peak, @abs(v));
+    const first = std.mem.indexOfDiff(i16, a.pcm.items[0..n], b.pcm.items[0..n]);
+    if (first) |i| f.note("\"sound_differs_at_frame\":{d}", .{i / 2});
+    try f.check(n >= 2 * 800 * 300 and peak > 1000 and first == null, "the same sound since the join, frame by frame");
+}
+
 /// The song the game's sound plays (its sequencer's), if any.
 fn song(m: *const Machine) ?u16 {
     const s = m.game.sound orelse return null;
@@ -370,6 +397,7 @@ fn atSelect(f: *Flow, r: *Room) !void {
     try f.check(w.players[0].entity != null and w.players[1].entity != null and host.game.state.setup.players == .two, "two players in the round");
     try f.check(song(host) != null and song(host) == song(guest), "the guest's sound plays the round's music");
     try sameFor(f, r, host, guest, 600);
+    try sameSound(f, host, guest);
     // Player 1's START in play: its settings, in place of the pause; both games hold, the guest
     // says why; Escape (save and leave), and both go on.
     try r.press(host, .enter);
@@ -442,6 +470,7 @@ fn inRound(f: *Flow, r: *Room) !void {
     try f.check(host.game.state.setup.characters[1] == chosen, "player 2 as the guest chose");
     try f.check(song(guest) != null and song(guest) == song(host), "the guest's sound plays the round's music");
     try sameFor(f, r, host, guest, 600);
+    try sameSound(f, host, guest);
     f.note("\"joined_at\":{d},\"character\":\"{s}\"", .{ host.game.state.tick, @tagName(chosen) });
 
     // A third game asks to join while the two play: turned away, it plays alone.

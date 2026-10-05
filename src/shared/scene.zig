@@ -440,8 +440,10 @@ test "the canonical state's most fits a session's state" {
     const canonical = @import("canonical.zig");
     const protocol = @import("net/protocol.zig");
     try testing.expect(canonical.maxSize(Overlay) < 64);
-    // Every place of the world taken, every scene at its largest: still under the most.
+    // Every place of the world taken, every scene at its largest: still under the most, and the
+    // join's sound beside it too.
     try testing.expect(canonical.maxSize(@import("game.zig").State) <= protocol.max_state_len);
+    try testing.expect(@import("game.zig").Game.join_max <= protocol.max_state_len);
 }
 
 test "the flow: a set-up, its load over the scene, the scene again; an exit, its edge" {

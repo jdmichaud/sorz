@@ -6,7 +6,9 @@
 //! updates); the guest's player's 2 PLAYERS and its character join the host's game. The virtual
 //! clock advances a tick's time per update; an update whose game holds waits a millisecond of real
 //! time for the peer and advances the clock as much. The run ends after `--frames` updates, or once
-//! the session ran `--until-session` ticks; it prints the game's hashes and its network play.
+//! the session ran `--until-session` ticks; it prints the game's hashes, its network play, and its
+//! sound since the session began (its frames' hash, their number and their peak): two machines in
+//! a session play the same sound from its first tick, the guest's carried over at the join.
 const std = @import("std");
 const sorz = @import("sorz");
 const AgentBackend = @import("backend.zig").AgentBackend;
@@ -84,11 +86,14 @@ pub fn process(
     var backend = AgentBackend.init(gpa, .{});
     defer backend.deinit();
     backend.transport = side.transport.transport();
+    backend.audio.record = true;
     var game = try sorz.Game.init(gpa, assets, storage);
     defer game.deinit();
     game.pacing = .per_update;
     game.variant = .network;
     try game.startNetplay(options);
+    // The sound since the session began.
+    var sound: Sound = .{};
     var script = try Script.init(gpa, presses);
     defer script.deinit(gpa);
     var p = backend.asPlatform();
@@ -105,6 +110,8 @@ pub fn process(
             finished = true;
             break;
         }
+        if (game.netplay) |n| if (n.inSession()) sound.add(backend.audio.pcm.items);
+        backend.audio.pcm.clearRetainingCapacity();
         const np = game.netplay orelse break;
         if (np.phase() == .ended or (np.phase() == .desynced and np.difference != null)) break;
         const now = std.Io.Clock.awake.now(io).toNanoseconds();
@@ -127,6 +134,20 @@ pub fn process(
     if (!finished) if (game.netplay) |n| n.quit(&p);
     try out.writeAll("{");
     try writeGame(out, if (options.role == .host) "host" else "guest", &game);
+    try out.print(",\"sound_hash\":\"{x:0>16}\",\"sound_frames\":{d},\"sound_peak\":{d}", .{ sound.hash.final(), sound.values / 2, sound.peak });
     try out.print(",\"verdict\":\"{s}\"}}\n", .{if (ok) "ok" else "incomplete"});
     return ok;
 }
+
+/// The sound's frames in a session: their hash, their number of values, their peak.
+const Sound = struct {
+    hash: std.hash.Fnv1a_64 = .init(),
+    values: u64 = 0,
+    peak: u32 = 0,
+
+    fn add(s: *Sound, pcm: []const i16) void {
+        s.hash.update(std.mem.sliceAsBytes(pcm));
+        s.values += pcm.len;
+        for (pcm) |v| s.peak = @max(s.peak, @abs(v));
+    }
+};
