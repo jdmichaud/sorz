@@ -405,8 +405,9 @@ fn blowsOnPlayers(t: *Tick, xh: Handle) void {
         }
         if (blow(t, xh, th)) {
             // A boss's blow leaves the hold's request (the original's bosses clear the
-            // reaction instead): the one held is let go as the player feels the blow.
-            if (t.kindOf(x).family() != .boss) freedByBlow(t, xh, th);
+            // reaction instead), and so does a blow that knocks down (its striker asks for the
+            // hold in front again): the one held is let go as the player feels the blow.
+            if (t.kindOf(x).family() != .boss and !knocksDown(t, x)) freedByBlow(t, xh, th);
             return;
         }
     }
@@ -422,6 +423,12 @@ fn freedByBlow(t: *Tick, xh: Handle, th: Handle) void {
     const held = p.holding orelse return;
     if (t.isPlayer(held) or held.index < xh.index) return;
     t.letGo(th);
+}
+
+/// Whether `a`'s move under way knocks down.
+fn knocksDown(t: *Tick, a: *const Entity) bool {
+    const m = a.move orelse return false;
+    return t.kindOf(a).definition.moves[m].reaction == .knock_down;
 }
 
 /// Whether the attack box of player entity `ph` (a blow's or a reach) meets `x`'s body.
