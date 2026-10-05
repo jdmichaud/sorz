@@ -942,6 +942,8 @@ pub const Run = struct {
     /// The round's script was taken up where it was (`replayScript`): it brings its records
     /// itself, and the stand-in does not.
     scripted: bool = false,
+    /// A beaten boss has ended the round: the display ticks left of its leaving.
+    leaving: ?u8 = null,
 
     /// What the run takes up besides the situation: the round's clock (the other program's tick
     /// counter at the script's start, when known) and the round's spawn records.
@@ -1280,6 +1282,7 @@ pub const Run = struct {
     /// One logic tick: the script's pads, the world's tick, the observations. False when the
     /// script is done.
     pub fn step(self: *Run) !bool {
+        if (self.leaving) |*left| return self.leave(left);
         const pads = self.body.tick(self, holds) orelse {
             if (self.body.timed_out != null) self.failure = "a condition did not come in time";
             return false;
@@ -1299,6 +1302,9 @@ pub const Run = struct {
         self.t += 1;
         try self.bringLater();
         const w = &self.play.world;
+        // A beaten boss ends the round, which leaves (screens/round.zig): the screen fades out.
+        const won = self.plan != null and w.script.stage == .won;
+        if (won) self.leaving = sorz.render.palettes.Fade.steps;
         if (self.trace) |tw| {
             // The ids the other program's things the world does not make took are not the
             // world's things'.
@@ -1306,11 +1312,28 @@ pub const Run = struct {
                 const o = &self.others[self.next_other];
                 if (self.kinds.find(o.kind) == null) tw.next_id = @max(tw.next_id, o.id + 1);
             }
-            tw.setPhase(if (w.special) "special" else "play");
+            tw.setPhase(if (won) "leaving" else if (w.special) "special" else "play");
             try tw.observe(self.v, w, self.kinds, &self.out);
         }
         self.noteIds();
         if (self.probe) |p| try p.observe(self.v, self.t, w, self.kinds, &self.ids);
+        return true;
+    }
+
+    /// The round leaving: its world stands still while the screen fades out, a step a display
+    /// tick (each a tick of the trace, as the original's counter goes then), the script's pads
+    /// still read; the fade's last step ends the round, and the run.
+    fn leave(self: *Run, left: *u8) !bool {
+        left.* -= 1;
+        if (left.* == 0) return false;
+        const pads = self.body.tick(self, holds) orelse return false;
+        self.v += 1;
+        self.t += 1;
+        self.out.begin();
+        if (self.trace) |tw| {
+            tw.held = .{ pads.pad1, pads.pad2 };
+            try tw.observe(self.v, &self.play.world, self.kinds, &self.out);
+        }
         return true;
     }
 
