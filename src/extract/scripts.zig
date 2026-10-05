@@ -1111,6 +1111,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .lift = lift,
         .exit = exit,
         .depth_walls = try depthWalls(rom, r),
+        .knocked_back_left = try knockedBackLeft(rom, r),
     };
 }
 
@@ -1162,6 +1163,13 @@ fn liftOf(arena: std.mem.Allocator, rom: []const u8, r: u32, mode_a: u16, mode_b
         .period = @intCast(period & 0xFF),
         .wait = @intCast(u16be(rom, 0x752)),
     };
+}
+
+/// Whether a new life knocks round `r`'s enemies back to the left (0x9522): from the round of
+/// 0x9552's `cmpi.w` on (bcs past), their animation's the other and their speed across negated.
+fn knockedBackLeft(rom: []const u8, r: u32) Error!bool {
+    if (u16be(rom, 0x9552) != 0x0C78 or u16be(rom, 0x9556) != 0xFF02 or rom[0x9558] != 0x65 or u16be(rom, 0x9560) != 0x4469 or u16be(rom, 0x9562) != 28) return error.BadData;
+    return r >= u16be(rom, 0x9554);
 }
 
 /// Whether round `r`'s walls stop the players' moves in depth (0x3B4E): not in the round of its

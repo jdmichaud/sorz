@@ -1754,15 +1754,18 @@ pub fn Of(comptime M: type) type {
             b.down = .flying;
             b.bounces = 0;
             b.slowing = false;
-            a.entity.facing = .left;
+            // To the right, facing left; in some rounds to the left, facing right.
+            const left = if (a.tick.plan) |p| p.round.knocked_back_left else false;
+            a.entity.facing = if (left) .right else .left;
             // Its knock-down's frames from the first, the first's ticks those left of the frame
             // it showed (the original sets the frame, not its count).
-            const left = a.entity.animation.left;
+            const ticks_left = a.entity.animation.left;
             a.animate(.down);
-            a.entity.animation.left = left;
+            a.entity.animation.left = ticks_left;
             a.pause(false);
             const v = a.entity.velocity;
-            a.entity.velocity.x = .parts(@intCast(n.knocked_back_x.whole()), v.x.frac());
+            const across = n.knocked_back_x.whole();
+            a.entity.velocity.x = .parts(@intCast(if (left) -across else across), v.x.frac());
             a.entity.velocity.height = .parts(@intCast(n.knocked_back_up.whole()), v.height.frac());
             a.entity.flags.airborne = true;
         }
