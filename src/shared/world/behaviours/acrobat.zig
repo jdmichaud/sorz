@@ -8,8 +8,12 @@
 //! air its moves fly across and in height. Its common states are every enemy's (enemy.zig). Its
 //! numbers, animations, moves and sounds are its definition's (`entities/acrobat.json`).
 //!
-//! Not in round 1, and not yet here: its leap or drop in from the screen's edge (`enter`), and its
-//! flip away from a knock-down.
+//! Placed so (round 5), knocked down with health left it looks at its first tick: on an odd tick
+//! it falls at once, on an even one it flips away from the one who struck it (`flip_away`), up
+//! and away, turning to its target in the air; down again it crouches a while, then jump kicks or
+//! closes in fast.
+//!
+//! Not in round 1, and not yet here: its leap or drop in from the screen's edge (`enter`).
 const std = @import("std");
 const tick = @import("../tick.zig");
 const fixed = @import("../fixed.zig");
@@ -65,9 +69,9 @@ pub const Mind = struct {
     looked: bool = false,
 };
 
-pub const Animation = enum { walk, down, reel, stand, thrown, slammed, punch, jump_kick, flip };
+pub const Animation = enum { walk, down, reel, stand, thrown, slammed, punch, jump_kick, flip, turn };
 pub const Move = enum { punch, somersault, jump_kick };
-pub const Sound = enum { hurt, thud, cry, cry_odd, leap, land };
+pub const Sound = enum { hurt, thud, cry, cry_odd, leap, land, flip_away };
 
 pub const Numbers = enemy.Numbers(struct {
     /// Heading for its place: its speed.
@@ -119,6 +123,14 @@ pub const Numbers = enemy.Numbers(struct {
     /// The jump kick and the flip hold their frame from these.
     jump_kick_holds: u8,
     flip_holds: u8,
+    /// The flip away: its speeds across (away from the one who struck it) and up (whole pixels),
+    /// its frames' pace, its frame it turns to its target at; down, its crouch's frame and ticks.
+    flip_away_x: i16,
+    flip_away_up: i16,
+    flip_away_pace: u8,
+    flip_away_turns: u8,
+    flip_away_crouch: u8,
+    flip_away_ticks: u8,
 });
 
 pub const Tables = enemy.Tables(struct {});
@@ -146,6 +158,7 @@ pub fn begin(a: Actor) void {
         .dash => dashSetUp(a),
         .jump_kick => jumpKickSetUp(a),
         .flip => flipSetUp(a),
+        .flip_away => flipAwaySetUp(a),
         else => Common.setUp(a),
     }
     _ = Common.leftAt(a, was);
@@ -166,15 +179,17 @@ pub fn think(a: Actor) void {
         .dash => dash(a),
         .jump_kick => jumpKick(a),
         .flip => flip(a),
-        // Not in round 1: they take up the fight at once.
-        .enter, .flip_away => Common.enter(a, .approach),
+        .flip_away => flipAway(a),
+        // Not in round 1: it takes up the fight at once.
+        .enter => Common.enter(a, .approach),
         else => {},
     }
 }
 
 /// Knocked down (by a blow, a throw, a new life's knock-back), its first tick it only looks
-/// whether to flip away (a trait not in round 1, left for the rounds that place it): it falls
-/// from the next, a tick behind the others.
+/// whether to flip away: it falls from the next, a tick behind the others; but placed to flip
+/// away, with health left, on an odd tick it falls at once, on an even one it flips away from
+/// the next.
 fn looks(a: Actor) bool {
     if (a.mind.state != .knocked_down) {
         a.mind.looked = false;
@@ -182,6 +197,10 @@ fn looks(a: Actor) bool {
     }
     if (a.mind.looked or a.mind.body.waits) return false;
     a.mind.looked = true;
+    if (a.entity.health >= 0 and a.entity.spawn.traits.flips_away) {
+        if (a.tick.world.tick & 1 != 0) return false;
+        go(a, .flip_away, .{});
+    }
     Common.setUpOnly(a);
     return true;
 }
@@ -462,6 +481,48 @@ fn flip(a: Actor) void {
     a.sound(.land);
     a.entity.velocity.height = .zero;
     go(a, .close_in, .{});
+}
+
+/// The flip away from the one who struck it, facing it in its knock-down's pose, up and away
+/// across (whole pixels, the fractions kept), its frames paced.
+fn flipAwaySetUp(a: Actor) void {
+    const n = a.numbers();
+    const e = a.entity;
+    a.sound(.flip_away);
+    const x: i16 = if (Common.faceStriker(a)) n.flip_away_x else -n.flip_away_x;
+    e.velocity.x = .parts(x, e.velocity.x.frac());
+    e.velocity.height = .parts(n.flip_away_up, e.velocity.height.frac());
+    a.animate(.down);
+    a.pause(false);
+    a.pace(n.flip_away_pace, n.flip_away_pace);
+    a.mind.turned = false;
+    a.mind.down = false;
+}
+
+/// In the air, at its frame `flip_away_turns` it turns to its target (its turn's pose); down
+/// again it crouches a while in its knock-down's frame, then jump kicks, or on an odd tick
+/// closes in fast.
+fn flipAway(a: Actor) void {
+    const n = a.numbers();
+    if (!a.mind.down) {
+        if (!a.mind.turned and a.frame() == n.flip_away_turns) {
+            a.mind.turned = true;
+            Common.faceTarget(a);
+            a.animate(.turn);
+        }
+        Common.flyAcross(a);
+        if (!Common.falls(a)) return;
+        a.mind.down = true;
+        Common.faceTarget(a);
+        a.animate(.down);
+        a.setFrame(n.flip_away_crouch);
+        a.pause(true);
+        a.mind.body.timer = n.flip_away_ticks;
+    }
+    a.mind.body.timer -%= 1;
+    if (a.mind.body.timer != 0) return;
+    if (a.tick.world.tick & 1 != 0) return go(a, .close_in, .{ .fast = true });
+    go(a, .jump_kick, .{});
 }
 
 // The hooks ---------------------------------------------------------------------------------------

@@ -548,6 +548,7 @@ pub fn acrobat(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definitio
         .{ .name = "punch", .entry = try animEntryWord(rom, 0xEB7C) },
         .{ .name = "jump_kick", .entry = try animEntryWord(rom, 0xEDEC) },
         .{ .name = "flip", .entry = try animEntry(rom, 0xEE9E) },
+        .{ .name = "turn", .entry = try animEntry(rom, 0xEADA) },
     });
     if (try animEntryWord(rom, 0xEBDC) != try animEntryWord(rom, 0xEB7C)) return error.BadData;
     blows(&d, "punch");
@@ -594,8 +595,18 @@ pub fn acrobat(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definitio
     try d.number("back_flip_up", try immediate(rom, 0xEEBA, &.{ 0x21, 0x7C }, 4), "ROM 0x0EEBA: move.l #N,(36,a0)");
     try d.number("back_flip_x", try immediate(rom, 0xEEC2, &.{ 0x20, 0x3C }, 4), "ROM 0x0EEC2: move.l #N,d0");
     try d.number("flip_holds", try frameCompared(rom, 0xEEDE), "ROM 0x0EEDE: cmpi.b #N,(10,a0)");
+    // The flip away from a knock-down (0xEA8A): its speeds (whole pixels), its frames' pace, the
+    // frame it turns to its target at; down again, the frame it crouches in and its ticks.
+    try d.number("flip_away_x", try moveWord(rom, 0xEA98, 28), "ROM 0x0EA98: move.w #N,(28,a0) (whole pixels, away from the one who struck it)");
+    try d.number("flip_away_up", try moveWord(rom, 0xEA9E, 36), "ROM 0x0EA9E: move.w #N,(36,a0) (whole pixels)");
+    try d.number("flip_away_pace", (try moveWord(rom, 0xEAB6, 12)) >> 8, "ROM 0x0EAB6: move.w #N*$101,(12,a0)");
+    try d.number("flip_away_turns", try frameCompared(rom, 0xEACC), "ROM 0x0EACC: cmpi.b #N,(10,a0)");
+    if (try animEntry(rom, 0xEAF0) != 2) return error.BadData;
+    try d.number("flip_away_crouch", try moveByte(rom, 0xEAF6, 10), "ROM 0x0EAF6: move.b #N,(10,a0) (its knock-down's frame, held)");
+    try d.number("flip_away_ticks", try moveByte(rom, 0xEB02, 80), "ROM 0x0EB02: move.b #N,(80,a0)");
     try d.sound("leap", @bitCast(@as(i8, @intCast(try moveq(rom, 0xEDE0, 7)))));
     try d.sound("land", @bitCast(@as(i8, @intCast(try moveq(rom, 0xEEF6, 7)))));
+    try d.sound("flip_away", @bitCast(@as(i8, @intCast(try moveq(rom, 0xEA92, 7)))));
     return finish(&d, "acrobat", 0x25, "acrobat", "the acrobat (handler 0xE8F0)");
 }
 
