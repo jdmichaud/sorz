@@ -45,8 +45,8 @@ pub const list = [_]Accepted{
     },
     .{
         .name = "objects past a band's 15",
-        .reason = "the original draws at most 15 objects in a band of depths, and one past them neither shows nor steps its animation at that tick (decision D4): round 3's raindrops, about twenty in one band, blink out of step there, and its shadows, objects of their own, take places the raindrops then miss (or miss those the raindrops take). sorz draws every raindrop and its shadows take no place: more correct, the user's rule (2026-10-05)",
-        .redraws = &.{ withoutRaindrops, raindropsShown, shadowsOutInRain },
+        .reason = "the original draws at most 15 objects in a band of depths, and one past them neither shows nor steps its animation at that tick (decision D4): round 3's raindrops, about twenty in one band, blink out of step there; and its shadows are objects of their own in eight places they share with the weapons, each entity taking one at each of its turns, so that a shadow may find none (the raindrops', a crowd's: a trio of acrobats knocked down at once). sorz draws every raindrop and every shadow, its shadows taking no place: more correct, the user's rule (2026-10-05)",
+        .redraws = &.{ withoutRaindrops, raindropsShown, shadowsOut },
         .leaves_out = .{ .kind = raindrop_kind, .state = raindrop_state },
     },
 };
@@ -111,15 +111,11 @@ fn raindropsShown(sprites: []const Sprite, c: Context, out: []Sprite) usize {
     return sprites.len;
 }
 
-/// Without the shadows while raindrops fall: the original's shadows, objects of their own in
-/// eight places the raindrops take too, find none then (the pixels where sorz shows a shadow
-/// the reference does not). Without a raindrop, the picture as it is.
-fn shadowsOutInRain(sprites: []const Sprite, c: Context, out: []Sprite) usize {
-    const frames = raindropFrames(c) orelse return copy(sprites, out);
+/// Without the shadows: the original's shadows, objects of their own in eight places the
+/// weapons, the raindrops and every entity's passing shadow take too, may find none (the pixels
+/// where sorz shows a shadow the reference does not).
+fn shadowsOut(sprites: []const Sprite, c: Context, out: []Sprite) usize {
     const shadow = c.shadow orelse return copy(sprites, out);
-    for (sprites) |s| {
-        if (s.frame == frames[0] or s.frame == frames[1]) break;
-    } else return copy(sprites, out);
     var n: usize = 0;
     for (sprites) |s| {
         if (s.frame == shadow) continue;
