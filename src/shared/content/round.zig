@@ -269,7 +269,21 @@ pub const Round = struct {
     boss: ?Boss = null,
     /// A sound the round plays by itself.
     own_sound: ?OwnSound = null,
+    /// A part of its planes the round animates by itself.
+    animation: ?Animation = null,
 };
+
+/// A part of a round's planes it animates by itself (round 3's waves): every `every` ticks of
+/// play (the special attack's too), the next of its `steps` (after the last, the first again),
+/// each a map of the round's art set written at its place, repeated across its plane, and colours
+/// of the art set put in the colours shown. Until its first step, the planes show their own.
+pub const Animation = struct {
+    provenance: []const u8 = "",
+    every: u8,
+    steps: []const AnimationStep,
+};
+
+pub const AnimationStep = struct { map: []const u8, colours: []const u8 };
 
 /// A sound a round plays by itself (round 3's waves): `sound` (a name of the sound content),
 /// `times` times, the first at play's `first`th tick, then every `every` ticks; counted again
@@ -448,6 +462,17 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
             .{ .key = "streamed", .value = .{ .array = both } },
         }) });
     }
+    if (r.animation) |an| {
+        const steps = try arena.alloc(json.Value, an.steps.len);
+        for (steps, an.steps) |*v, st| v.* = try obj(arena, &.{
+            .{ .key = "map", .value = .{ .str = st.map } },
+            .{ .key = "colours", .value = .{ .str = st.colours } },
+        });
+        try fields.append(arena, .{ .key = "animation", .value = try withProvenance(arena, an.provenance, &.{
+            .{ .key = "every", .value = json.Value.num(an.every) },
+            .{ .key = "steps", .value = .{ .array = steps } },
+        }) });
+    }
     if (r.own_sound) |o| try fields.append(arena, .{ .key = "own_sound", .value = try withProvenance(arena, o.provenance, &.{
         .{ .key = "sound", .value = .{ .str = o.sound } },
         .{ .key = "first", .value = json.Value.num(o.first) },
@@ -568,7 +593,7 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
@@ -662,6 +687,19 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         const both = try sp.get("streamed");
         if (try both.len() != 2) return both.fail("not the two callers' lists");
         r.special = .{ .provenance = try provenanceOf(sp), .streamed = .{ try readStreamed(arena, try both.at(0)), try readStreamed(arena, try both.at(1)) } };
+    }
+    if (try root.opt("animation")) |an| {
+        try an.only(&.{ "provenance", "every", "steps" });
+        const list = try an.get("steps");
+        const steps = try arena.alloc(AnimationStep, try list.len());
+        if (steps.len == 0) return list.fail("no step");
+        for (steps, 0..) |*st, i| {
+            const n = try list.at(i);
+            try n.only(&.{ "map", "colours" });
+            st.* = .{ .map = try (try n.get("map")).string(), .colours = try (try n.get("colours")).string() };
+        }
+        r.animation = .{ .provenance = try provenanceOf(an), .every = try (try an.get("every")).int(u8), .steps = steps };
+        if (r.animation.?.every == 0) return (try an.get("every")).fail("not 1 or more");
     }
     if (try root.opt("own_sound")) |o| {
         try o.only(&.{ "provenance", "sound", "first", "every", "times" });

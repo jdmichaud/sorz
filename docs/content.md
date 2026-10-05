@@ -445,6 +445,10 @@ play).
 - `own_sound`, optional: a sound the round plays by itself (round 3's waves): `sound`, `times`
   times, the first at play's `first`th tick, then every `every` ticks; counted again from each
   section's opening.
+- `animation`, optional: a part of its planes the round animates by itself (round 3's waves):
+  every `every` ticks of play, the next of its `steps` (after the last, the first again), each a
+  `map` of the round's art set written at its place, repeated across its plane, and `colours` of
+  the art set put in the colours shown; until the first step, the planes show their own.
 - `streamed` (a section's, the boss's, a reserve record's): the art the game decodes while it
   plays, a little each display tick, for what comes (the original streams it in, five tiles a
   display tick): a section's kinds' and the boss's, from the section's start (the first

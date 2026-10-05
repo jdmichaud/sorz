@@ -51,6 +51,10 @@ const HighScores = @import("high_scores.zig").HighScores;
 const Setup = setup_mod.Setup;
 const Score = setup_mod.Score;
 
+/// The cells across of a plane as the original's video memory holds it: an animation's map is
+/// written on all of them.
+const plane_cells = 64;
+
 /// The palette cycles of a round's colours at most.
 const max_cycles = library.Rounds.most_cycles;
 
@@ -215,6 +219,12 @@ pub const Round = struct {
     strips_due: u8 = 0,
     strip_blocks_due: u16 = 0,
     strip_rows_due: u8 = 0,
+    /// The round's animation's step the picture shows (null: none since the round's start, the
+    /// planes' own), and the rows of its map due at the next picture.
+    animation_shown: ?u8 = null,
+    animation_rows_due: u8 = 0,
+    /// The step the picture shows: the one before the tick (`animation_shown` as it began).
+    shown_animation: ?u8 = null,
     /// The art play streams in (a section's, the boss's, an arriving enemy's, the special
     /// attack's): its list, and the display tick of it that comes next.
     art: world.script.ArtQueue = .{},
@@ -414,6 +424,7 @@ pub const Round = struct {
         self.shown_camera = .{ cam.x.whole(), cam.y.whole(), cam.y.whole() - shaken };
         self.shown_bar = self.bar(a);
         self.shown_game_over = self.gameOver() != null;
+        self.shown_animation = self.animation_shown;
         if (turn.world_out) |o| o.latch();
         self.logic_ran = false;
         self.split = false;
@@ -624,6 +635,11 @@ pub const Round = struct {
         self.strips_due = 0;
         self.strip_blocks_due = 0;
         self.strip_rows_due = 0;
+        if (self.animation_shown) |step| if (self.animation_rows_due != 0) {
+            f.plane_rows = self.animation_rows_due;
+            f.plane_row_cells = @intCast(self.stage(a).steps()[step].map.width);
+            self.animation_rows_due = 0;
+        };
         return f;
     }
 
@@ -880,6 +896,7 @@ pub const Round = struct {
             if (s.first) turn.playNow(id) else turn.play(id);
         };
         self.cycle(a);
+        self.animate(a);
         const w = &self.play.world;
         if (join != null) self.joined(turn);
         for (&self.out_blinks, w.players) |*b, pl| b.blink(pl.out, !self.answeredNo(pl), a.screen.status_bar.join.blink);
@@ -1090,6 +1107,22 @@ pub const Round = struct {
         }
     }
 
+    /// The round's animation: a new step's colours in the colours shown, its map drawn at the
+    /// next picture (written on the plane's 64 cells across, its map's width at a time).
+    fn animate(self: *Round, a: *const Assets) void {
+        const steps = self.stage(a).steps();
+        if (steps.len == 0) return;
+        const step = self.play.world.script.animation.step;
+        if (self.animation_shown) |shown| {
+            if (shown == step) return;
+        } else if (step == 0) return;
+        self.animation_shown = step;
+        self.colours.palettes.show(steps[step].colours);
+        self.colours_due = true;
+        const m = steps[step].map;
+        self.animation_rows_due = @intCast(@as(u32, m.height) * (plane_cells / m.width));
+    }
+
     /// What the status bar shows.
     fn bar(self: *const Round, a: *const Assets) Bar {
         const w = &self.play.world;
@@ -1142,6 +1175,19 @@ pub const Round = struct {
             try v.board(.window).drawMapAtPlace(a.status_bar);
             try drawBar(v, a, now, null);
         } else try drawBar(v, a, now, prev.?.shown_bar);
+        // The round's animation's step, drawn whole when it changed: its map at its place,
+        // repeated across its plane.
+        if (self.shown_animation) |step| if (prev == null or prev.?.shown_animation != self.shown_animation) {
+            const m = s.steps()[step].map;
+            const place = m.place.?;
+            const board = v.board(switch (place.layer) {
+                .plane_a => .a,
+                .plane_b => .b,
+                .window => .window,
+            });
+            var x: i32 = place.x;
+            while (x < board.width) : (x += m.width) try board.drawMap(m, x, place.y);
+        };
         try drawBosses(v, a, now.bosses, if (prev) |p| p.shown_bar.bosses else null);
         const c = self.shown_camera;
         const r = s.script;

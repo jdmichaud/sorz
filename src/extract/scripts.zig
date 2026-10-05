@@ -502,6 +502,38 @@ fn ownSound(arena: std.mem.Allocator, rom: []const u8, r: u32) Error!?round.OwnS
     };
 }
 
+/// The waves (0x112C0 at the round's load, for the round of its `cmpi.w`; 0x11346 at each tick of
+/// play): their ticks between two steps and before the first (`move.w #$0505,($FFFA0A)`), their
+/// steps (0x11346: `cmpi.w #N,($FFFB1A)`), each step's frame (0x11398) and colours (0x1139E), the
+/// maps and the palettes of the round's art set (rounds.zig names them).
+fn animation(arena: std.mem.Allocator, rom: []const u8, r: u32) Error!?round.Animation {
+    const init: u32 = 0x112C0;
+    if (u16be(rom, init) != 0x0C78 or u16be(rom, init + 4) != 0xFF02 or u16be(rom, init + 6) != 0x6706) return error.BadData;
+    if (u16be(rom, init + 2) != r) return null;
+    if (u16be(rom, init + 20) != 0x31FC or u16be(rom, init + 24) != 0xFA0A) return error.BadData;
+    // The ticks before the first step ($FFFA0B) are the steps' period ($FFFA0A).
+    const every = rom[init + 22];
+    if (rom[init + 23] != every or every == 0) return error.BadData;
+    const tick: u32 = 0x11346;
+    if (u16be(rom, tick + 30) != 0x0C78 or u16be(rom, tick + 34) != 0xFB1A) return error.BadData;
+    const count = u16be(rom, tick + 32);
+    if (count == 0 or count > 8) return error.BadData;
+    const steps = try arena.alloc(round.AnimationStep, count);
+    for (steps, 0..) |*st, s| {
+        const frame = rom[rounds.wave_steps + s];
+        if (frame >= 4) return error.BadData;
+        st.* = .{
+            .map = try std.fmt.allocPrint(arena, "waves_{d}", .{frame + 1}),
+            .colours = try std.fmt.allocPrint(arena, "waves_{d}", .{s + 1}),
+        };
+    }
+    return .{
+        .provenance = try std.fmt.allocPrint(arena, "the waves (0x112C0 at the round's load, 0x11346 at each tick of play): a step every ROM 0x{X:0>5}'s ticks, the first after as many; {d} steps (ROM 0x{X:0>5}), each its frame (ROM 0x{X:0>5}) and its colours (ROM 0x{X:0>5}, 8 bytes a step)", .{ init + 22, count, tick + 32, rounds.wave_steps, rounds.wave_palettes }),
+        .every = every,
+        .steps = steps,
+    };
+}
+
 /// The pieces the round's start places itself after the first section's groups (0xEF0: for the
 /// round of its `cmpi.w`, two objects, each in the enemies' places (0xE46), of the type and the
 /// place across of its `move.b` and `move.w`, its depth 0): round 3's two lamps.
@@ -786,6 +818,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .special = try specialArt(arena, rom),
         .boss = boss_section,
         .own_sound = try ownSound(arena, rom, r),
+        .animation = try animation(arena, rom, r),
     };
 }
 

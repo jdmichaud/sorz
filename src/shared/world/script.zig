@@ -208,6 +208,8 @@ pub const State = struct {
     taking: ?u2 = null,
     /// The round's own sound (`Round.own_sound`): its times left, the ticks to the next.
     own_sound: struct { left: u8 = 0, ticks: u8 = 0 } = .{},
+    /// The round's animation (`Round.animation`): the step it shows, the ticks to the next.
+    animation: struct { step: u8 = 0, ticks: u8 = 0 } = .{},
 };
 
 /// The round's timer, part of the world.
@@ -252,6 +254,7 @@ pub fn start(w: anytype, plan: *const Plan) void {
     c.follows = cameraRules(r);
     w.script = .{};
     ownSoundAgain(w, r);
+    if (r.animation) |an| w.script.animation.ticks = an.every;
     w.timer = .{ .seconds = r.sections[0].timer, .shown = r.sections[0].timer, .ticks = r.timer.pace };
 }
 
@@ -302,6 +305,18 @@ pub fn restartTimer(w: anytype, plan: *const Plan) void {
     const r = plan.round;
     const k = @min(w.script.section, r.sections.len - 1);
     w.timer = .{ .seconds = r.sections[k].timer, .shown = r.sections[k].timer, .ticks = r.timer.pace };
+}
+
+/// The round's animation, after the entities' turns: every `every` ticks, its next step (the
+/// round's picture shows it).
+pub fn animate(t: *Tick) void {
+    const p = t.plan orelse return;
+    const an = p.round.animation orelse return;
+    const s = &t.world.script.animation;
+    s.ticks -|= 1;
+    if (s.ticks != 0) return;
+    s.ticks = an.every;
+    s.step = if (s.step + 1 < an.steps.len) s.step + 1 else 0;
 }
 
 /// The GO arrow's kind.

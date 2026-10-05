@@ -55,6 +55,7 @@ pub const pipeline = [_]System{
     .{ .name = "movement", .run = movement },
     .{ .name = "pickups", .run = pickups },
     .{ .name = "script", .run = script.run },
+    .{ .name = "animate", .run = script.animate },
     .{ .name = "animation", .run = animation },
     .{ .name = "sounds", .run = sounds },
     .{ .name = "draw_list", .run = draw_list.build },

@@ -57,6 +57,10 @@ pub const Frame = struct {
     /// header or digits it writes), and the rows of the rectangles among them.
     cell_rows: u8 = 0,
     cells: u16 = 0,
+    /// Rows of a plane written after them (a round's animation's map), `plane_row_cells` cells
+    /// each.
+    plane_rows: u8 = 0,
+    plane_row_cells: u8 = 0,
 };
 
 /// Transfers of tiles, each its length in words (16 a tile).
@@ -129,6 +133,8 @@ pub const costs = struct {
     pub const bar_part = 195;
     /// A cell written alone.
     pub const cell = -8;
+    /// A row of a plane written (a round's animation's).
+    pub const plane_row = 190;
     /// The art streamed in: each tile decoded, each code read (and each written out in full),
     /// each byte read.
     pub const stream_tile = 1593;
@@ -200,6 +206,7 @@ pub fn work(f: ?Frame) i32 {
     for (0..x.bar_parts) |_| b.writes(costs.bar_part, 16);
     b.spend(costs.row * @as(i32, x.cell_rows));
     for (0..x.cells) |_| b.writes(costs.cell, 1);
+    for (0..x.plane_rows) |_| b.writes(costs.plane_row, x.plane_row_cells);
     return b.work;
 }
 

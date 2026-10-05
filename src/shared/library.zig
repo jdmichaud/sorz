@@ -88,6 +88,16 @@ pub const RoundAssets = struct {
     number: *const art.Frame,
     /// The boss's colours, when the round has a boss.
     boss_colours: ?*const art.Palette = null,
+    /// Its animation's steps (the script's `animation`), their maps and colours found.
+    animation: [Rounds.most_steps]AnimationStep = undefined,
+    animation_steps: u8 = 0,
+
+    pub const AnimationStep = struct { map: *const art.TileMap, colours: *const art.Palette };
+
+    /// Its animation's steps.
+    pub fn steps(self: *const RoundAssets) []const AnimationStep {
+        return self.animation[0..self.animation_steps];
+    }
 };
 
 /// The enemies' colours by number (play's record, `screens/round`'s `enemy_colours`), their
@@ -113,6 +123,8 @@ pub const Rounds = struct {
     /// The most palette cycles a round's art set may have (the round scene keeps each one's
     /// place).
     pub const most_cycles = 8;
+    /// The most steps of a round's animation.
+    pub const most_steps = 8;
     items: [most]?RoundAssets = @splat(null),
 
     /// Round `number`, if the content has it.
@@ -140,7 +152,7 @@ fn findRounds(c: *const Content, diag: *json.Diagnostic) LoadError!Rounds {
         var full: [3][]const u8 = undefined;
         for (&full, &bufs, parts) |*f, *b, part| f.* = std.fmt.bufPrint(b, "{s}/{s}", .{ r.art, part }) catch return refuse(diag, r.art, "an art set's name too long");
         const number = play.banner.numbers[r.number - 1];
-        out.items[r.number - 1] = .{
+        var round_assets: RoundAssets = .{
             .script = r,
             .set = set,
             .plane_a = a.map(full[0]) orelse return refuse(diag, full[0], "a round's plane, not in its art set"),
@@ -150,6 +162,21 @@ fn findRounds(c: *const Content, diag: *json.Diagnostic) LoadError!Rounds {
             .number = a.frame(number) orelse return refuse(diag, number, "a banner's number, not in the art"),
             .boss_colours = if (r.boss) |b| if (b.colours) |boss| a.palette(boss) orelse return refuse(diag, boss, "a boss's colours, not in the art") else null else null,
         };
+        if (r.animation) |an| {
+            if (an.steps.len > Rounds.most_steps) return refuse(diag, name, "more animation steps than a round takes");
+            for (an.steps, round_assets.animation[0..an.steps.len]) |st, *o| {
+                var b: [2][64]u8 = undefined;
+                const map = std.fmt.bufPrint(&b[0], "{s}/{s}", .{ r.art, st.map }) catch return refuse(diag, st.map, "an art set's name too long");
+                const colours = std.fmt.bufPrint(&b[1], "{s}/{s}", .{ r.art, st.colours }) catch return refuse(diag, st.colours, "an art set's name too long");
+                o.* = .{
+                    .map = a.map(map) orelse return refuse(diag, map, "an animation's map, not in the round's art set"),
+                    .colours = a.palette(colours) orelse return refuse(diag, colours, "an animation's colours, not in the round's art set"),
+                };
+                if (o.map.place == null) return refuse(diag, map, "an animation's map with no place on a plane");
+            }
+            round_assets.animation_steps = @intCast(an.steps.len);
+        }
+        out.items[r.number - 1] = round_assets;
     }
     if (out.items[0] == null) return refuse(diag, "rounds/round1", "no round 1");
     return out;
