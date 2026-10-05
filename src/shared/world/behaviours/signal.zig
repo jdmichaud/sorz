@@ -137,6 +137,8 @@ fn holdsOrWatches(a: Actor) bool {
     }
     const th = a.mind.body.target.?;
     if (!a.tick.isPlayer(th) or t.holding != null or t.holder != null) return false;
+    // The last knee keeps its hold to its end, the one kneed knocked away already.
+    if (stateIs(t, "knee_last")) return false;
     if (!Common.reachMeetsTarget(a)) return false;
     if (@abs(t.position.height.whole() - a.entity.position.height.whole()) >= 8) return false;
     if (!a.tick.catchable(th)) return false;
