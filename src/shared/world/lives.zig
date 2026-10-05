@@ -71,6 +71,8 @@ pub fn lifeOver(t: *Tick, h: Handle) void {
     // sor-remaster's pictures there); not reproduced.
     const e = t.world.get(h).?;
     e.position = .zero;
+    // Its side faced cleared too: right.
+    e.facing = .right;
     e.flags.hidden = true;
     e.flags.stays = true;
 }
