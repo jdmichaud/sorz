@@ -240,6 +240,22 @@ fn commonNumbers(d: *Def, kind: u8) Error!void {
         try d.table("pacing_speed", &speeds, "ROM 0x0DD68: its speed (8.8)");
         try d.table("pacing_pace", &paces, "ROM 0x0DD6A: its frames' ticks");
     }
+    // By its strength (its record's, 0 to 2): its health (its word's low byte), its blows'
+    // damage (0x93CE) and its points (0x93B4).
+    {
+        var health: [3]i32 = undefined;
+        var power: [3]i32 = undefined;
+        var pts: [3]i32 = undefined;
+        for (0..3) |s| {
+            const ss: u32 = @intCast(s);
+            health[s] = rom[enemy_numbers + 6 * k + ss];
+            power[s] = rom[enemy_numbers + 6 * k + 3 + ss];
+            pts[s] = try points(rom, rom[score_indices + 3 * k + ss]);
+        }
+        try d.table("strength_health", &health, "ROM 0x26FCE: by type, 6 bytes, the health at strength N (0x93CE)");
+        try d.table("strength_power", &power, "ROM 0x26FCE: three bytes on, the power at strength N (0x93CE)");
+        try d.table("strength_points", &pts, "ROM 0x27010: by type, 3 bytes, the score's index at strength N (0x93B4), the amount at ROM 0x10DDE");
+    }
     // Where the enemies walk (0x9F96, 0xA00E), the screen's middle (0x97CE) and where the
     // players' blows land on them (0xAAA0).
     try d.number("walk_x_most", (try immediate(rom, 0x9FBC, &.{ 0x24, 0x3C }, 4)) >> 16, "ROM 0x09FBC: move.l #N,d2");

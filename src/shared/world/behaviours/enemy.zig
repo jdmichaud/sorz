@@ -213,6 +213,11 @@ pub fn merged(comptime First: type, comptime Second: type) type {
 
 /// The common tables, by name.
 pub const CommonTables = struct {
+    /// By its strength (its record's, 0 to 2): its health as it appears, the damage its blows
+    /// do, the points the player who knocks it out scores.
+    strength_health: [3]u8,
+    strength_power: [3]u8,
+    strength_points: [3]u32,
     /// The walk off's pacing: each stretch's length, speed and frames' pace, by a draw.
     pacing: [4]u8,
     pacing_speed: [4]i32,
@@ -438,7 +443,11 @@ pub fn Of(comptime M: type) type {
             a.entity.spawn.traits.waits_for_camera = false;
             // Its line: the one its colours are in as it appears (script.zig).
             if (a.entity.spawn.colours) |c| a.entity.palette = script.lineOf(a.tick, c);
-            a.entity.health = a.kind.definition.health;
+            const st = a.entity.spawn.strength;
+            const t = a.tables();
+            a.entity.health = if (st == 0) a.kind.definition.health else t.strength_health[st];
+            // A stronger one's blows all do its strength's damage (one at strength 0 its moves').
+            if (st != 0) a.entity.power = t.strength_power[st];
             a.animate(.walk);
             a.pause(false);
             if (!chooseTarget(a)) return true;
@@ -1152,7 +1161,8 @@ pub fn Of(comptime M: type) type {
                 // The one whose blow or hold it took last (or who threw or swung what struck
                 // it) scores, else the player it went after.
                 const by = scorer(a);
-                if (by) |h| a.tick.score(h, n.points);
+                const st = a.entity.spawn.strength;
+                if (by) |h| a.tick.score(h, if (st == 0) n.points else a.tables().strength_points[st]);
                 return a.remove();
             }
             a.entity.flags.blinked = !a.entity.flags.blinked;

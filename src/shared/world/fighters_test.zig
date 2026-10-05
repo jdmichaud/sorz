@@ -193,10 +193,11 @@ const punch_numbers =
     \\ "punch_ends": 9, "reach_frame": 0, "too_close": 48
 ;
 
-/// Every enemy's walk off paces by these.
+/// Every enemy's walk off paces by these, and its strengths' health, power and points.
 const pacing_tables =
     \\"pacing": [16, 8, 10, 5], "pacing_pace": [6, 5, 4, 4],
-    \\ "pacing_speed": [163840, 196608, 262144, 327680]
+    \\ "pacing_speed": [163840, 196608, 262144, 327680],
+    \\ "strength_health": [4, 7, 9], "strength_power": [4, 8, 8], "strength_points": [100, 200, 300]
 ;
 
 const enemy_sounds =

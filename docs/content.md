@@ -493,7 +493,8 @@ A record of `placed`, `wave` or `reserve` is one entity:
   place, not only until its place is on the screen; `slow`, `closes_in_after_lurking`, `pipe_b`,
   `slides`, `flips_away`, `drops_in`, `flips_at_close_range`, `unflinching`, `walks_off`,
   `twin`); `offset`, where it keeps from its target (`x` away from it, `depth`); `strength`, its
-  row of strength and colours (0 when absent); `colours`, its colours by number (`enemy_colours`).
+  row of strength and colours (0 when absent): its health, its blows' damage and its points are
+  its kind's tables' `strength_health`, `strength_power` and `strength_points` at it; `colours`, its colours by number (`enemy_colours`).
 - A breakable's (an oil drum's too): `holds`, the kind of the item it leaves. A boss's: `bar`,
   its entry in the status bar's names and bars.
 - A piece of scenery's (placed): `height`, the height it takes as it starts (on a wall; placed
