@@ -43,6 +43,7 @@ pub const System = struct {
 /// camera follows at the next (`noteDrawn`).
 pub const pipeline = [_]System{
     .{ .name = "timer", .run = script.timer },
+    .{ .name = "own_sound", .run = script.ownSound },
     .{ .name = "commands", .run = commands },
     .{ .name = "control", .run = control },
     .{ .name = "players_move", .run = playersMove },
@@ -742,7 +743,7 @@ fn sounds(t: *Tick) void {
     var n: usize = 0;
     for (list.items[0..list.len]) |s| {
         var x = s;
-        x.first = if (s.by) |h| t.world.playerOf(h) != null else false;
+        x.first = s.first or if (s.by) |h| t.world.playerOf(h) != null else false;
         for (list.items[0..n]) |kept| {
             if (kept.first == x.first and std.mem.eql(u8, kept.name, x.name)) break;
         } else {

@@ -442,6 +442,9 @@ play).
 - `boss`: after the last section's clear, the camera stops where it is and `fade` is asked for;
   `music_after` ticks after the clear, the boss's `music`; `wave_after` ticks after the music,
   its `wave` and `reserve` as a section's. A beaten boss ends the round.
+- `own_sound`, optional: a sound the round plays by itself (round 3's waves): `sound`, `times`
+  times, the first at play's `first`th tick, then every `every` ticks; counted again from each
+  section's opening.
 - `streamed` (a section's, the boss's, a reserve record's): the art the game decodes while it
   plays, a little each display tick, for what comes (the original streams it in, five tiles a
   display tick): a section's kinds' and the boss's, from the section's start (the first

@@ -206,6 +206,8 @@ pub const State = struct {
     held: Held = .{},
     /// The colours the arriving enemy takes.
     taking: ?u2 = null,
+    /// The round's own sound (`Round.own_sound`): its times left, the ticks to the next.
+    own_sound: struct { left: u8 = 0, ticks: u8 = 0 } = .{},
 };
 
 /// The round's timer, part of the world.
@@ -249,7 +251,28 @@ pub fn start(w: anytype, plan: *const Plan) void {
     c.y_max = .pixels(r.camera.y_max);
     c.follows = cameraRules(r);
     w.script = .{};
+    ownSoundAgain(w, r);
     w.timer = .{ .seconds = r.sections[0].timer, .shown = r.sections[0].timer, .ticks = r.timer.pace };
+}
+
+/// The round's own sound counts again (the round's start, a section's opening).
+fn ownSoundAgain(w: anytype, r: *const Round) void {
+    if (r.own_sound) |o| w.script.own_sound = .{ .left = o.times, .ticks = o.first };
+}
+
+/// The round's own sound, asked for before the entities' turns (in the tick's first half): while
+/// it has times left, its ticks count down; at zero it plays, and the next is due `every` ticks
+/// later.
+pub fn ownSound(t: *Tick) void {
+    const p = t.plan orelse return;
+    const o = p.round.own_sound orelse return;
+    const s = &t.world.script.own_sound;
+    if (s.left == 0) return;
+    s.ticks -|= 1;
+    if (s.ticks != 0) return;
+    s.ticks = o.every;
+    s.left -= 1;
+    t.out.sounds.append(.{ .name = o.sound, .first = true });
 }
 
 /// The first section starts, its placed at their places: at the round's start.
@@ -297,6 +320,7 @@ pub fn opening(t: *Tick) void {
     // The first section's wall and timer are the round's own.
     if (s.part == 0) return;
     t.world.camera.x_max = .pixels(p.round.sections[s.part].wall);
+    ownSoundAgain(t.world, p.round);
     restartTimer(t.world, p);
     if (t.kinds.find(go_arrow)) |kind| {
         _ = t.world.spawn(t.kinds, kind, .zero, .right) catch return;

@@ -469,6 +469,39 @@ fn group(arena: std.mem.Allocator, rom: []const u8, l: *Lists, page: u16, out: *
     }
 }
 
+/// The target of the `jsr (d16,pc)` at `at`, checked.
+fn jsrTarget(rom: []const u8, at: u32) Error!u32 {
+    if (u16be(rom, at) != 0x4EBA) return error.BadData;
+    return @intCast(@as(i32, @intCast(at + 2)) + s16be(rom, at + 2));
+}
+
+/// The round's own routine (0x112F2, its table at 0x11300, a play tick before the objects): none
+/// (`rts`), or round 3's sound (0x11310): while its times last ($FFFA55), its ticks ($FFFB50)
+/// count down; at zero they come again from $FFFB51, a time is spent and the sound is asked for.
+/// Its set-up (0x19D08: its times, its first ticks and the next ones) runs at the round's load (the
+/// round's entry of 0x19C4C) and at a section's opening (0x195AE: for the round of its
+/// `cmpi.w`). A routine of another kind (round 5's horn) is refused until its round comes.
+fn ownSound(arena: std.mem.Allocator, rom: []const u8, r: u32) Error!?round.OwnSound {
+    const table: u32 = 0x11300;
+    const at: u32 = table + u16be(rom, table + 2 * r);
+    if (u16be(rom, at) == 0x4E75) return null;
+    const pattern = [_]u8{ 0x4A, 0x38, 0xFA, 0x55, 0x67, 0x16, 0x53, 0x38, 0xFB, 0x50, 0x66, 0x10, 0x11, 0xF8, 0xFB, 0x51, 0xFB, 0x50, 0x53, 0x38, 0xFA, 0x55, 0x7E };
+    if (at + pattern.len + 1 > rom.len or !std.mem.eql(u8, rom[at..][0..pattern.len], &pattern)) return error.BadData;
+    const request = rom[at + pattern.len];
+    const setup: u32 = 0x19D08;
+    if (u16be(rom, setup) != 0x11FC or rom[setup + 2] != 0 or u16be(rom, setup + 4) != 0xFA55 or u16be(rom, setup + 6) != 0x31FC or u16be(rom, setup + 10) != 0xFB50) return error.BadData;
+    const loads: u32 = 0x19C4C;
+    if (try jsrTarget(rom, loads + u16be(rom, loads + 2 * r)) != setup) return error.BadData;
+    if (u16be(rom, 0x195AE) != 0x0C78 or u16be(rom, 0x195B0) != r or u16be(rom, 0x195B2) != 0xFF02 or try jsrTarget(rom, 0x195B6) != setup) return error.BadData;
+    return .{
+        .provenance = try std.fmt.allocPrint(arena, "the round's own routine (0x112F2, ROM 0x{X:0>5}): its sound ROM 0x{X:0>5}, set up by 0x19D08 at the round's load and at each section's opening (0x195AE): its times ROM 0x19D0B, its first ticks ROM 0x19D10, then every ROM 0x19D11's", .{ at, at + pattern.len + 1 }),
+        .sound = try soundName(request),
+        .times = rom[setup + 3],
+        .first = rom[setup + 8],
+        .every = rom[setup + 9],
+    };
+}
+
 /// The pieces the round's start places itself after the first section's groups (0xEF0: for the
 /// round of its `cmpi.w`, two objects, each in the enemies' places (0xE46), of the type and the
 /// place across of its `move.b` and `move.w`, its depth 0): round 3's two lamps.
@@ -752,6 +785,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .sections = sections,
         .special = try specialArt(arena, rom),
         .boss = boss_section,
+        .own_sound = try ownSound(arena, rom, r),
     };
 }
 

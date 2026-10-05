@@ -267,6 +267,19 @@ pub const Round = struct {
     /// The special attack's art (its police car's), streamed in as the car comes.
     special: Special = .{},
     boss: ?Boss = null,
+    /// A sound the round plays by itself.
+    own_sound: ?OwnSound = null,
+};
+
+/// A sound a round plays by itself (round 3's waves): `sound` (a name of the sound content),
+/// `times` times, the first at play's `first`th tick, then every `every` ticks; counted again
+/// from each section's opening. It counts in play, the special attack's too.
+pub const OwnSound = struct {
+    provenance: []const u8 = "",
+    sound: []const u8,
+    first: u8,
+    every: u8,
+    times: u8,
 };
 
 /// The rounds a tree may have, by their files' names.
@@ -435,6 +448,12 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
             .{ .key = "streamed", .value = .{ .array = both } },
         }) });
     }
+    if (r.own_sound) |o| try fields.append(arena, .{ .key = "own_sound", .value = try withProvenance(arena, o.provenance, &.{
+        .{ .key = "sound", .value = .{ .str = o.sound } },
+        .{ .key = "first", .value = json.Value.num(o.first) },
+        .{ .key = "every", .value = json.Value.num(o.every) },
+        .{ .key = "times", .value = json.Value.num(o.times) },
+    }) });
     if (r.boss) |*b| try fields.append(arena, .{ .key = "boss", .value = try withProvenance(arena, b.provenance, &.{
         .{ .key = "fade", .value = .{ .str = b.fade } },
         .{ .key = "music", .value = .{ .str = b.music } },
@@ -549,7 +568,7 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
@@ -643,6 +662,18 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         const both = try sp.get("streamed");
         if (try both.len() != 2) return both.fail("not the two callers' lists");
         r.special = .{ .provenance = try provenanceOf(sp), .streamed = .{ try readStreamed(arena, try both.at(0)), try readStreamed(arena, try both.at(1)) } };
+    }
+    if (try root.opt("own_sound")) |o| {
+        try o.only(&.{ "provenance", "sound", "first", "every", "times" });
+        r.own_sound = .{
+            .provenance = try provenanceOf(o),
+            .sound = try (try o.get("sound")).string(),
+            .first = try (try o.get("first")).int(u8),
+            .every = try (try o.get("every")).int(u8),
+            .times = try (try o.get("times")).int(u8),
+        };
+        if (r.own_sound.?.first == 0) return (try o.get("first")).fail("not 1 or more");
+        if (r.own_sound.?.every == 0) return (try o.get("every")).fail("not 1 or more");
     }
     if (try root.opt("boss")) |b| {
         try b.only(&.{ "provenance", "fade", "music", "music_after", "wave_after", "streamed", "again", "section_colours", "colours", "wave", "reserve" });
