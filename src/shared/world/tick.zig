@@ -405,6 +405,26 @@ pub const Tick = struct {
         dispatch(t, w, "putDown", void, {}, .{});
     }
 
+    /// A player's entity moved in its turn (the players' move): its behaviour's `moved` (a hold
+    /// between the players places it).
+    pub fn moved(t: *Tick, h: Handle) void {
+        dispatch(t, h, "moved", void, {}, .{});
+    }
+
+    /// Whether the camera keeps the player's entity in its view: its behaviour's `keptInView`;
+    /// by default, unless it holds or is held.
+    pub fn keptInView(t: *Tick, h: Handle) bool {
+        const e = t.world.get(h) orelse return false;
+        if (hasHook(e, "keptInView")) return dispatch(t, h, "keptInView", bool, true, .{});
+        return e.holding == null and e.holder == null;
+    }
+
+    /// How the player's entity may meet the other player's at this tick
+    /// (`systems.betweenPlayers`): its behaviour's `touchClass`; by default, not at all (0).
+    pub fn touchClass(t: *Tick, h: Handle) u8 {
+        return dispatch(t, h, "touchClass", u8, 0, .{});
+    }
+
     /// The entity is held: it follows its holder now that its holder has moved (`follow`; by
     /// default its holder places it).
     pub fn follow(t: *Tick, h: Handle) void {

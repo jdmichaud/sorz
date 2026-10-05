@@ -76,7 +76,15 @@ const hero =
     \\   "thrown_falls": 2, "thrown_ahead": 32, "thrown_up": -196608, "thrown_x": 229376,
     \\   "held_ahead": 16, "armed_blow_ends": 2, "armed_swing_ends": 3, "throw_frame": 1,
     \\   "stab_reach": 144, "stab_level": 12, "attack3_ends": 3, "counter_ends": 2, "throw_turns": 1,
-    \\   "leap_up": -458752, "leap_back": 28672},
+    \\   "leap_up": -458752, "leap_back": 28672, "slam_pause": 8, "knee_last_hits": 1,
+    \\   "lift_first": 5, "lift_pace": 4, "lift_ends": 2, "lift_up": -196608, "lift_rise": 24,
+    \\   "air_slam_loops": 2, "air_slam_gravity": 14336, "air_slam_x": 229376, "air_slam_drop": 16,
+    \\   "air_fall_x": 327680, "air_fall_reach": 24, "air_fall_ahead": -16, "slammed_first": 2,
+    \\   "slammed_pace": 4, "slammed_fall_back": 131072, "slammed_fall_up": -262144,
+    \\   "countered_drop": 16, "vault_off_step": 16, "wall_above": 8},
+    \\ "tables": {"slammed_back": [0, 0, 16, 32], "slammed_down": [-8, -40, 16, 32]},
+    \\ "partners": {"held": {"by": {"hero": [[-50, 0]]}, "depth": true, "moves_partner": true},
+    \\   "lifted": {"by": {"hero": [[-16, -20], [28, -32], [28, -32]]}}},
     \\ "sounds": {"jump": "jump", "land": "landing", "hurt": "player hit", "thud": "heavy fall",
     \\   "death": "axel death cry", "armed_blow": "swing", "throw_weapon": "throw weapon",
     \\   "swing_weapon": "pipe swing"},
@@ -116,6 +124,11 @@ const hero =
     anim("escape", fr("4", "") ++ "," ++ fr("6", "") ++ "," ++ fr("2", "") ++ "," ++ fr("4", "")) ++ "," ++
     anim("counter", fr("5", ", \"held\": {\"x\": 16, \"pose\": 0}") ++ "," ++ fr("15", ", \"blow\": true, \"held\": {\"x\": 40, \"height\": -32, \"lets_go\": true}") ++ "," ++ fr("4", "")) ++ "," ++
     anim("thrown", bare("100", ", \"place\": {\"x\": -24}") ++ "," ++ bare("12", ", \"place\": {\"x\": -4, \"height\": -48}") ++ "," ++ bare("8", ", \"place\": {\"x\": 16, \"height\": -40}") ++ "," ++ bare("1", ", \"place\": {}")) ++ "," ++
+    anim("slam_pause", bare("1", "") ++ "," ++ bare("1", "")) ++ "," ++
+    anim("lift", bare("5", "") ++ "," ++ bare("15", "") ++ "," ++ bare("4", "")) ++ "," ++
+    anim("air_slam", bare("2", ", \"attack\": \"fist\", \"blow\": true") ++ "," ++ bare("2", ", \"attack\": \"fist\", \"blow\": true") ++ "," ++ bare("2", ", \"attack\": \"fist\", \"blow\": true") ++ "," ++ bare("2", ", \"attack\": \"fist\", \"blow\": true")) ++ "," ++
+    anim("air_fall", bare("100", ", \"attack\": \"fist\", \"blow\": true")) ++ "," ++
+    anim("slammed", bare("100", "") ++ "," ++ bare("12", "")) ++ "," ++
     anim("armed_stand", fr("100", hand("-5", "-59", "lying", ""))) ++ "," ++
     anim("armed_stand_long", fr("100", hand("-3", "-61", "lying", ""))) ++ "," ++
     anim("armed_walk", fr("6", ", \"attack\": \"reach\"" ++ hand("-5", "-62", "lying", "")) ++ "," ++ fr("6", ", \"attack\": \"reach\"" ++ hand("-5", "-61", "lying", ""))) ++ "," ++
@@ -136,7 +149,10 @@ const hero =
     \\   "throw": {"animation": "throw"},
     \\   "vault": {"animation": "vault", "damage": 5, "reaction": "slammed", "sound": "shout"},
     \\   "throw_back": {"animation": "throw_back"},
-    \\   "counter": {"animation": "counter", "damage": 4, "reaction": "thrown"}}
+    \\   "counter": {"animation": "counter", "damage": 4, "reaction": "thrown"},
+    \\   "escape": {"animation": "escape"},
+    \\   "air_slam": {"animation": "air_slam", "damage": 15, "reaction": "knock_down"},
+    \\   "air_fall": {"animation": "air_fall", "damage": 8, "reaction": "knock_down"}}
     \\}
 ;
 
@@ -650,7 +666,7 @@ fn replaced(comptime text: []const u8, comptime old: []const u8, comptime new: [
 /// The hero playing its moves as Adam and Blaze play theirs: a back attack that jumps, a last
 /// blow and a last knee that leap from their frame 1, a throw over the shoulder that does not
 /// turn.
-const leaper = replaced(replaced(hero, "\"leap_back\": 28672}", "\"leap_back\": 28672, \"back_attack_up\": -409600, \"last_blow_leap\": 1, \"knee_last_leap\": 1}"), "\"throw_turns\": 1", "\"throw_turns\": 0");
+const leaper = replaced(replaced(hero, "\"leap_back\": 28672,", "\"leap_back\": 28672, \"back_attack_up\": -409600, \"last_blow_leap\": 1, \"knee_last_leap\": 1,"), "\"throw_turns\": 1", "\"throw_turns\": 0");
 
 const Fixture = struct {
     arena: std.heap.ArenaAllocator,
@@ -983,6 +999,95 @@ test "a grab: the walk's reach catches the punk; two knees, and the last knocks 
     }
     try testing.expectEqualSlices(i16, &.{ 2, 0, -3 }, &health);
     try testing.expect(r.w.get(p).?.mind.galsia.state == .knocked_down);
+    try testing.expect(r.player().holding == null);
+}
+
+/// Player 2, of the hero's kind, standing at `x` on player 1's depth, facing `facing`.
+fn secondPlayer(r: *Round, x: i32, facing: entity.Facing) !Handle {
+    const kind = r.f.kinds.find("hero").?;
+    const h = try r.w.spawn(&r.f.kinds, kind, .pixels(x, 64, 160), facing);
+    r.w.players[1] = .{ .entity = h, .character = kind, .lives = 3, .specials = 1, .continues = 3 };
+    const e = r.w.get(h).?;
+    e.mind.player.state = .ready;
+    e.mind.player.started = true;
+    r.f.kinds.startAnimation(e, r.f.kinds.get(kind).definition.animation("ready").?);
+    return h;
+}
+
+fn stateOf(r: *Round, h: Handle) []const u8 {
+    return behaviours.stateName(&r.w.get(h).?.mind).?;
+}
+
+/// Player 1 walks right into player 2 until it holds it.
+fn walkIntoOther(r: *Round) !void {
+    for (0..20) |_| {
+        r.step(.{ .pad1 = .{ .right = true } });
+        if (std.mem.eql(u8, r.state(), "grab") or std.mem.eql(u8, r.state(), "grab_behind")) return;
+    }
+    return error.NoGrab;
+}
+
+test "two players: one walks into the other and holds it, moved where the one held puts it; the throw lifts it over, spinning, falling" {
+    var r = try Round.init();
+    defer r.deinit();
+    const other = try secondPlayer(&r, 830, .left);
+    try walkIntoOther(&r);
+    try testing.expectEqualStrings("held", stateOf(&r, other));
+    // The one held puts its holder 50 pixels from it (its `held` place by the holder's kind).
+    try testing.expectEqual(r.w.get(other).?.position.x.whole() - 50, r.player().position.x.whole());
+    r.step(.{ .pad1 = .{ .b = true, .left = true } });
+    try testing.expectEqualStrings("grab_blow", r.state());
+    try testing.expectEqualStrings("lift", stateOf(&r, other));
+    // Lifted to the holder's other side (its `lifted` places, facing left).
+    try testing.expectEqual(r.player().position.x.whole() + 16, r.w.get(other).?.position.x.whole());
+    try testing.expectEqual(@as(i32, 140), r.w.get(other).?.position.height.whole());
+    // Its frames for 5, 4 and 4 ticks: then free, up into the spin.
+    for (0..12) |_| r.step(.{});
+    try testing.expectEqualStrings("lift", stateOf(&r, other));
+    r.step(.{});
+    try testing.expectEqualStrings("air_slam", stateOf(&r, other));
+    try testing.expect(r.w.get(other).?.holder == null and r.player().holding == null);
+    var fell = false;
+    var landed = false;
+    for (0..60) |_| {
+        r.step(.{});
+        if (std.mem.eql(u8, stateOf(&r, other), "air_fall")) fell = true;
+        if (std.mem.eql(u8, stateOf(&r, other), "land")) landed = true;
+    }
+    try testing.expect(fell and landed);
+}
+
+test "two players: knees pause the one held and cost it the knee's blow; the last knocks it down" {
+    var r = try Round.init();
+    defer r.deinit();
+    const other = try secondPlayer(&r, 830, .left);
+    try walkIntoOther(&r);
+    r.step(b_pad);
+    try testing.expectEqualStrings("knee", r.state());
+    try testing.expectEqualStrings("slam_pause", stateOf(&r, other));
+    try testing.expectEqual(@as(i16, 80 - 2), r.w.get(other).?.health);
+    // Its pause's 8 ticks, then held again.
+    for (0..8) |_| r.step(.{});
+    try testing.expectEqualStrings("held", stateOf(&r, other));
+    r.step(b_pad);
+    for (0..9) |_| r.step(.{});
+    r.step(b_pad);
+    try testing.expectEqualStrings("knee_last", r.state());
+    // Struck at the last knee's frame 1 (after its first frame's 6 ticks).
+    for (0..5) |_| r.step(.{});
+    try testing.expectEqualStrings("held", stateOf(&r, other));
+    r.step(.{});
+    try testing.expectEqualStrings("knocked_down", stateOf(&r, other));
+    try testing.expectEqual(@as(i16, 80 - 2 - 2 - 3), r.w.get(other).?.health);
+}
+
+test "two players: a blinking player neither strikes nor holds the other" {
+    var r = try Round.init();
+    defer r.deinit();
+    const other = try secondPlayer(&r, 830, .left);
+    r.w.get(other).?.mind.player.blink = 30;
+    for (0..12) |_| r.step(.{ .pad1 = .{ .right = true } });
+    try testing.expectEqualStrings("walk", r.state());
     try testing.expect(r.player().holding == null);
 }
 

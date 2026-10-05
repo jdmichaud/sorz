@@ -164,28 +164,57 @@ fn control(t: *Tick) void {
 
 // The others' turns -------------------------------------------------------------------------------
 
-/// The players' blows on each other land (the original's two players strike each other), then
-/// their grabs of each other. A player's blow that is not a knock-down frees the one the other
-/// holds at once, before the others' turns: the original's touch between the players puts the
-/// blow's kind where the struck one's hold keeps its request, which its one held reads at its
-/// turn (a knock-down's kind reads as a hold from the front, until the holder feels the blow).
+/// The two players meet (the original's players strike and hold each other): outside the
+/// special attack, when both may (`Tick.touchClass` nonzero: neither blinks nor is in a state
+/// apart), each one's attack box is looked at on the other's body, in an order that turns at
+/// each such tick, the last one looked at winning (its striker is not struck): a blow under way
+/// strikes the other; a reach without one holds it, unless either may only strike (class 2).
+/// A player's blow that is not a knock-down frees the one the other holds at once, before the
+/// others' turns: the original's touch puts the blow's kind where the struck one's hold keeps its
+/// request, which its one held reads at its turn (a knock-down's kind reads as a hold from the
+/// front, until the holder feels the blow).
 fn betweenPlayers(t: *Tick) void {
-    for (t.world.players) |p| {
-        const ah = p.entity orelse continue;
-        for (t.world.players) |q| {
-            const th = q.entity orelse continue;
-            if (th.eql(ah) or !blow(t, ah, th)) continue;
-            const a = t.world.get(ah) orelse continue;
-            const knocks = t.kindOf(a).definition.moves[a.move.?].reaction == .knock_down;
-            const holds = if (t.world.get(th)) |o| o.holding != null else false;
-            if (holds and !knocks) t.letGo(th);
+    if (t.world.special) return;
+    const hs = [2]Handle{ t.world.players[0].entity orelse return, t.world.players[1].entity orelse return };
+    const classes = [2]u8{ t.touchClass(hs[0]), t.touchClass(hs[1]) };
+    if (classes[0] == 0 or classes[1] == 0) return;
+    const last: usize = if (t.world.first_touches_last) 0 else 1;
+    t.world.first_touches_last = !t.world.first_touches_last;
+    const Role = enum { none, striker, struck, grabber, grabbed };
+    var roles: [2]Role = .{ .none, .none };
+    for ([2]usize{ 1 - last, last }) |a| {
+        const b = 1 - a;
+        const ae = t.world.get(hs[a]).?;
+        const be = t.world.get(hs[b]).?;
+        const reach = ae.boxes.attack orelse continue;
+        const body = be.boxes.body orelse continue;
+        if (!meet(ae, &t.kindOf(ae).definition.boxes[reach], be, &t.kindOf(be).definition.boxes[body])) continue;
+        if (t.power(ae) != 0) {
+            roles[a] = .striker;
+            roles[b] = .struck;
+        } else if (classes[0] == 1 and classes[1] == 1) {
+            roles[a] = .grabber;
+            roles[b] = .grabbed;
         }
     }
-    for (t.world.players) |p| {
-        const gh = p.entity orelse continue;
-        for (t.world.players) |q| {
-            const th = q.entity orelse continue;
-            if (!th.eql(gh) and grab(t, gh, th)) break;
+    for (roles, 0..) |r, b| {
+        const a = 1 - b;
+        switch (r) {
+            .struck => {
+                const holds = t.world.get(hs[b]).?.holding != null;
+                if (!strike(t, hs[a], hs[b]) or !holds) continue;
+                const s = t.world.get(hs[a]).?;
+                if (t.kindOf(s).definition.moves[s.move.?].reaction != .knock_down) t.letGo(hs[b]);
+            },
+            .grabbed => {
+                const g = t.world.get(hs[a]).?;
+                const o = t.world.get(hs[b]).?;
+                if (g.holding != null or g.holder != null or o.holding != null or o.holder != null) continue;
+                g.holding = hs[b];
+                o.holder = hs[a];
+                t.grabbed(hs[a], hs[b]);
+            },
+            else => {},
         }
     }
 }
@@ -235,6 +264,7 @@ fn playersMove(t: *Tick) void {
     for (t.world.players) |p| {
         const h = p.entity orelse continue;
         move(t, h);
+        t.moved(h);
         const e = t.world.get(h) orelse continue;
         if (e.holder == null) _ = t.keptOut(h);
         e.boxes.at = e.position;
@@ -358,14 +388,22 @@ fn reachesBody(t: *Tick, ph: Handle, x: *const Entity) bool {
 fn blow(t: *Tick, ah: Handle, th: Handle) bool {
     const a = t.world.get(ah) orelse return false;
     const attack = a.boxes.attack orelse return false;
+    if (t.power(a) == 0) return false;
+    const target = t.world.get(th) orelse return false;
+    const body = target.boxes.body orelse return false;
+    if (!blowsLand(a.team, target.team)) return false;
+    if (!meet(a, &t.kindOf(a).definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return false;
+    return strike(t, ah, th);
+}
+
+/// `a`'s blow under way strikes `target`, its box having met its body: as `blow` tells.
+fn strike(t: *Tick, ah: Handle, th: Handle) bool {
+    const a = t.world.get(ah) orelse return false;
     const move_index = a.move orelse return false;
     const damage = t.power(a);
     if (damage == 0) return false;
     const target = t.world.get(th) orelse return false;
-    const body = target.boxes.body orelse return false;
-    if (!blowsLand(a.team, target.team)) return false;
     const ak = t.kindOf(a);
-    if (!meet(a, &ak.definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return false;
     const m = ak.definition.moves[move_index];
     const away: i32 = switch (target.position.x.order(a.position.x)) {
         .lt => -1,
@@ -528,7 +566,7 @@ fn camera(t: *Tick) void {
     const rules = c.follows orelse return;
     for (t.world.players) |p| {
         const e = t.world.get(p.entity orelse continue) orelse continue;
-        if (e.holding == null and e.holder == null) {
+        if (t.keptInView(p.entity.?)) {
             const left = c.x.whole();
             e.position.x = keptWithin(e.position.x, left + rules.kept_x[0], left + rules.kept_x[1]);
         }

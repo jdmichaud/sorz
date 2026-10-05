@@ -49,6 +49,15 @@
 //!   ahead, the throw's damage taken at the first bounce, unless C and up land it on its feet).
 //!   Held from behind, C jumps (`escape`) and lands held again, with a moment in which B throws
 //!   the holder over (`grab_blow`).
+//! - Holds between the two players: walking into the other holds it as an enemy (`grab`,
+//!   `grab_behind`), and it is `held` or `held_behind`, a while. The holder asks, the one held
+//!   answers at its next turn (`Request`): a knee pauses it (`slam_pause`), the last knocks it
+//!   down at the knee's frame; the throw lifts it over (`lift`), from which it spins in the air
+//!   (`air_slam`) and falls (`air_fall`), striking as it goes; C lifts the holder itself over the
+//!   one held, which it lets go; from behind, B slams it down (`slammed`, then `thrown_fall`) and
+//!   C jumps back over it to hold it from the front. Held from behind, its counter throws the
+//!   holder (`thrown`). Each takes its places from the other at each new frame of the hold, as
+//!   its definition's `partners` give them by the other's kind.
 const std = @import("std");
 const tick = @import("../tick.zig");
 const fixed = @import("../fixed.zig");
@@ -101,6 +110,12 @@ pub const State = enum {
     held_behind,
     escape,
     thrown,
+    slam_pause,
+    lift,
+    air_slam,
+    air_fall,
+    slammed,
+    thrown_fall,
     armed_stand,
     armed_walk,
     armed_jump_crouch,
@@ -183,6 +198,27 @@ pub const Mind = struct {
     placed_frame: ?u8 = null,
     /// The weapon in its hand.
     weapon: ?Handle = null,
+    /// In a hold with the other player: what the holder asked of it, which it answers at its
+    /// next turn (its own tick's end forgets it); its holder's counter threw it (felt at its
+    /// next tick); it lifts itself over the one it holds (not lifted by its throw); the steps
+    /// of a slam; and what it showed at its tick's start (a new frame places it).
+    request: Request = .none,
+    countered: bool = false,
+    lifting_over: bool = false,
+    step: u8 = 0,
+    shown: Shown = .{},
+};
+
+/// What a player holding the other asks of it: the hold turned to the front or to behind (a
+/// jump over it), slammed down from behind, kneed (the last knee's knocks it down at its blow's
+/// frame), lifted over by a throw. Letting go needs no asking: the hold ends.
+pub const Request = enum { none, to_front, to_behind, slam, knee, last_knee, lift };
+
+/// The animation, frame and facing shown.
+pub const Shown = struct {
+    animation: ?u8 = null,
+    frame: u8 = 0,
+    facing: entity.Facing = .right,
 };
 
 pub const Animation = enum {
@@ -218,6 +254,11 @@ pub const Animation = enum {
     escape,
     counter,
     thrown,
+    slam_pause,
+    lift,
+    air_slam,
+    air_fall,
+    slammed,
     armed_stand,
     armed_stand_long,
     armed_walk,
@@ -241,6 +282,9 @@ pub const Move = enum {
     vault,
     throw_back,
     counter,
+    escape,
+    air_slam,
+    air_fall,
 };
 
 pub const Sound = enum { jump, land, hurt, thud, death, armed_blow, throw_weapon, swing_weapon };
@@ -330,6 +374,40 @@ pub const Numbers = struct {
     thrown_x: Fixed,
     /// Held from behind, it is kept this far ahead of its holder.
     held_ahead: i16,
+    /// Held by the other player: a knee taken pauses it these ticks; the last knee knocks it
+    /// down at the holder's frame `knee_last_hits` (the holder's own number).
+    slam_pause: u8,
+    knee_last_hits: u8,
+    /// Lifted over (by a throw, or itself over the one it holds): its first frame's ticks, each
+    /// next one's, to frame `lift_ends`; then up at `lift_up`, `lift_rise` pixels higher.
+    lift_first: u8,
+    lift_pace: u8,
+    lift_ends: u8,
+    lift_up: Fixed,
+    lift_rise: i16,
+    /// The spin in the air: its animation's loops, its gravity and speed across; then it drops
+    /// `air_slam_drop` pixels and falls at `air_fall_x` across, landing where the ground is
+    /// within `air_fall_reach` pixels below its feet, `air_fall_ahead` pixels on.
+    air_slam_loops: u8,
+    air_slam_gravity: Fixed,
+    air_slam_x: Fixed,
+    air_slam_drop: i16,
+    air_fall_x: Fixed,
+    air_fall_reach: i16,
+    air_fall_ahead: i16,
+    /// Slammed down from behind: its first step's ticks, each next one's (`Tables`); then it
+    /// falls back at this much more speed across, and up.
+    slammed_first: u8,
+    slammed_pace: u8,
+    slammed_fall_back: Fixed,
+    slammed_fall_up: Fixed,
+    /// Holding from behind, thrown by the one held: it starts this much lower.
+    countered_drop: i16,
+    /// Back over the other player held after its vault, it lets go this far back.
+    vault_off_step: i16,
+    /// Walls are looked for this far above its feet: fallen deeper into the ground, its move
+    /// across and in depth stops there.
+    wall_above: i16,
     /// Armed: the frames at which the plain blow and the stab end, and the swing; the plain
     /// blow's frame at which a knife leaves the hand; a knife stabs at a thing ahead within
     /// `stab_reach` across and `stab_level` either way in depth.
@@ -338,6 +416,12 @@ pub const Numbers = struct {
     throw_frame: u8,
     stab_reach: i16,
     stab_level: i16,
+};
+
+pub const Tables = struct {
+    /// The steps of a slam from behind: how far back it goes and how far down (negative: up).
+    slammed_back: [4]i16,
+    slammed_down: [4]i16,
 };
 
 fn enter(a: Actor, state: State) void {
@@ -443,6 +527,11 @@ pub fn takeUpPresses(a: Actor, elapsed: u32, presses: []const u32, landed_at: ?u
 /// The state's animation, move and speed across. A blow queued in the combo's first blows is
 /// kept by them alone (the original forgets the moves a new state does not keep).
 fn begin(a: Actor, state: State) void {
+    beginWith(a, state, null);
+}
+
+/// `begin`, with the move `own` in place of the state's (a throw that counters).
+fn beginWith(a: Actor, state: State, own: ?Move) void {
     const n = a.numbers();
     a.endMove();
     switch (state) {
@@ -476,7 +565,7 @@ fn begin(a: Actor, state: State) void {
         .grab_behind => a.animate(.grab_behind),
         .knee => a.startMove(.knee),
         .knee_last => a.startMove(.knee_last),
-        .grab_blow => a.startMove(.grab_blow),
+        .grab_blow => a.startMove(own orelse .grab_blow),
         .throw => a.startMove(.throw),
         .vault => a.startMove(.vault),
         .vault_land => {
@@ -486,8 +575,14 @@ fn begin(a: Actor, state: State) void {
         .throw_back => a.startMove(.throw_back),
         .held => a.animate(.held),
         .held_behind => a.animate(.held_behind),
-        .escape => a.animate(.escape),
+        .escape => a.startMove(.escape),
         .thrown => a.animate(.thrown),
+        .slam_pause => a.animate(.slam_pause),
+        .lift => a.animate(.lift),
+        .air_slam => a.startMove(.air_slam),
+        .air_fall => a.startMove(.air_fall),
+        // Slammed, it shows the hold's frame until its second step; its fall, the slam's.
+        .slammed, .thrown_fall => {},
         .armed_stand => a.animate(if (weaponLong(a)) .armed_stand_long else .armed_stand),
         .armed_walk => a.animate(if (weaponLong(a)) .armed_walk_long else .armed_walk),
         .armed_jump_crouch, .armed_land => a.animate(.jump_crouch),
@@ -498,12 +593,15 @@ fn begin(a: Actor, state: State) void {
         .armed_swing => a.animate(.armed_swing),
         .armed_back_attack, .armed_back_attack_air => a.startMove(.back_attack),
     }
-    // The state's speed: none but a walk's (set each tick by the walk) and a knock-down's,
-    // which goes back; a jump kick keeps its speed across.
-    const keep_x = state == .jump_kick or state == .armed_jump_kick;
+    // The state's speed: none but a walk's (set each tick by the walk), a knock-down's, which
+    // goes back, and the spin's and its fall's, ahead; a jump kick keeps its speed across, a
+    // slam's fall the slam's.
+    const keep_x = state == .jump_kick or state == .armed_jump_kick or state == .thrown_fall;
     if (!keep_x) a.entity.velocity.x = switch (state) {
         .knocked_down => n.knocked_down_x.times(a.entity.facing.sign()),
         .dying => n.dying_x.times(a.entity.facing.sign()),
+        .air_slam => n.air_slam_x.times(a.entity.facing.sign()),
+        .air_fall => n.air_fall_x.times(a.entity.facing.sign()),
         else => .zero,
     };
     a.entity.velocity.depth = .zero;
@@ -514,6 +612,8 @@ fn begin(a: Actor, state: State) void {
 
 pub fn control(a: Actor, c: Command) void {
     const n = a.numbers();
+    a.mind.shown = .{ .animation = a.entity.animation.index, .frame = a.frame(), .facing = a.entity.facing };
+    defer a.mind.request = .none;
     if (!a.mind.started) {
         a.mind.started = true;
         a.mind.blink = n.blink;
@@ -529,8 +629,10 @@ pub fn control(a: Actor, c: Command) void {
     if (a.mind.blink != 0) a.mind.blink -= 1;
     act(a, c);
     if (a.entity.velocity.height.order(n.fall_most) == .gt) a.entity.velocity.height = n.fall_most;
-    goAround(a);
-    placeHeld(a);
+    if (partnerOf(a) == null) {
+        goAround(a);
+        placeHeld(a);
+    }
     showBoxes(a);
     a.mind.landed_blow = false;
     a.mind.caught = false;
@@ -665,10 +767,12 @@ fn act(a: Actor, c: Command) void {
         .grab, .grab_behind => hold(a, c),
         .knee => if (a.countDown()) change(a, .grab),
         .knee_last => {
+            ask(a, .last_knee);
             _ = a.step();
             if (n.knee_last_leap) |from| {
                 if (a.frame() < from) return;
-                if (a.entity.holding != null) a.letGo();
+                // The other player held lets go itself, when its knee strikes it.
+                if (a.entity.holding != null and partnerOf(a) == null) a.letGo();
                 return leap(a);
             }
             if (a.frame() != n.knee_last_ends) return;
@@ -697,6 +801,15 @@ fn act(a: Actor, c: Command) void {
         .held_behind => heldBehind(a, c),
         .escape => escape(a),
         .thrown => thrown(a),
+        .slam_pause => {
+            a.mind.timer -%= 1;
+            if (a.mind.timer == 0) change(a, .held);
+        },
+        .lift => lift(a),
+        .air_slam => airSlam(a),
+        .air_fall => kickGravity(a),
+        .slammed => slammed(a),
+        .thrown_fall => gravity(a),
     }
     if (a.mind.state == .knocked_down and a.mind.may_recover and c.pressed.c and c.held.up) {
         a.mind.may_recover = false;
@@ -830,7 +943,7 @@ fn hitPause(a: Actor) bool {
 /// leaves it as it is (the original's players keep a mark of it through these states).
 fn struckDown(state: State) bool {
     return switch (state) {
-        .hurt, .knocked_down, .down, .getting_up, .recover, .dying, .lying_dead, .thrown => true,
+        .hurt, .knocked_down, .down, .getting_up, .recover, .dying, .lying_dead, .thrown, .thrown_fall => true,
         else => false,
     };
 }
@@ -926,13 +1039,33 @@ pub fn blowLanded(a: Actor, target: Handle) void {
 /// In the air after its move: it lands once it comes down to the ground, on its whole pixels;
 /// its gravity is its state's, applied before its move (`act`).
 pub fn fall(a: Actor) void {
-    if (a.entity.velocity.height.raw >= 0 and a.atGround()) a.land(.whole);
+    const n = a.numbers();
+    const e = a.entity;
+    // Fallen so deep into the ground that the look for walls above its feet finds it (the
+    // original's walls are the level's cells, the ground's among them): its move in depth, then
+    // its move across, is undone and stops.
+    const looked_at = e.position.height.whole() - n.wall_above;
+    const ground = a.tick.world.ground.whole();
+    if (e.velocity.depth.raw != 0 and looked_at > ground) {
+        e.position.depth = e.position.depth.sub(e.velocity.depth);
+        e.velocity.depth = .zero;
+    }
+    if (looked_at >= ground) {
+        e.position.x = e.position.x.sub(e.velocity.x);
+        e.position.depth = e.position.depth.sub(e.velocity.depth);
+        e.velocity.x = .zero;
+        e.velocity.depth = .zero;
+    }
+    if (e.velocity.height.raw < 0) return;
+    const reach: i16 = if (a.mind.state == .air_fall) n.air_fall_reach else 0;
+    if (e.position.height.add(.pixels(reach)).lessThan(a.tick.world.ground)) return;
+    a.land(.whole);
 }
 
 pub fn landed(a: Actor) void {
     const n = a.numbers();
     switch (a.mind.state) {
-        .knocked_down => {
+        .knocked_down, .thrown_fall => {
             if (a.mind.recovers) {
                 // Landed on its feet: the throw's damage spared.
                 a.mind.recovers = false;
@@ -976,6 +1109,11 @@ pub fn landed(a: Actor) void {
             a.sound(.land);
             change(a, .land);
         },
+        .air_fall => {
+            a.entity.position.x = a.entity.position.x.add(Fixed.pixels(n.air_fall_ahead).times(a.entity.facing.sign()));
+            a.sound(.land);
+            change(a, if (a.mind.weapon != null) .armed_land else .land);
+        },
         .armed_jump, .armed_jump_kick, .armed_back_attack_air => {
             a.sound(.land);
             change(a, if (a.mind.weapon != null) .armed_land else .land);
@@ -1018,25 +1156,40 @@ pub fn holds(a: Actor, held: Handle) void {
 /// the pad away throws it over the shoulder (from behind, slams it down); pushing away lets it
 /// go.
 fn hold(a: Actor, c: Command) void {
+    if (a.mind.countered) return countered(a);
     if (a.entity.holding == null or a.other(a.entity.holding.?) == null) {
         a.entity.holding = null;
         return change(a, .ready);
     }
     a.entity.velocity.height = .zero;
+    const other = partnerOf(a);
+    // Holding the other player from behind, it waits while the other jumps out.
+    if (other) |o| if (a.mind.state == .grab_behind and o.mind.state == .escape) return;
     if (c.pressed.c) {
         a.sound(.jump);
+        if (other != null and a.mind.state == .grab) {
+            // The other player held from the front: it lifts itself over it.
+            a.mind.lifting_over = true;
+            a.mind.throw_ticks = a.numbers().lift_first;
+            return change(a, .lift);
+        }
         return change(a, if (a.mind.state == .grab_behind) .throw_back else .throw);
     }
     if (a.mind.state == .grab_behind) {
-        if (c.pressed.b) return change(a, .vault);
+        if (c.pressed.b) {
+            ask(a, .slam);
+            return change(a, .vault);
+        }
     } else if (c.pressed.b) {
         const away = (c.held.left and a.entity.facing == .right) or (c.held.right and a.entity.facing == .left);
         if (away) {
+            ask(a, .lift);
             if (a.numbers().throw_turns != 0) a.entity.facing = a.entity.facing.turned();
             return change(a, .grab_blow);
         }
         a.mind.knees += 1;
         const knees = a.mind.knees;
+        ask(a, if (knees >= 3) .last_knee else .knee);
         change(a, if (knees >= 3) .knee_last else .knee);
         a.mind.knees = knees;
         return;
@@ -1059,12 +1212,16 @@ fn vaultEnds(a: Actor) void {
     a.sound(.land);
     if (a.mind.state == .throw) {
         a.mind.vaulted = true;
+        ask(a, .to_behind);
         return change(a, .grab_behind);
     }
     if (!a.mind.vaulted) {
         a.mind.vaulted = true;
+        ask(a, .to_front);
         return change(a, .grab);
     }
+    // The other player let go, a step back from it.
+    if (partnerOf(a) != null) a.entity.position.x = a.entity.position.x.add(Fixed.pixels(a.numbers().vault_off_step).times(-a.entity.facing.sign()));
     a.letGo();
     change(a, if (a.mind.weapon != null) .armed_land else .land);
 }
@@ -1153,6 +1310,7 @@ fn heldFront(a: Actor) void {
     const n = a.numbers();
     a.entity.velocity.height = .zero;
     if (a.entity.holder == null) return change(a, .ready);
+    if (partnerOf(a)) |holder| return heldByPlayer(a, holder);
     if (a.mind.throw_asked) {
         a.mind.throw_asked = false;
         const carried = a.mind.carried;
@@ -1172,18 +1330,35 @@ fn heldFront(a: Actor) void {
 fn heldBehind(a: Actor, c: Command) void {
     a.entity.velocity.height = .zero;
     if (a.entity.holder == null) return change(a, .ready);
+    const holder = partnerOf(a);
+    if (holder != null) switch (a.mind.request) {
+        .to_front => return change(a, .held),
+        .slam => {
+            dropWeapon(a);
+            change(a, .slammed);
+            a.mind.step = 0;
+            a.mind.timer = a.numbers().slammed_first;
+            return;
+        },
+        else => {},
+    };
     if (a.mind.counter_window != 0) {
         a.mind.counter_window -= 1;
         if (a.mind.counter_window != 0 and c.pressed.b) {
             a.mind.counter_window = 0;
             if (a.tick.turnHold(a.handle)) {
-                change(a, .grab_blow);
-                a.startMove(.counter);
+                // The throw's state with the counter's move (no sound of its own); the hold's
+                // count goes on once more, on the counter's first frame.
+                enter(a, .grab_blow);
+                beginWith(a, .grab_blow, .counter);
+                _ = a.countDown();
                 return;
             }
         }
     }
-    if (c.pressed.c) {
+    // No jump out while the other player holding it jumps over it.
+    const jumping_over = if (holder) |h| h.mind.state == .throw or h.mind.state == .throw_back else false;
+    if (c.pressed.c and !jumping_over) {
         a.sound(.jump);
         return change(a, .escape);
     }
@@ -1208,12 +1383,17 @@ fn escape(a: Actor) void {
 /// it falls ahead, knocked down, the holder's blow carried to the landing.
 fn thrown(a: Actor) void {
     const n = a.numbers();
+    const by_player = partnerOf(a) != null;
+    if (by_player) keepBlow(a);
     a.mind.throw_ticks -%= 1;
-    if (a.mind.throw_ticks != 0) return placeFromHolder(a);
+    if (a.mind.throw_ticks != 0) {
+        if (!by_player) placeFromHolder(a);
+        return;
+    }
     if (a.frame() == n.thrown_falls) return throwFall(a);
     a.mind.throw_ticks = n.thrown_pace;
     a.showFrame(a.frame() + 1, null);
-    placeFromHolder(a);
+    if (!by_player) placeFromHolder(a);
 }
 
 /// At a new frame of a throw, it is placed from its holder by the frame's place: its whole
@@ -1242,6 +1422,242 @@ fn throwFall(a: Actor) void {
     a.entity.velocity.height = n.thrown_up;
     a.entity.velocity.x = if (a.entity.velocity.x.raw < 0) n.thrown_x else n.thrown_x.neg();
     a.mind.may_recover = true;
+}
+
+// Holds between the two players -------------------------------------------------------------
+
+/// The other player, when it is the one it holds or is held by (a player's behaviour).
+fn partnerOf(a: Actor) ?Actor {
+    const h = a.entity.holding orelse a.entity.holder orelse return null;
+    return a.tick.actor(@This(), h);
+}
+
+/// It asks the other player it holds for `r`, answered at the other's next turn.
+fn ask(a: Actor, r: Request) void {
+    const h = a.entity.holding orelse return;
+    const o = a.tick.actor(@This(), h) orelse return;
+    o.mind.request = r;
+}
+
+/// The other player grabbed it (its walk's reach met its body): it feels the hold at its next
+/// tick, from behind when they face the same way. Holding from behind, its hold turned by the
+/// one it held: thrown by it.
+pub fn heldBy(a: Actor, by: Handle) void {
+    if (a.mind.state == .grab_behind) {
+        a.mind.countered = true;
+        return;
+    }
+    const o = a.other(by) orelse return;
+    a.mind.caught_by = .{ .by = by, .behind = o.facing == a.entity.facing };
+}
+
+/// Held from the front by the other player: it answers what its holder asks; else after a
+/// while it is free.
+fn heldByPlayer(a: Actor, holder: Actor) void {
+    const n = a.numbers();
+    switch (a.mind.request) {
+        .to_behind => return change(a, .held_behind),
+        .knee => {
+            loses(a, holder.handle, holderBlow(a, holder));
+            if (a.entity.health <= 0) return die(a, holder.handle);
+            a.sound(.hurt);
+            change(a, .slam_pause);
+            a.mind.timer = n.slam_pause;
+            return;
+        },
+        .last_knee => {
+            if (holder.frame() != holder.numbers().knee_last_hits) return;
+            return knockedByKnee(a, holder);
+        },
+        .lift => {
+            a.mind.lifting_over = false;
+            change(a, .lift);
+            a.mind.throw_ticks = n.lift_first;
+            return;
+        },
+        else => {},
+    }
+    if (!a.countDown()) return;
+    a.letGo();
+    change(a, .ready);
+}
+
+/// The damage of the blow its holder's frame shows, or else the one it kept (`keepBlow`).
+fn holderBlow(a: Actor, holder: Actor) i16 {
+    const p = holder.power();
+    if (p != 0) return p;
+    const kept = a.mind.carried;
+    a.mind.carried = 0;
+    return kept;
+}
+
+/// Held by the other player, it keeps the first blow its holder's frames show, for its fall.
+fn keepBlow(a: Actor) void {
+    if (a.mind.carried != 0) return;
+    const h = partnerOf(a) orelse return;
+    a.mind.carried = h.power();
+}
+
+/// The last knee strikes: facing the holder, it takes its blow and is knocked down, let go.
+fn knockedByKnee(a: Actor, holder: Actor) void {
+    const n = a.numbers();
+    faceStriker(a, holder.entity);
+    a.sound(.hurt);
+    loses(a, holder.handle, holderBlow(a, holder));
+    if (a.entity.health <= 0) return die(a, holder.handle);
+    dropWeapon(a);
+    a.letGo();
+    change(a, .knocked_down);
+    a.mind.bounces = 0;
+    a.entity.velocity.height = n.knocked_down_up;
+    a.entity.flags.airborne = true;
+}
+
+/// Holding from behind, the one held threw it over (its counter): it is thrown from a little
+/// lower, its thrower's blow kept for its landing.
+fn countered(a: Actor) void {
+    const n = a.numbers();
+    a.mind.countered = false;
+    a.entity.position.height = a.entity.position.height.add(.pixels(n.countered_drop));
+    change(a, .thrown);
+    a.mind.throw_ticks = n.thrown_first;
+    a.mind.thrower = a.entity.holder;
+    a.mind.carried = 0;
+    a.mind.may_recover = false;
+}
+
+/// Lifted over the other player (its throw), or lifting itself over the one it holds: its
+/// frames every few ticks to the last; then, the hold over, up and into the spin.
+fn lift(a: Actor) void {
+    const n = a.numbers();
+    a.mind.throw_ticks -%= 1;
+    if (a.mind.throw_ticks != 0) return;
+    a.mind.throw_ticks = n.lift_pace;
+    if (a.frame() != n.lift_ends) return a.showFrame(a.frame() + 1, null);
+    a.letGo();
+    a.entity.velocity.height = n.lift_up;
+    a.entity.position.height = a.entity.position.height.sub(.pixels(n.lift_rise));
+    a.entity.flags.airborne = true;
+    change(a, .air_slam);
+    a.mind.timer = n.air_slam_loops;
+}
+
+/// The spin in the air: a lighter gravity; when its animation has looped its times, it drops a
+/// little and falls.
+fn airSlam(a: Actor) void {
+    const n = a.numbers();
+    a.entity.velocity.height = a.entity.velocity.height.add(n.air_slam_gravity);
+    if (!a.step() or a.frame() != 0) return;
+    a.mind.timer -%= 1;
+    if (a.mind.timer != 0) return;
+    a.entity.position.height = a.entity.position.height.add(.pixels(n.air_slam_drop));
+    change(a, .air_fall);
+}
+
+/// Slammed down from behind, by steps: up a little, shown slammed and higher (the hold over),
+/// then back and down twice, shown down; then it falls back, as a knock-down does, and takes
+/// the slam's blow, the screen shaking.
+fn slammed(a: Actor) void {
+    const n = a.numbers();
+    const t = a.tables();
+    keepBlow(a);
+    a.mind.timer -%= 1;
+    if (a.mind.timer != 0) return;
+    a.mind.timer = n.slammed_pace;
+    a.mind.step += 1;
+    const e = a.entity;
+    const back = -e.facing.sign();
+    switch (a.mind.step) {
+        1, 2, 3, 4 => |k| {
+            if (k == 2) {
+                a.letGo();
+                a.animate(.slammed);
+                e.velocity = .zero;
+            }
+            if (k == 4) a.showFrame(1, null);
+            e.position.x = e.position.x.add(Fixed.pixels(t.slammed_back[k - 1]).times(back));
+            e.position.height = e.position.height.add(.pixels(t.slammed_down[k - 1]));
+            onGround(a);
+        },
+        else => {
+            a.mind.step = 0;
+            e.velocity.x = e.velocity.x.add(n.slammed_fall_back.times(back));
+            e.velocity.height = n.slammed_fall_up;
+            e.flags.airborne = true;
+            enter(a, .thrown_fall);
+            a.mind.bounces = 0;
+            const c = &a.tick.world.camera;
+            if (!a.tick.world.special and c.shake == 0) {
+                a.tick.shake();
+                a.sound(.thud);
+            }
+            const damage = a.mind.carried;
+            a.mind.carried = 0;
+            loses(a, a.mind.thrower, damage);
+            if (a.entity.health <= 0) die(a, a.mind.thrower);
+        },
+    }
+}
+
+/// Never below the ground: there, it stands on it.
+fn onGround(a: Actor) void {
+    const e = a.entity;
+    if (e.position.height.whole() > a.tick.world.ground.whole()) e.position.height = a.tick.world.ground;
+}
+
+/// After its move, in a hold with the other player: at a new frame of the hold (slammed, at each
+/// tick while held), it takes its place from the other, by its definition's `partners` for the
+/// other's kind: across from the other's place toward the side it faces (or the other goes the
+/// other way from it), its height from the other's, and in the holds its depth (whole pixels,
+/// its fractions kept).
+pub fn moved(a: Actor) void {
+    const o = partnerOf(a) orelse return;
+    const name: []const u8 = switch (a.mind.state) {
+        .held => "held",
+        .held_behind => "held_behind",
+        .slammed => "slammed",
+        .throw => "vault_over",
+        .throw_back => "throw_back",
+        .thrown => "thrown",
+        .lift => if (a.mind.lifting_over) "lift_over" else "lifted",
+        else => return,
+    };
+    const now: Shown = .{ .animation = a.entity.animation.index, .frame = a.frame(), .facing = a.entity.facing };
+    if (a.mind.state != .slammed and std.meta.eql(now, a.mind.shown)) return;
+    const pp = a.kind.definition.partnerPlaces(name, o.kind.definition.name) orelse return;
+    const place = pp.places[@min(a.frame(), pp.places.len - 1)];
+    const e = a.entity;
+    const p = o.entity;
+    const dx: i32 = @as(i32, place.x) * e.facing.sign();
+    if (pp.partner.moves_partner) {
+        p.position.x = .parts(@intCast(e.position.x.whole() - dx), p.position.x.frac());
+    } else e.position.x = .parts(@intCast(p.position.x.whole() + dx), e.position.x.frac());
+    e.position.height = .parts(@intCast(p.position.height.whole() + place.height), e.position.height.frac());
+    onGround(a);
+    if (pp.partner.depth) e.position.depth = .parts(@intCast(p.position.depth.whole()), e.position.depth.frac());
+}
+
+/// How it may meet the other player at this tick (`systems.betweenPlayers`): not at all (0)
+/// while it blinks or in a state that neither strikes nor is struck by it, its blows only (2),
+/// or its blows and its grabs (1).
+pub fn touchClass(a: Actor) u8 {
+    if (a.mind.blink != 0) return 0;
+    return switch (a.mind.state) {
+        .ready, .idle, .walk, .attack1, .attack2, .attack3, .armed_stand, .armed_walk, .armed_attack, .armed_stab, .armed_swing => 1,
+        .fall, .jump_crouch, .jump, .land, .jump_kick, .attack4, .back_attack, .back_attack_crouch, .back_attack_air => 2,
+        .armed_jump_crouch, .armed_jump, .armed_land, .armed_jump_kick, .armed_back_attack, .armed_back_attack_crouch, .armed_back_attack_air => 2,
+        .grab, .grab_behind, .escape, .lift, .air_slam, .air_fall => 2,
+        else => 0,
+    };
+}
+
+/// Whether the camera keeps it in its view: not in a hold's states but a back drop's, nor in a
+/// throw or a lift.
+pub fn keptInView(a: Actor) bool {
+    return switch (a.mind.state) {
+        .grab, .grab_blow, .grab_behind, .knee, .knee_last, .throw, .throw_back, .held, .held_behind, .escape, .thrown, .slam_pause, .lift => false,
+        else => true,
+    };
 }
 
 // The special attack -------------------------------------------------------------------------

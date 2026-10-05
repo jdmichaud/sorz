@@ -122,6 +122,9 @@ pub const World = struct {
     /// enemies it caught wait for its blast; the player who called the last one.
     special: bool = false,
     special_by: ?Handle = null,
+    /// Which player's blow or grab on the other is looked at last (it wins) at the next tick the
+    /// two may meet: player 1's (true) or player 2's; it turns at each such tick.
+    first_touches_last: bool = false,
     /// The status bar's bosses, from the first tick of the round's boss: its entry in the bar's
     /// names and bars (the round's script's `bar`), and the bosses whose health its bars show
     /// (the second of twins in the second).
