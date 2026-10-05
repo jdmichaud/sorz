@@ -653,7 +653,7 @@ pub const Round = struct {
         const w = &self.play.world;
         if (self.join_as) |c| {
             self.join_as = null;
-            if (w.players[1].entity == null) if (self.joinOf(a, c)) |x| return x;
+            if (w.players[1].entity == null) if (self.joinOf(turn, a, c)) |x| return x;
         }
         // The special attack holds the invitation as it is (its count, its blink).
         if (w.special) return null;
@@ -663,7 +663,7 @@ pub const Round = struct {
             self.join.turn();
             return null;
         }
-        const x = self.joinOf(a, j.next[@backingInt(first.?)]) orelse {
+        const x = self.joinOf(turn, a, j.next[@backingInt(first.?)]) orelse {
             self.join.turn();
             return null;
         };
@@ -672,13 +672,22 @@ pub const Round = struct {
     }
 
     /// The join of player 2 as `character`: null when the content lacks it.
-    fn joinOf(self: *Round, a: *const Assets, character: setup_mod.Character) ?world.tick.Join {
+    fn joinOf(self: *Round, turn: *const scene.Turn, a: *const Assets, character: setup_mod.Character) ?world.tick.Join {
         const kind = a.kinds.find(@tagName(character)) orelse {
             std.log.warn("the content defines no {s}: player 2 cannot join", .{@tagName(character)});
             return null;
         };
         self.joining = character;
-        return .{ .player = 1, .kind = kind, .lives = a.screen.status_bar.join.lives };
+        return .{ .player = 1, .kind = kind, .lives = a.screen.status_bar.join.lives, .colours = playerColours(turn, 1, character, kind, a) };
+    }
+
+    /// The colours player `k` playing `character` (of kind `kind`) is drawn with: the variant's
+    /// for a second player playing the first's character (`Policies.duplicate_colours`), when
+    /// the character's definition has them; else its own.
+    fn playerColours(turn: *const scene.Turn, k: u1, character: setup_mod.Character, kind: world.entity.KindId, a: *const Assets) ?u8 {
+        const name = turn.policies.duplicate_colours orelse return null;
+        if (k != 1 or turn.setup.characters[0] != character) return null;
+        return a.kinds.get(kind).definition.colourMap(name);
     }
 
     /// Player 2 joined at this logic tick, as `joining`: two players in the game from now on.
@@ -902,6 +911,7 @@ pub const Round = struct {
             const h = w.spawn(a.kinds, kind, at, .right) catch continue;
             wp.entity = h;
             wp.character = kind;
+            wp.colours = playerColours(turn, @intCast(k), character, kind, a);
             wp.specials = 1;
             if (t.actor(world.behaviours.player, h)) |act| world.behaviours.player.startLife(act);
         }

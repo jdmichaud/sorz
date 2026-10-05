@@ -62,6 +62,8 @@ const pose_wait = 18;
 const chosen_wait = 18;
 const eye_open_ticks = 300;
 const eye_closed_ticks = 8;
+/// The port's: the display ticks each of two players' labels on one portrait is in front.
+const label_turn = 32;
 
 pub const Portrait = struct {
     state: State = .standing,
@@ -420,9 +422,13 @@ pub const Select = struct {
         if (self.players == .two and turn.policies.characterTaken(self.cursors[1 - i].place, to)) to = next(to, pressed.right);
         if (turn.taken == to) to = next(to, pressed.right);
         c.place = to;
-        self.portraits[@backingInt(from)].cursor = false;
+        // A portrait the other player's cursor stays on stays lit (when the variant lets both
+        // be on one).
+        if (self.players != .two or self.cursors[1 - i].place != from) {
+            self.portraits[@backingInt(from)].cursor = false;
+            self.colours.show(a.dim(from));
+        }
         self.portraits[@backingInt(to)].cursor = true;
-        self.colours.show(a.dim(from));
         self.colours.show(a.lit(to));
         turn.play(a.move);
     }
@@ -522,10 +528,11 @@ pub const Select = struct {
             try v.board(.b).drawMapAtPlace(if (self.shown_eye_closed) a.eye_closed else a.eye_open);
         }
         v.screen.colours = self.colours.shown;
-        // Back to front: player 2's label, player 1's, Blaze, Axel, Adam.
-        var i: usize = 2;
-        while (i > 0) {
-            i -= 1;
+        // Back to front: player 2's label, player 1's (on one portrait, when the variant lets
+        // both players choose it, they take turns in front), Blaze, Axel, Adam.
+        const one_place = self.shown.labels[0] != null and self.shown.labels[0] == self.shown.labels[1];
+        const back_first: [2]usize = if (one_place and (self.ticks / label_turn) % 2 == 1) .{ 0, 1 } else .{ 1, 0 };
+        for (back_first) |i| {
             const place = self.shown.labels[i] orelse continue;
             try v.sprites.append(v.gpa, .of(a.labels[i], label_x.get(place), label_y));
         }

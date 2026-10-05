@@ -7,8 +7,8 @@
 //!   2 PLAYERS, OPTIONS), its options, its pause on START; the port's settings by the settings key
 //!   (F1) alone. It is the variant that the checks against sor-remaster compare.
 //! - **extended**, the default: the port's liberties: ADVANCED SETTINGS in OPTIONS, before EXIT,
-//!   and START during play opening the settings in place of the pause; later the same character
-//!   twice (PLAN item 20, a policy and the content's palettes).
+//!   START during play opening the settings in place of the pause, and the same character for
+//!   both players (PLAN item 20: its rule, and the content's colours for the second).
 //! - **network**: network play and the browser, one player a machine. Each machine runs its own
 //!   front end; its game menu is 2 PLAYERS and OPTIONS: 2 PLAYERS goes to the character select
 //!   with this machine's player alone, and the other machine's player joins there or in the round
@@ -70,6 +70,9 @@ pub const Policies = struct {
     /// Whether character `wanted` is taken for a player, the other player's cursor on `other` at
     /// the character select (two players): their cursor then passes it.
     characterTaken: *const fn (other: Character, wanted: Character) bool = takenByTheOther,
+    /// The colours a second player playing the first player's character is drawn with: the
+    /// colour map of that name in the character's definition (`colour_maps`); none: its own.
+    duplicate_colours: ?[]const u8 = null,
 };
 
 pub const Config = struct {
@@ -83,6 +86,8 @@ pub const extended: Config = .{ .graph = &flow.extended, .policies = .{
     .advanced_settings = true,
     .start_opens_settings = true,
     .settings_key = false,
+    .characterTaken = neverTaken,
+    .duplicate_colours = "duplicate",
 } };
 
 pub const network: Config = .{ .graph = &flow.network, .policies = .{
@@ -110,6 +115,13 @@ pub fn takenByTheOther(other: Character, wanted: Character) bool {
     return other == wanted;
 }
 
+/// The port's: both players may play the same character.
+pub fn neverTaken(other: Character, wanted: Character) bool {
+    _ = other;
+    _ = wanted;
+    return false;
+}
+
 const testing = std.testing;
 
 test "each variant: its graph, its menu, its options' lines, START and the settings key" {
@@ -125,9 +137,13 @@ test "each variant: its graph, its menu, its options' lines, START and the setti
     const e = &Variant.extended.config().policies;
     try testing.expectEqualSlices(MenuLine, &.{ .one_player, .two_players, .options }, e.menuLines());
     try testing.expect(e.advanced_settings and e.start_opens_settings and !e.settings_key);
+    try testing.expect(!e.characterTaken(.axel, .axel) and o.characterTaken(.axel, .axel));
+    try testing.expectEqualStrings("duplicate", e.duplicate_colours.?);
+    try testing.expect(o.duplicate_colours == null);
 
     const n = &Variant.network.config().policies;
     try testing.expectEqualSlices(MenuLine, &.{ .two_players, .options }, n.menuLines());
     try testing.expect(!n.two_players_here and n.advanced_settings and n.start_opens_settings and !n.settings_key);
+    try testing.expect(n.characterTaken(.axel, .axel) and n.duplicate_colours == null);
     try testing.expect(takenByTheOther(.axel, .axel) and !takenByTheOther(.adam, .axel));
 }
