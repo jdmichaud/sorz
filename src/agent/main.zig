@@ -27,7 +27,8 @@ const usage =
     \\                  [--game-tick N]] [--trace-events OUT] [--probe OUT]
     \\       sorz-agent trace-compare FIRST SECOND [--ticks M] [--pos PIXELS] [--tol FIELD=N]...
     \\                  [--ignore EV[,EV...]] [--scene NAME] [--after TICK] [--ignore-kind K[,K...]]
-    \\                  [--ignore-field F[,F...]] [--sounds SOUNDS_JSON] [--renumber] [--all]
+    \\                  [--ignore-field F[,F...]] [--sounds SOUNDS_JSON] [--renumber] [--close-ids]
+    \\                  [--all]
     \\  --frames N       run N frames, a display tick each (default 120)
     \\  --key FRAME:NAME[:HOLD]  press the key NAME (a platform.Key, as `enter` or `left`) at
     \\                   frame FRAME, release it HOLD frames later (default 1); repeats
@@ -76,7 +77,8 @@ const usage =
     \\                   tick --after; --sounds names the first trace's sounds (sor-remaster's
     \\                   `sfx_b2`) as the sound content's sounds.json does (\"enemy hit\");
     \\                   --renumber numbers the entities by their order of appearance (the
-    \\                   ignored kinds left out); --all writes every difference; exits 1 when
+    \\                   ignored kinds left out); --close-ids gives up the numbers the ignored
+    \\                   kinds took after --after; --all writes every difference; exits 1 when
     \\                   they differ
     \\
 ;
@@ -352,6 +354,8 @@ fn traceCompare(init: std.process.Init, args: anytype, out: *std.Io.Writer) !boo
             options.all = true;
         } else if (std.mem.eql(u8, arg, "--renumber")) {
             options.renumber = true;
+        } else if (std.mem.eql(u8, arg, "--close-ids")) {
+            options.close_ids = true;
         } else if (n < 2 and arg.len != 0 and arg[0] != '-') {
             paths[n] = arg;
             n += 1;

@@ -44,6 +44,10 @@ pub const Options = struct {
     /// ignored kinds left out; the players keep 1 and 2): two runs from power-on whose front
     /// ends make other entities (sor-remaster's screen objects) number the round's alike.
     renumber: bool = false,
+    /// The numbers the ignored kinds' entities took after `after` are given up: each entity
+    /// that came after one is numbered down by one (a program that makes no such entity numbers
+    /// the others alike).
+    close_ids: bool = false,
     max_written: usize = 50,
 };
 
@@ -139,6 +143,7 @@ pub fn restrict(arena: std.mem.Allocator, trace: *const Trace, options: Options,
     var events: std.ArrayList(Event) = .empty;
     var numbers: std.AutoHashMapUnmanaged(i64, i64) = .empty;
     var next_number: i64 = 3;
+    var given_up: i64 = 0;
     for (trace.events) |e| {
         if (std.mem.eql(u8, e.ev, "spawn")) if (int(e.object, "e")) |id| {
             const kind = str(e.object, "kind") orelse "";
@@ -146,6 +151,10 @@ pub fn restrict(arena: std.mem.Allocator, trace: *const Trace, options: Options,
             if (options.renumber and !listed(options.ignore_kinds, kind) and id > 2) {
                 try numbers.put(arena, id, next_number);
                 next_number += 1;
+            }
+            const later = if (options.after) |a| e.t > a else true;
+            if (options.close_ids and later) {
+                if (listed(options.ignore_kinds, kind)) given_up += 1 else if (given_up != 0) try numbers.put(arena, id, id - given_up);
             }
         };
         if (keep_scene) |k| {
@@ -156,7 +165,7 @@ pub fn restrict(arena: std.mem.Allocator, trace: *const Trace, options: Options,
         if (str(e.object, "kind")) |kind| if (listed(options.ignore_kinds, kind)) continue;
         var x = e;
         if (keep_scene != null) x.scene = 1;
-        if (options.renumber) x = try renumbered(arena, x, &numbers);
+        if (options.renumber or options.close_ids) x = try renumbered(arena, x, &numbers);
         if (rename and std.mem.eql(u8, e.ev, "sound")) if (str(e.object, "sound")) |name| {
             for (options.sound_names) |r| if (std.mem.eql(u8, r.from, name)) {
                 var o = try e.object.clone(arena);
