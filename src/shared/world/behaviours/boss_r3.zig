@@ -902,17 +902,36 @@ fn lie(a: Actor) void {
 }
 
 /// His health gone: knocked out; one alone (not a variant) with no helper ends the section's
-/// fight; with a helper, the helper is told.
+/// fight; with a helper, the helper is told. One not a variant with no other of his kind up (or
+/// no helper) makes the round's end due: the round's timer stops.
 fn knockout(a: Actor) void {
     const m = a.mind;
     m.state = .knocked_out;
     if (a.entity.spawn.traits.twin) return;
-    if (helperOf(a)) |h| {
+    const helper = helperOf(a);
+    if (helper == null or !otherUp(a)) a.tick.world.timer.stopped = true;
+    if (helper) |h| {
         const bar = a.entity.spawn.bar orelse 0;
         if (bar != 0) h.mind.beaten.second = true else h.mind.beaten.first = true;
         return;
     }
     a.tick.bossBeaten();
+}
+
+/// Whether another of his kind is up (not knocked out), in the enemies' places.
+fn otherUp(a: Actor) bool {
+    const w = a.tick.world;
+    const places = world_mod.World.enemy_places;
+    for (places.from..places.to) |i| {
+        if (i == a.handle.index) continue;
+        const o = &w.entities[i];
+        if (!o.alive() or o.kind == null or o.kind.? != a.entity.kind.?) continue;
+        switch (o.mind) {
+            .boss_r3 => |om| if (om.state != .knocked_out) return true,
+            else => {},
+        }
+    }
+    return false;
 }
 
 fn helperOf(a: Actor) ?tick.Actor(@import("boss_r3_helper.zig")) {
