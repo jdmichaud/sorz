@@ -372,13 +372,16 @@ fn entry(rom: []const u8, type_byte: u8, bytes: [3]u8, y: u8) Error!round.Spawn 
         .level = @intCast(y & 3),
         .two_players = type_byte & 0x80 != 0,
     };
-    if (t == 0x11) {
-        // A breakable: the item it holds, an index from 1 (0 for none).
-        if (bytes[1] != 0) {
-            if (bytes[1] > 11) return error.BadData;
-            s.holds = kindName(rom[breakable_items + @as(u32, bytes[1])]) orelse return error.BadData;
-        }
-        return s;
+    switch (t) {
+        0x11, 0x19 => {
+            // A breakable, an oil drum: the item it holds, an index from 1 (0 for none).
+            if (bytes[1] != 0) {
+                if (bytes[1] > 11) return error.BadData;
+                s.holds = kindName(rom[breakable_items + @as(u32, bytes[1])]) orelse return error.BadData;
+            }
+            return s;
+        },
+        else => {},
     }
     try enemyRecord(rom, &s, t, bytes[0], bytes[1], bytes[2]);
     return s;

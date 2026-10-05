@@ -256,8 +256,9 @@ of behaviour `player`, from the same code of the original, which tests the chara
 plays a move its own way: each definition holds its own numbers and frames then), round 1's
 Galsia (`galsia`), a stand-in for the special attack's police car (`police_car`), the GO arrow
 a section's opening shows (`go_arrow`) and a player out of lives (`player_waiting`: no art, the
-name entry's and the continue's question's numbers and sounds); the other characters and enemies
-come with PLAN items 12 to 15. Their numbers are read from the ROM's
+name entry's and the continue's question's numbers and sounds), round 2's scenery (the oil drums,
+`knockable`); the other characters and enemies come with PLAN items 12 to 15. Their numbers
+are read from the ROM's
 tables and from the immediate values of the code that uses them, each with its place in the
 definition's provenance, but the car's times, which the original's car, camera and shells make
 together: those are measured in sor-remaster and said so.
@@ -467,8 +468,8 @@ A record of `placed`, `wave` or `reserve` is one entity:
   `slides`, `flips_away`, `drops_in`, `flips_at_close_range`, `unflinching`, `walks_off`,
   `twin`); `offset`, where it keeps from its target (`x` away from it, `depth`); `strength`, its
   row of strength and colours (0 when absent); `colours`, its colours by number (`enemy_colours`).
-- A breakable's: `holds`, the kind of the item it leaves. A boss's: `bar`, its entry in the
-  status bar's names and bars.
+- A breakable's (an oil drum's too): `holds`, the kind of the item it leaves. A boss's: `bar`,
+  its entry in the status bar's names and bars.
 
 The extractor writes round 1's script (PLAN item 13; the other rounds, whose last sections and set
 pieces differ, with item 15). The times between the events are the original's loads of art: a

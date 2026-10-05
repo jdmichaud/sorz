@@ -153,8 +153,7 @@ fn breaks(a: Actor) bool {
     const at = a.entity.position;
     if (a.mind.holds) |item| {
         a.mind.holds = null;
-        const place: fixed.Vec3 = .{ .x = .pixels(at.x.whole()), .depth = .pixels(at.depth.whole()), .height = .pixels(at.height.whole()) };
-        _ = w.spawnItem(a.tick.kinds, item, place) catch {};
+        leave(a.tick, item, at);
     }
     a.mind.timer = n.breaking;
     a.mind.state = .breaking;
@@ -175,6 +174,13 @@ fn breaks(a: Actor) bool {
         p.mind.breakable.piece = @intCast(k + 1);
     }
     return true;
+}
+
+/// A thing of the street that held `item` leaves it where it stood, `at` (its whole pixels), in
+/// the items' places (`World.spawnItem`; none free: it is lost), as the original's do.
+pub fn leave(t: *tick.Tick, item: entity.KindId, at: fixed.Vec3) void {
+    const place: fixed.Vec3 = .{ .x = .pixels(at.x.whole()), .depth = .pixels(at.depth.whole()), .height = .pixels(at.height.whole()) };
+    _ = t.world.spawnItem(t.kinds, item, place) catch {};
 }
 
 /// A player does not hold it.

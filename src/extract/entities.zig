@@ -19,6 +19,7 @@ const enemies = @import("enemies.zig");
 const weapons = @import("weapons.zig");
 const items = @import("items.zig");
 const special = @import("special.zig");
+const scenery = @import("scenery.zig");
 
 const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
@@ -1087,6 +1088,7 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8) Error![]const entity.Defin
     try enemies.all(arena, rom, &out);
     try weapons.all(arena, rom, &out);
     try items.all(arena, rom, &out);
+    try scenery.all(arena, rom, &out);
     try special.all(arena, rom, &out);
     try out.append(arena, try goArrow(arena, rom));
     try out.append(arena, try playerWaiting(arena, rom));

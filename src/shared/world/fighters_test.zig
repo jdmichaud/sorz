@@ -377,6 +377,20 @@ const apple =
     \\ }}
 ;
 
+/// An oil drum: it stands (its body, its solid box); knocked away, it flies 24 ticks.
+const knockable_fixture =
+    \\{"family": "scenery", "team": "neutral", "behaviour": "knockable",
+    \\ "numbers": {"height": 160, "flight": 24, "speed": 262144, "up": -589824, "rising": 59392,
+    \\   "falling": 98304, "bounce": -262144, "left_behind": 96, "screen_from": -8,
+    \\   "screen_to": 328},
+    \\ "sounds": {"knocked": "smash"},
+    \\ "boxes": {"body": {"x": [-16, 16], "depth": [-10, 10], "height": [-56, 0]},
+    \\   "solid": {"x": [-27, 27], "depth": [-9, 3], "height": [-56, 0]}},
+    \\ "animations": {
+++ anim("stand", fr("1", "")) ++ "," ++ anim("fly", bare("1", "") ++ "," ++ bare("1", "")) ++
+    \\ }}
+;
+
 /// A gold bar: 5000 points.
 const gold =
     \\{"family": "item", "team": "neutral", "behaviour": "item",
@@ -699,6 +713,7 @@ const Fixture = struct {
             .{ .name = "special_blast", .text = special_blast_fixture },
             .{ .name = "special_fire", .text = special_fire_fixture },
             .{ .name = "player_waiting", .text = waiting },
+            .{ .name = "knockable", .text = knockable_fixture },
         };
         var defs: [sources.len]content_entity.Definition = undefined;
         var diag: json.Diagnostic = .{};
@@ -1733,6 +1748,48 @@ test "a breakable stops the player at its side; a blow on the screen breaks it: 
     for (0..20) |_| r.step(.{});
     try testing.expect(r.w.get(b) == null);
     for (World.item_places.from + 1..World.item_places.to) |i| try testing.expect(r.w.handleAt(i) == null);
+}
+
+test "an oil drum stands solid; a blow knocks it away the way the striker faces, its item left; it flies its ticks and goes" {
+    var r = try Round.init();
+    defer r.deinit();
+    const d = try r.w.spawnWithin(&r.f.kinds, r.f.kinds.find("knockable").?, 2, 34, .pixels(870, 64, 160), .right);
+    var t = r.tick();
+    t.give(d, r.f.kinds.find("apple").?);
+    r.step(.{});
+    try testing.expectEqualStrings("s1", behaviours.traceName(&r.w.get(d).?.mind).?);
+    try testing.expect(r.w.get(d).?.flags.solid);
+    // Walking right, the player stops against its side, 28 pixels from its place.
+    for (0..20) |_| r.step(.{ .pad1 = .{ .right = true } });
+    try testing.expectEqual(@as(i32, 842), r.player().position.x.whole());
+    r.step(.{});
+    // The jab's blow knocks it away to the right: the apple where it stood, in the items' places.
+    r.step(b_pad);
+    var waited: usize = 0;
+    while (r.w.get(d).?.mind.knockable.state == .stand) : (waited += 1) {
+        try testing.expect(waited < 8);
+        r.step(.{});
+    }
+    const e = r.w.get(d).?;
+    try testing.expect(!e.flags.solid);
+    try testing.expectEqual(entity.Facing.right, e.facing);
+    try testing.expectEqual(@as(i32, 4), e.velocity.x.whole());
+    try testing.expectEqual(@as(i32, -9), e.velocity.height.whole());
+    try testing.expectEqual(@as(i32, 870), e.position.x.whole());
+    const item = r.w.handleAt(World.item_places.from).?;
+    try testing.expectEqualStrings("apple", r.f.kinds.get(r.w.get(item).?.kind.?).name());
+    // It flies 24 ticks from the next: up, then down, bouncing off the ground; then it goes.
+    var highest: i32 = 160;
+    for (0..23) |_| {
+        r.step(.{});
+        const now = r.w.get(d) orelse return error.TestUnexpectedResult;
+        highest = @min(highest, now.position.height.whole());
+        try testing.expect(now.position.height.whole() <= 160 + 8);
+    }
+    try testing.expect(highest < 130);
+    try testing.expectEqual(@as(i32, 870 + 23 * 4), r.w.get(d).?.position.x.whole());
+    r.step(.{});
+    try testing.expect(r.w.get(d) == null);
 }
 
 test "an item picked up gives what it gives and goes: health up to the most, points" {

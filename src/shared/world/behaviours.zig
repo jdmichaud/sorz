@@ -48,7 +48,8 @@
 //! `signal`, `galsia_pipe`, `galsia_knife`, `acrobat`, `brawler`, their weapons (`weapon`,
 //! `knife`, and the `bat` a breakable holds, with its `bat_splinter`s), the rolling `shutter`,
 //! `breakable` and `item` the street's breakables and what they leave, round 1's boss `antonio`
-//! and his `boomerang`, and the `hit_spark` a player's blow makes (PLAN item 12).
+//! and his `boomerang`, and the `hit_spark` a player's blow makes (PLAN item 12); round 2's
+//! scenery (PLAN item 15): the oil drums a blow knocks away (`knockable`).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -79,6 +80,7 @@ pub const special_blast = @import("behaviours/special_blast.zig");
 pub const special_fire = @import("behaviours/special_fire.zig");
 pub const go_arrow = @import("behaviours/go_arrow.zig");
 pub const player_waiting = @import("behaviours/player_waiting.zig");
+pub const knockable = @import("behaviours/knockable.zig");
 
 /// An entity's behaviour and its memory: one line a behaviour module.
 pub const Mind = union(enum) {
@@ -109,6 +111,7 @@ pub const Mind = union(enum) {
     special_fire: special_fire.Mind,
     go_arrow: go_arrow.Mind,
     player_waiting: player_waiting.Mind,
+    knockable: knockable.Mind,
 };
 
 pub const Behaviour = std.meta.Tag(Mind);
