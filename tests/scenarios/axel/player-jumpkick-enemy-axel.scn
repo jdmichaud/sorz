@@ -1,0 +1,12 @@
+# axel: walk into the first wave until a Galsia is within 50 pixels, then a forward jump kick
+# that lands on it (the kick holds a moment in the air, then the jump goes on).
+start axel
+until state 1 ready
++right
+until near galsia 50 within 300
+jump
+wait 4
+attack
+wait 40
+-right
+wait 20

@@ -205,9 +205,8 @@ pub const Mind = struct {
     /// A state's timer (hurt, down), and the knock-down's bounces.
     timer: u8 = 0,
     bounces: u8 = 0,
-    /// The pause in the air after a jump kick lands: its ticks, and the speed it holds.
+    /// The pause in the air after a jump kick lands: its ticks.
     pause: u8 = 0,
-    paused_speed: Vec3 = .zero,
     /// The frame of the hold it last went around the one held at.
     placed_frame: ?u8 = null,
     /// The weapon in its hand.
@@ -973,22 +972,18 @@ fn steer(a: Actor, c: Command) void {
     a.entity.velocity.x = v.clamp(n.steer_most.neg(), n.steer_most);
 }
 
-/// After a jump kick lands, the kick holds still in the air a moment: no move, no gravity.
+/// After a jump kick lands, the kick holds still in the air a moment, its speeds kept: no move,
+/// no gravity; at the pause's last tick it moves on, without gravity yet.
 fn hitPause(a: Actor) bool {
     const n = a.numbers();
     if (a.mind.pause != 0) {
         a.mind.pause -= 1;
-        if (a.mind.pause == 0) {
-            a.entity.velocity = a.mind.paused_speed;
-            return true;
-        }
-        a.entity.velocity = .zero;
+        if (a.mind.pause != 0) a.entity.flags.still = true;
         return true;
     }
     if (!a.mind.landed_blow) return false;
     a.mind.pause = n.hit_pause;
-    a.mind.paused_speed = a.entity.velocity;
-    a.entity.velocity = .zero;
+    a.entity.flags.still = true;
     return true;
 }
 
@@ -1084,7 +1079,7 @@ fn loses(a: Actor, by: ?Handle, damage: i16) void {
 /// gone, a hold it was in let go.
 fn ledge(a: Actor) void {
     const e = a.entity;
-    if (e.velocity.height.raw != 0 or flies(a.mind.state)) return;
+    if (e.flags.airborne or e.velocity.height.raw != 0 or flies(a.mind.state)) return;
     if (a.tick.onFloor(e.position)) return;
     if (e.holding != null or e.holder != null) a.letGo();
     if (a.mind.weapon) |w| {
