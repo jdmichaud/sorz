@@ -25,6 +25,8 @@ pub const Mind = struct {
     body: weapon.Body = .{},
     /// Its holder threw it: it flies from its next turn.
     thrown: bool = false,
+    /// Gone at an earlier tick (else at this one's blows).
+    went: bool = false,
 };
 
 pub const Numbers = struct {
@@ -48,7 +50,11 @@ pub fn think(a: Actor) void {
     switch (a.mind.state) {
         .held => if (a.mind.thrown) return flies(a),
         .flying => return fly(a),
-        .gone => return a.remove(),
+        .gone => {
+            if (a.mind.went) return a.remove();
+            a.mind.went = true;
+            return;
+        },
         .bouncing => {},
         else => {},
     }
@@ -87,7 +93,6 @@ fn fly(a: Actor) void {
 
 fn gone(a: Actor) void {
     a.entity.missile = null;
-    a.entity.velocity = .zero;
     a.mind.state = .gone;
 }
 
@@ -133,6 +138,7 @@ pub fn takeable(a: Actor) bool {
 pub fn takeUp(a: Actor, elapsed: u32) void {
     C.takeUp(a, elapsed);
     if (a.mind.state == .flying) C.pose(a, "level");
+    if (a.mind.state == .gone) a.mind.went = elapsed >= 1;
 }
 
 pub fn takeUpTaken(a: Actor, times: u8) void {

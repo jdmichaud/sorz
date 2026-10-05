@@ -490,7 +490,11 @@ pub const Writer = struct {
             const e = now[i];
             var l = try self.line("hit");
             try l.int("e", e.id);
-            if (by[i]) |a| try self.idField(&l, "by", a, now) else try l.nul("by");
+            // The striker: the one in its place at the observation, as sor-remaster's observer,
+            // which sees the places only, names it (none when the place is empty: a thrown
+            // thing gone at its blow's tick is no one's).
+            const s = if (by[i]) |a| now[a.index] else null;
+            if (s != null and s.?.live and by[i].?.index != i) try l.int("by", s.?.id) else try l.nul("by");
             try l.int("damage", damage[i]);
             try l.int("health", e.health);
             try l.str("reaction", e.state orelse "");
