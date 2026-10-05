@@ -67,6 +67,16 @@ pub const Output = struct {
     /// The draw list, back to front: what the renderer's `Screen.sprites` takes. It stays until
     /// the next logic tick, so the display ticks in between draw it again.
     sprites: List(render.Sprite, 2 * capacity) = .{},
+    /// The draw list the picture shows: the one of the tick before (the console takes its
+    /// sprites as a frame starts, so a tick's show from the next tick on: `latch`).
+    shown_sprites: List(render.Sprite, 2 * capacity) = .{},
+
+    /// At the start of a display tick: the picture takes the draw list the last tick left.
+    pub fn latch(self: *Output) void {
+        const n = self.sprites.len;
+        @memcpy(self.shown_sprites.items[0..n], self.sprites.items[0..n]);
+        self.shown_sprites.len = n;
+    }
 
     /// A new logic tick: its lists start empty (the draw list is rebuilt by its system).
     pub fn begin(self: *Output) void {

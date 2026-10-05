@@ -14,7 +14,9 @@
 //! picture. The `behind` mark lasts one drawing.
 //!
 //! A shadow (an entity whose definition has one, when the content has the shadow's frame) is
-//! drawn on the ground under its entity, just behind it.
+//! drawn on the ground under its entity, just behind it, while the entity is in the air: the
+//! original's shadow goes as its entity stands on the floor (on round 1's floor; the floor's
+//! cells, PLAN item 13, will say where it stays).
 //!
 //! Not reproduced (decision D4, the sprite limits): the original draws at most 15 objects a
 //! band, and an object past them neither shows nor advances its animation at that tick; and it
@@ -43,7 +45,7 @@ pub const far_off_screen: struct { left: i32, right: i32, top: i32, bottom: i32 
 
 /// The bands of depth the order sorts in: four units of depth each.
 const band_depth = 4;
-const band_count = systems.ground_depths.near / band_depth + 1;
+const band_count: usize = systems.ground_depths.near / band_depth + 1;
 
 pub const Place = struct { x: i32, y: i32 };
 
@@ -98,7 +100,7 @@ pub fn build(t: *Tick) void {
         const e = &w.entities[i];
         const shown = out.shown[i].?;
         const p = screenPlace(w, e);
-        if (t.kinds.shadow) |shadow| if (t.kindOf(e).definition.shadow) {
+        if (t.kinds.shadow) |shadow| if (t.kindOf(e).definition.shadow and e.position.height.lessThan(w.ground)) {
             var y = (e.position.depth.whole() >> 1) + w.ground.whole();
             if (!e.flags.on_screen) y -= w.camera.y.whole();
             out.sprites.append(.{ .frame = shadow, .x = p.x, .y = y, .palette = shadow.palette, .priority = shadow.priority or e.flags.in_front });

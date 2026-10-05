@@ -61,6 +61,26 @@ pub fn run(world: *World, kinds: *const Kinds, rng: *random.Random, in: Input, o
     runRound(world, kinds, rng, in, out, null);
 }
 
+/// The draw list of the world as it stands, with no tick: each entity on the frame it is on
+/// (a round's set-up, whose picture shows its entities before they first move). No shadows: they
+/// come with play (the original makes them in its play's mode only).
+pub fn picture(t: *Tick) void {
+    const kinds = t.kinds;
+    defer t.kinds = kinds;
+    var no_shadows = kinds.*;
+    no_shadows.shadow = null;
+    t.kinds = &no_shadows;
+    t.out.begin();
+    for (&t.world.entities, 0..) |*e, i| {
+        if (!e.alive() or e.flags.hidden) continue;
+        const index = e.animation.index orelse continue;
+        const k = t.kindOf(e);
+        const step = k.definition.animations[index].frames[e.animation.frame];
+        t.out.shown[i] = .{ .frame = k.frames[index][e.animation.frame], .mirrored = e.facingLeft() != step.flip };
+    }
+    draw_list.build(t);
+}
+
 /// One logic tick of a round's world, which follows the round's script `plan` (null: none).
 pub fn runRound(world: *World, kinds: *const Kinds, rng: *random.Random, in: Input, out: *Output, plan: ?*const script.Plan) void {
     out.begin();

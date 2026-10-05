@@ -326,10 +326,20 @@ fn place(t: *Tick, rec: *const Spawn, x: i32) void {
         return;
     };
     const position: fixed.Vec3 = .{ .x = .pixels(x), .depth = .pixels(rec.depth), .height = t.world.ground };
-    _ = t.world.spawn(t.kinds, kind, position, .right) catch {
+    const h = t.world.spawn(t.kinds, kind, position, .right) catch {
         std.log.warn("the world is full: the round's script's {s} is skipped", .{rec.kind});
         return;
     };
+    // An enemy comes hidden, its health not yet given: its behaviour brings it out when its
+    // place is on the screen.
+    switch (t.kinds.get(kind).family()) {
+        .enemy, .boss => {
+            const e = t.world.get(h).?;
+            e.flags.hidden = true;
+            e.health = 0;
+        },
+        else => {},
+    }
 }
 
 /// The section's enemies in the world: those of the enemies' and the bosses' families.

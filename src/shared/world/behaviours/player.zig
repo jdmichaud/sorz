@@ -221,6 +221,15 @@ fn change(a: Actor, state: State) void {
     begin(a, state);
 }
 
+/// A life starts (the round's start, a new life): the player drops in from where it was put,
+/// at its drop's speed.
+pub fn startLife(a: Actor) void {
+    enter(a, .fall);
+    begin(a, .fall);
+    a.entity.velocity = .{ .height = a.numbers().drop };
+    a.entity.flags.airborne = true;
+}
+
 /// Taken up in its state from a situation another program recorded: its state's animation and
 /// move, its speed kept.
 pub fn takeUp(a: Actor) void {
