@@ -402,6 +402,8 @@ fn enterSetUp(a: Actor) void {
     a.mind.reached = false;
     a.mind.risen = false;
     if (!e.spawn.traits.drops_in) return;
+    // Its first pose held all the way down: the original's frames do not run there.
+    a.pause(true);
     e.position.height = .parts(n.drop_height, e.position.height.frac());
     e.velocity.height = .parts(0, e.velocity.height.frac());
     const x: i32 = @as(i32, a.draw(.drop_place) & n.drop_spread) + n.drop_x;
