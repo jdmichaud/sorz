@@ -20,6 +20,7 @@
 //! script and the timer wait while it lasts.
 const std = @import("std");
 const content_round = @import("../content/round.zig");
+const content_screens = @import("../content/screens.zig");
 const fixed = @import("fixed.zig");
 const entity = @import("entity.zig");
 const tick_mod = @import("tick.zig");
@@ -40,6 +41,9 @@ pub const Plan = struct {
     level: u2 = 1,
     /// The lives a continue gives (the options' lives).
     lives: u8 = 3,
+    /// The players' buttons, by the options' CONTROL: which gives the special attack, the
+    /// attack and the jump.
+    buttons: content_screens.Layout = .{},
     /// The high-score table's last entry, which the score of a player out of lives must beat for
     /// its name to be entered (lives.zig); null: no table, no name entry.
     last_score: ?Ranked = null,

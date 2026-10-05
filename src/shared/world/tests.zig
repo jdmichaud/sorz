@@ -283,18 +283,18 @@ test "the commands: directions from the last read, buttons from either; a press 
     const b: input.Pad = .{ .b = true };
     // B pressed at the first display tick only, then released: still pressed for the tick.
     systems.run(&w, &f.kinds, &rng, .{ .pads = .{ .{ .pad1 = b }, .{} } }, &out);
-    try testing.expect(w.players[0].command.pressed.b and w.players[0].command.held.b);
+    try testing.expect(w.players[0].command.pressed.attack and w.players[0].command.held.attack);
     // Right at the first display tick only: the last read decides the directions.
     systems.run(&w, &f.kinds, &rng, .{ .pads = .{ .{ .pad1 = .{ .right = true } }, .{} } }, &out);
-    try testing.expect(!w.players[0].command.held.right and !w.players[0].command.pressed.b);
+    try testing.expect(!w.players[0].command.held.right and !w.players[0].command.pressed.attack);
     // B held across ticks is pressed once.
     systems.run(&w, &f.kinds, &rng, Input.steady(.{ .pad1 = b }), &out);
-    try testing.expect(w.players[0].command.pressed.b);
+    try testing.expect(w.players[0].command.pressed.attack);
     systems.run(&w, &f.kinds, &rng, Input.steady(.{ .pad1 = b }), &out);
-    try testing.expect(w.players[0].command.held.b and !w.players[0].command.pressed.b);
+    try testing.expect(w.players[0].command.held.attack and !w.players[0].command.pressed.attack);
     // Pressed at the last read, after a release at the first.
     systems.run(&w, &f.kinds, &rng, .{ .pads = .{ .{}, .{ .pad1 = b } } }, &out);
-    try testing.expect(w.players[0].command.pressed.b);
+    try testing.expect(w.players[0].command.pressed.attack);
 }
 
 test "a blow lands: its frame's attack box meets a body, the damage, the reaction, the sounds" {
@@ -577,7 +577,7 @@ test "play: the logic at every other display tick, with both display ticks' pads
     try testing.expectEqual(@as(u32, 0), play.world.tick);
     try testing.expect(play.displayTick(&f.kinds, &rng, .{}, &out));
     try testing.expectEqual(@as(u32, 1), play.world.tick);
-    try testing.expect(play.world.players[0].command.pressed.b);
+    try testing.expect(play.world.players[0].command.pressed.attack);
     try testing.expectEqualStrings("swing", out.sounds.items[0].name);
     // The draw list stays for the display tick in between.
     try testing.expect(!play.displayTick(&f.kinds, &rng, .{}, &out));
@@ -585,10 +585,10 @@ test "play: the logic at every other display tick, with both display ticks' pads
     try testing.expectEqualStrings("punch_0", out.sprites.items[0].frame.name);
     // C only at a second display tick: the logic tick then does not see it; the next one does.
     try testing.expect(play.displayTick(&f.kinds, &rng, .{ .pad1 = .{ .c = true } }, &out));
-    try testing.expect(!play.world.players[0].command.pressed.c);
+    try testing.expect(!play.world.players[0].command.pressed.jump);
     try testing.expect(!play.displayTick(&f.kinds, &rng, .{}, &out));
     try testing.expect(play.displayTick(&f.kinds, &rng, .{}, &out));
-    try testing.expect(play.world.players[0].command.pressed.c);
+    try testing.expect(play.world.players[0].command.pressed.jump);
     // A screen at 60 a second runs its logic at each display tick, with that tick's pads twice.
     var screen: schedule.Play = .{ .schedule = .{ .rate = .display } };
     _ = try withHero(&f, &screen.world);

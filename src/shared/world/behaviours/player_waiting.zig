@@ -89,7 +89,7 @@ pub fn control(a: Actor, c: Command) void {
                 a.mind.phase = !a.mind.phase;
             }
             a.mind.shown = !a.mind.phase;
-            if (p.a or p.b or p.c or p.start) a.mind.state = .continue_chosen;
+            if (p.special or p.attack or p.jump or p.start) a.mind.state = .continue_chosen;
         },
         .continue_chosen => {
             const k = a.tick.world.playerOf(a.handle) orelse return;
@@ -164,12 +164,12 @@ fn entry(a: Actor, c: Command) void {
     const p = c.last;
     if (p.start) return endEntry(a);
     const end = n.letters -| 1;
-    if (p.b and m.place != 0) {
+    if (p.attack and m.place != 0) {
         m.letters[m.place] = m.letter;
         m.place -= 1;
         m.letter = m.letters[m.place];
     }
-    if (p.a or p.c) {
+    if (p.special or p.jump) {
         // Taken, it shows.
         m.letters[m.place] = m.letter;
         m.name[m.place] = m.letter;

@@ -346,6 +346,7 @@ pub const Round = struct {
             .round = self.stage(a).script,
             .level = @intCast(@min(setup.level, 3)),
             .lives = setup_mod.Progress.livesOf(setup),
+            .buttons = a.screen.buttons.of(setup.control),
             .last_score = .{ .score = last.score, .level = last.level, .round = last.round },
             .art_loading = self.art.loading(self.stage(a).script),
             .colour_lines = a.enemy_colours.lines,

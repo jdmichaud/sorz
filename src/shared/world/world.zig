@@ -26,13 +26,27 @@ pub const Traits = entity.Traits;
 
 pub const capacity = entity.capacity;
 
-/// What a player asks for at a logic tick: the buttons held, and those newly pressed.
+/// What a player does, in the game's terms: the directions, its actions (the special attack,
+/// the attack, the jump: its pad's buttons by the options' CONTROL, systems.zig `commands`) and
+/// START.
+pub const Actions = packed struct(u8) {
+    up: bool = false,
+    down: bool = false,
+    left: bool = false,
+    right: bool = false,
+    special: bool = false,
+    attack: bool = false,
+    jump: bool = false,
+    start: bool = false,
+};
+
+/// What a player asks for at a logic tick: the actions held, and those newly asked for.
 pub const Command = struct {
-    held: input.Pad = .{},
-    pressed: input.Pad = .{},
+    held: Actions = .{},
+    pressed: Actions = .{},
     /// The presses of the last read alone (those a player waiting to continue reads, as the
     /// original's reads its pad there).
-    last: input.Pad = .{},
+    last: Actions = .{},
 };
 
 pub const Player = struct {

@@ -1216,6 +1216,23 @@ fn statesOf(r: *Round, plan: *const script.Plan, ticks: usize, pads: input.Pads)
     return seen.items;
 }
 
+test "the options' CONTROL: the round's buttons give the actions: with the second layout, A attacks and B jumps" {
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &lives_round, .buttons = .{ .attack = .a, .jump = .b, .special = .c } };
+    script.start(&r.w, &plan);
+    r.stepPlan(.{ .pad1 = .{ .a = true } }, &plan);
+    try testing.expectEqualStrings("attack1", r.state());
+    for (0..10) |_| r.stepPlan(.{}, &plan);
+    try testing.expectEqualStrings("ready", r.state());
+    r.stepPlan(.{ .pad1 = .{ .b = true } }, &plan);
+    try testing.expectEqualStrings("jump_crouch", r.state());
+    // Without a plan, the cartridge's first: B attacks.
+    for (0..40) |_| r.step(.{});
+    r.step(b_pad);
+    try testing.expectEqualStrings("attack1", r.state());
+}
+
 test "a death: no health left (the time over's), it dies at the next tick; one bounce, lying dead, the next life" {
     var r = try Round.init();
     defer r.deinit();

@@ -1,6 +1,6 @@
 //! A pawn (synthetic, behaviours.zig): the player of the world's tests. It walks with the pad's
-//! directions, strikes with B, jumps with C (keeping its walk's speed across), and reels a while
-//! when struck. Its numbers, animations and strike are its definition's.
+//! directions, strikes with the attack, jumps with the jump (keeping its walk's speed across),
+//! and reels a while when struck. Its numbers, animations and strike are its definition's.
 const tick = @import("../tick.zig");
 const Fixed = @import("../fixed.zig").Fixed;
 const Vec3 = @import("../fixed.zig").Vec3;
@@ -38,13 +38,13 @@ pub fn control(a: Actor, c: Command) void {
     a.mind.ticks +|= 1;
     switch (a.mind.state) {
         .stand, .walk => {
-            if (c.pressed.b) {
+            if (c.pressed.attack) {
                 a.stop();
                 enter(a, .attack);
                 a.startMove(.attack);
                 return;
             }
-            if (c.pressed.c) {
+            if (c.pressed.jump) {
                 enter(a, .jump);
                 a.animate(.jump);
                 a.leap(n.jump.neg());

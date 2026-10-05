@@ -5,6 +5,10 @@
 //! that jumps (`back_attack_up`, Adam's), blows that leap (`last_blow_leap`, `knee_last_leap`,
 //! Blaze's), a throw that does not turn (`throw_turns`), and its own frames and ends.
 //!
+//! It acts on its command's actions (`Command`: the special attack, the attack, the jump), which
+//! the options' CONTROL gives buttons; below, A, B and C name them by the cartridge's first
+//! layout: A the special attack, B the attack, C the jump.
+//!
 //! As the original's players, it advances its animation itself, one tick at a time, so that the
 //! blows of a tick strike with the frame the tick shows (`drives_animation`); and it applies its
 //! gravity in its states before it moves.
@@ -626,7 +630,7 @@ pub fn control(a: Actor, c: Command) void {
     // During a special attack it stands still, as it is.
     a.entity.flags.still = a.tick.world.special;
     if (a.tick.world.special) return leftBySpecial(a);
-    if (c.pressed.a) callSpecial(a);
+    if (c.pressed.special) callSpecial(a);
     feelBlow(a);
     feelCatch(a);
     if (a.mind.blink != 0) a.mind.blink -= 1;
@@ -686,7 +690,7 @@ fn act(a: Actor, c: Command) void {
         .jump, .armed_jump => {
             gravity(a);
             steer(a, c);
-            if (c.pressed.b) change(a, if (a.mind.state == .armed_jump) .armed_jump_kick else .jump_kick);
+            if (c.pressed.attack) change(a, if (a.mind.state == .armed_jump) .armed_jump_kick else .jump_kick);
         },
         .jump_kick, .armed_jump_kick => {
             if (hitPause(a)) return;
@@ -725,7 +729,7 @@ fn act(a: Actor, c: Command) void {
         .attack1, .attack2, .attack3 => {
             _ = a.step();
             if (a.mind.landed_blow) a.mind.window = n.combo_window;
-            if (a.mind.state == .attack1 and c.pressed.b and !a.mind.queued) {
+            if (a.mind.state == .attack1 and c.pressed.attack and !a.mind.queued) {
                 a.mind.queued = true;
                 if (a.mind.window == 0) a.retime(.attack1_hurried, if (a.frame() == 1) n.hurry_first else n.hurry_later);
             }
@@ -814,7 +818,7 @@ fn act(a: Actor, c: Command) void {
         .slammed => slammed(a),
         .thrown_fall => gravity(a),
     }
-    if (a.mind.state == .knocked_down and a.mind.may_recover and c.pressed.c and c.held.up) {
+    if (a.mind.state == .knocked_down and a.mind.may_recover and c.pressed.jump and c.held.up) {
         a.mind.may_recover = false;
         a.mind.recovers = true;
     }
@@ -825,8 +829,8 @@ fn act(a: Actor, c: Command) void {
 fn choose(a: Actor, c: Command) void {
     if (a.mind.weapon != null) return armedChoose(a, c);
     if (caught(a)) return;
-    if ((c.held.b and c.pressed.c) or (c.held.c and c.pressed.b)) return change(a, if (a.numbers().back_attack_up != null) .back_attack_crouch else .back_attack);
-    if (c.pressed.c) {
+    if ((c.held.attack and c.pressed.jump) or (c.held.jump and c.pressed.attack)) return change(a, if (a.numbers().back_attack_up != null) .back_attack_crouch else .back_attack);
+    if (c.pressed.jump) {
         a.sound(.jump);
         return change(a, .jump_crouch);
     }
@@ -839,7 +843,7 @@ fn choose(a: Actor, c: Command) void {
 fn attack(a: Actor, c: Command) bool {
     const queued = a.mind.queued;
     a.mind.queued = false;
-    if (!queued and !c.pressed.b) return false;
+    if (!queued and !c.pressed.attack) return false;
     if (queued) a.mind.jab_walk = true;
     if (pickUp(a)) return true;
     var next: State = .attack1;
@@ -1173,7 +1177,7 @@ fn hold(a: Actor, c: Command) void {
     const other = partnerOf(a);
     // Holding the other player from behind, it waits while the other jumps out.
     if (other) |o| if (a.mind.state == .grab_behind and o.mind.state == .escape) return;
-    if (c.pressed.c) {
+    if (c.pressed.jump) {
         a.sound(.jump);
         if (other != null and a.mind.state == .grab) {
             // The other player held from the front: it lifts itself over it.
@@ -1184,11 +1188,11 @@ fn hold(a: Actor, c: Command) void {
         return change(a, if (a.mind.state == .grab_behind) .throw_back else .throw);
     }
     if (a.mind.state == .grab_behind) {
-        if (c.pressed.b) {
+        if (c.pressed.attack) {
             ask(a, .slam);
             return change(a, .vault);
         }
-    } else if (c.pressed.b) {
+    } else if (c.pressed.attack) {
         const away = (c.held.left and a.entity.facing == .right) or (c.held.right and a.entity.facing == .left);
         if (away) {
             ask(a, .lift);
@@ -1352,7 +1356,7 @@ fn heldBehind(a: Actor, c: Command) void {
     };
     if (a.mind.counter_window != 0) {
         a.mind.counter_window -= 1;
-        if (a.mind.counter_window != 0 and c.pressed.b) {
+        if (a.mind.counter_window != 0 and c.pressed.attack) {
             a.mind.counter_window = 0;
             if (a.tick.turnHold(a.handle)) {
                 // The throw's state with the counter's move (no sound of its own); the hold's
@@ -1366,7 +1370,7 @@ fn heldBehind(a: Actor, c: Command) void {
     }
     // No jump out while the other player holding it jumps over it.
     const jumping_over = if (holder) |h| h.mind.state == .throw or h.mind.state == .throw_back else false;
-    if (c.pressed.c and !jumping_over) {
+    if (c.pressed.jump and !jumping_over) {
         a.sound(.jump);
         return change(a, .escape);
     }
@@ -1757,12 +1761,12 @@ fn dropWeapon(a: Actor) void {
 /// no longer in its hand, it is unarmed.
 fn armedChoose(a: Actor, c: Command) void {
     if (caught(a)) return;
-    if ((c.held.b and c.pressed.c) or (c.held.c and c.pressed.b)) return change(a, if (a.numbers().back_attack_up != null) .armed_back_attack_crouch else .armed_back_attack);
-    if (c.pressed.c) {
+    if ((c.held.attack and c.pressed.jump) or (c.held.jump and c.pressed.attack)) return change(a, if (a.numbers().back_attack_up != null) .armed_back_attack_crouch else .armed_back_attack);
+    if (c.pressed.jump) {
         a.sound(.jump);
         return change(a, .armed_jump_crouch);
     }
-    if (c.pressed.b) {
+    if (c.pressed.attack) {
         if (pickUp(a)) return;
         const w = weaponHeld(a) orelse return change(a, .armed_attack);
         const def = a.tick.kindOf(w).definition;

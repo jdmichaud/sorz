@@ -7,6 +7,7 @@
 const std = @import("std");
 const input = @import("../input.zig");
 const content_entity = @import("../content/entity.zig");
+const content_screens = @import("../content/screens.zig");
 const fixed = @import("fixed.zig");
 const random = @import("random.zig");
 const entity = @import("entity.zig");
@@ -126,20 +127,46 @@ fn joining(t: *Tick) void {
 /// The players' commands, from the pads read at the logic tick's two display ticks, as the
 /// original's players read theirs: the directions as the last read has them; the buttons (A, B,
 /// C, start) as either read has them, so that a press is not lost between two logic ticks. A
-/// button is newly pressed at a read when the read before it did not have it.
+/// button is newly pressed at a read when the read before it did not have it. The buttons give
+/// their actions by the options' CONTROL (the round's plan's `buttons`; without a plan, the
+/// cartridge's first): from here on the world knows the actions, not the buttons.
 fn commands(t: *Tick) void {
+    const layout: content_screens.Layout = if (t.plan) |plan| plan.buttons else .{};
     for (&t.world.players, 0..) |*p, k| {
         const first = bits(padOf(t.input.pads[0], k));
         const last = bits(padOf(t.input.pads[1], k));
         const first_new = first & ~bits(p.last);
         const last_new = last & ~first;
         p.command = .{
-            .held = @bitCast((last & directions) | ((first | last) & buttons)),
-            .pressed = @bitCast((last_new & directions) | ((first_new | last_new) & buttons)),
-            .last = @bitCast(last_new),
+            .held = actions((last & directions) | ((first | last) & buttons), layout),
+            .pressed = actions((last_new & directions) | ((first_new | last_new) & buttons), layout),
+            .last = actions(last_new, layout),
         };
         p.last = @bitCast(last);
     }
+}
+
+/// The actions of a pad's bits by `layout`.
+fn actions(pad_bits: u8, layout: content_screens.Layout) world_mod.Actions {
+    const pad: input.Pad = @bitCast(pad_bits);
+    return .{
+        .up = pad.up,
+        .down = pad.down,
+        .left = pad.left,
+        .right = pad.right,
+        .special = button(pad, layout.special),
+        .attack = button(pad, layout.attack),
+        .jump = button(pad, layout.jump),
+        .start = pad.start,
+    };
+}
+
+fn button(pad: input.Pad, b: content_screens.Button) bool {
+    return switch (b) {
+        .a => pad.a,
+        .b => pad.b,
+        .c => pad.c,
+    };
 }
 
 const directions: u8 = bits(.{ .up = true, .down = true, .left = true, .right = true });
