@@ -64,6 +64,9 @@ pub const Player = struct {
     out: bool = false,
     /// Points, as the original counts them: they hold at the world's `score_most`.
     score: u32 = 0,
+    /// The lives its score gave it (lives.zig, `extraLife`): its next comes at the plan's
+    /// `extra_lives` score of this rank.
+    extra_lives: u8 = 0,
     /// The command of this tick.
     command: Command = .{},
     /// The pad as read at the last display tick, which the next read's presses are new against.

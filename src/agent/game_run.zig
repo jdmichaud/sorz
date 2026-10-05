@@ -280,6 +280,12 @@ pub const Run = struct {
         w.* = taken.play.world;
         w.tick = was.tick;
         w.score_most = was.score_most;
+        // The lives the players' scores gave them by then (the trace does not count them: each
+        // came at the turn after its score), so that only a score passing the next gives one.
+        const extra = self.assets.round.screen.status_bar.extra_lives;
+        for (&w.players) |*p| p.extra_lives = @intCast(for (extra, 0..) |score, n| {
+            if (p.score < score) break n;
+        } else extra.len);
         w.boss_bar = was.boss_bar;
         w.bosses = .{ null, null };
         // The bosses beaten (none left with health) stopped the timer with their last blow.
@@ -471,6 +477,10 @@ pub const Run = struct {
             self.seen_t = r.trace_t;
             if (r.trace_scene == .round) tw.setPhase(phaseName(r));
             try tw.observeAt(v, r.trace_t, &r.play.world, &self.content.kinds, &self.out);
+            // The sounds its set-up asked for under the load (a life more for the clear's
+            // points), with its first observation, as sor-remaster's trace has them.
+            for (self.deferred[0..self.deferred_len]) |id| try tw.sceneSound(self.content.sounds.sounds[id].name);
+            self.deferred_len = 0;
             try self.sounds(turn);
             self.noteIds(&r.play.world);
             if (self.probe) |p| try p.observe(v, r.trace_t, &r.play.world, &self.content.kinds, &self.ids);

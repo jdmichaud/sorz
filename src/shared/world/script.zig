@@ -41,6 +41,9 @@ pub const Plan = struct {
     level: u2 = 1,
     /// The lives a continue gives (the options' lives).
     lives: u8 = 3,
+    /// The scores that give a player a life more, by the lives its score gave it already (play's
+    /// record's; none: no life more).
+    extra_lives: []const u32 = &.{},
     /// The players' buttons, by the options' CONTROL: which gives the special attack, the
     /// attack and the jump.
     buttons: content_screens.Layout = .{},

@@ -306,13 +306,15 @@ pub const ground_depths: struct { near: i32, far: i32 } = .{ .far = 0, .near = 2
 /// others' turns (`Boxes.at`), before the camera keeps them in its view: the original's players
 /// set their boxes in the world at the end of their own turn.
 fn playersMove(t: *Tick) void {
-    for (t.world.players) |p| {
+    for (t.world.players, 0..) |p, k| {
         const h = p.entity orelse continue;
         move(t, h);
         t.moved(h);
         const e = t.world.get(h) orelse continue;
         if (e.holder == null) _ = t.keptOut(h);
         e.boxes.at = e.position;
+        // The end of its turn, as a fighter: its score may give it a life more.
+        if (e.mind == .player) _ = lives.extraLife(t, @intCast(k));
     }
 }
 

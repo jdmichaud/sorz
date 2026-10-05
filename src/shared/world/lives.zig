@@ -83,6 +83,7 @@ pub fn continueGame(t: *Tick, k: u1) void {
     const p = &t.world.players[k];
     p.continues -|= 1;
     p.score = 0;
+    p.extra_lives = 0;
     if (t.plan) |plan| p.lives = plan.lives;
     newLife(t, k);
 }
@@ -129,3 +130,19 @@ pub fn newLife(t: *Tick, k: u1) void {
     // It starts where it was put: it moves from the next tick.
     e.flags.still = true;
 }
+
+/// At the end of player `k`'s turn, as the original's: its score at the plan's next
+/// `extra_lives` score gives it a life more, with its sound; one a turn (a score past two gives
+/// the second at the next). True when it gave one.
+pub fn extraLife(t: *Tick, k: u1) bool {
+    const scores = (t.plan orelse return false).extra_lives;
+    const p = &t.world.players[k];
+    if (p.extra_lives >= scores.len or p.score < scores[p.extra_lives]) return false;
+    p.extra_lives += 1;
+    p.lives +|= 1;
+    t.sound(extra_life_sound, p.entity);
+    return true;
+}
+
+/// The sound of a life more.
+pub const extra_life_sound = "extra life";

@@ -28,6 +28,9 @@ pub const Gamer = struct {
     in_play: bool = false,
     /// Points, as the original counts them.
     score: u32 = 0,
+    /// The lives its score gave it (the next round's first turn may give one more, for points
+    /// the clear's bonuses added).
+    extra_lives: u8 = 0,
     /// The lives, the one under way counted, and the special attacks.
     lives: u8 = 0,
     specials: u8 = 0,

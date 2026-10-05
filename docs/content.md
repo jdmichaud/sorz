@@ -305,8 +305,11 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   shown and hidden in turn every `blink` logic ticks of play; at a blink's tick with player 2's
   START held, player 2 joins with `lives` (the one it plays counted) as the character `next`
   names by player 1's (`{"adam": ..., "axel": ..., "blaze": ...}`); `score_most`, the most a score
-  holds (points past it are lost), its digits the bar's score's; `image`, the bar's rows and
-  cells the game writes at every frame of play (their time comes before the sound's driver, A4);
+  holds (points past it are lost), its digits the bar's score's; `extra_lives`, the scores that
+  give a player a life more, by the lives its score gave it already (at the end of its turn, one
+  a turn, with the sound `extra life`; a continue counts them from none again); `image`, the
+  bar's rows and cells the game writes at every frame of play (their time comes before the sound's
+  driver, A4);
   `bosses`, the bosses' bars, shown from the tick after a boss's first in its section (its
   record's `bar` their entry): the fixed layer a row taller, the bars' rectangle
   (`play/enemy_bar`, at its place, written whole at every frame) and on it each bar's ten cells

@@ -159,13 +159,17 @@ pub const Bosses = struct {
 };
 
 /// The status bar, on the fixed layer: each player's parts, the timer's, the invitation to join;
-/// the most a score holds (its digits the bar's); the bosses' bars.
+/// the most a score holds (its digits the bar's), and the scores that give a life more; the
+/// bosses' bars.
 pub const StatusBar = struct {
     provenance: []const u8 = "",
     players: [2]BarPlayer,
     time: Cell,
     join: Join,
     score_most: u32,
+    /// The score that gives a player its next life, by the lives its score gave it already
+    /// (past the last: none more).
+    extra_lives: []const u32 = &.{},
     /// The bar's image the game keeps and writes at every frame of play: its rows of cells
     /// (from the bar's second), and the cells of a row.
     image_rows: u8,
@@ -404,6 +408,16 @@ fn bossesValue(arena: std.mem.Allocator, b: *const Bosses) !json.Value {
     });
 }
 
+/// The scores that give a life more, each more than the one before.
+fn readExtraLives(arena: std.mem.Allocator, n: json.Node) Error![]const u32 {
+    const out = try arena.alloc(u32, try n.len());
+    for (out, 0..) |*o, i| {
+        o.* = try (try n.at(i)).int(u32);
+        if (i > 0 and o.* <= out[i - 1]) return (try n.at(i)).fail("not more than the score before");
+    }
+    return out;
+}
+
 fn readBosses(arena: std.mem.Allocator, n: json.Node) Error!Bosses {
     try n.only(&.{ "provenance", "bars", "label", "points", "over", "second" });
     const bars = try n.get("bars");
@@ -507,6 +521,8 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
             .{ .key = "specials_mark", .value = try cellValue(arena, p.specials_mark) },
         }) },
     });
+    const extra_lives = try arena.alloc(json.Value, r.status_bar.extra_lives.len);
+    for (extra_lives, r.status_bar.extra_lives) |*o, score| o.* = json.Value.num(score);
     const t = &r.time_over;
     const cq = &r.continue_question;
     const places = try arena.alloc(json.Value, 2);
@@ -542,6 +558,7 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
             .{ .key = "players", .value = .{ .array = players } },
             .{ .key = "time", .value = try cellValue(arena, r.status_bar.time) },
             .{ .key = "score_most", .value = json.Value.num(r.status_bar.score_most) },
+            .{ .key = "extra_lives", .value = .{ .array = extra_lives } },
             .{ .key = "image", .value = .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(r.status_bar.image_rows), json.Value.num(r.status_bar.image_cells) }) } },
             .{ .key = "bosses", .value = try bossesValue(arena, &r.status_bar.bosses) },
             .{ .key = "join", .value = try obj(arena, &.{
@@ -862,7 +879,7 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
     const t = try n.get("time_over");
     try t.only(&.{ "provenance", "frame", "ticks", "health", "seconds" });
     const s = try n.get("status_bar");
-    try s.only(&.{ "provenance", "players", "time", "join", "score_most", "image", "bosses" });
+    try s.only(&.{ "provenance", "players", "time", "join", "score_most", "extra_lives", "image", "bosses" });
     const image = try s.get("image");
     if (try image.len() != 2) return image.fail("not [rows, cells]");
     const j = try s.get("join");
@@ -956,6 +973,7 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
                 .next = try readNext(try j.get("next")),
             },
             .score_most = try (try s.get("score_most")).int(u32),
+            .extra_lives = if (try s.opt("extra_lives")) |x| try readExtraLives(arena, x) else &.{},
             .image_rows = try (try image.at(0)).int(u8),
             .image_cells = try (try image.at(1)).int(u8),
             .bosses = try readBosses(arena, try s.get("bosses")),
@@ -1121,6 +1139,7 @@ test "the screens' records write and read back the same" {
                 .time = .{ .x = 19, .y = 1 },
                 .join = .{ .text = "PRESS 2UP START", .at = .{ .x = 24, .y = 1 }, .blink = 8 },
                 .score_most = 999_900,
+                .extra_lives = &.{ 50_000, 150_000 },
                 .image_rows = 3,
                 .image_cells = 40,
                 .bosses = .{ .bars = .{ .{ .x = 1, .y = 3 }, .{ .x = 27, .y = 3 } }, .label = .{ .x = 17, .y = 3 }, .points = 4, .over = .{ 81, 97 }, .second = &.{ false, true } },

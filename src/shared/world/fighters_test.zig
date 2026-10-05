@@ -1362,6 +1362,37 @@ test "out of lives: the continue's question; YES spends a continue for the lives
     try testing.expectEqual(@as(u8, 3), r.w.players[0].lives);
     try testing.expectEqual(@as(u8, 2), r.w.players[0].continues);
     try testing.expectEqual(@as(u32, 0), r.w.players[0].score);
+    try testing.expectEqual(@as(u8, 0), r.w.players[0].extra_lives);
+}
+
+test "a life more: a score at the next extra life's score gives one at the end of the player's next turn, with its sound" {
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &lives_round, .lives = 3, .extra_lives = &.{ 50_000, 150_000 } };
+    script.start(&r.w, &plan);
+    const p = &r.w.players[0];
+    p.lives = 2;
+    p.score = 49_900;
+    r.stepPlan(.{}, &plan);
+    try testing.expectEqual(@as(u8, 2), p.lives);
+    // Points scored in a turn after the player's (an enemy knocked out): its next turn gives it.
+    var t = r.tick();
+    t.score(r.hero, 100);
+    r.stepPlan(.{}, &plan);
+    try testing.expectEqual(@as(u8, 3), p.lives);
+    try testing.expectEqual(@as(u8, 1), p.extra_lives);
+    const asked = r.out.sounds.slice();
+    try testing.expect(asked.len == 1 and std.mem.eql(u8, asked[0].name, "extra life") and asked[0].first);
+    r.stepPlan(.{}, &plan);
+    try testing.expectEqual(@as(u8, 3), p.lives);
+    // Past two at once: one a turn. Past the last: none more.
+    t.score(r.hero, 900_000);
+    r.stepPlan(.{}, &plan);
+    try testing.expectEqual(@as(u8, 4), p.lives);
+    r.stepPlan(.{}, &plan);
+    r.stepPlan(.{}, &plan);
+    try testing.expectEqual(@as(u8, 4), p.lives);
+    try testing.expectEqual(@as(u8, 2), p.extra_lives);
 }
 
 test "the continue's NO, or none left: out of the game, the game over's count" {

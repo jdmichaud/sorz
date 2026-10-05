@@ -374,6 +374,7 @@ pub const Round = struct {
             .round = self.stage(a).script,
             .level = @intCast(@min(setup.level, 3)),
             .lives = setup_mod.Progress.livesOf(setup),
+            .extra_lives = a.screen.status_bar.extra_lives,
             // The demo's pads are read as they are (the cartridge's first layout).
             .buttons = a.screen.buttons.of(if (self.demo) 0 else setup.control),
             .last_score = .{ .score = last.score, .level = last.level, .round = last.round },
@@ -974,6 +975,7 @@ pub const Round = struct {
         for (&g.players, w.players) |*gp, wp| gp.* = .{
             .in_play = wp.entity != null,
             .score = wp.score,
+            .extra_lives = wp.extra_lives,
             .lives = wp.lives,
             .specials = wp.specials,
             .continues = wp.continues,
@@ -1015,7 +1017,7 @@ pub const Round = struct {
         var t: world.tick.Tick = .{ .world = w, .kinds = a.kinds, .random = turn.random.?, .out = out, .plan = &p };
         const r = s.script;
         for (&w.players, g.players, 0..) |*wp, gp, k| {
-            wp.* = .{ .lives = gp.lives, .specials = gp.specials, .score = gp.score, .continues = gp.continues };
+            wp.* = .{ .lives = gp.lives, .specials = gp.specials, .score = gp.score, .extra_lives = gp.extra_lives, .continues = gp.continues };
             self.drawn_scores[k] = gp.score;
             if (!gp.in_play) continue;
             const character = characters[k] orelse continue;
@@ -1040,6 +1042,12 @@ pub const Round = struct {
         }
         world.script.placeFirst(&t, &p);
         world.systems.loadTurns(&t);
+        // The load's turn of the players (the original's objects run once as its load ends): the
+        // points the clear's bonuses added may give a life more, its sound asked for then.
+        for (w.players, 0..) |wp, k| {
+            if (wp.entity == null) continue;
+            if (world.lives.extraLife(&t, @intCast(k))) if (a.sounds.find(world.lives.extra_life_sound)) |id| turn.play(id);
+        }
         if (self.demo) {
             placeSign(w, a, d.sign);
             // The demo's load runs its players' turn too: the camera keeps them in its view.
