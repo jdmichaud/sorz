@@ -173,8 +173,11 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
         const last = hs.first[@min(hs.first.len, sorz.setup.high_scores) - 1];
         break :blk .{ .score = last.score, .level = last.level, .round = last.round };
     } else null;
-    // TODO(PLAN item 13): the round's script's records, until its content holds them.
-    var r = try scenario.Run.init(gpa, &kinds, &script, &situation, .{ .game_tick = options.game_tick, .round = if (c.rounds.len != 0) &c.rounds[0] else null, .last_score = last_score }, if (options.trace != null) &tw else null, if (options.probe != null) &probe else null);
+    // The round's script: the situation's round's.
+    const round: ?*const sorz.content.round.Round = for (c.rounds) |*x| {
+        if (x.number == situation.round) break x;
+    } else if (c.rounds.len != 0) &c.rounds[0] else null;
+    var r = try scenario.Run.init(gpa, &kinds, &script, &situation, .{ .game_tick = options.game_tick, .round = round, .last_score = last_score }, if (options.trace != null) &tw else null, if (options.probe != null) &probe else null);
     defer r.deinit();
     // The world's canonical form at each logic tick: the round's world alone runs here.
     var sizes_file: ?std.Io.File = null;
