@@ -80,9 +80,19 @@
   - His moves as data (frames, boxes, damage, sounds), walking, jumping, attacks, grabs, throws,
     the special attack.
   - Gate: similar to sor-remaster in each move's measurements.
-- [ ] **12 — Round 1's enemies, items and boss** — Depends: 11.
+- [x] **12 — Round 1's enemies, items and boss** — Depends: 11.
   - Their definitions, behaviours and AI; weapons and food.
   - Gate: similar in their measurements and AI timings.
+  - [x] Checked 2026-10-05: `similar-check -Dpads=...` on the catalogue's ai-* and item-*
+    families, every 4th run, with sorz's item-knife and item-bat: 168 of 175 runs the same as
+    sor-remaster's (ai-s2c's 8 again since the hold's fix). Per kind (the catalogue's m_ai measures), Signal, the knife Galsia, Antonio,
+    the knife, the boomerang and the pipe are equal; the Galsia, the stalker, the pipe Galsia,
+    the acrobat and the brawler are within tolerance; none differs. The items' families (apple,
+    beef, pipe, knife, bat) are equal. The hit sparks are compared since then, in the recorded
+    round's trace and pictures as well.
+  - [ ] Open: the runs that still part come from the take-up, not from play: a pipe Galsia's
+    offsets turned by waits before the situation, a brawler's follow, a knife Galsia's frame
+    pace. The bat's splinters go at the ground, not by the floor's cells (item 15).
 - [ ] **13 — Round 1's script and the round's screens** — Depends: 12, 09.
   - The map, the camera's stops, the waves, the status bar, the timer, pause, continue, game over,
     and the name entry of a score that enters the high-score table as its player's lives run out.
