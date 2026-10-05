@@ -372,8 +372,13 @@ pub const Situation = struct {
     /// The other things the other program made after the situation, by tick: the ids of the
     /// kinds the world does not make (sor-remaster's hit sparks) are not the world's.
     others: []const Other = &.{},
+    /// Player 2 joining after the situation (PRESS 2UP START): the tick the other program
+    /// dropped it in at, its character and its lives (the join's timing is the round screen's,
+    /// round-check's to compare).
+    join: ?Join = null,
 
     pub const Later = struct { t: u64, seen: Seen };
+    pub const Join = struct { t: u64, kind: []const u8, lives: u8 = 0 };
     pub const Step = struct {
         t: u64,
         what: union(enum) {
@@ -689,8 +694,18 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             }
             continue;
         }
+        if (std.mem.eql(u8, ev, "lives")) {
+            if (s.join) |*j| if (int(o, "player") == 2 and int(o, "t") == @as(i64, @intCast(j.t))) {
+                j.lives = @intCast(int(o, "lives") orelse 0);
+            };
+            continue;
+        }
         if (!std.mem.eql(u8, ev, "spawn")) continue;
         const kind = str(o, "kind") orelse return error.BadTrace;
+        if (int(o, "player") == 2 and s.join == null) {
+            s.join = .{ .t = @intCast(int(o, "t") orelse 0), .kind = try arena.dupe(u8, kind) };
+            continue;
+        }
         // A breakable's pieces (its kind's, not in its first state) are its own, not the script's.
         const piece = std.mem.eql(u8, kind, "breakable") and !std.mem.eql(u8, str(o, "state") orelse "", "s0");
         if (!(scripted(kind) or std.mem.eql(u8, kind, "go_arrow")) or piece) {
@@ -955,6 +970,8 @@ pub const Run = struct {
     /// The round's script's stand-in: the spawns still to come, and the records they take.
     later: []const Situation.Later = &.{},
     next_later: usize = 0,
+    /// Player 2 joining after the situation, at the other program's tick.
+    join: ?Situation.Join = null,
     others: []const Situation.Other = &.{},
     next_other: usize = 0,
     round: ?*const sorz.content.round.Round = null,
@@ -1010,6 +1027,7 @@ pub const Run = struct {
             .follows = world.script.cameraRules(round),
         };
         r.later = situation.later;
+        r.join = situation.join;
         r.others = situation.others;
         r.round = extras.round;
         try takeUpScript(&r, round, situation, extras.last_score);
@@ -1318,7 +1336,7 @@ pub const Run = struct {
         const plan = if (self.plan) |*p| p else null;
         for (0..2) |_| {
             if (self.plan) |*p| p.art_loading = self.art.loading(p.round);
-            const ran = self.play.roundTick(self.kinds, &self.random, pads, &self.out, plan);
+            const ran = self.play.roundTickJoined(self.kinds, &self.random, pads, &self.out, plan, self.joining());
             if (self.plan) |*p| {
                 if (ran) if (self.out.streamed) |of| self.art.start(of);
                 _ = self.art.next(p.round);
@@ -1361,6 +1379,15 @@ pub const Run = struct {
             try tw.observe(self.v, &self.play.world, self.kinds, &self.out);
         }
         return true;
+    }
+
+    /// Player 2's join at the tick about to run, when the other program's player 2 dropped in
+    /// then.
+    fn joining(self: *const Run) ?world.tick.Join {
+        const j = self.join orelse return null;
+        if (j.t != self.t + 1) return null;
+        const kind = self.kinds.find(j.kind) orelse return null;
+        return .{ .player = 1, .kind = kind, .lives = j.lives };
     }
 
     /// The round's script's stand-in: what the other program's script brought at the end of this
