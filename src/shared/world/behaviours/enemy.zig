@@ -645,8 +645,15 @@ pub fn Of(comptime M: type) type {
         /// It walks by its speed, across and in depth, each refused at the street's limits; a
         /// solid thing in its way stops it (`Tick.keptOut`), and it walks off (anew when it
         /// walked off already). On a floor by cells (round 4's holes), no floor a step ahead of
-        /// its way, it walks off where it stands. Returns false when it changed state.
+        /// its way, it walks off where it stands. Above the floor under it (walked onto a lower
+        /// cell, round 7's) or over a hole, it moves by its speeds and falls (`falls`). Returns
+        /// false when it changed state.
         pub fn walk(a: A) bool {
+            if (!a.atGround()) {
+                walkInAir(a);
+                _ = falls(a);
+                return a.mind.state != .knocked_out;
+            }
             const n = a.numbers();
             const e = a.entity;
             conveyed(a);
@@ -791,9 +798,15 @@ pub fn Of(comptime M: type) type {
 
         /// It walks by its speed across alone, refused at the street's ends; a solid thing in its
         /// way stops it, and it walks off, as it does on a floor before a wall or a cell too low
-        /// `across_ahead` ahead. Returns false when it changed state.
+        /// `across_ahead` ahead; above its floor or over a hole it falls instead (`falls`). Returns
+        /// false when it changed state.
         pub fn walkAcross(a: A) bool {
             const e = a.entity;
+            // Above the floor under it, or over a hole, it falls instead.
+            if (!a.atGround()) {
+                _ = falls(a);
+                return a.mind.state != .knocked_out;
+            }
             if (wallAcross(a)) {
                 enter(a, .walk_off);
                 return false;
@@ -827,14 +840,23 @@ pub fn Of(comptime M: type) type {
         }
 
         /// In the air: its gravity, then its fall in height; true when it is down, on the
-        /// ground's whole pixels (the fraction of its height kept).
+        /// floor's whole pixels under it (the fraction of its height kept). Above that floor or
+        /// over a hole it falls on (`fallsOn`), and past `fall_out_below` it is out of the fight,
+        /// as `fall` has it (the original's leaps fall by the same code as its knock-downs).
         pub fn falls(a: A) bool {
             gravity(a);
             const e = a.entity;
             e.position.height = e.position.height.add(e.velocity.height);
-            const ground = a.tick.world.ground.whole();
-            if (e.position.height.whole() < ground) return false;
-            e.position.height = .parts(@intCast(ground), e.position.height.frac());
+            if (!a.atGround()) {
+                fallsOn(a);
+                return false;
+            }
+            if (a.numbers().fall_out_below) |out| if (e.position.height.whole() > out) {
+                fellOut(a);
+                return false;
+            };
+            const floor = a.tick.floorUnder(e.position).?.whole();
+            e.position.height = .parts(@intCast(floor), e.position.height.frac());
             return true;
         }
 
