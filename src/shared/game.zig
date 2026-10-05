@@ -22,15 +22,15 @@
 //! Without a session, nothing of this runs.
 //!
 //! Settings (DESIGN.md 7): the record, read from the storage at the start, gives the controls'
-//! layout, the sound's volume and the SDL host's window. The settings screen changes it: an
-//! overlay of this machine over the game's scenes (overlay.zig), opened by the game menu's
-//! SETTINGS on the machine of the player who chose it, by the settings key in any scene, or by the
+//! layout, the sound's volume and the SDL host's window: this machine's, never the game's state.
+//! The settings screen changes it: an overlay of this machine over the game's scenes
+//! (overlay.zig), opened on the machine of the player who asks: OPTIONS' ADVANCED SETTINGS, START
+//! during play (the extended and network variants), the settings key in the original, or the
 //! browser page's menu before the game starts (`openSettings`). While it is open the game holds:
 //! no tick, the picture dimmed under it, the game's sound faded out and the pause's jingle played.
 //! In network play the other machine holds too, says why (unless its host says it: the browser's
 //! page) and plays the jingle. A damaged record is repaired and kept aside (settings/record.zig),
-//! and a notice tells the player for a few seconds. OPTIONS' VOLUME line (variant.zig) is the
-//! record's volume of the machine whose player 1 moves it.
+//! and a notice tells the player for a few seconds.
 const std = @import("std");
 const platform = @import("platform.zig");
 const input = @import("input.zig");
@@ -114,28 +114,32 @@ pub const State = struct {
     random: world.Random = .{},
 
     /// The state at power-on of a game with its content: the variant's flow's first scene, its
-    /// set-up, and the original's wait after it; the players and the VOLUME line the start gives.
+    /// set-up, and the original's wait after it.
     pub fn powerOn(start: variant.Start) State {
         var s: State = .{ .start = start };
-        s.setup.players = start.players;
-        s.setup.volume = start.volume;
         s.scenes = scene.powerOn(start.variant.config().graph, &s.setup);
         return s;
     }
 
+    /// What this machine tells a tick: whether a second pad is there, whether its game takes the
+    /// game's rules from another machine's (scene.Turn).
+    pub const Machine = struct { second_pad: bool = true, guest: bool = false };
+
     /// One display tick, with the pads of that tick and whether a second pad is there. Returns
     /// what the tick asks of the sound. Every scene but the test pattern needs `assets`.
     pub fn step(self: *State, pads: input.Pads, second_pad: bool, assets: ?*const scene.Assets) scene.Turn {
-        return self.stepWith(pads, second_pad, assets, null);
+        return self.stepWith(pads, .{ .second_pad = second_pad }, assets, null);
     }
 
-    /// `step`, a round's world giving out its tick into `world_out` (the picture's).
-    pub fn stepWith(self: *State, pads: input.Pads, second_pad: bool, assets: ?*const scene.Assets, world_out: ?*world.Output) scene.Turn {
+    /// `step`, with this machine's facts, a round's world giving out its tick into `world_out`
+    /// (the picture's).
+    pub fn stepWith(self: *State, pads: input.Pads, machine: Machine, assets: ?*const scene.Assets, world_out: ?*world.Output) scene.Turn {
         const config = self.start.variant.config();
         var turn: scene.Turn = .{
             .pads = pads,
             .pressed = .{ .pad1 = newly(pads.pad1, self.held.pad1), .pad2 = newly(pads.pad2, self.held.pad2) },
-            .second_pad = second_pad,
+            .second_pad = machine.second_pad,
+            .guest = machine.guest,
             .setup = &self.setup,
             .policies = &config.policies,
             .random = &self.random,
@@ -200,6 +204,9 @@ pub const Game = struct {
     /// The host applies the settings' volume itself (the browser's page, with its gain): the game
     /// then queues its sound at full volume.
     host_volume: bool = false,
+    /// This machine's game takes the game's rules from another machine's (network play's guest,
+    /// player 2): its OPTIONS show only what is its own (scene.Turn).
+    guest: bool = false,
     /// Room for a tick's frames at the settings' volume.
     volume_buffer: []i16 = &.{},
     /// The scenes' picture, with the content.
@@ -308,12 +315,12 @@ pub const Game = struct {
         return if (self.content != null) .powerOn(self.start()) else .{};
     }
 
-    /// What the game starts with (variant.zig): this machine's variant, its volume and its
-    /// players, or in network play the session's, which the host gives.
+    /// What the game starts with (variant.zig): this machine's variant, or in network play the
+    /// session's, which the host gives.
     pub fn start(self: *const Game) variant.Start {
         if (self.netplay) |np| if (np.session.start) |s| return startOf(s);
         if (self.fixed_start) |s| return s;
-        return .of(self.variant, !self.host_volume, self.settings.sound.volume, if (self.netplay != null) .two else .one);
+        return .{ .variant = self.variant };
     }
 
     comptime {
@@ -322,15 +329,18 @@ pub const Game = struct {
 
     /// A start as the session's welcome carries it, and back.
     fn startOf(s: net.protocol.Start) variant.Start {
-        return .{
-            .variant = @fromBackingInt(s.variant),
-            .players = if (s.players == 1) .two else .one,
-            .volume = if (s.volume == net.protocol.Start.no_volume) null else s.volume,
-        };
+        return .{ .variant = @fromBackingInt(s.variant) };
     }
 
     fn startBytes(s: variant.Start) net.protocol.Start {
-        return .{ .variant = @backingInt(s.variant), .players = @intFromBool(s.players == .two), .volume = s.volume orelse net.protocol.Start.no_volume };
+        return .{ .variant = @backingInt(s.variant) };
+    }
+
+    /// The rules of the variant the game plays: its state's (without content, the test pattern's
+    /// has none: this machine's).
+    fn policies(self: *const Game) *const variant.Policies {
+        const v = if (self.content != null) self.state.start.variant else self.start().variant;
+        return &v.config().policies;
     }
 
     /// The settings from the storage: a damaged record is told (settings/record.zig).
@@ -403,12 +413,13 @@ pub const Game = struct {
         return np.peerInSettings();
     }
 
-    /// Whether the game takes `key` now: a pad's key or the settings key, or any key while the
-    /// settings are open (the browser's page keeps the other keys for itself).
+    /// Whether the game takes `key` now: a pad's key or the settings key (where the variant has
+    /// it), or any key while the settings are open (the browser's page keeps the other keys for
+    /// itself).
     pub fn usesKey(self: *const Game, key: platform.Key) bool {
         if (key == .unknown) return false;
         if (self.settingsOpen()) return true;
-        return key == self.settings.settings_key or self.controls.uses(key);
+        return (self.policies().settings_key and key == self.settings.settings_key) or self.controls.uses(key);
     }
 
     /// Whether the settings screen is open (the hosts follow its window's settings).
@@ -423,18 +434,14 @@ pub const Game = struct {
         return @intFromBool(np.role == .guest) == who;
     }
 
-    /// Whether this machine's volume is OPTIONS' VOLUME line: the game has the line, and this
-    /// machine's player 1 moves it.
-    fn volumeIsLine(self: *const Game) bool {
-        return self.start().volume != null and self.plays(0);
-    }
-
     /// Opens the settings screen over the game, which holds while it is open; the controls let go,
-    /// and once the game runs, the pause's jingle plays. A notice goes.
+    /// and once the game runs, the pause's jingle plays. A notice goes. The screen shows this
+    /// machine's players alone (one in network play), and the settings key where the variant has
+    /// it.
     fn showSettings(self: *Game) void {
         if (self.settingsOpen() or self.panel == null) return;
         self.overlays.remove(.notice);
-        self.overlays.push(.{ .settings = .open(&self.settings, .{ .one_player = self.controls.one_player, .volume = !self.volumeIsLine() }) });
+        self.overlays.push(.{ .settings = .open(&self.settings, .{ .one_player = self.controls.one_player, .settings_key = self.policies().settings_key }) });
         self.overlay_dirty = true;
         self.controls.release();
         if (self.started) self.jingle_at = 0;
@@ -539,7 +546,7 @@ pub const Game = struct {
                     .quit => self.finished = true,
                     .key_down => |k| if (k.key == .escape) {
                         self.finished = true;
-                    } else if (k.key == self.settings.settings_key and !k.repeat) {
+                    } else if (self.policies().settings_key and k.key == self.settings.settings_key and !k.repeat) {
                         self.showSettings();
                     } else {
                         _ = self.controls.handle(e);
@@ -656,10 +663,11 @@ pub const Game = struct {
         return np.stretchPpm();
     }
 
-    /// Whether this machine has a second pad for the game: two players on it, or the other player of
-    /// network play. A browser alone has one (the game menu dims 2 PLAYERS).
+    /// Whether this machine has a second pad for the game: two players on it, or network play's
+    /// second player, another machine's (the variant whose 2 PLAYERS is this machine's player
+    /// alone).
     fn secondPad(self: *const Game) bool {
-        return !self.controls.one_player or self.netplay != null;
+        return !self.controls.one_player or self.netplay != null or !self.policies().two_players_here;
     }
 
     /// One tick, and its sound. In network play the pads are the session's; false when the game
@@ -669,14 +677,9 @@ pub const Game = struct {
         if (self.overlays.holds()) return false;
         var pads = self.controls.pads();
         if (self.netplay) |np| pads = np.pads(p, pads.pad1) orelse return false;
-        const turn = self.state.stepWith(pads, self.secondPad(), if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
+        const turn = self.state.stepWith(pads, .{ .second_pad = self.secondPad(), .guest = self.guest }, if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
         self.redraw = true;
         if (turn.settings) |who| if (self.plays(who)) self.showSettings();
-        // OPTIONS' VOLUME line is the record's volume of player 1's machine.
-        if (self.state.setup.volume) |v| if (self.volumeIsLine() and v != self.settings.sound.volume) {
-            self.settings.sound.volume = v;
-            self.writeSettings(&self.settings);
-        };
         if (self.sound) |*s| {
             const frames = tickSound(s, &self.transfers_due, &turn, self.stretchPpm());
             // After a hold, the sound fades in, and the jingle of the hold stops.
@@ -922,7 +925,11 @@ test "the settings come from the storage: a whole record is kept, a damaged one 
     try testing.expectEqual(@as(u64, 1), game.loads_done);
     try testing.expectEqual(Notice.none, game.notice);
     try testing.expectEqual(platform.Key.p, game.controls.layout.keys[0][@backingInt(input.Button.start)]);
-    try testing.expect(game.usesKey(.p) and game.usesKey(.f1) and !game.usesKey(.enter));
+    try testing.expect(game.usesKey(.p) and !game.usesKey(.enter));
+    // The settings key is the original's alone.
+    try testing.expect(!game.usesKey(.f1));
+    game.variant = .original;
+    try testing.expect(game.usesKey(.f1));
 
     try store.storage().save(settings_mod.record.name, "not JSON");
     const level = testing.log_level;
@@ -967,7 +974,6 @@ test "without the content's look, no settings screen; without network play, both
     var game = try Game.init(testing.allocator, null, null);
     defer game.deinit();
     game.showSettings();
-    try testing.expect(!game.settingsOpen() and game.usesKey(.f1));
+    try testing.expect(!game.settingsOpen());
     try testing.expect(game.plays(0) and game.plays(1));
-    try testing.expect(game.volumeIsLine() == (game.start().volume != null));
 }

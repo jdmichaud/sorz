@@ -24,16 +24,16 @@
 //   flow (with --content): the page of a relay that serves the whole content tree: the menu's
 //      sounds are made before the menu shows; SETTINGS opens the game's settings screen before
 //      the game, and Escape comes back to the menu; 1 PLAYER plays the network variant
-//      (DESIGN.md 10.7): after the title, the game's own menu is START, SETTINGS, OPTIONS, not 1
-//      PLAYER and 2 PLAYERS again; the settings key opens the settings over the game, which
-//      holds, and Escape closes them.
+//      (DESIGN.md 10.7): after the title, the game's own menu is 2 PLAYERS and OPTIONS; the
+//      settings key is the original's alone: F1 does not hold the game.
 //   steps: 1 PLAYER, one tick per update (`sorz.step`), N ticks: the canvas's pixels and the
 //      frame's hash at the ticks the agent host wrote pictures of must equal the agent host's, and
 //      so must the state's hash and the frame's hash at the end, and every block of sound the game
 //      queued (the agent host's WAV).
 //   settings: a settings record kept by the browser for the page (pad 1's Start on P, the volume at
 //      30, the scale at 1) is read at the start and applied: the output's gain, the picture's whole
-//      multiple; F1 (the settings key) never reaches the browser, F2 and Escape do.
+//      multiple; F1 (the settings key of the page's menu) does not reach the browser there, F1 in
+//      play (no settings key outside the original), F2 and Escape do.
 //   realtime: the game as the player runs it, paced by the sound, for S seconds: every frame it
 //      shows must be the frame of the same tick in the steps part, the ticks must come at the
 //      console's rate (59.92 a second), and the sound must not run dry.
@@ -651,7 +651,8 @@ async function settingsCheck(page, url) {
   await page.click(20, 20);
   await page.waitFor(`sorz.phase === 'playing'`, 5000, 'the click to start the game');
   await page.evaluate('sorz.setPacing(true); sorz.step(3)');
-  // In play: F1 and P are the game's, F2 and Escape the browser's.
+  // In play: P is the game's, F1 (no settings key outside the original), F2 and Escape the
+  // browser's.
   for (const key of [keyEvents.f1, keyEvents.p, keyEvents.f2, keyEvents.escape]) await tap(page, key);
   await page.evaluate('sorz.step(1)');
   const kept = await page.evaluate(`({ state: sorz.inspect(), view: sorz.view, gain: sorz.stats().audio_gain, keys: __keys })`);
@@ -661,7 +662,7 @@ async function settingsCheck(page, url) {
     kept.state.loads_done === 1 && kept.state.notice === 'none' && s.volume === 30 && s.scale === 1 && s.start_key === 'p' &&
     Math.abs(kept.gain - 0.09) < 1e-6 && Math.abs(kept.view.gain - 0.09) < 1e-9 &&
     multiple(kept.view) === Math.max(1, Math.round(kept.view.device_pixel_ratio)) &&
-    prevented('F1').length === 2 && prevented('F1').every((p) => p) && prevented('KeyP').length === 1 && prevented('KeyP')[0] &&
+    prevented('F1').length === 2 && prevented('F1')[0] && !prevented('F1')[1] && prevented('KeyP').length === 1 && prevented('KeyP')[0] &&
     prevented('F2').length === 2 && prevented('F2').every((p) => !p) && prevented('Escape').length === 1 && !prevented('Escape')[0];
   return [pass, {
     menu,
@@ -775,19 +776,16 @@ async function flowCheck(browser) {
     await page.evaluate('sorz.step(160)');
     const inMenu = await page.evaluate('sorz.inspect()');
     if (options.keep) await page.screenshot(path.join(options.keep, 'page-flow-game-menu.png'));
-    // The settings key: the settings over the game, which holds; Escape closes them.
+    // No settings key outside the original: F1 holds nothing.
     await hold(keyEvents.f1);
     await page.evaluate('sorz.step(30)');
     const held = await page.evaluate('sorz.inspect()');
-    if (options.keep) await page.screenshot(path.join(options.keep, 'page-flow-game-settings.png'));
-    await hold(keyEvents.escape);
-    await page.evaluate('sorz.step(5)');
-    const after = await page.evaluate('sorz.inspect()');
+    const after = held;
     const errors = page.console.filter((m) => m.type === 'error' || m.type === 'exception');
     const pass = atReady.every((n) => n > 1000) && menu === '▶ 1 PLAYER\n2 PLAYERS\nSETTINGS' && settingsTitle > 20 &&
       back === '1 PLAYER\n2 PLAYERS\n▶ SETTINGS' && inMenu.variant === 'network' && inMenu.scene === 'menu' &&
-      inMenu.menu === 'start,settings,options' && held.settings_open && held.ticks <= inMenu.ticks + 4 &&
-      !after.settings_open && after.ticks > held.ticks && errors.length === 0;
+      inMenu.menu === 'two_players,options' && !held.settings_open && held.ticks >= inMenu.ticks + 30 &&
+      errors.length === 0;
     return [pass, {
       menu_sounds_at_menu: atReady, menu, settings_title: settingsTitle, back,
       game: { variant: inMenu.variant, scene: inMenu.scene, menu: inMenu.menu, ticks: inMenu.ticks },

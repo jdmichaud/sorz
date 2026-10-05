@@ -1,24 +1,24 @@
 //! The settings screen (DESIGN.md 7, 10.4 S3): the player changes this machine's settings record
 //! in the game, on a scene over the game's picture that holds the game while it is open
-//! (game.zig: the overlays). It is reached from the game menu's SETTINGS (the extended and network
-//! variants), from the browser page's menu, and with the settings key (F1 by default), in every
-//! variant and scene.
+//! (game.zig: the overlays). It is reached from OPTIONS' ADVANCED SETTINGS and from START during
+//! play (the extended and network variants, variant.zig), and in the original with the settings
+//! key (F1 by default), in any scene.
 //!
 //! Its rows, in the cartridge's options' style (the chosen row bright, the others dim, the menu's
 //! arrow at the choice): each pad button's key, for player 1 and player 2, and, for A, B, C and
 //! START, the gamepads' button (every gamepad: its directions are always its d-pad and left stick);
-//! the settings key; which player the first gamepad plays (the second plays the other); the volume
-//! and the sound; the window's scale and full screen; the defaults; and the two ways out, SAVE AND
-//! EXIT and EXIT WITHOUT SAVING. A machine with one player (network play, a browser) shows its
-//! keys alone (YOUR KEYS: pad 1's, which network play sends) and the gamepads' buttons; every
-//! gamepad plays that player, so there is no FIRST GAMEPAD row. The volume's row is not there when
-//! this machine's volume is OPTIONS' VOLUME line (variant.zig): one place for one setting.
+//! the settings key, where the variant has it; which player the first gamepad plays (the second
+//! plays the other); the volume and the sound; the window's scale and full screen; the defaults;
+//! and the two ways out, SAVE AND EXIT and EXIT WITHOUT SAVING. They are this machine's players'
+//! alone: a machine with one player (network play, a browser) shows its keys alone (YOUR KEYS:
+//! pad 1's, which network play sends) and the gamepads' buttons; every gamepad plays that player,
+//! so there is no FIRST GAMEPAD row.
 //!
 //! The arrows move, Enter changes (a key or a button: the next one pressed is the new one; one
 //! that another setting has is swapped with it, so that no key does two things), left and right
 //! change a value. Escape saves and leaves, as SAVE AND EXIT does; EXIT WITHOUT SAVING, the
-//! settings key and a gamepad's B or BACK leave without saving, giving back the settings the
-//! screen opened with. A gamepad's d-pad and A or START do what the arrows and Enter do. The
+//! settings key (where the variant has it) and a gamepad's B or BACK leave without saving, giving
+//! back the settings the screen opened with. A gamepad's d-pad and A or START do what the arrows and Enter do. The
 //! arrows, Enter and Escape keep their meaning here whatever the pads' keys are, so the screen is
 //! always usable. The changes apply at once (the keys when the screen closes).
 const std = @import("std");
@@ -78,8 +78,8 @@ const volume_step = 10;
 pub const Facts = struct {
     /// One player on the machine: its keys alone, and no FIRST GAMEPAD.
     one_player: bool = false,
-    /// The volume's row: not when this machine's volume is OPTIONS' VOLUME line.
-    volume: bool = true,
+    /// The settings key opens the settings (the original): its row, and it leaves them.
+    settings_key: bool = true,
 };
 
 /// What an event did: the screen stays open, or it closed, its settings to be written, or given
@@ -104,7 +104,7 @@ pub const Screen = struct {
     fn shows(self: *const Screen, row: Row) bool {
         return switch (row) {
             .first_pad => !self.facts.one_player,
-            .volume => self.facts.volume,
+            .settings_key => self.facts.settings_key,
             else => true,
         };
     }
@@ -130,7 +130,7 @@ pub const Screen = struct {
                     .right => .right,
                     .enter, .space => if (k.repeat) return .stay else .choose,
                     .escape => .back,
-                    else => if (k.key == settings.settings_key and !k.repeat) .leave else return .stay,
+                    else => if (self.facts.settings_key and k.key == settings.settings_key and !k.repeat) .leave else return .stay,
                 };
                 return self.navigate(settings, nav);
             },
@@ -474,6 +474,9 @@ test "EXIT WITHOUT SAVING, the settings key and a gamepad's B give back what the
     try testing.expectEqual(Result.stay, press(&screen, &s, .f2));
     try testing.expectEqual(Result.exit_without_saving, press(&screen, &s, .f1));
     try testing.expectEqual(opened, s);
+    // Without the settings key (outside the original), F1 is a key like the others.
+    screen = .open(&s, .{ .settings_key = false });
+    try testing.expectEqual(Result.stay, press(&screen, &s, .f1));
 
     screen = .open(&s, .{});
     _ = pressButton(&screen, &s, .dpad_up);
@@ -492,10 +495,10 @@ test "EXIT WITHOUT SAVING, the settings key and a gamepad's B give back what the
     try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .enter));
 }
 
-test "one player: its keys alone, no FIRST GAMEPAD; without the volume's row, none" {
+test "one player: its keys alone, no FIRST GAMEPAD; without the settings key, no row of it" {
     var s: Settings = .{};
-    var screen: Screen = .open(&s, .{ .one_player = true, .volume = false });
-    // The rows: the eight keys, the settings key, the sound...
+    var screen: Screen = .open(&s, .{ .one_player = true, .settings_key = false });
+    // The rows: the eight keys, the volume, the sound...
     for (0..9) |_| _ = press(&screen, &s, .down);
     try testing.expectEqual(Row.sound, screen.row);
     try testing.expectEqual(@as(u16, 6 + 9 + 1), screen.screenRow(.sound));

@@ -6,10 +6,12 @@
 //! the sound); A, B or C on the sound test plays its entry, on EXIT leaves. START leaves from any
 //! line (stopping the sound), a tick sooner than EXIT. Leaving fades out to the game menu.
 //!
-//! The port's VOLUME line (the extended and network variants, on the machine of player 1 when it
-//! sounds the game itself: variant.zig) comes between CONTROL's table and EXIT, which moves a row
-//! down: its name and its value as the other lines', left and right change it by 10 (0 to 100),
-//! and the game's sound follows it (game.zig).
+//! The port's ADVANCED SETTINGS line (the extended and network variants: variant.zig) comes
+//! between CONTROL's table and EXIT, which moves a row down: its name in the font, in the other
+//! names' column; A, B or C on it opens the settings (game.zig: an overlay of this machine that
+//! holds the game), and the options go on when they close. A network guest's options (DESIGN.md 9:
+//! the game's rules are player 1's game's) show only what is its own: SOUND TEST, ADVANCED
+//! SETTINGS and EXIT.
 const std = @import("std");
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
@@ -29,10 +31,6 @@ const sound_test_cells = 11;
 const level_cells = 7;
 const control_cells = 16;
 const control_rows = 5;
-/// The VOLUME line's value: right-aligned in three cells; its step, and its most.
-const volume_cells = 3;
-const volume_step = 10;
-const volume_most = 100;
 
 pub const Line = enum(u8) {
     sound_test,
@@ -40,12 +38,17 @@ pub const Line = enum(u8) {
     control,
     lives,
     first_round,
-    /// The port's.
-    volume,
+    /// The port's: the settings.
+    advanced_settings,
     exit,
 
     fn hidden(l: Line) bool {
         return l == .lives or l == .first_round;
+    }
+
+    /// A line of the game's rules, which a network guest's options do not show.
+    fn rules(l: Line) bool {
+        return l == .level or l == .control or l.hidden();
     }
 };
 
@@ -56,11 +59,9 @@ pub const Values = struct {
     control: u8 = 0,
     lives: u8 = 0,
     first_round: u8 = 0,
-    /// Null without the VOLUME line.
-    volume: ?u8 = null,
 
     fn of(s: *const Setup) Values {
-        return .{ .sound_test = s.sound_test, .level = s.level, .control = s.control, .lives = s.lives, .first_round = s.first_round, .volume = s.volume };
+        return .{ .sound_test = s.sound_test, .level = s.level, .control = s.control, .lives = s.lives, .first_round = s.first_round };
     }
 
     fn store(v: Values, s: *Setup) void {
@@ -69,7 +70,6 @@ pub const Values = struct {
         s.control = v.control;
         s.lives = v.lives;
         s.first_round = v.first_round;
-        s.volume = v.volume;
     }
 };
 
@@ -83,6 +83,10 @@ pub const Options = struct {
     /// The cursor arrived at the last tick: the line is drawn bright at this one.
     arriving: bool = false,
     hidden_lines: bool = false,
+    /// The variant's ADVANCED SETTINGS line, and a network guest's lines alone (taken at the
+    /// set-up).
+    advanced_settings: bool = false,
+    own_only: bool = false,
     values: Values = .{},
 
     pub const Phase = enum(u8) { setup, aim, fade_in, first_line, lines, leave, fade_out, leaving };
@@ -131,10 +135,11 @@ pub const Options = struct {
             .stop = "stop",
         };
 
-        /// The cartridge's art of a line's name (the port's VOLUME is written in the font).
+        /// The cartridge's art of a line's name (the port's ADVANCED SETTINGS is written in the
+        /// font).
         fn name(a: *const Assets, l: Line, bright: bool) *const art.TileMap {
             return switch (l) {
-                .volume => unreachable,
+                .advanced_settings => unreachable,
                 .sound_test => if (bright) a.sound_test else a.sound_test_dim,
                 .level => if (bright) a.level else a.level_dim,
                 .control => if (bright) a.control else a.control_dim,
@@ -167,6 +172,8 @@ pub const Options = struct {
             .setup => {
                 self.values = .of(turn.setup);
                 self.hidden_lines = turn.setup.hidden_lines;
+                self.advanced_settings = turn.policies.advanced_settings;
+                self.own_only = turn.guest;
                 self.phase = .aim;
             },
             .aim => {
@@ -229,9 +236,9 @@ pub const Options = struct {
             .first_round => if (step) |up| {
                 v.first_round = wrap(v.first_round, 8, up);
             },
-            .volume => if (step) |up| {
-                const was = v.volume.?;
-                v.volume = if (up) @min(volume_most, was + volume_step) else was -| volume_step;
+            // The settings open over the options, which go on when they close.
+            .advanced_settings => if (p.a or p.b or p.c) {
+                turn.settings = 0;
             },
             .exit => if (p.a or p.b or p.c) {
                 self.phase = .leave;
@@ -241,10 +248,10 @@ pub const Options = struct {
     }
 
     /// The line after the cursor's, down or up, round the ends; the hidden lines, when they are
-    /// open, come before EXIT though they are below it on the screen (quirk O2), and the VOLUME
-    /// line, when there is one, right before EXIT.
+    /// open, come before EXIT though they are below it on the screen (quirk O2), and ADVANCED
+    /// SETTINGS, when there is the line, right before EXIT.
     fn next(self: *const Options, down: bool) Line {
-        const order = [_]Line{ .sound_test, .level, .control, .lives, .first_round, .volume, .exit };
+        const order = [_]Line{ .sound_test, .level, .control, .lives, .first_round, .advanced_settings, .exit };
         var i = std.mem.indexOfScalar(Line, &order, self.line).?;
         while (true) {
             i = if (down) (i + 1) % order.len else (i + order.len - 1) % order.len;
@@ -254,7 +261,8 @@ pub const Options = struct {
 
     /// Whether the screen has the line now.
     fn has(self: *const Options, l: Line) bool {
-        if (l == .volume) return self.values.volume != null;
+        if (self.own_only and l.rules()) return false;
+        if (l == .advanced_settings) return self.advanced_settings;
         return self.hidden_lines or !l.hidden();
     }
 
@@ -276,11 +284,11 @@ pub const Options = struct {
     fn drawLine(self: *const Options, l: Line, v: *view.View, a: *const Assets) !void {
         const bright = self.bright == l;
         const look: render.Look = .{ .palette = if (bright) 0 else 1 };
-        if (l == .volume) return self.drawVolume(v, a, look);
+        if (l == .advanced_settings) return drawAdvanced(v, a, look);
         const name = a.name(l, bright);
         const at = name.place orelse return;
-        // With the VOLUME line, EXIT a row lower.
-        const below: i32 = if (l == .exit and self.values.volume != null) 1 else 0;
+        // With ADVANCED SETTINGS, EXIT a row lower.
+        const below: i32 = if (l == .exit and self.advanced_settings) 1 else 0;
         try v.board(.a).drawMap(name, at.x, at.y + below);
         const row: i32 = at.y;
         const d = a.data;
@@ -297,19 +305,15 @@ pub const Options = struct {
             },
             .lives => try v.write(.a, a.text, value_column, row, &[_]u8{'1' + 2 * self.values.lives}, look),
             .first_round => try v.write(.a, a.text, value_column, row, &[_]u8{'1' + self.values.first_round}, look),
-            .volume, .exit => {},
+            .advanced_settings, .exit => {},
         }
     }
 
-    /// The VOLUME line, on the row above EXIT's place (EXIT then a row lower): its name in the
-    /// column of the others', its value right-aligned in the values' column.
-    fn drawVolume(self: *const Options, v: *view.View, a: *const Assets, look: render.Look) !void {
+    /// ADVANCED SETTINGS, on the row above EXIT's place (EXIT then a row lower), its name in the
+    /// column of the others'.
+    fn drawAdvanced(v: *view.View, a: *const Assets, look: render.Look) !void {
         const at = a.exit.place orelse return;
-        const row: i32 = at.y - 1;
-        try v.write(.a, a.text, at.x, row, "VOLUME", look);
-        var digits: [volume_cells]u8 = undefined;
-        const text = std.fmt.bufPrint(&digits, "{d: >3}", .{self.values.volume.?}) catch unreachable;
-        try v.write(.a, a.text, value_column, row, text, look);
+        try v.write(.a, a.text, at.x, at.y - 1, "ADVANCED SETTINGS", look);
     }
 
     /// `text` padded with blanks to `cells`, in `buf`.
@@ -336,30 +340,35 @@ test "the cursor's order: the hidden lines before EXIT when open, round the ends
     try std.testing.expectEqual(@as(u8, 0), Options.wrap(72, 73, true));
 }
 
-test "the VOLUME line: right before EXIT when there is one, by tens from 0 to 100" {
-    var o: Options = .{ .values = .{ .volume = 90 } };
+test "ADVANCED SETTINGS: right before EXIT when there is the line; A opens the settings" {
+    var o: Options = .{ .advanced_settings = true };
     o.line = .control;
-    try std.testing.expectEqual(Line.volume, o.next(true));
+    try std.testing.expectEqual(Line.advanced_settings, o.next(true));
     o.hidden_lines = true;
     o.line = .first_round;
-    try std.testing.expectEqual(Line.volume, o.next(true));
+    try std.testing.expectEqual(Line.advanced_settings, o.next(true));
     o.line = .exit;
-    try std.testing.expectEqual(Line.volume, o.next(false));
-    o.line = .volume;
+    try std.testing.expectEqual(Line.advanced_settings, o.next(false));
+    o.line = .advanced_settings;
     try std.testing.expectEqual(Line.first_round, o.next(false));
     try std.testing.expectEqual(Line.exit, o.next(true));
 
-    // Right twice: 100 at most; left: by ten; the setup keeps it.
-    var setup: Setup = .{ .volume = 90 };
+    // A on it: the settings asked for, by this machine's player; left and right do nothing.
+    var setup: Setup = .{};
     var turn: scene.Turn = .{ .setup = &setup, .pressed = .{ .pad1 = .{ .right = true } } };
     const a: Options.Assets = undefined;
     o.lineInput(&turn, &a);
+    try std.testing.expect(turn.settings == null);
+    turn.pressed = .{ .pad1 = .{ .a = true } };
     o.lineInput(&turn, &a);
-    try std.testing.expectEqual(@as(?u8, 100), setup.volume);
-    turn.pressed = .{ .pad1 = .{ .left = true } };
-    o.lineInput(&turn, &a);
-    try std.testing.expectEqual(@as(?u8, 90), setup.volume);
-    o.values.volume = 5;
-    o.lineInput(&turn, &a);
-    try std.testing.expectEqual(@as(?u8, 0), setup.volume);
+    try std.testing.expectEqual(@as(?u1, 0), turn.settings);
+}
+
+test "a network guest's options: SOUND TEST, ADVANCED SETTINGS, EXIT" {
+    var o: Options = .{ .advanced_settings = true, .own_only = true, .hidden_lines = true };
+    try std.testing.expectEqual(Line.advanced_settings, o.next(true));
+    o.line = .exit;
+    try std.testing.expectEqual(Line.sound_test, o.next(true));
+    try std.testing.expectEqual(Line.advanced_settings, o.next(false));
+    try std.testing.expect(!o.has(.level) and !o.has(.control) and !o.has(.lives) and o.has(.sound_test));
 }

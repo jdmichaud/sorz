@@ -44,8 +44,6 @@ pub const Exit = enum {
     menu,
     one_player,
     two_players,
-    /// The network variant's START: the game for the players the machines have.
-    play,
     options,
     /// The characters are chosen.
     chosen,
@@ -115,26 +113,25 @@ pub const original: Graph = .{
 };
 
 /// The extended game's flow: the cartridge's. Its additions are not scenes of the flow: the
-/// settings are an overlay over the game menu (scene.zig, game.zig), the VOLUME line a line of the
-/// options.
+/// settings are an overlay of this machine over the game (overlay.zig, game.zig), ADVANCED
+/// SETTINGS a line of the options.
 pub const extended: Graph = original;
 
-/// Network play's flow, one player a machine: the players are the machines' (two in a session,
-/// one in a browser alone), known before the game starts, so the game menu's START leads to the
-/// character select as the cartridge's 1 PLAYER and 2 PLAYERS do; the rest is the cartridge's.
+/// Network play's flow, one player a machine: each machine's own front end, whose game menu has
+/// no 1 PLAYER (2 PLAYERS goes to the character select with this machine's player, whom the other
+/// machine's joins there or in the round); the rest is the cartridge's.
 pub const network: Graph = .{
     .first = original.first,
     .power_on = original.power_on,
     .edges = blk: {
-        var edges: [original.edges.len]Edge = undefined;
+        var edges: [original.edges.len - 1]Edge = undefined;
         var n: usize = 0;
         for (original.edges) |e| {
-            if (e.from == .menu and (e.exit == .one_player or e.exit == .two_players)) continue;
+            if (e.from == .menu and e.exit == .one_player) continue;
             edges[n] = e;
             n += 1;
         }
-        edges[n] = .{ .from = .menu, .exit = .play, .to = .select, .load = 31 };
-        const out = edges[0 .. n + 1].*;
+        const out = edges;
         break :blk &out;
     },
 };
@@ -159,15 +156,14 @@ test "every scene but the test pattern and the load has a way in, and every edge
     try checkGraph(&network);
 }
 
-test "the variants' flows: the cartridge's menu chooses the players, network play's starts" {
+test "the variants' flows: the cartridge's menu chooses the players, network play's has 2 PLAYERS" {
     for ([_]*const Graph{ &original, &extended }) |g| {
         try std.testing.expectEqual(Kind.select, g.next(.menu, .one_player).?.to);
         try std.testing.expectEqual(Kind.select, g.next(.menu, .two_players).?.to);
-        try std.testing.expect(g.next(.menu, .play) == null);
     }
-    try std.testing.expect(network.next(.menu, .one_player) == null and network.next(.menu, .two_players) == null);
-    const start = network.next(.menu, .play).?;
-    try std.testing.expect(start.to == .select and start.load == original.next(.menu, .one_player).?.load);
+    try std.testing.expect(network.next(.menu, .one_player) == null);
+    const two = network.next(.menu, .two_players).?;
+    try std.testing.expect(two.to == .select and two.load == original.next(.menu, .two_players).?.load);
     // The rest is the cartridge's: the options and back, the round's ends.
     try std.testing.expectEqual(original.edges.len - 1, network.edges.len);
     try std.testing.expectEqual(Kind.options, network.next(.menu, .options).?.to);

@@ -4,20 +4,21 @@
 //!
 //!   sorz-variants-check ROM
 //!
-//! - original: the cartridge's game menu (1 PLAYER, 2 PLAYERS, OPTIONS); OPTIONS without VOLUME;
-//!   the settings key opens the settings over the options, the game held; Escape saves and leaves.
-//! - extended: SETTINGS after 2 PLAYERS opens the settings over the menu (the game held, the
-//!   volume's row not there: it is OPTIONS'), EXIT WITHOUT SAVING gives the menu back as it was;
-//!   OPTIONS has VOLUME before EXIT, and the record's volume follows it; 1 PLAYER, the select, the
-//!   round.
-//! - network, a browser's page alone (one player, the page's own volume): START, SETTINGS,
-//!   OPTIONS; no VOLUME; START to the select with one player, then the round.
-//! - network, two games in a session (the in-memory network): the host's start is both games';
-//!   player 2 opens their settings from the menu: the host holds and says why, both hear the
-//!   game's hold; then START, the select (each player's pad), the round; the two states the same
-//!   and the session's checks without a difference.
+//! - original: the cartridge's game menu (1 PLAYER, 2 PLAYERS, OPTIONS) and options (no ADVANCED
+//!   SETTINGS); the settings key opens the settings over the options (its row there), the game
+//!   held; Escape saves and leaves; 1 PLAYER to the round, where START pauses (no settings).
+//! - extended: the cartridge's menu; OPTIONS has ADVANCED SETTINGS right before EXIT, which opens
+//!   the settings (the game held, both players' keys and the volume, no settings key: F1 is no
+//!   key of the game); EXIT WITHOUT SAVING gives the settings back and OPTIONS goes on; 1 PLAYER,
+//!   the select, the round, where START opens the settings in place of the pause (the round not
+//!   paused, the game held, the pause's jingle), and Escape goes back to play.
+//! - network, as a browser's page plays it alone (one player): 2 PLAYERS and OPTIONS; ADVANCED
+//!   SETTINGS opens one player's settings; 2 PLAYERS to the select with this machine's player
+//!   alone, then the round, where START opens the settings.
+//! - network, a guest's OPTIONS: SOUND TEST, ADVANCED SETTINGS and EXIT alone.
 //!
-//! Prints a JSON line per flow, and exits with 1 when a step fails.
+//! The network's sessions (the join, the two games in lockstep) are netplay-check's. Prints a JSON
+//! line per flow, and exits with 1 when a step fails.
 const std = @import("std");
 const sorz = @import("sorz");
 const agent = @import("agent");
@@ -165,16 +166,60 @@ fn lines(r: *const Run) []const sorz.variant.MenuLine {
     return m.lines[0..m.line_count];
 }
 
+fn optionsOf(r: *const Run) ?*const sorz.screens.options.Options {
+    return switch (r.game.state.scenes.base) {
+        .options => |*o| o,
+        else => null,
+    };
+}
+
+fn roundOf(r: *const Run) ?*const sorz.scene.Round {
+    return switch (r.game.state.scenes.base) {
+        .round => |*x| x,
+        else => null,
+    };
+}
+
+fn playing(r: *const Run) bool {
+    const x = roundOf(r) orelse return false;
+    return x.phase == .play and r.game.state.scenes.overlay_count == 0 and !r.game.overlays.holds();
+}
+
+/// The options' cursor up `n` lines, a tick after each move, as the cursor arrives.
+fn optionsUp(r: *Run, n: usize) !void {
+    for (0..n) |_| {
+        try r.press(.up);
+        try r.update();
+    }
+}
+
+/// From the menu's first line, the line `line` chosen, to the round with one player: the select's
+/// cursor right, a choice, the round's play.
+fn toRound(f: *Flow, r: *Run, line: usize) !void {
+    try f.until(r, choosing, 400, "the menu");
+    try down(r, line);
+    try r.press(.enter);
+    try f.until(r, inSelect, 600, "the select");
+    try f.check(r.game.state.setup.players == .one, "one player in the select");
+    try r.press(.right);
+    try r.press(.z);
+    try f.until(r, playing, 2400, "the round's play");
+}
+
 fn original(f: *Flow, r: *Run) !void {
     try toMenu(f, r);
     try f.check(std.mem.eql(sorz.variant.MenuLine, lines(r), &.{ .one_player, .two_players, .options }), "the cartridge's menu");
     try down(r, 2);
     try r.press(.enter);
     try f.until(r, inOptions, 400, "OPTIONS");
-    try f.check(r.game.state.setup.volume == null, "OPTIONS without VOLUME");
+    try f.check(!optionsOf(r).?.advanced_settings, "OPTIONS without ADVANCED SETTINGS");
+    // Up from SOUND TEST: EXIT, then CONTROL.
+    try optionsUp(r, 2);
+    try f.check(optionsOf(r).?.line == .control, "CONTROL right before EXIT");
     // The settings key: the settings over OPTIONS, the game held.
     try r.press(.f1);
     try f.check(settingsOpen(r), "the settings key opens the settings");
+    try f.check(r.game.overlays.find(.settings).?.settings.facts.settings_key, "the settings key's row");
     const tick = r.game.state.tick;
     for (0..30) |_| try r.update();
     try f.check(r.game.state.tick == tick, "the settings hold the game");
@@ -183,17 +228,36 @@ fn original(f: *Flow, r: *Run) !void {
     try f.check(!settingsOpen(r) and r.game.saves_written == saves + 1, "Escape saves and leaves");
     try r.update();
     try f.check(r.game.state.tick > tick and !r.game.finished, "the game goes on");
+    // EXIT (down from CONTROL), the menu, 1 PLAYER, the round: START pauses.
+    try r.press(.down);
+    try r.update();
+    try r.press(.enter);
+    try toRound(f, r, 0);
+    try r.press(.enter);
+    for (0..4) |_| try r.update();
+    try f.check(roundOf(r).?.phase == .paused and !settingsOpen(r), "START pauses the round");
+    try r.press(.enter);
+    for (0..4) |_| try r.update();
+    try f.check(roundOf(r).?.phase == .play, "START ends the pause");
 }
 
 fn extended(f: *Flow, r: *Run) !void {
     try toMenu(f, r);
-    try f.check(std.mem.eql(sorz.variant.MenuLine, lines(r), &.{ .one_player, .two_players, .settings, .options }), "SETTINGS after 2 PLAYERS");
+    try f.check(std.mem.eql(sorz.variant.MenuLine, lines(r), &.{ .one_player, .two_players, .options }), "the cartridge's menu");
     try down(r, 2);
-    const tick = r.game.state.tick;
     try r.press(.enter);
-    try f.check(settingsOpen(r), "SETTINGS opens the settings");
+    try f.until(r, inOptions, 400, "OPTIONS");
+    try f.check(optionsOf(r).?.advanced_settings, "OPTIONS with ADVANCED SETTINGS");
+    try optionsUp(r, 2);
+    try f.check(optionsOf(r).?.line == .advanced_settings, "ADVANCED SETTINGS right before EXIT");
+    // F1 is no key of the extended game.
+    try r.press(.f1);
+    try f.check(!settingsOpen(r), "no settings key");
+    const tick = r.game.state.tick;
+    try r.press(.z);
+    try f.check(settingsOpen(r), "ADVANCED SETTINGS opens the settings");
     const screen = &r.game.overlays.find(.settings).?.settings;
-    try f.check(!screen.facts.volume, "the volume is OPTIONS', not the settings'");
+    try f.check(!screen.facts.one_player and !screen.facts.settings_key, "both players' keys, no settings key");
     for (0..30) |_| try r.update();
     try f.check(r.game.state.tick <= tick + 2, "the settings hold the game");
     // A change, then EXIT WITHOUT SAVING (up from the first row: the last): given back.
@@ -207,137 +271,64 @@ fn extended(f: *Flow, r: *Run) !void {
     const saves = r.game.saves_written;
     try r.press(.enter);
     try f.check(!settingsOpen(r) and std.meta.eql(before, r.game.settings) and r.game.saves_written == saves, "EXIT WITHOUT SAVING gives the settings back");
-    try f.until(r, choosing, 10, "the menu goes on");
-    try f.check(r.menu().?.choice == .settings, "the arrow on SETTINGS");
-    try down(r, 1);
+    try f.until(r, inOptions, 10, "OPTIONS go on");
+    try f.check(optionsOf(r).?.line == .advanced_settings, "the cursor on ADVANCED SETTINGS");
+    // EXIT, the menu, 1 PLAYER, the round: START opens the settings in place of the pause.
+    try r.press(.down);
+    try r.update();
     try r.press(.enter);
-    try f.until(r, inOptions, 400, "OPTIONS");
-    try f.check(r.game.state.setup.volume.? == 100, "OPTIONS with VOLUME, the record's");
-    // Down to VOLUME (SOUND TEST, LEVEL, CONTROL, VOLUME): a tick after each move, as the cursor
-    // arrives.
-    for (0..3) |_| {
-        try r.press(.down);
-        try r.update();
-    }
-    try r.press(.left);
-    try f.check(r.game.state.setup.volume.? == 90 and r.game.settings.sound.volume == 90, "VOLUME sets the record's volume");
+    try toRound(f, r, 0);
+    try startOpensSettings(f, r);
+}
+
+/// START in play: the settings open in place of the pause, the game held with the pause's
+/// jingle; Escape (save and leave) and play goes on.
+fn startOpensSettings(f: *Flow, r: *Run) !void {
     try r.press(.enter);
-    try f.until(r, choosing, 400, "back to the menu");
-    try r.press(.enter);
-    try f.until(r, inSelect, 600, "the select");
-    try f.check(r.game.state.setup.players == .one, "1 PLAYER");
-    try r.press(.right);
-    try r.press(.z);
-    try f.until(r, inRound, 1200, "the round");
+    for (0..4) |_| try r.update();
+    try f.check(settingsOpen(r) and roundOf(r).?.phase == .play, "START opens the settings, the round not paused");
+    try f.check(r.game.jingle.len == 0 or r.game.jingle_at != null, "the pause's jingle");
+    const tick = r.game.state.tick;
+    for (0..30) |_| try r.update();
+    try f.check(r.game.state.tick == tick, "the settings hold the game");
+    try r.press(.escape);
+    for (0..4) |_| try r.update();
+    try f.check(!settingsOpen(r) and roundOf(r).?.phase == .play and r.game.state.tick > tick, "play goes on");
 }
 
 fn page(f: *Flow, r: *Run) !void {
     try toMenu(f, r);
-    try f.check(std.mem.eql(sorz.variant.MenuLine, lines(r), &.{ .start, .settings, .options }), "START, SETTINGS, OPTIONS");
-    try f.check(r.game.state.setup.volume == null, "no VOLUME line (the page's own volume)");
+    try f.check(std.mem.eql(sorz.variant.MenuLine, lines(r), &.{ .two_players, .options }), "2 PLAYERS and OPTIONS");
+    try f.check(r.menu().?.all_lines, "2 PLAYERS offered (the other player is the network's)");
     try down(r, 1);
     try r.press(.enter);
-    try f.check(settingsOpen(r) and r.game.overlays.find(.settings).?.settings.facts.volume and r.game.overlays.find(.settings).?.settings.facts.one_player, "the settings: one player's keys, the volume");
+    try f.until(r, inOptions, 400, "OPTIONS");
+    try optionsUp(r, 2);
+    try r.press(.z);
+    const screen = &r.game.overlays.find(.settings);
+    try f.check(screen.* != null and screen.*.?.settings.facts.one_player, "the settings: one player's");
     try r.press(.escape);
     try f.check(!settingsOpen(r), "Escape leaves");
-    try r.press(.up);
+    try r.press(.down);
+    try r.update();
     try r.press(.enter);
-    try f.until(r, inSelect, 600, "the select");
-    try f.check(r.game.state.setup.players == .one, "one player");
-    try r.press(.right);
-    try r.press(.z);
-    try f.until(r, inRound, 1200, "the round");
+    try toRound(f, r, 0);
+    try startOpensSettings(f, r);
 }
 
-/// Two games of a session over the in-memory network, updated in turn.
-const Pair = struct {
-    network: sorz.net.memory.Network,
-    host: *Run,
-    guest: *Run,
-
-    fn update(p: *Pair) !void {
-        try p.host.update();
-        try p.guest.update();
-    }
-
-    fn press(p: *Pair, r: *Run, k: Key) !void {
-        try r.key(k, true);
-        try p.update();
-        try r.key(k, false);
-        try p.update();
-    }
-};
-
-fn pairUntil(f: *Flow, p: *Pair, cond: *const fn (*const Run) bool, limit: u32, what: []const u8) !void {
-    var n: u32 = 0;
-    while (!(cond(p.host) and cond(p.guest))) : (n += 1) {
-        if (n == limit) return f.check(false, what);
-        try p.update();
-    }
-    try f.check(true, what);
-}
-
-fn pairStep(p: *Pair, n: usize) !void {
-    for (0..n) |_| try p.update();
-}
-
-fn session(f: *Flow, gpa: std.mem.Allocator, assets: platform.AssetSource) !void {
-    var p: Pair = .{ .network = sorz.net.memory.Network.init(gpa), .host = try Run.create(gpa, assets, .network), .guest = try Run.create(gpa, assets, .original) };
-    defer {
-        p.host.destroy(gpa);
-        p.guest.destroy(gpa);
-        p.network.deinit();
-    }
-    for ([_]*Run{ p.host, p.guest }, [_]sorz.net.netplay.Role{ .host, .guest }) |r, role| {
-        r.backend.transport = (try p.network.endpoint()).transport();
-        try r.game.startNetplay(.{
-            .role = role,
-            .address = if (role == .host) "7000" else "ws://localhost:7000",
-            .build = sorz.net.protocol.buildId(sorz.version.build),
-            .data = @splat(1),
-            .delay = if (role == .host) 3 else null,
-            .log = false,
-        });
-    }
-    const started = struct {
-        fn on(r: *const Run) bool {
-            return r.game.net_epoch == 1;
-        }
-    }.on;
-    try pairUntil(f, &p, started, 100, "the session starts");
-    try f.check(p.guest.game.state.start.variant == .network and p.host.game.state.start.players == .two, "the host's start is both games'");
-    // The front end, the host's START.
-    for (0..500) |_| try p.update();
-    try p.press(p.host, .enter);
-    for (0..60) |_| try p.update();
-    try p.press(p.host, .enter);
-    try pairUntil(f, &p, choosing, 400, "the game menu on both");
-    // Player 2 opens their settings from the menu: down, then Enter, on the guest's pad.
-    try p.press(p.guest, .down);
-    try pairStep(&p, 6);
-    try p.press(p.guest, .enter);
-    try pairStep(&p, 8);
-    try f.check(settingsOpen(p.guest) and !settingsOpen(p.host), "player 2's settings, on player 2's machine");
-    try f.check(p.host.game.overlays.find(.peer_settings) != null, "player 1's machine says why it holds");
-    const ticks = .{ p.host.game.state.tick, p.guest.game.state.tick };
-    try pairStep(&p, 60);
-    try f.check(p.host.game.state.tick == ticks[0] and p.guest.game.state.tick == ticks[1], "both games hold");
-    try p.press(p.guest, .escape);
-    try pairStep(&p, 8);
-    try f.check(!settingsOpen(p.guest) and p.host.game.overlays.find(.peer_settings) == null and p.host.game.state.tick > ticks[0], "both go on");
-    // START (up to it), the select with each player's pad, the round.
-    try p.press(p.host, .up);
-    try pairStep(&p, 6);
-    try p.press(p.host, .enter);
-    try pairUntil(f, &p, inSelect, 600, "the select on both");
-    try f.check(p.host.game.state.setup.players == .two, "two players");
-    try p.press(p.host, .right);
-    try p.press(p.host, .z);
-    try p.press(p.guest, .z);
-    try pairUntil(f, &p, inRound, 1200, "the round on both");
-    for (0..600) |_| try p.update();
-    try f.check(p.host.game.state.hash() == p.guest.game.state.hash() and p.host.game.state.tick == p.guest.game.state.tick, "the same state");
-    try f.check(p.host.game.netplay.?.difference == null and p.host.game.netplay.?.phase() == .playing, "the session's checks agree");
+fn guestOptions(f: *Flow, r: *Run) !void {
+    try toMenu(f, r);
+    try down(r, 1);
+    try r.press(.enter);
+    try f.until(r, inOptions, 400, "OPTIONS");
+    const o = optionsOf(r).?;
+    try f.check(o.own_only and o.advanced_settings, "the guest's own lines");
+    try optionsUp(r, 1);
+    try f.check(optionsOf(r).?.line == .exit, "EXIT");
+    try optionsUp(r, 1);
+    try f.check(optionsOf(r).?.line == .advanced_settings, "ADVANCED SETTINGS");
+    try optionsUp(r, 1);
+    try f.check(optionsOf(r).?.line == .sound_test, "SOUND TEST, no LEVEL or CONTROL");
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -362,26 +353,24 @@ pub fn main(init: std.process.Init) !void {
     var out_buf: [4096]u8 = undefined;
     var out = std.Io.File.stdout().writerStreaming(io, &out_buf);
     var all = true;
-    const Single = struct { name: []const u8, variant: sorz.variant.Variant, page: bool, run: *const fn (*Flow, *Run) anyerror!void };
+    const Single = struct { name: []const u8, variant: sorz.variant.Variant, page: bool = false, guest: bool = false, run: *const fn (*Flow, *Run) anyerror!void };
     for ([_]Single{
-        .{ .name = "original", .variant = .original, .page = false, .run = original },
-        .{ .name = "extended", .variant = .extended, .page = false, .run = extended },
+        .{ .name = "original", .variant = .original, .run = original },
+        .{ .name = "extended", .variant = .extended, .run = extended },
         .{ .name = "network_page", .variant = .network, .page = true, .run = page },
-    }) |s| {
-        var f: Flow = .{ .out = &out.interface, .name = s.name };
-        const r = try Run.create(gpa, assets, s.variant);
+        .{ .name = "network_guest_options", .variant = .network, .page = true, .guest = true, .run = guestOptions },
+    }) |sg| {
+        var f: Flow = .{ .out = &out.interface, .name = sg.name };
+        const r = try Run.create(gpa, assets, sg.variant);
         defer r.destroy(gpa);
-        if (s.page) {
+        if (sg.page) {
             r.game.setOnePlayer();
             r.game.host_volume = true;
         }
-        s.run(&f, r) catch |e| if (e != error.StepFailed) return e;
+        r.game.guest = sg.guest;
+        sg.run(&f, r) catch |e| if (e != error.StepFailed) return e;
         try f.report(r);
         all = all and f.failed == null;
     }
-    var f: Flow = .{ .out = &out.interface, .name = "network_session" };
-    session(&f, gpa, assets) catch |e| if (e != error.StepFailed) return e;
-    try f.report(null);
-    all = all and f.failed == null;
     if (!all) std.process.exit(1);
 }

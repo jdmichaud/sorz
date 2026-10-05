@@ -181,7 +181,7 @@ pub const Run = struct {
     pub fn step(self: *Run) !bool {
         if (self.stage == .done) return false;
         const pads = self.next() orelse return false;
-        const turn = self.state.stepWith(pads, true, self.assets, &self.out);
+        const turn = self.state.stepWith(pads, .{}, self.assets, &self.out);
         if (self.sound) |s| try s.pcm.appendSlice(s.gpa, sorz.game.tickSound(&s.out, &s.due, &turn, 0));
         if (self.trace) |tw| tw.held = .{ pads.pad1, pads.pad2 };
         try self.observe(&turn);

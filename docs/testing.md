@@ -176,15 +176,17 @@ The game is played in three variants (DESIGN.md 10.7, src/shared/variant.zig): t
 (`--original`, the cartridge exactly), the extended game (the default) and the network variant
 (network play and the browser). The checks against sor-remaster compare the original: its
 scenarios (`--scenario`, game_run.zig) and `screens-check` run it, and sor-remaster's agent runs its
-own default, which is the cartridge's too (its options without the port's VOLUME line).
+own default, which is the cartridge's too.
 
 - `zig build variants-check -Drom=ROM` (src/tools/variants_check.zig), the gate of PLAN item 19:
   each variant's flow played from power-on on the ROM's content, as the hosts run it, its steps
-  checked on the game's state and its overlays: the original's menu and options and the settings
-  key; the extended menu's SETTINGS (the game held, EXIT WITHOUT SAVING) and OPTIONS' VOLUME, to the
-  round; the network variant as a browser's page plays it alone, to the round; and a session of two
-  games, player 2 in their settings from the menu (both games held, player 1 told), then the
-  select and the round, the two states the same.
+  checked on the game's state and its overlays: the original's menu and options (no ADVANCED
+  SETTINGS), the settings key, the round's pause on START; the extended game's ADVANCED SETTINGS
+  right before EXIT (the settings held over OPTIONS, both players', no settings key; EXIT WITHOUT
+  SAVING), and START in the round opening the settings in place of the pause; the network variant
+  as a browser's page plays it alone (2 PLAYERS and OPTIONS, one player's settings, the select
+  with this machine's player, the round's START); a network guest's OPTIONS (SOUND TEST,
+  ADVANCED SETTINGS, EXIT).
 - `browser-check` with `-Drom=ROM` adds the part `flow`: on a relay serving the whole content
   tree, the page's menu (its sounds made before it shows, SETTINGS before the game and back), and
   1 PLAYER's game in the network variant (its own menu START, SETTINGS, OPTIONS; the settings key

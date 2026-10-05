@@ -13,7 +13,8 @@
 //!   waits);
 //! - play: a logic tick of the world every other display tick (its timer, its script). START at
 //!   a logic tick's start pauses, and at any tick of the pause resumes (each time the pause's
-//!   sound; the pause's text while it lasts). The time running out is the time over: its sound
+//!   sound; the pause's text while it lasts); where the variant says so, it opens the settings in
+//!   place of the pause instead (`startOpensSettings`). The time running out is the time over: its sound
 //!   and text for its ticks, then the round's music again, and each player in play loses its
 //!   health. A player dies, and its next life drops in (world/lives.zig); out of lives, it enters
 //!   its name on its part of the status bar when its score enters the high-score table (the
@@ -185,8 +186,8 @@ pub const Round = struct {
     play: world.Play = .{},
     colours: Colours = .{},
     cycles: [max_cycles]Cycle = @splat(.{}),
-    /// START pressed since the last logic tick began (the pause's).
-    start_pressed: bool = false,
+    /// START pressed since the last logic tick began (the pause's), and by which player first.
+    start_pressed: ?u1 = null,
     /// The logic tick ran at this display tick (the traces observe the world then).
     logic_ran: bool = false,
     /// The display tick was the first of a logic tick's two (no picture ends there).
@@ -431,7 +432,7 @@ pub const Round = struct {
             },
             .play => return self.playTick(turn, a, true),
             // START in the pause ends it (its text shows a display tick longer).
-            .paused => if (self.startPressed(turn)) {
+            .paused => if (self.startPressed(turn) != null) {
                 self.phase = .play;
                 self.resumed = true;
                 turn.play(a.pause);
@@ -452,13 +453,12 @@ pub const Round = struct {
         return null;
     }
 
-    /// START on the pad of a player in play (not waiting to continue).
-    fn startPressed(self: *const Round, turn: *const scene.Turn) bool {
-        const w = &self.play.world;
-        if (self.fighting(0) and turn.pressed.pad1.start) return true;
-        if (self.fighting(1) and turn.pressed.pad2.start) return true;
-        _ = w;
-        return false;
+    /// START on the pad of a player in play (not waiting to continue): the player, player 1's
+    /// first.
+    fn startPressed(self: *const Round, turn: *const scene.Turn) ?u1 {
+        if (self.fighting(0) and turn.pressed.pad1.start) return 0;
+        if (self.fighting(1) and turn.pressed.pad2.start) return 1;
+        return null;
     }
 
     /// Whether player `k` plays as a fighter.
@@ -626,6 +626,15 @@ pub const Round = struct {
         }
     }
 
+    /// START opens the settings in place of the pause (the extended and network variants): the
+    /// game holds them as it holds the pause (game.zig: the pause's jingle with them), and the
+    /// logic tick that START was seen at waits, as the pause's first tick does; play goes on with
+    /// it once they close.
+    fn startOpensSettings(_: *Round, turn: *scene.Turn, who: u1) ?flow.Exit {
+        turn.settings = who;
+        return null;
+    }
+
     /// A display tick ends while the world waits (the round's start, the pause, the time over, the
     /// end): the game's clock counts it, as the original counts every tick of its logic that ends
     /// (`World.tick`; in play the world counts its own logic ticks), and so does the trace's.
@@ -638,14 +647,15 @@ pub const Round = struct {
     /// at the next logic tick's start), and at a logic tick's end the world's sounds go out, the
     /// colours cycle, and the time running out, the round won, the game over end play.
     fn playTick(self: *Round, turn: *scene.Turn, a: *const Assets, hear_start: bool) ?flow.Exit {
-        if (hear_start and self.startPressed(turn)) self.start_pressed = true;
-        if (self.play.schedule.into == 0 and self.start_pressed) {
-            self.start_pressed = false;
-            self.phase = .paused;
+        if (hear_start and self.start_pressed == null) self.start_pressed = self.startPressed(turn);
+        if (self.play.schedule.into == 0) if (self.start_pressed) |who| {
+            self.start_pressed = null;
             self.waited();
+            if (turn.policies.start_opens_settings) return self.startOpensSettings(turn, who);
+            self.phase = .paused;
             turn.play(a.pause);
             return null;
-        }
+        };
         var scratch: world.Output = undefined;
         const out = turn.world_out orelse blk: {
             scratch = .{};

@@ -26,10 +26,11 @@ pub const usage =
     \\                       content is extracted in memory
     \\  --saves DIR          where saves are kept (default: the per-user application data
     \\                       directory)
-    \\  --original           the cartridge exactly: its game menu and its options, without the
-    \\                       port's additions (SETTINGS in the game menu, VOLUME in OPTIONS);
-    \\                       the settings key (F1) still opens the settings. In network play,
-    \\                       the host's choice is both games'
+    \\  --original           the cartridge exactly: its game menu, its options and its pause on
+    \\                       START, without the port's additions (ADVANCED SETTINGS in
+    \\                       OPTIONS, START opening the settings during play); the settings
+    \\                       key (F1) opens the settings. In network play, the host's choice
+    \\                       is both games'
     \\  --netplay [ADDRESS:]PORT  play with a second player over the network, as the host
     \\                       (player 1): listen at PORT (all interfaces without ADDRESS), where
     \\                       the browser build's page is served too, with the game's files

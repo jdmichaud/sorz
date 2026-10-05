@@ -79,9 +79,6 @@ pub const Setup = struct {
     /// The options' hidden lines (the lives, the first round), opened by a code on pad 2 at the
     /// game menu, for one visit of the options.
     hidden_lines: bool = false,
-    /// The port's VOLUME line of the options (variant.zig): its value, 0 to 100 by tens; null
-    /// without the line. Player 1's machine sounds at that volume (game.zig).
-    volume: ?u8 = null,
     /// Each player's character, once chosen.
     characters: [2]?Character = .{ null, null },
     /// The high-score table; null until a game changes it: the content's first one stands.

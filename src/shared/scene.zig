@@ -99,14 +99,19 @@ pub const Turn = struct {
     /// The buttons held at this tick, and those newly held (held now, not at the last reading).
     pads: input.Pads = .{},
     pressed: input.Pads = .{},
-    /// Whether a second pad is there (the game menu dims 2 PLAYERS without it).
+    /// Whether a second pad is there (the game menu dims 2 PLAYERS without it): a second player
+    /// on this machine, or network play's, whose second player is another machine's.
     second_pad: bool = true,
+    /// This machine's game takes the game's rules from another machine's (network play's guest):
+    /// OPTIONS shows only what is this machine's own.
+    guest: bool = false,
     setup: *Setup,
     /// The variant's rules (variant.zig), which the scenes ask rather than the variant.
     policies: *const variant.Policies = &variant.original.policies,
     requests: Requests = .{},
-    /// The player who chose the settings at this tick (the game menu's SETTINGS): the game opens
-    /// them over the scenes, on that player's machine (game.zig).
+    /// The player who asked for the settings at this tick (OPTIONS' ADVANCED SETTINGS, START
+    /// during play where the variant says so): the game opens them over the scenes, on that
+    /// player's machine (game.zig).
     settings: ?u1 = null,
     /// The sounds asked for in the first half of a logic tick of play (its players'), which the
     /// sound's driver takes at the frame in the logic tick's middle: this tick's update, before

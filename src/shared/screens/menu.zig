@@ -1,13 +1,12 @@
 //! The game menu, after the title: the cartridge's 1 PLAYER, 2 PLAYERS, OPTIONS, or the lines of
-//! another variant (variant.zig: SETTINGS after 2 PLAYERS in the extended game; START, SETTINGS,
-//! OPTIONS in network play), one under the other from the cartridge's first line. It fades in; the
-//! arrow (the font's `->`) blinks left of the chosen line, up and down move it ("menu move") from
-//! the fade's start; once the fade is done, A, B, C or START chooses ("menu choose"), and after a
-//! tick the menu fades out, then leaves for the character select or the options. SETTINGS is not a
-//! way out: the settings open over the menu (game.zig), which goes on when they close. Without a
-//! second pad, 2 PLAYERS is dimmed (the colours `menu/one_pad`) and the arrow skips it. Choosing
-//! OPTIONS with pad 2 holding exactly A, B, C and right at the end of the fade opens the options'
-//! hidden lines. The pad that drives the menu is the variant's (pad 1, or either player's).
+//! another variant (variant.zig: 2 PLAYERS and OPTIONS in network play), one under the other from
+//! the cartridge's first line. It fades in; the arrow (the font's `->`) blinks left of the chosen
+//! line, up and down move it ("menu move") from the fade's start; once the fade is done, A, B, C or
+//! START chooses ("menu choose"), and after a tick the menu fades out, then leaves for the
+//! character select or the options. Without a second pad, 2 PLAYERS is dimmed (the colours
+//! `menu/one_pad`) and the arrow skips it (network play's second player is the network's: it is
+//! never dimmed there). Choosing OPTIONS with pad 2 holding exactly A, B, C and right at the end of
+//! the fade opens the options' hidden lines. Pad 1 drives it: each machine's menu is its own.
 const std = @import("std");
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
@@ -29,16 +28,6 @@ pub const Line = variant.MenuLine;
 
 /// The most lines a menu has.
 const most_lines = std.enums.values(Line).len;
-
-/// The port's lines, which the cartridge's art does not have: written in its font, in the
-/// colours of its bright lines.
-fn word(l: Line) ?[]const u8 {
-    return switch (l) {
-        .start => "START",
-        .settings => "SETTINGS",
-        .one_player, .two_players, .options => null,
-    };
-}
 
 pub const Menu = struct {
     /// Ticks since the scene began (its set-up is tick 1).
@@ -81,13 +70,12 @@ pub const Menu = struct {
             .choose = "menu choose",
         };
 
-        /// The cartridge's art of a line, if it has one.
-        pub fn map(a: *const Assets, l: Line) ?*const art.TileMap {
+        /// The cartridge's art of a line.
+        pub fn map(a: *const Assets, l: Line) *const art.TileMap {
             return switch (l) {
                 .one_player => a.one_player,
                 .two_players => a.two_players,
                 .options => a.options,
-                .start, .settings => null,
             };
         }
 
@@ -126,7 +114,6 @@ pub const Menu = struct {
         self.colours.latch();
         defer turn.frame = .{ .colours = self.colours.copy, .first_line = true };
         self.shown_arrow = if (self.hidden) null else self.choice;
-        const pad = turn.policies.menuPad(turn.pressed);
         switch (self.phase) {
             .setup => {
                 turn.releasePads();
@@ -146,19 +133,14 @@ pub const Menu = struct {
                 self.phase = .fade_in;
             },
             .fade_in => {
-                self.cursor(turn, pad.pressed, a);
+                self.cursor(turn, turn.pressed.pad1, a);
                 if (self.colours.stepFade()) self.phase = .choosing;
             },
             .choosing => {
-                const p = pad.pressed;
+                const p = turn.pressed.pad1;
                 if (p.a or p.b or p.c or p.start) {
-                    if (self.choice == .settings) {
-                        // The settings open over the menu, which goes on when they close.
-                        turn.settings = pad.player;
-                    } else {
-                        turn.play(a.choose);
-                        self.phase = .chosen;
-                    }
+                    turn.play(a.choose);
+                    self.phase = .chosen;
                 } else {
                     // The lines follow the second pad as it comes and goes.
                     if (!self.all_lines and turn.second_pad) self.all_lines = true;
@@ -179,19 +161,17 @@ pub const Menu = struct {
                     turn.setup.players = .one;
                     return .one_player;
                 },
+                // Both players here, or this machine's alone: the other machine's joins later.
                 .two_players => {
-                    turn.setup.players = .two;
+                    turn.setup.players = if (turn.policies.two_players_here) .two else .one;
                     return .two_players;
                 },
-                // The players the game started with: the machines'.
-                .start => return .play,
                 .options => {
                     const p2 = turn.pads.pad2;
                     const code: input.Pad = .{ .a = true, .b = true, .c = true, .right = true };
                     turn.setup.hidden_lines = std.meta.eql(p2, code);
                     return .options;
                 },
-                .settings => unreachable,
             },
         }
         return null;
@@ -223,9 +203,7 @@ pub const Menu = struct {
     pub fn draw(self: *const Menu, prev: ?*const Menu, v: *view.View, a: *const Assets) !void {
         if (prev == null) for (self.slice(), 0..) |l, i| {
             const c = a.cellOf(i);
-            if (a.map(l)) |m| {
-                try v.board(.a).drawMap(m, c.x, c.y);
-            } else try v.write(.a, a.text, c.x, c.y, word(l).?, .{});
+            try v.board(.a).drawMap(a.map(l), c.x, c.y);
         };
         v.screen.colours = self.colours.shown;
         if (self.shown_arrow) |l| {
@@ -297,55 +275,37 @@ test "without a second pad, 2 PLAYERS is dimmed and the arrow skips it; A choose
     try std.testing.expectEqual(@as(u16, 65 + 66), m.ticks);
 }
 
-test "the extended menu: SETTINGS after 2 PLAYERS opens the settings and stays; OPTIONS a line lower" {
-    const a = &Fixture.assets;
+test "the extended menu is the cartridge's; 2 PLAYERS puts both players in the game" {
     var setup: Setup = .{};
     var m: Menu = .{};
     _ = press(&m, &setup, .extended, true, .{});
-    try std.testing.expectEqualSlices(Line, &.{ .one_player, .two_players, .settings, .options }, m.slice());
-    try std.testing.expectEqual(@as(i32, 15 * 8), m.arrowAt(a, .settings).y);
-    try std.testing.expectEqual(@as(i32, 17 * 8), m.arrowAt(a, .options).y);
+    try std.testing.expectEqualSlices(Line, &.{ .one_player, .two_players, .options }, m.slice());
     while (m.phase != .choosing) _ = press(&m, &setup, .extended, true, .{});
-    for ([_]Line{ .two_players, .settings, .options, .one_player }) |want| {
-        _ = press(&m, &setup, .extended, true, .{ .pad1 = .{ .down = true } });
-        try std.testing.expectEqual(want, m.choice);
-    }
-    // Without a second pad, 2 PLAYERS is passed in either direction.
-    _ = press(&m, &setup, .extended, false, .{ .pad1 = .{ .down = true } });
-    try std.testing.expectEqual(Line.settings, m.choice);
-    _ = press(&m, &setup, .extended, false, .{ .pad1 = .{ .up = true } });
-    try std.testing.expectEqual(Line.one_player, m.choice);
-    _ = press(&m, &setup, .extended, true, .{ .pad1 = .{ .up = true } });
-    _ = press(&m, &setup, .extended, true, .{ .pad1 = .{ .up = true } });
-    try std.testing.expectEqual(Line.settings, m.choice);
-    // SETTINGS: the settings asked for, by player 1; no sound, no way out, the menu goes on.
-    const chosen = press(&m, &setup, .extended, true, .{ .pad1 = .{ .start = true } });
-    try std.testing.expect(chosen.exit == null and chosen.turn.settings.? == 0 and chosen.turn.requests.len == 0);
-    try std.testing.expectEqual(Menu.Phase.choosing, m.phase);
     _ = press(&m, &setup, .extended, true, .{ .pad1 = .{ .down = true } });
-    var exit: ?flow.Exit = press(&m, &setup, .extended, true, .{ .pad1 = .{ .c = true } }).exit;
+    var exit: ?flow.Exit = press(&m, &setup, .extended, true, .{ .pad1 = .{ .start = true } }).exit;
     while (exit == null) exit = press(&m, &setup, .extended, true, .{}).exit;
-    try std.testing.expectEqual(flow.Exit.options, exit.?);
+    try std.testing.expectEqual(flow.Exit.two_players, exit.?);
+    try std.testing.expectEqual(@import("../setup.zig").Players.two, setup.players);
 }
 
-test "the network menu: START, SETTINGS, OPTIONS; either player's pad; START keeps the players" {
+test "the network menu: 2 PLAYERS and OPTIONS, pad 1's alone; 2 PLAYERS puts this machine's player in" {
     const a = &Fixture.assets;
     var setup: Setup = .{ .players = .two };
     var m: Menu = .{};
     _ = press(&m, &setup, .network, true, .{});
-    try std.testing.expectEqualSlices(Line, &.{ .start, .settings, .options }, m.slice());
-    try std.testing.expectEqual(@as(i32, 11 * 8), m.arrowAt(a, .start).y);
-    try std.testing.expectEqual(@as(i32, 15 * 8), m.arrowAt(a, .options).y);
+    try std.testing.expectEqualSlices(Line, &.{ .two_players, .options }, m.slice());
+    // From the cartridge's first line's place down.
+    try std.testing.expectEqual(@as(i32, 11 * 8), m.arrowAt(a, .two_players).y);
+    try std.testing.expectEqual(@as(i32, 13 * 8), m.arrowAt(a, .options).y);
     while (m.phase != .choosing) _ = press(&m, &setup, .network, true, .{});
-    // Player 2 moves the arrow to SETTINGS and opens their own settings.
+    // Pad 2 is not this menu's: the arrow stays.
     _ = press(&m, &setup, .network, true, .{ .pad2 = .{ .down = true } });
-    try std.testing.expectEqual(Line.settings, m.choice);
-    const chosen = press(&m, &setup, .network, true, .{ .pad2 = .{ .a = true } });
-    try std.testing.expectEqual(@as(?u1, 1), chosen.turn.settings);
-    // Player 1 goes up to START and starts: the select with the two players.
-    _ = press(&m, &setup, .network, true, .{ .pad1 = .{ .up = true } });
+    try std.testing.expectEqual(Line.two_players, m.choice);
+    _ = press(&m, &setup, .network, true, .{ .pad1 = .{ .down = true } });
+    _ = press(&m, &setup, .network, true, .{ .pad1 = .{ .down = true } });
+    try std.testing.expectEqual(Line.two_players, m.choice);
     var exit: ?flow.Exit = press(&m, &setup, .network, true, .{ .pad1 = .{ .b = true } }).exit;
     while (exit == null) exit = press(&m, &setup, .network, true, .{}).exit;
-    try std.testing.expectEqual(flow.Exit.play, exit.?);
-    try std.testing.expectEqual(@import("../setup.zig").Players.two, setup.players);
+    try std.testing.expectEqual(flow.Exit.two_players, exit.?);
+    try std.testing.expectEqual(@import("../setup.zig").Players.one, setup.players);
 }

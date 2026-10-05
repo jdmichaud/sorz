@@ -38,12 +38,12 @@ const usage =
     \\  DIR|ROM          the game directory (its content tree), or the user's ROM, whose content
     \\                   is extracted in memory; without either, a test pattern
     \\  --saves DIR      where saves are kept, the settings record (settings.json) among them
-    \\  --original       the cartridge's variant (DESIGN.md 10.7): its game menu and options;
-    \\                   the default is the extended game, network play's the network variant
-    \\                   (with --pair, the host's: the network variant without --original)
-    \\  --page           the game as a browser's page runs it alone (1 PLAYER on its menu):
-    \\                   the network variant, one player (pad 1's keys and every gamepad), the
-    \\                   page's own volume (no VOLUME line in OPTIONS)
+    \\  --original       the cartridge's variant (DESIGN.md 10.7): its game menu, options and
+    \\                   pause, the settings by the settings key; the default is the extended
+    \\                   game, network play's the network variant (with --pair, the host's: the
+    \\                   network variant without --original)
+    \\  --page           the game as a browser's page runs it alone: the network variant, one
+    \\                   player (pad 1's keys and every gamepad), the page's own volume
     \\  --netplay, --join  network play over WebSockets, as the host (player 1) or the guest
     \\                   (player 2); --frames counts the session's ticks, and --key presses a
     \\                   pad 1 key by tick (it reaches the game --delay ticks later); prints the
