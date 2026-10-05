@@ -696,7 +696,7 @@ pub fn Of(comptime M: type) type {
 
         /// Whether its place across may be `x`: within the street's ends (on the round's own
         /// floor, past its least).
-        fn acrossAllowed(a: A, x: Fixed) bool {
+        pub fn acrossAllowed(a: A, x: Fixed) bool {
             if (!x.lessThan(.pixels(a.numbers().walk_x_most))) return false;
             if (roundWalk(a)) |ew| return Fixed.pixels(ew.x_least).lessThan(x);
             return !x.lessThan(.zero);

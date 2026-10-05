@@ -199,7 +199,7 @@ fn diagonal(a: Actor) void {
     if (!a.mind.across) {
         if (Common.wallAcross(a)) return Common.enter(a, .walk_off);
         const x = e.position.x.add(e.velocity.x);
-        const refused = x.lessThan(.zero) or !x.lessThan(.pixels(n.walk_x_most));
+        const refused = !Common.acrossAllowed(a, x);
         if (!refused) e.position.x = x;
         if (a.tick.keptOut(a.handle)) return Common.enter(a, .walk_off);
         if (!refused) {
