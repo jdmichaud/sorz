@@ -856,6 +856,13 @@ pub const Run = struct {
                 w.camera.drawn[p - 1] = x.position.x;
             }
             if (x.team == .enemy) takeUpSpawn(kinds, x, e, extras.round, two, &r.used);
+            // A breakable standing still holds the item its record names.
+            if (std.mem.eql(u8, e.kind, "breakable") and stateIn(e.state, &.{ "s0", "s1" })) {
+                if (recordOf(e, extras.round, two, &r.used)) |rec| if (rec.holds) |name| if (kinds.find(name)) |item| {
+                    var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
+                    t.give(h, item);
+                };
+            }
             made[h.index] = .{ .h = h, .e = e };
         }
         // The animation the other program's probe names by the original's number, for the kinds
@@ -1025,39 +1032,7 @@ pub const Run = struct {
     /// has come in, waited or flanked has the way in and the
     /// place it has now; one that changed kind keeps its old blows' damage.
     fn takeUpSpawn(kinds: *const world.Kinds, x: *world.Entity, e: *const Situation.Seen, round_script: ?*const sorz.content.round.Round, two: bool, used: *[256]bool) void {
-        const Record = sorz.content.round.Spawn;
-        var n: usize = 0;
-        const kind = e.was_kind orelse e.kind;
-        const found: ?*const Record = search: {
-            const r = round_script orelse break :search null;
-            var lists: [64][]const Record = undefined;
-            var count: usize = 0;
-            for (r.sections) |sec| {
-                for ([_][]const Record{ sec.placed, sec.wave, sec.reserve }) |l| {
-                    if (count < lists.len) lists[count] = l;
-                    count += 1;
-                }
-            }
-            if (r.boss) |b| for ([_][]const Record{ b.wave, b.reserve }) |l| {
-                if (count < lists.len) lists[count] = l;
-                count += 1;
-            };
-            for (lists[0..@min(count, lists.len)], 0..) |list, li| {
-                // Placed ahead: by its place; brought in: by its depth.
-                const placed = li % 3 == 0 and li < 3 * r.sections.len;
-                for (list) |*rec| {
-                    defer n += 1;
-                    if (n >= used.len or used[n]) continue;
-                    if (rec.two_players and !two) continue;
-                    if (!std.mem.eql(u8, rec.kind, kind) or rec.depth != e.spawned_at[1]) continue;
-                    if (placed and rec.x != e.spawned_at[0]) continue;
-                    used[n] = true;
-                    break :search rec;
-                }
-            }
-            break :search null;
-        };
-        if (found) |rec| x.spawn = world.script.placing(rec);
+        if (recordOf(e, round_script, two, used)) |rec| x.spawn = world.script.placing(rec);
         const state = e.state orelse "";
         if (!std.mem.eql(u8, state, "appear")) x.spawn.traits.waits_for_camera = false;
         // A Galsia that has waited, or one come out of a shutter, fights on as a plain one.
@@ -1088,6 +1063,42 @@ pub const Run = struct {
         w.timer.seconds = count.seconds;
         w.timer.shown = count.seconds;
         w.timer.ticks = @intCast(pace - @min(situation.t - count.t, pace - 1));
+    }
+
+    /// The record of the round's script that placed `e` where it appeared (placed ahead: at
+    /// its place; brought in: at its depth), of its kind (its first), not yet taken by another
+    /// (`used`), and not one for two players in a game of one (`two`).
+    fn recordOf(e: *const Situation.Seen, round_script: ?*const sorz.content.round.Round, two: bool, used: *[256]bool) ?*const sorz.content.round.Spawn {
+        const Record = sorz.content.round.Spawn;
+        var n: usize = 0;
+        const kind = e.was_kind orelse e.kind;
+        const r = round_script orelse return null;
+        var lists: [64][]const Record = undefined;
+        var count: usize = 0;
+        for (r.sections) |sec| {
+            for ([_][]const Record{ sec.placed, sec.wave, sec.reserve }) |l| {
+                if (count < lists.len) lists[count] = l;
+                count += 1;
+            }
+        }
+        if (r.boss) |b| for ([_][]const Record{ b.wave, b.reserve }) |l| {
+            if (count < lists.len) lists[count] = l;
+            count += 1;
+        };
+        for (lists[0..@min(count, lists.len)], 0..) |list, li| {
+            // Placed ahead: by its place; brought in: by its depth.
+            const placed = li % 3 == 0 and li < 3 * r.sections.len;
+            for (list) |*rec| {
+                defer n += 1;
+                if (n >= used.len or used[n]) continue;
+                if (rec.two_players and !two) continue;
+                if (!std.mem.eql(u8, rec.kind, kind) or rec.depth != e.spawned_at[1]) continue;
+                if (placed and rec.x != e.spawned_at[0]) continue;
+                used[n] = true;
+                return rec;
+            }
+        }
+        return null;
     }
 
     /// An entity the other program had, in its place there when it is free (so that the order
