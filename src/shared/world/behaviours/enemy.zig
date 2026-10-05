@@ -95,6 +95,8 @@ pub const Body = struct {
     cried: bool = false,
     /// Held still by the special attack: its pose (by its place across when the attack came).
     special_pose: u2 = 0,
+    /// Called by the special attack in the air: it falls to the ground first.
+    special_fall: bool = false,
     /// The walk off: pacing across (after its walk away in depth), on the right of its target
     /// when it began; its walks off one soon after the other, and the tick of the last.
     pacing: bool = false,
@@ -1367,7 +1369,8 @@ pub fn Of(comptime M: type) type {
 
         /// It stands, facing its target, a while (with no player in play, until one comes).
         /// During the special attack it is held still in a pose by its place across: turning
-        /// about now and then, lying, or shaking on its feet.
+        /// about now and then, lying, or shaking on its feet; in the air (an acrobat's leap), it
+        /// first falls to the ground, in height alone, and takes its pose as it lands.
         pub fn standSetUp(a: A) void {
             const n = a.numbers();
             const b = body(a);
@@ -1379,6 +1382,17 @@ pub fn Of(comptime M: type) type {
                 b.timer = n.stand;
                 return;
             }
+            if (!a.atGround()) {
+                b.special_fall = true;
+                return;
+            }
+            specialPose(a);
+        }
+
+        /// Its pose through the special attack, by its place across.
+        fn specialPose(a: A) void {
+            const n = a.numbers();
+            const b = body(a);
             switch (b.special_pose) {
                 0 => {
                     faceTarget(a);
@@ -1416,6 +1430,15 @@ pub fn Of(comptime M: type) type {
                 b.timer -%= 1;
                 if (b.timer == 0) enter(a, M.fights);
                 return;
+            }
+            if (b.special_fall) {
+                gravity(a);
+                a.entity.position.height = a.entity.position.height.add(a.entity.velocity.height);
+                if (!a.atGround()) return;
+                // On the ground: its whole pixels the ground's, its fraction kept.
+                a.entity.position.height = .parts(@intCast(a.tick.world.ground.whole()), a.entity.position.height.frac());
+                b.special_fall = false;
+                return specialPose(a);
             }
             if (b.special_pose & 1 != 0) return;
             b.timer -%= 1;
@@ -1550,6 +1573,7 @@ pub fn Of(comptime M: type) type {
             body(a).other = null;
             a.takeDamage(by, a.entity.health + 1);
             body(a).special_pose = @intCast(a.entity.position.x.whole() & 3);
+            body(a).special_fall = false;
             enter(a, .stand);
         }
 
