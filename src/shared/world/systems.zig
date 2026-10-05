@@ -37,7 +37,8 @@ pub const System = struct {
 /// and move, a section due opens (its wall), and the camera follows them; the players' blows and
 /// grabs on each other land; then the others take their turns one after the other (each begins
 /// its tick, takes the blows and the grabs of the tick where it stands and decides), and move;
-/// the round's script brings who comes.
+/// the round's script brings who comes. Where the players are drawn at the tick's end is what the
+/// camera follows at the next (`noteDrawn`).
 pub const pipeline = [_]System{
     .{ .name = "timer", .run = script.timer },
     .{ .name = "commands", .run = commands },
@@ -53,6 +54,7 @@ pub const pipeline = [_]System{
     .{ .name = "animation", .run = animation },
     .{ .name = "sounds", .run = sounds },
     .{ .name = "draw_list", .run = draw_list.build },
+    .{ .name = "drawn", .run = noteDrawn },
 };
 
 /// One logic tick of `world`, with the pads `in`; its output in `out`.
@@ -426,12 +428,12 @@ fn camera(t: *Tick) void {
         },
         .back => {
             c.x = c.x.sub(r.speed).max(r.limit);
-            return noteDrawn(t);
+            return;
         },
         .ahead => {
             c.x = c.x.add(r.speed).min(c.x_max);
             if (c.x.whole() >= r.from.whole()) c.run = null;
-            return noteDrawn(t);
+            return;
         },
     };
     if (c.follows) |rules| {
@@ -464,7 +466,6 @@ fn camera(t: *Tick) void {
         }
         e.position.depth = keptWithin(e.position.depth, rules.kept_depth[0], rules.kept_depth[1]);
     }
-    noteDrawn(t);
 }
 
 /// `v` kept within whole pixels `from` to `to`, as the original keeps its players: its whole
@@ -476,8 +477,9 @@ fn keptWithin(v: Fixed, from: i32, to: i32) Fixed {
     return v;
 }
 
-/// Where the players are drawn at this tick, for the camera's next (a player waiting to continue
-/// is not drawn).
+/// Where the players are drawn at this tick's end, after the others' turns (one may have moved a
+/// player: a hold, a throw), for the camera's next, as the original's camera reads where its
+/// players were drawn (a player waiting to continue is not drawn).
 fn noteDrawn(t: *Tick) void {
     for (t.world.players, &t.world.camera.drawn) |p, *d| {
         d.* = null;
