@@ -255,6 +255,9 @@ pub const Run = struct {
                     return self.sounds(turn);
                 }
             } else if (r.trace_t == self.seen_t) {
+                // A sound of a logic tick's first display tick (the pause's, as play resumes) is
+                // that logic tick's, as sor-remaster's trace counts the tick as it begins.
+                if (r.phase == .play and r.play.schedule.into == 1 and turn.requests.len != 0) try tw.atTick(v, r.trace_t + 1);
                 try self.sounds(turn);
                 return;
             }

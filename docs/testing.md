@@ -153,10 +153,13 @@ catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (it
   differs. `-Dsimilar-only=NAME,...` runs some scenarios.
 - `zig build round-check -Drom=ROM -Dremaster=DIR|AGENT` (src/tools/round_check.zig), the gate of
   PLAN item 13: round 1's scenarios (`tests/scenarios/round1`: a walk to the first wall, standing
-  through three time overs, the continue's YES and NO) run from power-on in both programs, and
-  their round scenes' traces are compared event by event (the camera and its stops, the timer,
-  play's phases, the players' places, states, health, lives and deaths, the continue, the game
-  over, the placed enemies coming out, the sounds), the hit sparks left out; all equal. It writes
+  through three time overs, the continue's YES and NO, two pauses) run from power-on in both
+  programs, and their round scenes' traces are compared event by event (the camera and its stops,
+  the timer, play's phases, the players' places, states, health, lives and deaths, the continue,
+  the game over, the placed enemies coming out, the sounds asked for), the hit sparks left out;
+  all equal; and the game's clock as each script begins is the same. Play's sound itself (its
+  samples) is not compared yet: play's frames' transfers, which hold the sound's processor, are
+  not modelled, and its drums' samples differ from sor-remaster's. It writes
   the runs and the report into `<prefix>/round` (`-Dround-out=DIR`); `-Dround-only=NAME,...`.
 
 ## Comparing behaviours with statistics

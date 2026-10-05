@@ -1,0 +1,15 @@
+# round 1: START pauses play and ends the pause, twice (the pauses 20 and 21 display ticks long,
+# `+start 1` holding it a tick); then a walk. The pause's ticks count on the game's clock.
+start axel
+until state 1 ready
+wait 30
++start 1
+wait 20
++start 1
+wait 31
++start 1
+wait 21
++start 1
+wait 2
+right 30
+wait 10

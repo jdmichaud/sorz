@@ -36,6 +36,7 @@ pub const scenarios = [_]Scenario{
     .{ .name = "idle", .what = "standing still: the timer, three time overs and deaths, new lives, the continue's question" },
     .{ .name = "continue", .what = "the continue's YES: a new game's lives, the next life" },
     .{ .name = "gameover", .what = "the continue's NO: the game over's count, the fade out, the high scores" },
+    .{ .name = "pause", .what = "two pauses: the pause's sounds, its ticks on the game's clock, play after it" },
 };
 
 /// The front end's objects (sor-remaster's) and the hit sparks (PLAN item 12): their events
