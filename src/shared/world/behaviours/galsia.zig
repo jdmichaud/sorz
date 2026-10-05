@@ -267,6 +267,8 @@ pub fn Punk(comptime M: type) type {
         pub fn punch(a: A) void {
             const n = a.numbers();
             if (a.frame() >= n.last_punch_frame) a.entity.move = a.kind.move_of[@backingInt(M.Move.punch_last)];
+            // The tick its blow lands is the blow's: the punch goes on.
+            if (a.mind.body.landed) return;
             if (!a.mind.punk.tested and a.frame() == n.last_punch_test) {
                 a.mind.punk.tested = true;
                 const box = C.frameBox(a, .punch, n.last_punch_frame) orelse return endPunch(a);
@@ -481,7 +483,7 @@ fn endTaunt(a: Actor) void {
     Common.enter(a, fights);
 }
 
-/// Its blow landed: a taunt ends.
+/// Its blow landed: a taunt ends, a punch goes on that tick.
 pub fn blowLanded(a: Actor, target: Handle) void {
     _ = target;
     a.mind.body.landed = true;

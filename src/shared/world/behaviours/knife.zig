@@ -2,8 +2,9 @@
 //! (`Tick.throwWeapon`), it leaves its holder's hand ahead of it and below, and flies straight
 //! across at its speed (`flying`), a thing thrown: its blow is its power and knocks down, on the
 //! enemies when a player threw it, on the players when an enemy did. It is gone (`gone`, then out
-//! of the world at its next tick) when its blow lands, when a blow meets it, or when it leaves the
-//! screen's sides. Its numbers and its poses are its definition's (`entities/knife.json`).
+//! of the world at its next tick) when its blow lands or a blow meets it; out of the screen's
+//! sides, it is out of the world at once. Its numbers and its poses are its definition's
+//! (`entities/knife.json`).
 //!
 //! TODO(PLAN item 15): its bounce off a wall (`bouncing`: a quarter of its speed back, falling,
 //! worn out once down) waits for the round's floor, whose cells say where the walls are.
@@ -74,13 +75,13 @@ fn flies(a: Actor) void {
     a.mind.state = .flying;
 }
 
-/// It flies across while on the screen's sides; else it is gone.
+/// It flies across while on the screen's sides; else it is out of the world at once.
 fn fly(a: Actor) void {
     const n = a.numbers();
     const e = a.entity;
     e.flags.still = true;
     const from_camera = e.position.x.whole() - a.tick.world.camera.x.whole();
-    if (from_camera < n.flight_from or from_camera >= n.flight_to) return gone(a);
+    if (from_camera < n.flight_from or from_camera >= n.flight_to) return a.remove();
     e.position = e.position.add(e.velocity);
 }
 

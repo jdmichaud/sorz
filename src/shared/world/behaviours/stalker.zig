@@ -244,6 +244,12 @@ pub fn landed(a: Actor) void {
     Common.landed(a);
 }
 
+/// Its blow landed: a punch goes on that tick.
+pub fn blowLanded(a: Actor, target: Handle) void {
+    _ = target;
+    a.mind.body.landed = true;
+}
+
 pub fn grabbable(a: Actor, by: Handle) bool {
     if (a.mind.state == .grab) return false;
     return Common.grabbable(a, by);
