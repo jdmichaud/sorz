@@ -52,6 +52,11 @@ pub const Drawn = struct {
         return self.view.screen.window.lines;
     }
 
+    /// What the world's sprites (the first of `sprites`) were drawn for.
+    pub fn info(self: Drawn) []const sorz.world.output.SpriteInfo {
+        return self.view.world_out.shown_info.slice();
+    }
+
     /// The picture drawn again with `sprites_instead`, on `lines` when given (else the sprites'
     /// own lines).
     pub fn redraw(self: Drawn, sprites_instead: []const sorz.render.Sprite, lines: ?sorz.render.Lines) !sorz.platform.RgbaFrame {

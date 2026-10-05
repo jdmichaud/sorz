@@ -566,7 +566,7 @@ const PictureTaker = struct {
             const len = drawn.sprites().len;
             const buffers = try gpa.alloc(sorz.render.Sprite, 2 * len);
             defer gpa.free(buffers);
-            const context: accepted.Context = .{ .shadow = drawn.shadow, .kinds = drawn.kinds, .bar_lines = drawn.bar_lines, .window = drawn.window() };
+            const context: accepted.Context = .{ .shadow = drawn.shadow, .kinds = drawn.kinds, .bar_lines = drawn.bar_lines, .window = drawn.window(), .info = drawn.info() };
             // Each way of drawing again: one of each difference's redraws or none (all none
             // left out), the differences' redraws applied one after the other, so that a pixel
             // two of them make is theirs.

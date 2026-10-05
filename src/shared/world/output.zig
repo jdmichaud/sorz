@@ -81,6 +81,15 @@ pub const ColourLoad = union(enum) {
 /// The frame an entity showed at the tick, and whether mirrored.
 pub const Shown = struct { frame: *const art.Frame, mirrored: bool };
 
+/// What a sprite of the draw list was drawn for, as the order saw it: its entity's place, its
+/// rank in the world's order (the players' first), the depth the order compared, its `behind`
+/// mark; a shadow's, its own place (`no_place`: none was free) and its entity's depth (the checks
+/// draw the list again in the original's order).
+pub const SpriteInfo = struct { place: u8, rank: u8, depth: i16, behind: bool = false, shadow: bool = false };
+
+/// A shadow's place when none holds it.
+pub const no_place: u8 = 255;
+
 pub const Output = struct {
     /// The most sounds a tick asks for.
     pub const sound_most = 32;
@@ -112,15 +121,21 @@ pub const Output = struct {
     /// The draw list, back to front: what the renderer's `Screen.sprites` takes. It stays until
     /// the next logic tick, so the display ticks in between draw it again.
     sprites: List(render.Sprite, 2 * capacity) = .{},
+    /// What each sprite of the draw list was drawn for.
+    sprite_info: List(SpriteInfo, 2 * capacity) = .{},
     /// The draw list the picture shows: the one of the tick before (the console takes its
     /// sprites as a frame starts, so a tick's show from the next tick on: `latch`).
     shown_sprites: List(render.Sprite, 2 * capacity) = .{},
+    shown_info: List(SpriteInfo, 2 * capacity) = .{},
 
     /// At the start of a display tick: the picture takes the draw list the last tick left.
     pub fn latch(self: *Output) void {
         const n = self.sprites.len;
         @memcpy(self.shown_sprites.items[0..n], self.sprites.items[0..n]);
         self.shown_sprites.len = n;
+        const m = self.sprite_info.len;
+        @memcpy(self.shown_info.items[0..m], self.sprite_info.items[0..m]);
+        self.shown_info.len = m;
     }
 
     /// A new logic tick: its lists start empty (the draw list is rebuilt by its system).

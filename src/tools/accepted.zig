@@ -17,6 +17,7 @@ const Sprite = sorz.render.Sprite;
 const Lines = sorz.render.Lines;
 const Frame = sorz.content.art.Frame;
 const Kinds = sorz.world.Kinds;
+const SpriteInfo = sorz.world.output.SpriteInfo;
 
 /// What a redraw knows of sorz's picture besides its sprites.
 pub const Context = struct {
@@ -28,6 +29,9 @@ pub const Context = struct {
     /// bar's, with the bosses' bars' row while it shows).
     bar_lines: u16 = 0,
     window: Lines = .{},
+    /// What the world's sprites, the first of a picture's, were drawn for (their entities'
+    /// places and depths), when known.
+    info: []const SpriteInfo = &.{},
 };
 
 /// sorz's sprites (`sprites`, back to front) as the original would draw them, into `out` (as
@@ -50,8 +54,8 @@ pub const Accepted = struct {
 pub const list = [_]Accepted{
     .{
         .name = "shadows over sprites",
-        .reason = "sorz draws a shadow just behind its entity; the original's shadow is an object of its own, drawn at its entity's depth in its place's order, so it may cover another entity (a thrown Galsia's hand and feet on the ground), or go behind one its entity is in front of (an acrobat's foot beside another's shadow). sorz's way is the user's choice (2026-10-05)",
-        .redraws = &.{ shadowsInFront, shadowsBehind },
+        .reason = "sorz draws a shadow just behind its entity; the original's shadow is an object of its own, drawn at its entity's depth in its place's order, so it may cover another entity (a thrown Galsia's hand and feet on the ground), or go behind one its entity is in front of (an acrobat's foot beside another's shadow); and its place in the sort of a band of depths reorders the entities at nearly one depth (round 2's brawler and Axel, display tick 5169). Its places, eight it shares with the weapons, move a weapon to a later place than sorz's, which changes their order of updates, no behaviour seen. sorz's way is the user's choice (2026-10-05)",
+        .redraws = &.{ originalOrder, shadowsInFront, shadowsBehind },
     },
     .{
         .name = "objects past a band's 15",
@@ -93,6 +97,82 @@ fn ofPlayer(kinds: *const Kinds, frame: *const Frame) bool {
         };
     }
     return false;
+}
+
+/// The sprites in the original's order: the shadows objects of their own in the sort, in their
+/// places (world/shadows.zig) at their entities' depths, and none for a shadow that found no
+/// place; the bands of four depths from the nearest, each sorted as the original sorts
+/// (draw_list.zig), the first in front. The pixels where a shadow or an entity at nearly one
+/// depth shows over another in the reference. The first must be the world's sprites as sorz
+/// draws them (this difference first in the list); the others (a round's texts) stay last.
+fn originalOrder(sprites: []const Sprite, c: Context, out: []Sprite) usize {
+    const n = @min(c.info.len, sprites.len);
+    if (n == 0) return copy(sprites, out);
+    var entries: [max_sprites]Entry = undefined;
+    if (n > entries.len) return copy(sprites, out);
+    var len: usize = 0;
+    for (c.info[0..n], 0..) |in, i| {
+        if (in.shadow and in.place == sorz.world.output.no_place) continue;
+        entries[len] = .{
+            .sprite = @intCast(i),
+            .key = @as(u32, in.place) * 256 + in.rank,
+            .depth = std.math.clamp(in.depth, 0, 240),
+            .behind = in.behind,
+        };
+        len += 1;
+    }
+    const m0 = len;
+    // The world's order (the shadows after the enemies'), then the bands from the nearest.
+    std.mem.sort(Entry, entries[0..m0], {}, struct {
+        fn less(_: void, a: Entry, b: Entry) bool {
+            return a.key < b.key;
+        }
+    }.less);
+    var front: [max_sprites]Entry = undefined;
+    var k: usize = 0;
+    var b: i32 = 240 / 4;
+    while (b >= 0) : (b -= 1) {
+        const from = k;
+        for (entries[0..m0]) |e| if (@divTrunc(e.depth, 4) == b) {
+            front[k] = e;
+            k += 1;
+        };
+        selectionSort(front[from..k]);
+    }
+    // Back to front.
+    var m: usize = 0;
+    var i = k;
+    while (i > 0) {
+        i -= 1;
+        out[m] = sprites[front[i].sprite];
+        m += 1;
+    }
+    for (sprites[n..]) |s| {
+        out[m] = s;
+        m += 1;
+    }
+    return m;
+}
+
+const max_sprites = 160;
+
+const Entry = struct { sprite: u8, key: u32, depth: i32, behind: bool };
+
+/// The original's sort of a band (draw_list.zig's): each position takes the nearest of the
+/// rest, swapped there; at an equal depth one marked `behind` gives way.
+fn selectionSort(band: []Entry) void {
+    if (band.len < 2) return;
+    for (0..band.len - 1) |i| {
+        var best = band[i];
+        for (i + 1..band.len) |j| {
+            const cand = band[j];
+            if (cand.depth > best.depth or (cand.depth == best.depth and best.behind and !cand.behind)) {
+                band[j] = band[i];
+                band[i] = cand;
+                best = cand;
+            }
+        }
+    }
 }
 
 /// The shadows in front of every other sprite: the pixels where sorz shows a sprite and the

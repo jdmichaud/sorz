@@ -33,6 +33,8 @@ const entity = @import("entity.zig");
 const world_mod = @import("world.zig");
 const tick_mod = @import("tick.zig");
 const systems = @import("systems.zig");
+const shadows = @import("shadows.zig");
+const output = @import("output.zig");
 
 const Entity = entity.Entity;
 const World = world_mod.World;
@@ -88,6 +90,7 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
     const w = t.world;
     const out = t.out;
     out.sprites.clear();
+    out.sprite_info.clear();
 
     var buf: [capacity]u8 = undefined;
     var drawn: [capacity]u8 = undefined;
@@ -105,6 +108,8 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
     }
     var front: [capacity]u8 = undefined;
     order(w, drawn[0..n], &front);
+    var rank: [capacity]u8 = @splat(0);
+    for (w.updateOrder(&buf), 0..) |i, r| rank[i] = @intCast(r);
 
     // Back to front: the last of the order first; a shadow just behind its entity.
     var k = n;
@@ -121,6 +126,7 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
             var y = (e.position.depth.whole() >> 1) + f.whole();
             if (!e.flags.on_screen) y -= w.camera.y.whole();
             out.sprites.append(.{ .frame = shadow, .x = p.x, .y = y, .palette = shadow.palette, .priority = shadow.priority or e.flags.in_front });
+            out.sprite_info.append(.{ .place = shadowPlace(w, i), .rank = rank[i], .depth = @intCast(depthOf(e)), .shadow = true });
         };
         out.sprites.append(.{
             .frame = shown.frame,
@@ -131,8 +137,16 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
             .priority = shown.frame.priority or e.flags.in_front,
             .colours = coloursOf(t, i, e),
         });
+        out.sprite_info.append(.{ .place = i, .rank = rank[i], .depth = @intCast(depthOf(e)), .behind = e.flags.behind });
         e.flags.behind = false;
     }
+}
+
+/// The place of the shadow of the entity in place `i` (shadows.zig), or `no_place` when none holds
+/// one (the original's eight were taken).
+fn shadowPlace(w: *const World, i: usize) u8 {
+    for (w.shadows, 0..) |s, k| if (s) |x| if (x.owner == i) return @intCast(shadows.first + k);
+    return output.no_place;
 }
 
 /// The colour map a player's fighter (at place `i`) is drawn with (`Player.colours`), when its
