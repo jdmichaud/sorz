@@ -57,10 +57,15 @@ p="$("$bin" "$rom" "$@" 2>"$dir/pair.log")" || fail "the pair differs: $p"
 [ "$(field "$p" scene)" = round ] || fail "the pair is not in the round: $p"
 echo "check_netplay: the pair and one game with their pads, the same state: $(field "$p" state_hash)"
 
-# 3. A planted difference in the round: named on both sides at the next check.
+# 3. A planted difference in the round (a bit of its random generator): at the next check, both
+# sides name the same field, the generator's or one that its draws changed since.
 c="$("$bin" "$rom" "$@" --corrupt 1650 2>"$dir/corrupt.log")" || fail "the planted difference was not named: $c"
-case "$c" in
-*'"difference":"random.state'*'"difference":"random.state'*) ;;
-*) fail "the planted difference is not named as the random generator's: $c" ;;
+names="$(printf '%s\n' "$c" | grep -o '"difference":"[^ "]*' | sed 's/"difference":"//')"
+[ "$(printf '%s\n' "$names" | wc -l)" = 2 ] || fail "not both games named a difference: $c"
+[ "$(printf '%s\n' "$names" | sort -u | wc -l)" = 1 ] || fail "the two games named other fields: $c"
+case "$names" in
+'('*) fail "the difference is not a field's: $c" ;;
 esac
-echo "check_netplay: a bit flipped before tick 1650 in the round, found at tick $(printf '%s\n' "$c" | sed -n 's/.*"found_at":\([0-9]*\).*/\1/p') and named on both sides: $(printf '%s\n' "$c" | sed -n 's/.*"difference":"\([^"]*\)".*/\1/p')"
+found="$(printf '%s\n' "$c" | sed -n 's/.*"found_at":\([0-9]*\).*/\1/p')"
+[ -n "$found" ] && [ "$found" -le 1680 ] || fail "the difference was not found at the next check: $c"
+echo "check_netplay: a bit flipped before tick 1650 in the round, found at tick $found and named on both sides: $(printf '%s\n' "$c" | sed -n 's/.*"difference":"\([^"]*\)".*/\1/p')"
