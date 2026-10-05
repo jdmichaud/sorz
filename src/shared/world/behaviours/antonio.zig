@@ -363,11 +363,13 @@ fn end(a: Actor) void {
 
 // Coming in ----------------------------------------------------------------------------------
 
-/// His first tick: the ground he stands on is his; his twin found; the status bar shows him; his
-/// power and health by the level; he walks.
+/// His first tick: shown (the round's script places its enemies hidden, and he comes in seen);
+/// the ground he stands on is his; his twin found; the status bar shows him; his power and
+/// health by the level; he walks.
 fn appear(a: Actor) void {
     const m = a.mind;
     const e = a.entity;
+    e.flags.hidden = false;
     m.ground = e.position.height;
     pairUp(a);
     if (inFight(a)) onBar(a);

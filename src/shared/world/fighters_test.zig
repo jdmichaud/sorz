@@ -2005,14 +2005,18 @@ test "a brawler: struck, it reels a tick later; placed to, it shrugs the blow of
     try testing.expectEqualStrings("knocked_down", r2.state());
 }
 
-test "Antonio comes in: on the status bar from his first tick; off the screen he walks in, his boomerang in hand" {
+test "Antonio placed by the round's script: shown and on the status bar from his first tick; off the screen he walks in, his boomerang in hand" {
     var r = try Round.init();
     defer r.deinit();
     const h = try r.w.spawnEnemy(&r.f.kinds, r.f.kinds.find("antonio").?, .pixels(768 + 328, 16, 160), .{ .bar = 4 });
+    // As the round's script places him: hidden, his health not yet given.
+    r.w.get(h).?.flags.hidden = true;
+    r.w.get(h).?.health = 0;
     r.step(.{});
     try testing.expectEqual(@as(?u8, 4), r.w.boss_bar);
     try testing.expect(r.w.bosses[0].?.eql(h));
     const e = r.w.get(h).?;
+    try testing.expect(!e.flags.hidden);
     try testing.expectEqual(@as(i16, 24), e.health);
     try testing.expectEqualStrings("walk", behaviours.stateName(&e.mind).?);
     r.step(.{});
