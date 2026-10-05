@@ -1182,6 +1182,10 @@ fn die(a: Actor, by: ?Handle) void {
 pub fn struck(a: Actor, blow: tick.Blow) bool {
     if (!catchable(a)) return false;
     a.mind.taken = .{ .by = blow.attacker, .damage = blow.damage, .reaction = blow.reaction };
+    // The original keeps one touch a player: a blow taken after its own landed at this tick
+    // writes over it (no spark of it then, nor its combo's window or pause).
+    a.mind.landed_blow = false;
+    a.mind.landed_on = null;
     return true;
 }
 
