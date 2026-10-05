@@ -932,7 +932,7 @@ fn replayScript(gpa: std.mem.Allocator, kinds: *const world.Kinds, plan: *const 
 
 /// The kinds the round's script places: its enemies, its bosses, its breakables (rounds 1 and 2).
 fn scripted(kind: []const u8) bool {
-    for ([_][]const u8{ "galsia", "galsia_stalker", "galsia_knife", "galsia_pipe", "signal", "acrobat", "brawler", "antonio", "juggler", "boss_r2", "breakable" }) |k| {
+    for ([_][]const u8{ "galsia", "galsia_stalker", "galsia_knife", "galsia_pipe", "signal", "acrobat", "brawler", "antonio", "juggler", "boss_r2", "boss_r4", "breakable" }) |k| {
         if (std.mem.eql(u8, k, kind)) return true;
     }
     return false;

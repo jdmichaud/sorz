@@ -354,6 +354,8 @@ pub fn Of(comptime M: type) type {
             const n = a.numbers();
             const m = a.mind;
             if (a.entity.health > 0) {
+                // Getting up: a boss that notes it (round 4's twins change targets then).
+                if (@hasField(M.Mind, "rose")) m.rose = true;
                 m.count -%= 1;
                 if (m.count == 0) walkAgain(a);
                 return;

@@ -1289,6 +1289,135 @@ pub fn boomerang(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definit
     };
 }
 
+// --- Round 4's boss and his shoulder ---------------------------------------------------------------
+
+/// Round 4's boss (type $57, his handler 0x174E0, his states at 0x174F4; sor-remaster's
+/// obj/boss_57.zig): he walks at his target keeping a band from it in depth, turns when it gets
+/// behind him, and within reach across charges (state 2): three looks of a wind-up, then a rush
+/// with his shoulder out (type $97) that speeds up until he has passed his target, and a slide.
+/// His own frames strike nothing (his blow's power is cleared each tick, 0x174E8): his shoulder
+/// strikes. The rest is the bosses' common body (`bossBody`).
+pub fn bossR4(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const kind: u8 = 0x57;
+    const set = u32be(rom, boss_sets + 4 * @as(u32, kind - 0x55));
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "round4_boss", .set = set, .box_table = entities.object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
+    // His looks, facing right (the facing bit of the word aside, 0x17A24, 0x176C8).
+    const anims = [_]struct { name: []const u8, word: i32 }{
+        .{ .name = "stand", .word = try moveq(rom, 0x15888, 0) },
+        .{ .name = "turn", .word = try moveq(rom, 0x1766C, 0) },
+        .{ .name = "wind_up", .word = try moveq(rom, 0x1764E, 0) },
+        .{ .name = "wind_up_2", .word = try moveq(rom, 0x176BC, 0) },
+        .{ .name = "wind_up_3", .word = try moveq(rom, 0x176DC, 0) },
+        .{ .name = "rush", .word = try moveq(rom, 0x17740, 0) },
+        .{ .name = "knocked", .word = try animWord(rom, 0x17CC2) },
+        .{ .name = "held", .word = try animWord(rom, 0x17D66) },
+        .{ .name = "held_behind", .word = try animWord(rom, 0x17D90) },
+        .{ .name = "flight", .word = try animWord(rom, 0x17CC2) + try immediate(rom, 0x163F8, &.{ 0x06, 0x68 }, 2) },
+        .{ .name = "bounce", .word = try animWord(rom, 0x17CC2) + try immediate(rom, 0x163F8, &.{ 0x06, 0x68 }, 2) + try quick(rom, 0x1640E, 0x5068) },
+        .{ .name = "down", .word = try immediate(rom, 0x16490, &.{ 0x30, 0x3C }, 2) },
+        .{ .name = "lifted", .word = try animWord(rom, 0x1662A) },
+    };
+    for (anims) |an| try d.animations.append(arena, .{ .name = an.name, .loop = true, .frames = try enemyFrames(&d, an.name, try wordEntry(an.word)) });
+    // His blow's power cleared each tick (0x174E8: clr.b (52,a0)): his own frames strike nothing.
+    if (u32be(rom, 0x174E8) != 0x42280034) return error.BadData;
+    try bossBody(&d, kind);
+    // The walk (state 1, 0x175BA): his speed, the second of twins' ((93,a0) = 2).
+    if (u32be(rom, 0x175EA) != 0x0C280002 or u16be(rom, 0x175EE) != 0x5D) return error.BadData;
+    try d.number("walk_speed", try movedLong(rom, 0x175E2), "ROM 0x175E2: move.l #N,(28,a0) (facing left, its whole pixels' bits reversed: not.w at 0x17608)");
+    try d.number("walk_speed_second", try movedLong(rom, 0x175F2), "ROM 0x175F2: move.l #N,(28,a0) (the second of twins)");
+    if (u32be(rom, 0x17608) != 0x4668001C) return error.BadData;
+    try d.number("depth_near", try comparedWord(rom, 0x17614), "ROM 0x17614: cmpi.w #N,(82,a0) (nearer in depth, he steps away)");
+    try d.number("depth_far", try comparedWord(rom, 0x1761C), "ROM 0x1761C: cmpi.w #N,(82,a0) (this far or farther, he steps nearer)");
+    try d.number("depth_speed", try moveLong(rom, 0x17628, 0), "ROM 0x17628: move.l #N,d0; the other way 0x17630");
+    if (try moveLong(rom, 0x17630, 0) != -(try moveLong(rom, 0x17628, 0))) return error.BadData;
+    try d.number("charge_reach", try comparedWord(rom, 0x17642), "ROM 0x17642: cmpi.w #N,(80,a0) (nearer across, he charges)");
+    try d.number("turn_ticks", try moveByte(rom, 0x17666, 104), "ROM 0x17666: move.b #N,(104,a0)");
+    // The charge (state 2, 0x17682): the wind-up's looks and their ticks, the rush, its speed-up,
+    // the slide.
+    try d.number("wind_up_ticks", try moveByte(rom, 0x17650, 104), "ROM 0x17650: move.b #N,(104,a0)");
+    try d.number("wind_up_2_ticks", try moveByte(rom, 0x176BE, 104), "ROM 0x176BE: move.b #N,(104,a0)");
+    try d.number("wind_up_3_ticks", try moveByte(rom, 0x176DE, 104), "ROM 0x176DE: move.b #N,(104,a0)");
+    try d.number("rush_speed", try swappedPixels(rom, 0x176F8, 1), "ROM 0x176F8: moveq #N,d1; swap d1 (across, the way he faces)");
+    try d.number("rush_depth_most", try immediate(rom, 0x17728, &.{ 0x0C, 0x81 }, 4), "ROM 0x17728: cmpi.l #N,d1 (in depth: the distance's share, (dd << 8) / (dx / 2) << 8, at most this)");
+    if (try swappedPixels(rom, 0x17730, 1) != try immediate(rom, 0x17728, &.{ 0x0C, 0x81 }, 4)) return error.BadData;
+    try d.number("speed_up", try immediate(rom, 0x17780, &.{ 0x06, 0x80 }, 4), "ROM 0x17780: addi.l #N,d0 (each tick of the rush, across; in depth 0x177AC)");
+    if (try immediate(rom, 0x177AC, &.{ 0x06, 0x80 }, 4) != try immediate(rom, 0x17780, &.{ 0x06, 0x80 }, 4)) return error.BadData;
+    try d.number("speed_most", try swappedPixels(rom, 0x17786, 1), "ROM 0x17786: moveq #N,d1; swap d1; 0x177B2");
+    if (try swappedPixels(rom, 0x177B2, 1) != try swappedPixels(rom, 0x17786, 1)) return error.BadData;
+    try d.number("speed_up_depth_from", try comparedWord(rom, 0x1779C), "ROM 0x1779C: cmpi.w #N,(82,a0) (this far from his target in depth, his speed in depth grows)");
+    try d.number("passed_by", try comparedWord(rom, 0x177CC), "ROM 0x177CC: cmpi.w #N,(80,a0) (past his target this far across, he slides)");
+    try d.number("slide_ticks", try moveByte(rom, 0x177DA, 121), "ROM 0x177DA: move.b #N,(121,a0)");
+    // The screen (from where he was drawn): he walks and winds up within it (0x17744), slides
+    // while within it (0x177E2).
+    try d.number("on_screen_from", try comparedWord(rom, 0x17748) - 0x80, "ROM 0x17748: cmpi.w #N+$80,d1 (drawn across)");
+    try d.number("on_screen_to", try immediate(rom, 0x17754, &.{ 0x04, 0x41 }, 2) - 0x80, "ROM 0x17754: subi.w #N+$80,d1");
+    if (try comparedWord(rom, 0x177EE) != try comparedWord(rom, 0x17748) or try immediate(rom, 0x177F4, &.{ 0x04, 0x40 }, 2) != try immediate(rom, 0x17754, &.{ 0x04, 0x41 }, 2)) return error.BadData;
+    try d.sound("rush", @bitCast(@as(i8, @intCast(try moveq(rom, 0x176F0, 7)))));
+    return .{
+        .name = "boss_r4",
+        .provenance = try std.fmt.allocPrint(arena, "boss type $57, round 4's (handler 0x174E0): the animation set at ROM 0x{X:0>5} (0x158B4), the boxes (0x1A68E, 0x1AB8E); health ROM 0x{X:0>5} (0x17EDC); his palette line his art's (move.w #N,d1 at ROM 0x17530){s}", .{ set, boss_health + @as(u32, kind - 0x55), d.number_notes.items }),
+        .family = .boss,
+        .team = .enemy,
+        .behaviour = "boss_r4",
+        .palette = try lineOfArt(rom, 0x17530),
+        .health = bossByte(rom, boss_health, kind),
+        .shadow = true,
+        .numbers = d.numbers.items,
+        .tables = d.tables.items,
+        .sounds = d.sounds.items,
+        .boxes = d.boxes.items,
+        .animations = d.animations.items,
+        .moves = d.moves.items,
+    };
+}
+
+/// Round 4's boss's shoulder (type $97, handler 0x17858, made at 0x1781E): his rush's blow, at
+/// his shoulder (0x178D0): its first look until the last tick of its frame 2, then its second;
+/// gone once he leaves his charge (in its second look). A blow that lands knocks down, its damage
+/// his power.
+pub fn bossR4Shoulder(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const kind: u8 = 0x57;
+    const set = u32be(rom, boss_sets + 4 * @as(u32, kind - 0x55));
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "round4_boss", .set = set, .box_table = entities.object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
+    for ([_]struct { name: []const u8, word: i32 }{
+        .{ .name = "lead", .word = try moveq(rom, 0x17842, 0) },
+        .{ .name = "shoulder", .word = try moveq(rom, 0x1788E, 0) },
+    }) |an| try d.animations.append(arena, .{ .name = an.name, .loop = true, .frames = try enemyFrames(&d, an.name, try wordEntry(an.word)) });
+    blows(&d, "lead");
+    blows(&d, "shoulder");
+    // A blow that lands knocks the player down (0x17874: move.b #1,(125,a1)), its damage his
+    // power ((74,a0) to its (52,a1), 0x17832).
+    if (u32be(rom, 0x17874) != 0x137C0001 or u16be(rom, 0x17878) != 125 or u32be(rom, 0x17832) != 0x1368004A or u16be(rom, 0x17836) != 52) return error.BadData;
+    try d.moves.append(arena, .{ .name = "shoulder", .provenance = "the rush's shoulder (0x17858): a blow that lands knocks the player down (0x17874: move.b #1,(125,a1)), its damage his power (0x17832)", .animation = d.animationIndex("lead").?, .damage = bossByte(rom, boss_power, kind), .reaction = .knock_down });
+    // Its second look at the last tick of its first's frame 2 (0x1787E: (13,a0) its frame's
+    // ticks left, (10,a0) its frame).
+    if (u16be(rom, 0x1787E) != 0x0C28 or rom[0x17880] != 0 or u16be(rom, 0x17882) != 13) return error.BadData;
+    try d.number("turn_left", rom[0x17881], "ROM 0x1787E: cmpi.b #N,(13,a0) (its frame's ticks left)");
+    try d.number("turn_frame", try frameCompared(rom, 0x17886), "ROM 0x17886: cmpi.b #N,(10,a0)");
+    // At his shoulder (0x178D0): ahead of him the way he faces, deeper, above his feet (a pixel
+    // less at his frames 0 and `low_frame`).
+    try d.number("ahead", try immediate(rom, 0x178EE, &.{ 0x06, 0x40 }, 2), "ROM 0x178EE: addi.w #N,d0 (facing left 0x178E2: subi.w)");
+    if (try immediate(rom, 0x178E2, &.{ 0x04, 0x40 }, 2) != try immediate(rom, 0x178EE, &.{ 0x06, 0x40 }, 2)) return error.BadData;
+    try d.number("deeper", try quick(rom, 0x178FA, 0x5040), "ROM 0x178FA: addq.w #N,d0");
+    try d.number("above", try immediate(rom, 0x17910, &.{ 0x04, 0x40 }, 2), "ROM 0x17910: subi.w #N,d0");
+    try d.number("above_low", try immediate(rom, 0x17916, &.{ 0x04, 0x40 }, 2), "ROM 0x17916: subi.w #N,d0 (at his frame 0 and the next number's)");
+    try d.number("low_frame", try immediate(rom, 0x1790A, &.{ 0x0C, 0x01, 0x00 }, 1), "ROM 0x1790A: cmpi.b #N,d1 (his frame)");
+    return .{
+        .name = "boss_r4_shoulder",
+        .provenance = try std.fmt.allocPrint(arena, "round 4's boss's shoulder (type $97, handler 0x17858, made at 0x1781E): his animation set at ROM 0x{X:0>5}, the boxes (0x1A68E, 0x1AB8E){s}", .{ set, d.number_notes.items }),
+        .family = .projectile,
+        .team = .enemy,
+        .behaviour = "boss_r4_shoulder",
+        .palette = try lineOfArtGiven(rom, 0x1783C),
+        // Every object of the original's play below its shadows' places has a shadow (0xB132).
+        .shadow = true,
+        .numbers = d.numbers.items,
+        .boxes = d.boxes.items,
+        .animations = d.animations.items,
+        .moves = d.moves.items,
+    };
+}
+
 /// The definitions this module writes, appended to `out`.
 // --- The juggler, round 2's, and its knives ---------------------------------------------------
 
@@ -1432,4 +1561,6 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity
     try out.append(arena, try bossR2(arena, rom));
     try out.append(arena, try bossR2Claws(arena, rom));
     try out.append(arena, try bossR2Trail(arena, rom));
+    try out.append(arena, try bossR4(arena, rom));
+    try out.append(arena, try bossR4Shoulder(arena, rom));
 }
