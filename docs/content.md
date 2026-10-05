@@ -485,7 +485,7 @@ A record of `placed`, `wave` or `reserve` is one entity:
   on the ground, as the original places it); the trait `stirs`: it moves while a flight passes
   (round 2's posters' corners).
 
-The extractor writes the scripts of rounds 1 and 2 (PLAN items 13 and 15; the other rounds, whose
+The extractor writes the scripts of rounds 1 to 3 (PLAN items 13 and 15; the other rounds, whose
 last sections and set pieces differ, with item 15). The times between the events are the
 original's loads of art: a section opens, and a reserve comes in, once its kinds' art is loaded,
 which the original streams at five tiles a display tick; the extractor counts them from the art's

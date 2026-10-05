@@ -83,9 +83,9 @@ const wave_end: u16 = 0x0099;
 /// 1's at VBlank 1139, round 2's at 17526); the others' are the flow's until they are measured.
 const measured_loads = [_]u16{ 53, 49 };
 
-/// The rounds whose scripts the extractor writes (PLAN items 13 and 15: rounds 1 and 2; the others,
+/// The rounds whose scripts the extractor writes (PLAN items 13 and 15: rounds 1 to 3; the others,
 /// whose last sections differ, to come).
-pub const extracted = [_]u8{ 1, 2 };
+pub const extracted = [_]u8{ 1, 2, 3 };
 
 /// The trace's names of the original's object types (sor-remaster's docs/traces.md).
 fn kindName(t: u8) ?[]const u8 {
@@ -98,6 +98,9 @@ fn kindName(t: u8) ?[]const u8 {
         0x11 => "breakable",
         0x13 => "flight_scenery",
         0x14 => "drip",
+        0x16 => "drifter",
+        0x17 => "rain",
+        0x18 => "crate",
         0x19 => "knockable",
         0x20 => "galsia_knife",
         0x21 => "galsia_stalker",
@@ -108,12 +111,14 @@ fn kindName(t: u8) ?[]const u8 {
         0x26 => "brawler",
         0x27 => "juggler",
         0x2A => "acrobat_trio",
+        0x30 => "boss_r3",
         0x3F => "money",
         0x40 => "gold",
         0x47 => "beef",
         0x4B => "apple",
         0x4C => "life",
         0x4D => "flight",
+        0x4E => "lamp",
         0x4F => "special_item",
         0x55 => "boss_r2",
         0x56 => "antonio",
@@ -170,12 +175,26 @@ fn bandsOf(arena: std.mem.Allocator, rom: []const u8, r: u32, p: u32) Error![]co
     return out.items;
 }
 
-/// A plane's bands in its mode 1 (0x19368): each band's place across is the plane's (its layer's X
-/// set to the plane's, 0x1937E), its layout record's ratio unread.
+/// A plane's bands in its mode 1 (plane A's 0x18C70, plane B's 0x19368): each band's place across
+/// is the plane's (its layer's X set to the plane's: 0x18D04, 0x1937E), its layout record's ratio
+/// unread.
 fn atPlaneX(arena: std.mem.Allocator, bands: []const round.Band) Error![]const round.Band {
     const out = try arena.alloc(round.Band, bands.len);
     for (out, bands) |*o, b| o.* = .{ .rows = b.rows, .times = 1, .per = 1 };
     return out;
+}
+
+/// A plane's bands in its mode (the round header's mode word): in mode 0 (plane A's 0x18C4A,
+/// plane B's 0x1934A) each band's place across is the camera's X times its layout record's
+/// ratio (0x190EA: muls.w, then divs.w), in mode 1 the plane's (`atPlaneX`). The other modes (the
+/// water's, the lift's) are refused until their rounds come (PLAN item 15).
+fn bandsInMode(arena: std.mem.Allocator, rom: []const u8, r: u32, p: u32, mode: u16) Error![]const round.Band {
+    const bands = try bandsOf(arena, rom, r, p);
+    return switch (mode) {
+        0 => bands,
+        1 => atPlaneX(arena, bands),
+        else => error.BadData,
+    };
 }
 
 /// The pixels of a long immediate's whole part (its high word), after `opcode` at `at`; its low
@@ -543,19 +562,26 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     const shake_ticks = try immediate(rom, 0x4D52, &.{ 0x11, 0xFC }, 2);
     if (u16be(rom, 0x4D56) != 0xFA45) return error.BadData;
     const shake_by = try immediate(rom, 0x19292, &.{0x70}, 1);
-    // Plane B in its mode 1 (0x19368, the round header's plane B's mode word): at the camera's X
-    // in round 1, a quarter of it in the others (tst.w ($FF02) at 0x19372, then asr.w #2).
-    if (u16be(rom, h + 22) != 1) return error.BadData;
+    // The planes' modes (the round header's mode words): plane B in its mode 1 (0x19368) at the
+    // camera's X in round 1, a quarter of it in the others (tst.w ($FF02) at 0x19372, then asr.w
+    // #2); in its mode 0 (0x1934A) at plane A's X, its bands at their ratios of it.
+    const mode_a = u16be(rom, h + 10);
+    const mode_b = u16be(rom, h + 22);
     if (u32be(rom, 0x19372) != 0x4A78FF02 or u16be(rom, 0x19376) != 0x6702 or u16be(rom, 0x19378) & 0xF1FF != 0xE040) return error.BadData;
     const plane_b_shift: u3 = @intCast((u16be(rom, 0x19378) >> 9) & 7);
+    const plane_b: [2]u8 = switch (mode_b) {
+        0 => .{ 1, 1 },
+        1 => .{ 1, if (r == 0) 1 else @as(u8, 1) << plane_b_shift },
+        else => return error.BadData,
+    };
     const camera: round.Camera = .{
-        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down; plane B in its mode 1 (0x19368): the camera's X in round 1, a quarter of it in the others (ROM 0x19378: asr.w #2); the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282); the planes' bands, their rows and ratios, from the layout records (0x199C6, the table at ROM 0x5F788), the strips the camera brings in (0x18B3C)", .{ h, limits_set / 8 }),
+        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down; the planes in their modes (the header's mode words): in mode 0 (0x18C4A, 0x1934A) their bands at the camera's X times their ratios, plane B at plane A's X; in mode 1 plane A at the camera's X, plane B at it in round 1, a quarter of it in the others (ROM 0x19378: asr.w #2); the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282); the planes' bands, their rows and ratios, from the layout records (0x199C6, the table at ROM 0x5F788), the strips the camera brings in (0x18B3C)", .{ h, limits_set / 8 }),
         .x = u16be(rom, h + 6),
         .y = u16be(rom, h + 8),
         .x_min = u16be(rom, limits + 4),
         .y_min = u16be(rom, limits),
         .y_max = u16be(rom, limits + 2),
-        .plane_b = .{ 1, if (r == 0) 1 else @as(u8, 1) << plane_b_shift },
+        .plane_b = plane_b,
         .wall_within = @intCast(wall_within),
         .edges = .{ -8, @intCast(right_edge) },
         .left_behind = .{ -@as(i32, @intCast(behind_x)), @intCast(behind_depth) },
@@ -564,7 +590,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .kept_x = .{ @intCast(kept_left), @intCast(kept_left + kept_width) },
         .kept_depth = .{ @intCast(depth_from), @intCast(if (r == own_round) depth_to_own else depth_to_common) },
         .shake = .{ @intCast(shake_ticks), @intCast(shake_by) },
-        .bands = .{ try bandsOf(arena, rom, r, 0), try atPlaneX(arena, try bandsOf(arena, rom, r, 1)) },
+        .bands = .{ try bandsInMode(arena, rom, r, 0, mode_a), try bandsInMode(arena, rom, r, 1, mode_b) },
     };
     const first_wall: i32 = u16be(rom, limits + 6);
 
