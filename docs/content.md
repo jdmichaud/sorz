@@ -229,6 +229,18 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
   gives that one, `push` (`x` away from the striker, `height` negative upward: a throw's, which
   Blaze's makes faster); the `sound` asked for when it starts and the `hit_sound` when its blow
   lands.
+- `partners` (the players'): in a hold between the two players, where this kind goes from the
+  other at each frame of what it does then, by the other's kind: under the behaviour's name of
+  that role (`held`, `held_behind`, `slammed`, `thrown`, `lifted`, `lift_over`, `throw_back`,
+  `vault_over`), `by` maps the other's kind to a place `[x, height]` per frame (`x` toward the
+  side this one faces, `height` downward, from the other's place). With `moves_partner`, the
+  other goes instead, to stand at that place from it (the one held puts its holder); with
+  `depth`, it takes the other's depth too.
+
+  ```json
+  "partners": {"held": {"by": {"axel": [[-51, 0]], "blaze": [[-50, 0]]}, "depth": true,
+                        "moves_partner": true}}
+  ```
 
 The optional fields are written only when they are not their defaults, so a file read and
 written again keeps its bytes. The extractor writes the players (`axel`, `adam`, `blaze`, each

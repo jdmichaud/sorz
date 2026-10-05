@@ -163,6 +163,20 @@ pub const Table = struct { name: []const u8, values: []const i32 };
 /// choose what follows a move).
 pub const Choice = struct { name: []const u8, states: []const []const u8 };
 
+/// In a hold between two players, where one of this kind goes from the other (its partner) at
+/// each frame of what it does then, by the partner's kind (`by`): a place a frame, `x` toward the
+/// side it faces and `height` downward. With `moves_partner`, the partner goes instead, to be at
+/// that place from it; with `depth`, it takes the partner's depth too. Its name is the
+/// behaviour's (a player held, thrown...).
+pub const Partner = struct {
+    name: []const u8,
+    moves_partner: bool = false,
+    depth: bool = false,
+    by: []const PartnerPlaces,
+};
+
+pub const PartnerPlaces = struct { partner: []const u8, places: []const Place };
+
 pub const Definition = struct {
     /// The kind's name: the file's (`entities/galsia.json` is `galsia`), which the traces use.
     name: []const u8,
@@ -185,6 +199,7 @@ pub const Definition = struct {
     boxes: []const Box = &.{},
     animations: []const Animation = &.{},
     moves: []const Move = &.{},
+    partners: []const Partner = &.{},
 
     pub fn animation(d: *const Definition, name: []const u8) ?u8 {
         return indexOf(Animation, d.animations, name);
@@ -211,6 +226,14 @@ pub const Definition = struct {
         for (d.choices) |c| if (std.mem.eql(u8, c.name, name)) return c.states;
         return null;
     }
+    /// The places of `name` from a partner of kind `partner`.
+    pub fn partnerPlaces(d: *const Definition, name: []const u8, partner: []const u8) ?struct { partner: *const Partner, places: []const Place } {
+        for (d.partners) |*p| if (std.mem.eql(u8, p.name, name)) {
+            for (p.by) |b| if (std.mem.eql(u8, b.partner, partner)) return .{ .partner = p, .places = b.places };
+            return null;
+        };
+        return null;
+    }
 };
 
 fn indexOf(comptime T: type, items: []const T, name: []const u8) ?u8 {
@@ -233,7 +256,7 @@ pub const max_items = 255;
 /// Reads definition `name` from its file's parsed `root`, checking every value; the frames must
 /// be `a`'s. A refusal names the field in the diagnostic.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *const art.Art) json.Error!Definition {
-    try root.only(&.{ "provenance", "family", "team", "behaviour", "health", "palette", "gravity", "shadow", "numbers", "tables", "choices", "sounds", "boxes", "animations", "moves" });
+    try root.only(&.{ "provenance", "family", "team", "behaviour", "health", "palette", "gravity", "shadow", "numbers", "tables", "choices", "sounds", "boxes", "animations", "moves", "partners" });
     var d: Definition = .{
         .name = name,
         .provenance = if (try root.opt("provenance")) |p| try p.string() else "",
@@ -357,6 +380,37 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *con
             if (try e.value.opt("hit_sound")) |x| m.hit_sound = try soundName(x);
         }
         d.moves = out;
+    }
+    if (try root.opt("partners")) |node| {
+        var it = try listed(node);
+        const out = try arena.alloc(Partner, it.count());
+        for (out) |*x| {
+            const e = (try it.next()).?;
+            try e.value.only(&.{ "moves_partner", "depth", "by" });
+            const by_node = try e.value.get("by");
+            var by = try listed(by_node);
+            const list = try arena.alloc(PartnerPlaces, by.count());
+            for (list) |*b| {
+                const pe = (try by.next()).?;
+                const n = try pe.value.len();
+                if (n == 0) return pe.value.fail("no place");
+                if (n > max_items) return pe.value.fail("more than 255 places");
+                const places = try arena.alloc(Place, n);
+                for (places, 0..) |*pl, i| {
+                    const at = try pe.value.at(i);
+                    if (try at.len() != 2) return at.fail("not [x, height]");
+                    pl.* = .{ .x = try (try at.at(0)).int(i16), .height = try (try at.at(1)).int(i16) };
+                }
+                b.* = .{ .partner = try checkedName(pe.value, pe.key), .places = places };
+            }
+            x.* = .{
+                .name = try checkedName(e.value, e.key),
+                .moves_partner = if (try e.value.opt("moves_partner")) |b| try b.boolean() else false,
+                .depth = if (try e.value.opt("depth")) |b| try b.boolean() else false,
+                .by = list,
+            };
+        }
+        d.partners = out;
     }
     return d;
 }
@@ -574,6 +628,28 @@ pub fn value(arena: std.mem.Allocator, d: *const Definition) error{OutOfMemory}!
         }
         try top.append(arena, .{ .key = "moves", .value = .{ .object = out } });
     }
+    if (d.partners.len != 0) {
+        const out = try arena.alloc(json.Field, d.partners.len);
+        for (out, d.partners) |*o, p| {
+            const by = try arena.alloc(json.Field, p.by.len);
+            for (by, p.by) |*bo, b| {
+                const places = try arena.alloc(json.Value, b.places.len);
+                for (places, b.places) |*v, pl| {
+                    const pair = try arena.alloc(json.Value, 2);
+                    pair[0] = json.Value.num(pl.x);
+                    pair[1] = json.Value.num(pl.height);
+                    v.* = .{ .array = pair };
+                }
+                bo.* = .{ .key = b.partner, .value = .{ .array = places } };
+            }
+            var fs: std.ArrayList(json.Field) = .empty;
+            try fs.append(arena, .{ .key = "by", .value = .{ .object = by } });
+            if (p.depth) try fs.append(arena, .{ .key = "depth", .value = .{ .bool = true } });
+            if (p.moves_partner) try fs.append(arena, .{ .key = "moves_partner", .value = .{ .bool = true } });
+            o.* = .{ .key = p.name, .value = .{ .object = fs.items } };
+        }
+        try top.append(arena, .{ .key = "partners", .value = .{ .object = out } });
+    }
     return .{ .object = top.items };
 }
 
@@ -690,6 +766,20 @@ const sample =
     \\    "walk_speed": 65536
     \\  },
     \\  "palette": 1,
+    \\  "partners": {
+    \\    "held": {
+    \\      "by": {
+    \\        "dummy": [
+    \\          [-50, 0]
+    \\        ],
+    \\        "other": [
+    \\          [-46, 2]
+    \\        ]
+    \\      },
+    \\      "depth": true,
+    \\      "moves_partner": true
+    \\    }
+    \\  },
     \\  "provenance": "synthetic",
     \\  "shadow": true,
     \\  "sounds": {
@@ -738,6 +828,10 @@ test "a definition reads, names its parts, and writes the same bytes again" {
     const body = d.boxes[d.box("body").?];
     try testing.expectEqual(Span{ .from = -8, .to = 8 }, body.across(true));
     try testing.expect(d.animations[d.animation("stand").?].loop);
+    const by_other = d.partnerPlaces("held", "other").?;
+    try testing.expect(by_other.partner.moves_partner and by_other.partner.depth);
+    try testing.expectEqual(Place{ .x = -46, .height = 2 }, by_other.places[0]);
+    try testing.expect(d.partnerPlaces("held", "third") == null and d.partnerPlaces("thrown", "other") == null);
     const h = d.animations[d.animation("stand").?].frames[0].hand.?;
     try testing.expectEqualStrings("upright", h.pose);
     try testing.expect(h.front and !h.strikes and h.x == -9 and h.height == -60);
