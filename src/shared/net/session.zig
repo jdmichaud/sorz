@@ -6,7 +6,8 @@
 //!
 //! - **Handshake.** The guest sends `hello` (versions, data identity, the session it had). A new
 //!   session: the host pings to measure the round trip, picks the input delay D from it (2 to 6
-//!   ticks) and answers `welcome` (fresh); both games then start from power-on. The same session
+//!   ticks) and answers `welcome` (fresh), with what its game starts with (`start`, its variant:
+//!   the guest's game takes it); both games then start from power-on. The same session
 //!   after a dropped connection: `welcome` (not fresh), and each peer resends the pads the other
 //!   lacks. Different versions or data: `reject`.
 //! - **Pads.** Before tick N runs, the peer samples its pad for tick N + D and sends it; the pads
@@ -38,6 +39,9 @@ pub const Config = struct {
     data: protocol.DataId,
     /// The host's input delay (2 to 6), instead of the one that the round trip gives.
     delay: ?u8 = null,
+    /// What the host's game starts with, which its welcome gives the guest (the game sets it
+    /// before the session starts).
+    start: protocol.Start = .{},
 };
 
 /// The pads that the session keeps on each side, ticks in a ring.
@@ -133,6 +137,8 @@ pub const Session = struct {
     peer_left: bool = false,
     id: u64 = 0,
     delay: u8 = 0,
+    /// What both games start with, once the session has started: the host's.
+    start: ?protocol.Start = null,
     random: std.Random.SplitMix64 = .init(0),
 
     /// The next tick to run.
@@ -347,7 +353,7 @@ pub const Session = struct {
         const resumable = h.session != 0 and h.session == self.id and self.phase == .playing and
             h.resume_from <= self.local_count and self.local_count - h.resume_from < window;
         if (resumable) {
-            self.send(.{ .welcome = .{ .session = self.id, .delay = self.delay, .fresh = false, .resume_from = self.remote_count } });
+            self.send(.{ .welcome = .{ .session = self.id, .delay = self.delay, .fresh = false, .resume_from = self.remote_count, .start = self.start orelse self.config.start } });
             self.resumeFrom(h.resume_from);
             return .accepted;
         }
@@ -384,6 +390,7 @@ pub const Session = struct {
     fn onWelcome(self: *Session, w: protocol.Welcome) Verdict {
         if (self.config.role != .guest or self.welcomed or !self.connected) return .unexpected;
         if (w.fresh) {
+            self.start = w.start;
             self.startFresh(w.session, w.delay);
             return .accepted;
         }
@@ -399,7 +406,8 @@ pub const Session = struct {
     /// Both sides start from power-on with empty pads for the first `delay` ticks.
     fn startFresh(self: *Session, id: u64, delay: u8) void {
         if (self.config.role == .host) {
-            self.send(.{ .welcome = .{ .session = id, .delay = delay, .fresh = true, .resume_from = 0 } });
+            self.start = self.config.start;
+            self.send(.{ .welcome = .{ .session = id, .delay = delay, .fresh = true, .resume_from = 0, .start = self.config.start } });
         }
         self.id = id;
         self.delay = delay;

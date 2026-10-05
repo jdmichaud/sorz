@@ -1,4 +1,4 @@
-//! The messages of the netplay session (DESIGN.md 9), version 1: one message per transport message,
+//! The messages of the netplay session (DESIGN.md 9), version 2: one message per transport message,
 //! its first byte its kind, then fixed fields in little-endian order. Decoding is strict: an
 //! unknown kind, a wrong length or a field out of its range is `Malformed`, and nothing is
 //! half-read.
@@ -7,7 +7,9 @@
 //! |---------------|--------------------------------------------------------------|--------------|
 //! | 1 hello       | magic "SZNP", protocol u16, build [32], data [32], session    | 83           |
 //! |               | u64 (0: a new one), resume_from u32 (host pads needed from)  |              |
-//! | 2 welcome     | session u64, delay u8 (2-6), fresh u8 (0/1), resume_from u32  | 15           |
+//! | 2 welcome     | session u64, delay u8 (2-6), fresh u8 (0/1), resume_from u32, | 18           |
+//! |               | start: variant u8 (0-2), players u8 (0/1), volume u8 (0-100, |              |
+//! |               | 255 none)                                                    |              |
 //! | 3 reject      | reason u8                                                    | 2            |
 //! | 4 ping        | seq u32, time_ns u64 (the sender's clock, echoed)            | 13           |
 //! | 5 pong        | seq u32, time_ns u64                                         | 13           |
@@ -18,7 +20,9 @@
 //! | 10 settings   | open u8 (0/1): the sender's player is on the settings screen | 2            |
 //!
 //! The guest opens with `hello`; the host answers `welcome` (after pings that measure the round
-//! trip, for a new session) or `reject`. `pads` carries the sender's pads (input.Pad's byte) from
+//! trip, for a new session) or `reject`. The welcome's `start` is what the host's game starts with
+//! (its variant, the players, OPTIONS' VOLUME line: variant.zig): the guest's game starts with it
+//! too, so that both run the same game (version 2 on). `pads` carries the sender's pads (input.Pad's byte) from
 //! tick `first`, with `ack`, the first of the receiver's pads the sender does not have, and
 //! `slack`, the sender's measure of how early the receiver's pads reach it (session.zig, the clock
 //! balancing). `hash` is the hash of the game's state before tick `tick`, in its canonical form
@@ -28,7 +32,7 @@
 //! or closed it.
 const std = @import("std");
 
-pub const version: u16 = 1;
+pub const version: u16 = 2;
 pub const magic = "SZNP";
 
 /// The longest run of pads in one message.
@@ -94,6 +98,18 @@ pub const Welcome = struct {
     delay: u8,
     fresh: bool,
     resume_from: u32,
+    start: Start = .{},
+};
+
+/// What the host's game starts with (variant.zig's `Start`, as bytes): the variant's number (0 to
+/// `max_variant`), the players (0 one, 1 two), the VOLUME line's value (`no_volume`: none).
+pub const Start = struct {
+    variant: u8 = 0,
+    players: u8 = 0,
+    volume: u8 = no_volume,
+
+    pub const max_variant = 2;
+    pub const no_volume = 255;
 };
 
 pub const Ping = struct { seq: u32, time_ns: u64 };
@@ -195,6 +211,9 @@ pub fn encode(m: Message, out: []u8) []u8 {
             w.byte(h.delay);
             w.byte(@intFromBool(h.fresh));
             w.int(u32, h.resume_from);
+            w.byte(h.start.variant);
+            w.byte(h.start.players);
+            w.byte(h.start.volume);
         },
         .reject => |r| w.byte(@backingInt(r)),
         .bye => |r| w.byte(@backingInt(r)),
@@ -247,7 +266,10 @@ pub fn decode(bytes: []const u8) DecodeError!Message {
             const delay = try r.byte();
             const fresh = try r.byte();
             if (delay < min_delay or delay > max_delay or fresh > 1 or session == 0) return error.Malformed;
-            break :blk .{ .welcome = .{ .session = session, .delay = delay, .fresh = fresh == 1, .resume_from = try r.int(u32) } };
+            const resume_from = try r.int(u32);
+            const start: Start = .{ .variant = try r.byte(), .players = try r.byte(), .volume = try r.byte() };
+            if (start.variant > Start.max_variant or start.players > 1 or (start.volume > 100 and start.volume != Start.no_volume)) return error.Malformed;
+            break :blk .{ .welcome = .{ .session = session, .delay = delay, .fresh = fresh == 1, .resume_from = resume_from, .start = start } };
         },
         .reject => blk: {
             const reason: RejectReason = @fromBackingInt(@intCast(try r.byte()));
@@ -328,6 +350,7 @@ test "every message round trips, and its truncations are malformed" {
     const data: DataId = @splat(171);
     try roundTrip(.{ .hello = .{ .build = buildId("0.1.0 abc"), .data = data, .session = 1234567890123, .resume_from = 77 } });
     try roundTrip(.{ .welcome = .{ .session = 9, .delay = 3, .fresh = true, .resume_from = 0 } });
+    try roundTrip(.{ .welcome = .{ .session = 9, .delay = 3, .fresh = true, .resume_from = 0, .start = .{ .variant = 2, .players = 1, .volume = 70 } } });
     try roundTrip(.{ .reject = .data });
     try roundTrip(.{ .bye = .quit });
     try roundTrip(.{ .settings = true });
@@ -361,6 +384,12 @@ test "fields out of range are malformed" {
         const w = encode(.{ .welcome = .{ .session = v[2], .delay = 3, .fresh = false, .resume_from = 0 } }, &buf);
         w[9] = v[0];
         w[10] = v[1];
+        try testing.expectError(error.Malformed, decode(w));
+    }
+    // A start out of range: an unknown variant, three players, a volume past 100.
+    for ([_][3]u8{ .{ 3, 0, 255 }, .{ 0, 2, 255 }, .{ 0, 0, 101 } }) |v| {
+        const w = encode(.{ .welcome = .{ .session = 1, .delay = 3, .fresh = true, .resume_from = 0 } }, &buf);
+        @memcpy(w[15..18], &v);
         try testing.expectError(error.Malformed, decode(w));
     }
     // No pads, or more than a message may carry, or a count that disagrees with the bytes.
