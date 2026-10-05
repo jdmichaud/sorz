@@ -331,8 +331,10 @@ play).
 
 - `art`: the art set of the round's planes (`plane_a`, `plane_b`), colours (`colours`) and
   cycles (8 at most); the round's scene draws and colours its round from them, its size the
-  planes'. `music`: the round's music, a name of the sound content. `ground`: the ground's height, where the
-  enemies stand and the players land (heights grow downward, as the screen's lines).
+  planes'. `music`: the round's music, a name of the sound content. `ground`: the ground's
+  height, where the enemies stand and the players land (heights grow downward, as the screen's
+  lines): the floor's, one kind of cell everywhere in round 1 (the extractor refuses a round
+  whose floor's cells differ until the floor comes cell by cell, PLAN 15).
 - `camera`: the view's top-left corner at the start (`at`), how far back it may go at the start
   (`x_min`; it never goes back after), its limits down (`y`), and plane B's scroll across,
   `plane_b` = [times, per] of the camera's. It has reached a wall when it is less than

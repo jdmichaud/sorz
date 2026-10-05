@@ -470,10 +470,16 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         if (ground != null and ground.? != at_height) return error.BadData;
         ground = at_height;
     };
+    // The floor is one kind of cell everywhere (round 1's), so its height is the ground's at
+    // every place: a round whose floor's cells differ needs them cell by cell (its walls, its
+    // pits, PLAN item 15), and is refused until then.
+    const kind = floor[0] >> 4;
+    for (floor) |byte| if (byte >> 4 != kind or byte & 0xF != kind) return error.BadData;
+    if (ground != null and ground.? != u16be(rom, heights + 2 * @as(u32, kind))) return error.BadData;
 
     return .{
         .number = n,
-        .provenance = try std.fmt.allocPrint(arena, "round {d}'s level events (0x436): the spawn lists (Nemesis at ROM 0x{X:0>5}), the sections (0x1C1C4), the walls (0x195D8), the music (0x11B44); its ground the height of the floor map (Kosinski at ROM 0x{X:0>5}, the cells' heights at ROM 0x{X:0>5}, 0x19C04) at every place it places an enemy (0xAD2A)", .{ n, lists_at, floor_at, heights }),
+        .provenance = try std.fmt.allocPrint(arena, "round {d}'s level events (0x436): the spawn lists (Nemesis at ROM 0x{X:0>5}), the sections (0x1C1C4), the walls (0x195D8), the music (0x11B44); its ground the height of the floor map's one kind of cell, everywhere (Kosinski at ROM 0x{X:0>5}, the cells' heights at ROM 0x{X:0>5}, 0x19C04; 0xAD2A probes it)", .{ n, lists_at, floor_at, heights }),
         .art = try std.fmt.allocPrint(arena, "round{d}", .{n}),
         .music = try soundName(rom[round_music + r]),
         .ground = ground orelse return error.BadData,
