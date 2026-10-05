@@ -343,7 +343,15 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   `level_bonus` a LEVEL), counted `count` points a tick; the `colours` faded in over the status
   bar's. `buttons`, the players' buttons by the options' CONTROL: for each choice in its order
   (`layouts`), the pad's button (`a`, `b` or `c`) that gives the `special` attack, the `attack`
-  and the `jump`; left out, the cartridge's first alone.
+  and the `jump`; left out, the cartridge's first alone. `demo`, the attract demo: round 1
+  played by the game, both players in play, the characters `players` names (player 1's, player
+  2's), each with `lives` and `specials` (the status bar shows those a new life gives until they
+  change); its play lasts `ticks` ticks, then fades out; its `sign`, a kind of entity fixed on
+  the screen (`press_start`), stays over it; `pads`, each pad's readings, one at each display
+  tick of the demo but its load's from its set-up's, the buttons held (the engine's pad's bits,
+  up, down, left, right, A, B, C, START from the lowest), two hexadecimal digits a reading, the
+  readings before `first_reading` none; the pads as they are (the cartridge's first layout), and
+  the real START pressed ends the demo.
   The parts' pictures are the `play` set's: `play/status_bar`
   under them, `play/time_digits` (the big digits, a column of two cells each), `play/health_1`
   and `_2` and `play/enemy_bar_1` and `_2` (a bar's full cells, its partial cell, its empty

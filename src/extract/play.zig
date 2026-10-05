@@ -782,6 +782,52 @@ pub fn extract(b: *Builder) !records.Round {
         .enemy_colours = try enemyColours(arena, rom),
         .clear = clear,
         .buttons = try buttons(arena, rom),
+        .demo = try demo(b),
+    };
+}
+
+/// The attract demo (mode $14, 0x10840): its players (0x119AC: player 1 the original's character
+/// 0, Axel, player 2 its 2, Blaze, three lives each, both in play), the special attacks the round's
+/// load gives them (0x107F2) and the length of its play (0x11A36 counts it down); its sign (type
+/// $3E, the `press_start` entity, entities.zig); and its pads (0x10852: the Kosinski block unpacked at $FF7000, 4 KiB a pad, two bytes a
+/// reading, the buttons held then those newly pressed; 0x813C reads the held ones over all but
+/// the real START at each frame).
+fn demo(b: *Builder) !records.Demo {
+    const rom = b.rom;
+    const arena = b.arena;
+    if (u16be(rom, 0x10852) != 0x41F9) return error.BadData;
+    const source = u32be(rom, 0x10854);
+    const d = try b.lib.decode(.{ .name = "demo/pads", .pack = .kosinski, .source = source, .what = "the attract demo's pads (0x10852)" });
+    const per_pad = 0x1000;
+    if (d.bytes.len < 2 * per_pad) return error.BadData;
+    var pads: [2][]const u8 = undefined;
+    for (&pads, 0..) |*p, k| {
+        const bytes = d.bytes[k * per_pad ..][0..per_pad];
+        const text = try arena.alloc(u8, per_pad);
+        for (0..per_pad / 2) |i| {
+            const o = bytes[2 * i];
+            // The original's byte: START, A, C, B, right, left, down, up from the highest bit;
+            // the engine's pad: up, down, left, right, A, B, C, START from the lowest.
+            const held: u8 = (o & 0x0F) | ((o >> 6) & 1) << 4 | ((o >> 4) & 1) << 5 | ((o >> 5) & 1) << 6 | (o & 0x80);
+            _ = std.fmt.bufPrint(text[2 * i ..][0..2], "{X:0>2}", .{held}) catch unreachable;
+        }
+        p.* = text;
+    }
+    if (u16be(rom, 0x119F6) != 0x11FC or u16be(rom, 0x119F8) != 0x3E) return error.BadData;
+    if (try immediate(rom, 0x119FC, &.{ 0x42, 0x38 }, 2) != 0xFF1E or try immediate(rom, 0x11A00, &.{ 0x11, 0xFC }, 2) != 2) return error.BadData;
+    const lives = try immediate(rom, 0x11A06, &.{ 0x11, 0xFC }, 2);
+    if (try immediate(rom, 0x11A0C, &.{ 0x11, 0xFC }, 2) != lives) return error.BadData;
+    return .{
+        .provenance = try std.fmt.allocPrint(arena, "the attract demo (0x10840): its players (0x119AC: player 1 the original's character 0 (ROM 0x119FC: clr.b ($FF1E)), Axel, player 2 its 2 (ROM 0x11A00), Blaze, ROM 0x11A06's and 0x11A0C's lives each, both in play), the special attacks (ROM 0x10806 and 0x1082C: move.b #N,($FF21) and ($FF24), 0x107F2, which the bar does not show: it shows a new life's), its play's ticks (ROM 0x11A12: move.w #N,($FB52), 0x11A36 counts them down at each tick of play, then the fade out); its sign (ROM 0x119F6: move.b #$3E,($D100), the object of type $3E in slot 50, `press_start`); its pads (ROM 0x10852: the Kosinski block at ROM 0x{X:0>5}, unpacked at $FF7000 (0x85A2), 4 KiB a pad, two bytes a reading, the buttons held and those newly pressed (consistent through the demo's play): the held ones, which 0x813C reads over all but the real START at each frame; its pointers set as the demo's mode is (0x90AA), the frame then and the first after the load read before the stream is unpacked, none of their buttons held)", .{source}),
+        .players = .{ "axel", "blaze" },
+        .lives = @intCast(lives),
+        .specials = @intCast(try immediate(rom, 0x10806, &.{ 0x11, 0xFC }, 2)),
+        .ticks = @intCast(try immediate(rom, 0x11A12, &.{ 0x31, 0xFC }, 2)),
+        .sign = "press_start",
+        .pads = pads,
+        // Read at the frame its mode is set (0x90AA) and at the first after its load, the
+        // stream is unpacked only at the load's end (0x10852): those read what the buffer held.
+        .first_reading = 2,
     };
 }
 

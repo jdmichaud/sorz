@@ -298,6 +298,35 @@ pub const Round = struct {
     clear: Clear,
     /// The players' buttons by the options' CONTROL.
     buttons: Buttons = .{},
+    /// The attract demo.
+    demo: Demo = .{},
+};
+
+/// The attract demo: round 1 played by the game on the pads the cartridge holds, both players in
+/// play, each the character `players` names, with `lives` and `specials` (the status bar shows
+/// those a new life gives until they change); it lasts `ticks` ticks of play, then fades out;
+/// its `sign` (a kind of entity, fixed on the screen) stays over it. `pads` holds each pad's
+/// readings, one at each display tick of the demo but its load's, from its set-up's: the buttons
+/// held (the bits of the engine's pad: up, down, left, right, A, B, C, START from the lowest),
+/// two hexadecimal digits a reading; those before `first_reading` read none (the stream is not
+/// there yet); the real START pressed ends the demo (a fade out).
+pub const Demo = struct {
+    provenance: []const u8 = "",
+    players: [2][]const u8 = .{ "", "" },
+    lives: u8 = 0,
+    specials: u8 = 0,
+    ticks: u16 = 0,
+    sign: []const u8 = "",
+    pads: [2][]const u8 = .{ "", "" },
+    first_reading: u8 = 0,
+
+    /// Pad `pad`'s reading `k`: the buttons held (none before `first_reading` or past the
+    /// readings).
+    pub fn reading(self: *const Demo, pad: u1, k: usize) u8 {
+        const text = self.pads[pad];
+        if (k < self.first_reading or 2 * k + 2 > text.len) return 0;
+        return std.fmt.parseInt(u8, text[2 * k ..][0..2], 16) catch 0;
+    }
 };
 
 /// The screens' records a tree has.
@@ -489,7 +518,7 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
         .{ .key = "no", .value = try cellValue(arena, p.no) },
         .{ .key = "out", .value = try cellValue(arena, p.out) },
     });
-    return obj(arena, &.{
+    const record = try obj(arena, &.{
         .{ .key = "banner", .value = try withProvenance(arena, b.provenance, &.{
             .{ .key = "left", .value = .{ .str = b.left } },
             .{ .key = "numbers", .value = try strings(arena, b.numbers) },
@@ -538,6 +567,47 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
         .{ .key = "enemy_colours", .value = try enemyColoursValue(arena, &r.enemy_colours) },
         .{ .key = "buttons", .value = try buttonsValue(arena, &r.buttons) },
     });
+    // The attract demo, when the record has one.
+    if (r.demo.ticks == 0) return record;
+    return .{ .object = try std.mem.concat(arena, json.Field, &.{ record.object, &.{.{ .key = "demo", .value = try demoValue(arena, &r.demo) }} }) };
+}
+
+fn demoValue(arena: std.mem.Allocator, d: *const Demo) !json.Value {
+    return withProvenance(arena, d.provenance, &.{
+        .{ .key = "players", .value = .{ .array = try arena.dupe(json.Value, &.{ .{ .str = d.players[0] }, .{ .str = d.players[1] } }) } },
+        .{ .key = "lives", .value = json.Value.num(d.lives) },
+        .{ .key = "specials", .value = json.Value.num(d.specials) },
+        .{ .key = "ticks", .value = json.Value.num(d.ticks) },
+        .{ .key = "sign", .value = .{ .str = d.sign } },
+        .{ .key = "pads", .value = .{ .array = try arena.dupe(json.Value, &.{ .{ .str = d.pads[0] }, .{ .str = d.pads[1] } }) } },
+        .{ .key = "first_reading", .value = json.Value.num(d.first_reading) },
+    });
+}
+
+fn readDemo(n: json.Node) Error!Demo {
+    try n.only(&.{ "provenance", "players", "lives", "specials", "ticks", "sign", "pads", "first_reading" });
+    var d: Demo = .{
+        .provenance = if (try n.opt("provenance")) |x| try x.string() else "",
+        .lives = try (try n.get("lives")).int(u8),
+        .specials = try (try n.get("specials")).int(u8),
+        .ticks = try (try n.get("ticks")).int(u16),
+        .sign = try (try n.get("sign")).string(),
+        .first_reading = try (try n.get("first_reading")).int(u8),
+    };
+    const ps = try n.get("players");
+    if (try ps.len() != 2) return ps.fail("not the two players' characters");
+    const pads = try n.get("pads");
+    if (try pads.len() != 2) return pads.fail("not the two pads' readings");
+    for (0..2) |k| {
+        d.players[k] = try (try ps.at(k)).string();
+        const p = try pads.at(k);
+        const text = try p.string();
+        if (text.len % 2 != 0) return p.fail("not two hexadecimal digits a reading");
+        for (text) |c| if (!std.ascii.isHex(c)) return p.fail("not hexadecimal digits");
+        d.pads[k] = text;
+    }
+    if (d.ticks == 0) return n.fail("a demo of no ticks");
+    return d;
 }
 
 fn buttonsValue(arena: std.mem.Allocator, b: *const Buttons) !json.Value {
@@ -779,7 +849,7 @@ fn readFrame(n: json.Node, a: ?*const art.Art) Error![]const u8 {
 }
 
 fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!Round {
-    try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue", "name_entry", "enemy_colours", "clear", "buttons" });
+    try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue", "name_entry", "enemy_colours", "clear", "buttons", "demo" });
     const b = try n.get("banner");
     try b.only(&.{ "provenance", "left", "numbers", "right", "fade", "in", "in_ticks", "wait", "out", "out_ticks", "after" });
     const ns = try b.get("numbers");
@@ -852,6 +922,7 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
         .name_entry = try readNameEntry(arena, try n.get("name_entry")),
         .enemy_colours = try readEnemyColours(arena, try n.get("enemy_colours"), a),
         .buttons = if (try n.opt("buttons")) |x| try readButtons(arena, x) else .{},
+        .demo = if (try n.opt("demo")) |x| try readDemo(x) else .{},
         .banner = .{
             .provenance = if (try b.opt("provenance")) |x| try x.string() else "",
             .left = try readFrame(try b.get("left"), a),

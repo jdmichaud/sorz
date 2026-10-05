@@ -1093,5 +1093,37 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8) Error![]const entity.Defin
     try out.append(arena, try goArrow(arena, rom));
     try out.append(arena, try playerWaiting(arena, rom));
     try out.append(arena, try hitSpark(arena, rom));
+    try out.append(arena, try pressStart(arena, rom));
     return out.items;
+}
+
+/// The attract demo's sign, PRESS START BUTTON (type $3E, 0x673C), which its set-up makes
+/// (0x119F6): fixed on the screen (flags $5E: off the camera, animated, never culled, in front of
+/// the layers), its animation (0 of the set at 0x676E: the sign, then a blank frame) at its
+/// place, x, depth (the original's y) and height (its z), from the immediates of its code; it
+/// does nothing more.
+pub fn pressStart(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set = 0x676E;
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "demo", .set = set, .box_table = object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
+    // Its animation: the sign, then a blank frame (the round's blank tile), in turn.
+    const sign = try readAnimation(arena, rom, set, 0);
+    const frames = try arena.alloc(entity.Frame, sign.frames.len);
+    for (frames, sign.frames) |*f, r| {
+        const index = std.mem.indexOfScalar(u32, d.frame_addresses, r.address) orelse return error.BadData;
+        f.* = .{ .frame = try std.fmt.allocPrint(arena, "demo/press_start_{d:0>2}", .{index}), .ticks = @max(sign.timing, 1), .flip = r.mirrored };
+    }
+    try d.animations.append(arena, .{ .name = "sign", .loop = true, .frames = frames });
+    try d.number("x", try immediate(rom, 0x6748, &.{ 0x31, 0x7C }, 2), "ROM 0x06748 (move.w #N,($10,a0))");
+    try d.number("depth", try immediate(rom, 0x674E, &.{ 0x31, 0x7C }, 2), "ROM 0x0674E (move.w #N,($14,a0))");
+    try d.number("height", try immediate(rom, 0x6754, &.{ 0x31, 0x7C }, 2), "ROM 0x06754 (move.w #N,($18,a0))");
+    if (rom[0x675A] != 0x00 or rom[0x675B] != 0x28 or rom[0x675D] != 0x5E) return error.BadData;
+    return .{
+        .name = "press_start",
+        .provenance = try std.fmt.allocPrint(arena, "the attract demo's sign (type $3E, 0x673C; made by 0x119F6): its frame from the animation set at ROM 0x{X:0>5}; fixed on the screen, never culled, in front of the layers (ROM 0x0675A: ori.b #$5E,(1,a0)){s}", .{ set, d.number_notes.items }),
+        .family = .effect,
+        .team = .neutral,
+        .behaviour = "none",
+        .numbers = d.numbers.items,
+        .animations = d.animations.items,
+    };
 }
