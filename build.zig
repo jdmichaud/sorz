@@ -523,6 +523,7 @@ pub fn build(b: *std.Build) void {
     const round_out = b.option([]const u8, "round-out", "Where round-check writes its runs and report (default: <prefix>/round)");
     const round_only = b.option([]const u8, "round-only", "The scenarios round-check runs, separated by commas (default: all)");
     const round_reach = b.option([]const u8, "round-reach", "Scenario files round-check also runs to report how far they stay equal (a recorded play's), separated by commas");
+    const round_reach_min = b.option([]const u8, "round-reach-min", "The floors of -Dround-reach's runs, TRACE,FRAMES,SOUND (round ticks, round ticks, display ticks; one left empty is none): a run below one fails");
     const round_check_step = b.step("round-check", "Compare round 1's scenes with sor-remaster's from power-on (needs -Drom=ROM -Dremaster=DIR|AGENT)");
     const round_module = b.createModule(.{
         .root_source_file = b.path("src/tools/round_check.zig"),
@@ -561,6 +562,7 @@ pub fn build(b: *std.Build) void {
         if (round_reach) |files| {
             var it = std.mem.tokenizeScalar(u8, files, ',');
             while (it.next()) |path| check.addArgs(&.{ "--reach", path });
+            if (round_reach_min) |floors| check.addArgs(&.{ "--reach-min", floors });
         }
         check.has_side_effects = true;
         round_check_step.dependOn(&check.step);

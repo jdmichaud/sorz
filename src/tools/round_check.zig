@@ -9,10 +9,13 @@
 //! sor-remaster's trace and every `picture_every` display ticks from the round's start.
 //!
 //!   sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...] [--reach FILE...]
+//!       [--reach-min TRACE,FRAMES,SOUND]
 //!
 //! A scenario given with `--reach` (a recorded play, `start pads FILE V`, kept out of the
 //! repository) is not a gate: its line says how far each comparison stays equal (the trace's
-//! and the frames' first difference by the round's tick, the sound's by display tick).
+//! and the frames' first difference by the round's tick, the sound's by display tick). With
+//! `--reach-min`, it is one: a reach below its floor fails the check (the trace's and the
+//! frames' round ticks, the sound's display tick; a floor left empty is none).
 //!
 //! For each scenario (`scenarios` below, the file SCENARIOS_DIR/NAME.scn), sor-remaster's agent
 //! runs it and writes its trace into OUT_DIR; sorz runs it in this process, on the content
@@ -45,6 +48,8 @@ pub const Scenario = struct {
     /// Whether its pictures are compared, and before which display tick.
     pictures: bool = true,
     pictures_before: ?u64 = null,
+    /// A reach's floors: the trace's, the frames' (round ticks), the sound's (display ticks).
+    reach_min: [3]?u64 = .{ null, null, null },
 };
 
 /// The display ticks of the pictures compared: from a few before each scene's start to some
@@ -153,7 +158,21 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
         if (frames.first) |d| try w.print("equal before the round's tick {d} (entity {d}: {f} against {f}), {d} of {d} entities differ\n", .{ d.t, d.e, startOf(d.a), startOf(d.b), frames.differing, frames.entities }) else try w.print("equal, {d} entities\n", .{frames.entities});
         try w.writeAll("  the sound: ");
         if (sound.first) |f| try w.print("equal before display tick {d} of {d}\n", .{ ticksOf(f), ticksOf(common) }) else try w.print("equal, {d} display ticks\n", .{ticksOf(common)});
-        return true;
+        // Its floors: how far each must reach.
+        const reached = [3]?u64{
+            if (result.first) |d| @intCast(@max(firstTick(d), 0)) else null,
+            if (frames.first) |d| @intCast(@max(d.t, 0)) else null,
+            if (sound.first) |f| ticksOf(f) else null,
+        };
+        var above = true;
+        for (reached, sc.reach_min, [_][]const u8{ "the trace", "the frames", "the sound" }) |r, floor, what| {
+            const least = floor orelse continue;
+            const at = r orelse continue;
+            if (at >= least) continue;
+            try w.print("  {s} reaches {d}, below its floor {d}\n", .{ what, at, least });
+            above = false;
+        }
+        return above;
     }
     if (result.differences == 0 and frames.first == null and sound_same and pictures.first == null) {
         try w.print("{s}: equal, {d} events, {d} entities' frames, the sound's {d} display ticks, {d} pictures ({s})\n", .{ sc.name, events, frames.entities, ticksOf(common), pictures.compared, sc.what });
@@ -366,8 +385,15 @@ pub fn main(init: std.process.Init) !void {
     const out_path = args.next() orelse return usage(io);
     var only: std.ArrayList([]const u8) = .empty;
     var reach: std.ArrayList(Scenario) = .empty;
+    var reach_min: [3]?u64 = .{ null, null, null };
     while (args.next()) |arg| {
-        if (std.mem.eql(u8, arg, "--reach")) {
+        if (std.mem.eql(u8, arg, "--reach-min")) {
+            var floors = std.mem.splitScalar(u8, args.next() orelse return usage(io), ',');
+            for (&reach_min) |*f| {
+                const text = floors.next() orelse break;
+                f.* = if (text.len == 0) null else std.fmt.parseInt(u64, text, 10) catch return usage(io);
+            }
+        } else if (std.mem.eql(u8, arg, "--reach")) {
             const path = args.next() orelse return usage(io);
             const base = std.fs.path.basename(path);
             const name = if (std.mem.endsWith(u8, base, ".scn")) base[0 .. base.len - 4] else base;
@@ -395,6 +421,7 @@ pub fn main(init: std.process.Init) !void {
     try text.writer.writeAll("round-check: round 1's scenes in sorz against sor-remaster's, from power-on (PLAN item 13).\n\n");
     var failed = false;
     var printed: usize = 0;
+    for (reach.items) |*sc| sc.reach_min = reach_min;
     const all = try std.mem.concat(arena, Scenario, &.{ &scenarios, reach.items });
     for (all) |*sc| {
         if (only.items.len != 0 and !sc.reach) {
@@ -429,7 +456,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn usage(io: std.Io) !void {
-    return fail(io, "usage: sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...] [--reach FILE...]\n");
+    return fail(io, "usage: sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...] [--reach FILE...] [--reach-min TRACE,FRAMES,SOUND]\n");
 }
 
 fn fail(io: std.Io, message: []const u8) !void {
