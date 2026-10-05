@@ -99,8 +99,13 @@
 
 ## F6 — Network play, settings and variants
 
-- [ ] **18 — Network play** — Depends: 02, 13.
+- [x] **18 — Network play** — Depends: 02, 13.
   - The session on the new canonical state; A1 and A2's checks (DESIGN.md section 9).
+  - [x] Checked 2026-10-05 on round 1 as it is: `netplay-check -Drom` (two agent hosts over
+    WebSockets from power-on into the round, the same state; a difference planted in the round,
+    named on both sides), `browser-check -Drom` (a Chromium guest on a native host's page into the
+    round, the same state; two pages through the relay), the host's variant both games'.
+  - [ ] Open: two real machines under `netem`'s latency and loss (A1), and the user's play.
 - [x] **19 — Settings and variants** — Depends: 08.
   - The settings scene; the variants (original, extended, network: DESIGN.md 10.7) as flow
     graphs and policies; the extended OPTIONS lines; the network flow (one player a machine).
