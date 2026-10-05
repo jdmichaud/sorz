@@ -152,9 +152,10 @@ fn betweenPlayers(t: *Tick) void {
 
 /// The others' turns, in the world's order, as the original runs its objects one after the
 /// other, each through its whole tick: the entity's tick begins (a state entered at the last tick
-/// sets itself up); the blows that meet it land (`blowsOn`), then its own on the players; a
-/// player asking to grab it holds it; and it decides. What each draws from the random generator
-/// is thus drawn in the original's order. An entity that appears during the turns in a later
+/// sets itself up); the blows that meet it land (`blowsOn`); a player asking to grab it holds it,
+/// before its own blows land on the players (the original looks at a player's reach before its
+/// blow); and it decides. What each draws from the random generator is thus drawn in the
+/// original's order. An entity that appears during the turns in a later
 /// place has its turn in the same tick, as in the original. Through the turns, the players' boxes
 /// stay where the players stood when they began (`Boxes.at`); their asks to grab end with them.
 fn turns(t: *Tick) void {
@@ -167,8 +168,8 @@ fn turns(t: *Tick) void {
         if (t.world.playerOf(h) != null) continue;
         t.begin(h);
         blowsOn(t, h);
-        blowsOnPlayers(t, h);
         grabbedByPlayers(t, h);
+        blowsOnPlayers(t, h);
         if (t.world.get(h) != null) t.think(h);
     }
     for (t.world.players) |p| {

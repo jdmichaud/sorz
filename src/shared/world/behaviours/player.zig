@@ -874,17 +874,20 @@ fn goAround(a: Actor) void {
     a.entity.position.height = held.position.height.add(.pixels(p.height));
 }
 
-/// The one held, where the frame of the hold puts it (`held`); at a frame that lets it go, the
-/// hold ends there.
+/// The one held, where the frame of the hold puts it (`held`): its whole pixels the holder's and
+/// the frame's, its own fractions kept (as the original's held enemies place themselves); at a
+/// frame that lets it go, the hold ends there.
 fn placeHeld(a: Actor) void {
     const h = a.entity.holding orelse return;
     const f = a.currentFrame() orelse return;
     const where = f.held orelse return;
     const held = a.other(h) orelse return;
+    const at = a.entity.position;
+    const was = held.position;
     held.position = .{
-        .x = a.entity.position.x.add(Fixed.pixels(where.x).times(a.entity.facing.sign())),
-        .depth = a.entity.position.depth,
-        .height = a.entity.position.height.add(.pixels(where.height)),
+        .x = .parts(@intCast(at.x.whole() + @as(i32, where.x) * a.entity.facing.sign()), was.x.frac()),
+        .depth = .parts(@intCast(at.depth.whole()), was.depth.frac()),
+        .height = .parts(@intCast(at.height.whole() + where.height), was.height.frac()),
     };
     if (where.lets_go) a.letGo();
 }
