@@ -26,6 +26,25 @@ const tap_off = 9;
 /// The display ticks the start may take before it fails.
 const start_most = 6000;
 
+/// A run's sound, when it is kept: the game's sound as the hosts make it (`game.tickSound`), its
+/// frames at 48 kHz.
+pub const Sound = struct {
+    gpa: std.mem.Allocator,
+    out: sorz.sound_out.SoundOut,
+    /// The frame's transfers and work due at the next tick.
+    due: sorz.game.Due = .{},
+    pcm: std.ArrayList(i16) = .empty,
+
+    pub fn init(gpa: std.mem.Allocator, sounds: *const sorz.library.Sounds) !Sound {
+        return .{ .gpa = gpa, .out = try .init(gpa, sorz.sound_out.rate, sounds) };
+    }
+
+    pub fn deinit(self: *Sound) void {
+        self.out.deinit(self.gpa);
+        self.pcm.deinit(self.gpa);
+    }
+};
+
 pub const Run = struct {
     content: *const library.Content,
     assets: *const scene.Assets,
@@ -46,6 +65,8 @@ pub const Run = struct {
     chooser: u1 = 0,
     /// The pads held over the logic tick under way.
     current: input.Pads = .{},
+    /// The sound, when the run keeps it.
+    sound: ?*Sound = null,
     /// The display tick of the body's tick 0.
     body_v: ?u64 = null,
     /// The game's clock as the script's tick 0 begins, as sor-remaster tells it: its value at
@@ -87,6 +108,7 @@ pub const Run = struct {
         if (self.stage == .done) return false;
         const pads = self.next() orelse return false;
         const turn = self.state.stepWith(pads, true, self.assets, &self.out);
+        if (self.sound) |s| try s.pcm.appendSlice(s.gpa, sorz.game.tickSound(&s.out, &s.due, &turn, 0));
         if (self.trace) |tw| tw.held = .{ pads.pad1, pads.pad2 };
         try self.observe(&turn);
         return true;
@@ -121,9 +143,12 @@ pub const Run = struct {
             const in = self.startStep() orelse return if (self.stage == .done) null else self.next();
             return in;
         }
-        // A logic tick starts at the next display tick (a screen's: each): the script's commands,
-        // then its pads.
-        const starts = if (self.round()) |r| r.phase != .play or r.play.schedule.into == 0 else true;
+        // A logic tick starts at the next display tick (a screen's: each; a load's: none): the
+        // script's commands, then its pads.
+        const starts = switch (self.state.scenes.top()) {
+            .overlay => false,
+            .scene => if (self.round()) |r| r.phase != .play or r.play.schedule.into == 0 else true,
+        };
         if (!starts) return self.current;
         if (self.body_v == null) {
             self.body_v = self.state.tick;
@@ -153,7 +178,9 @@ pub const Run = struct {
     fn startStep(self: *Run) ?input.Pads {
         const players = self.script.start.players;
         defer self.in_stage += 1;
-        const top = self.state.scenes.topKind();
+        // The scene of the flow as sor-remaster's runner sees it, by the original's mode: from the
+        // last scene's exit (the next one due), its load included.
+        const top = if (self.state.scenes.next) |n| n.kind else std.meta.activeTag(self.state.scenes.base);
         switch (self.stage) {
             .to_menu => {
                 if (top == .menu) {
@@ -167,7 +194,7 @@ pub const Run = struct {
                     self.enter(.select_wait);
                     return .{};
                 }
-                const s = self.topScene() orelse return .{};
+                const s = &self.state.scenes.base;
                 const m = switch (s.*) {
                     .menu => |*m| m,
                     else => return .{},
@@ -183,7 +210,7 @@ pub const Run = struct {
                 return .{};
             },
             .select => {
-                const s = self.topScene() orelse return self.fail("the character select ended before the choice");
+                const s = &self.state.scenes.base;
                 const sel = switch (s.*) {
                     .select => |*x| x,
                     else => return self.fail("the character select ended before the choice"),
@@ -302,13 +329,15 @@ pub const Run = struct {
             world_sounds = self.out.sounds.slice();
         };
         var skipped: [world.output.Output.sound_most]bool = @splat(false);
-        next: for (turn.requests.items[0..turn.requests.len]) |id| {
-            const name = self.content.sounds.sounds[id].name;
-            for (world_sounds, 0..) |s, i| if (!skipped[i] and std.mem.eql(u8, s.name, name)) {
-                skipped[i] = true;
-                continue :next;
-            };
-            try tw.sceneSound(name);
+        for ([_][]const sorz.library.Sound{ turn.requests_now.slice(), turn.requests.slice() }) |list| {
+            next: for (list) |id| {
+                const name = self.content.sounds.sounds[id].name;
+                for (world_sounds, 0..) |s, i| if (!skipped[i] and std.mem.eql(u8, s.name, name)) {
+                    skipped[i] = true;
+                    continue :next;
+                };
+                try tw.sceneSound(name);
+            }
         }
     }
 

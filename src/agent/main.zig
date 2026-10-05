@@ -201,12 +201,13 @@ pub fn main(init: std.process.Init) !void {
 
     // A scenario's run, on the game's data.
     if (scenario) |*sc| {
-        if (options.assets == null or pair or presses.items.len != 0 or shots.items.len != 0 or wav_path != null) return fail(io);
+        if (options.assets == null or pair or presses.items.len != 0 or shots.items.len != 0 or (wav_path != null and situation != null)) return fail(io);
         sc.situation = situation;
         sc.situation_probe = situation_probe;
         sc.game_tick = game_tick;
         sc.trace = trace_events;
         sc.probe = probe;
+        sc.wav = wav_path;
         var obuf: [512]u8 = undefined;
         var ow = std.Io.File.stdout().writerStreaming(io, &obuf);
         const done = agent.scenario_cmd.run(gpa, io, assets.?, sc.*, &ow.interface) catch |err| {
@@ -275,7 +276,7 @@ pub fn main(init: std.process.Init) !void {
         for (shots.items) |shot| if (shot.frame >= frame) std.log.err("no picture for --shot {d}:{s}: the run ended at frame {d}", .{ shot.frame, shot.path, frame });
         std.process.exit(1);
     }
-    if (wav_path) |path| try writeWav(gpa, io, path, backend.audio.pcm.items, backend.audio.format);
+    if (wav_path) |path| try agent.wav.write(gpa, io, path, backend.audio.pcm.items, backend.audio.format.channels, backend.audio.format.sample_rate);
 
     var buf: [512]u8 = undefined;
     var w = std.Io.File.stdout().writerStreaming(io, &buf);
@@ -310,28 +311,6 @@ fn writeShot(gpa: std.mem.Allocator, io: std.Io, game: *const sorz.Game, path: [
     std.debug.assert(f.stride == f.width * 4);
     const bytes = try agent.png.encode(gpa, f.width, f.height, f.pixels[0 .. f.stride * f.height]);
     defer gpa.free(bytes);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = bytes });
-}
-
-/// The sound played, as a 16-bit PCM WAV file.
-fn writeWav(gpa: std.mem.Allocator, io: std.Io, path: []const u8, pcm: []const i16, format: sorz.platform.AudioFormat) !void {
-    const data_bytes: u32 = @intCast(pcm.len * 2);
-    const bytes = try gpa.alloc(u8, 44 + data_bytes);
-    defer gpa.free(bytes);
-    const channels: u32 = format.channels;
-    @memcpy(bytes[0..4], "RIFF");
-    std.mem.writeInt(u32, bytes[4..8], 36 + data_bytes, .little);
-    @memcpy(bytes[8..16], "WAVEfmt ");
-    std.mem.writeInt(u32, bytes[16..20], 16, .little);
-    std.mem.writeInt(u16, bytes[20..22], 1, .little);
-    std.mem.writeInt(u16, bytes[22..24], @intCast(channels), .little);
-    std.mem.writeInt(u32, bytes[24..28], format.sample_rate, .little);
-    std.mem.writeInt(u32, bytes[28..32], format.sample_rate * channels * 2, .little);
-    std.mem.writeInt(u16, bytes[32..34], @intCast(channels * 2), .little);
-    std.mem.writeInt(u16, bytes[34..36], 16, .little);
-    @memcpy(bytes[36..40], "data");
-    std.mem.writeInt(u32, bytes[40..44], data_bytes, .little);
-    for (pcm, 0..) |v, i| std.mem.writeInt(i16, bytes[44 + 2 * i ..][0..2], v, .little);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = bytes });
 }
 

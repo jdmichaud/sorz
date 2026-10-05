@@ -9,6 +9,8 @@ pub const netplay_cmd = @import("netplay_cmd.zig");
 /// Scenarios: a converted start, then a script of pad events; their traces and probes.
 pub const scenario = @import("scenario.zig");
 pub const scenario_cmd = @import("scenario_cmd.zig");
+/// The sound a run played, as a WAV file.
+pub const wav = @import("wav.zig");
 /// A scenario from power-on: the whole game, its start through the screens.
 pub const game_run = @import("game_run.zig");
 /// The comparison of two semantic traces, carried over from sor-remaster.

@@ -9,6 +9,7 @@ const std = @import("std");
 const sorz = @import("sorz");
 const scenario = @import("scenario.zig");
 const game_run = @import("game_run.zig");
+const agent_wav = @import("wav.zig");
 const input = sorz.input;
 
 pub const Options = struct {
@@ -20,6 +21,8 @@ pub const Options = struct {
     game_tick: ?u32 = null,
     trace: ?[]const u8 = null,
     probe: ?[]const u8 = null,
+    /// Where a run from power-on writes its sound (a WAV file).
+    wav: ?[]const u8 = null,
     /// The most logic ticks the script runs.
     ticks: u64 = 100_000,
 };
@@ -160,6 +163,9 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
         };
     }
     var r: game_run.Run = .init(c, &assets_found, script, pads, if (options.trace != null) &tw else null);
+    var sound: ?game_run.Sound = if (options.wav != null) try .init(gpa, &c.sounds) else null;
+    defer if (sound) |*s| s.deinit();
+    if (sound) |*s| r.sound = s;
     // The start's display ticks, then two a logic tick of the script's.
     var ticks: u64 = 0;
     while (ticks < 2 * options.ticks + 10_000) : (ticks += 1) {
@@ -169,6 +175,7 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
         try tw.end();
         try trace_writer.interface.flush();
     }
+    if (sound) |*s| try agent_wav.write(gpa, io, options.wav.?, s.pcm.items, sorz.sound_out.channels, sorz.sound_out.rate);
     try out.print("{{\"scenario\":\"{s}\"", .{r.failure orelse "done"});
     if (r.body.timed_out) |line| try out.print(",\"line\":{d}", .{line});
     try out.print(",\"script_vblank\":{d}", .{r.body_v orelse 0});

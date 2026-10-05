@@ -13,8 +13,10 @@
 //! extracted from the ROM (agent/game_run.zig), and writes its own. The comparison takes each
 //! trace's round scene, its entities numbered by their order of appearance (sor-remaster's front
 //! end makes objects that sorz's screens do not), without the effects sorz does not have yet (the
-//! hit sparks) and sorz's own section events; and the game's clock as each script begins (which
-//! the enemies' choices read) must be the same. Prints a line per scenario, its events and the
+//! hit sparks) and sorz's own section events; the game's clock as each script begins (which
+//! the enemies' choices read) must be the same; and the sound, the whole run's from power-on,
+//! sample by sample (both programs' 48 kHz output: DESIGN.md's sound exact from the start).
+//! Prints a line per scenario, its events and the
 //! first difference; writes the comparisons into OUT_DIR/report.txt; exits with 1 when a
 //! scenario's traces differ or a run fails.
 const std = @import("std");
@@ -63,8 +65,10 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     const scn = try std.fmt.allocPrint(arena, "{s}/{s}.scn", .{ c.scenarios_dir, sc.name });
     const ref_trace = try std.fmt.allocPrint(arena, "{s}/ref-{s}.jsonl", .{ c.out_path, sc.name });
     const z_trace = try std.fmt.allocPrint(arena, "{s}/z-{s}.jsonl", .{ c.out_path, sc.name });
+    const ref_wav = try std.fmt.allocPrint(arena, "{s}/ref-{s}.wav", .{ c.out_path, sc.name });
+    const z_wav = try std.fmt.allocPrint(arena, "{s}/z-{s}.wav", .{ c.out_path, sc.name });
 
-    const ran = try std.process.run(c.gpa, c.io, .{ .argv = &.{ c.remaster, c.rom_path, "--scenario", scn, "--trace-events", ref_trace, "--frames", "200000" } });
+    const ran = try std.process.run(c.gpa, c.io, .{ .argv = &.{ c.remaster, c.rom_path, "--scenario", scn, "--trace-events", ref_trace, "--wav", ref_wav, "--frames", "200000" } });
     defer c.gpa.free(ran.stdout);
     defer c.gpa.free(ran.stderr);
     if (ran.term != .exited or ran.term.exited != 0 or std.mem.indexOf(u8, ran.stdout, "\"scenario\":\"done\"") == null) {
@@ -72,7 +76,7 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
         return false;
     }
     var said: std.Io.Writer.Allocating = .init(arena);
-    const done = try agent.scenario_cmd.run(c.gpa, c.io, c.assets, .{ .scenario = scn, .trace = z_trace }, &said.writer);
+    const done = try agent.scenario_cmd.run(c.gpa, c.io, c.assets, .{ .scenario = scn, .trace = z_trace, .wav = z_wav }, &said.writer);
     if (!done) {
         try w.print("{s}: sorz's run did not end as the scenario does: {s}", .{ sc.name, said.written() });
         return false;
@@ -102,12 +106,51 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     const result = try compare.compare(arena, &a, &b, options, &written.writer);
     var events: usize = 0;
     for (result.counts) |n| events += n.a;
-    if (result.differences == 0) {
-        try w.print("{s}: equal, {d} events ({s})\n", .{ sc.name, events, sc.what });
+    const sound = try soundOf(c, ref_wav, z_wav);
+    // The runs end a few ticks apart past the round (the runners count the start-up's ticks
+    // differently: the original's is a scene of its own): the sound is compared where both are.
+    const sound_same = sound.first == null;
+    const common = @min(sound.frames, sound.reference_frames);
+    if (result.differences == 0 and sound_same) {
+        try w.print("{s}: equal, {d} events, the sound's {d} display ticks ({s})\n", .{ sc.name, events, ticksOf(common), sc.what });
         return true;
     }
-    try w.print("{s}: {d} differences in {d} events ({s})\n{s}\n", .{ sc.name, result.differences, events, sc.what, written.written() });
+    if (result.differences != 0) try w.print("{s}: {d} differences in {d} events ({s})\n{s}\n", .{ sc.name, result.differences, events, sc.what, written.written() });
+    if (!sound_same) {
+        try w.print("{s}: the sound differs ({d} frames, sor-remaster's {d})", .{ sc.name, sound.frames, sound.reference_frames });
+        if (sound.first) |f| try w.print("; from frame {d} (display tick {d}), {d} frames differ, by {d} at most", .{ f, ticksOf(f), sound.differing, sound.largest });
+        try w.writeAll("\n");
+    }
     return false;
+}
+
+const Sound = struct { frames: usize, reference_frames: usize, first: ?usize = null, differing: usize = 0, largest: u32 = 0 };
+
+/// The display tick of 48 kHz frame `frame` (a tick is 896,040 periods of the 53,693,175 Hz clock).
+fn ticksOf(frame: usize) u64 {
+    return @as(u64, frame) * 53_693_175 / (896_040 * 48_000);
+}
+
+/// The two runs' sound (16-bit stereo WAV files, a 44-byte header), frame by frame: their lengths,
+/// the first frame that differs, how many do and by how much at most.
+fn soundOf(c: *const Context, ref_path: []const u8, z_path: []const u8) !Sound {
+    const cwd = std.Io.Dir.cwd();
+    const a = try cwd.readFileAlloc(c.io, ref_path, c.arena, .limited(1 << 30));
+    const b = try cwd.readFileAlloc(c.io, z_path, c.arena, .limited(1 << 30));
+    const da = if (a.len > 44) a[44..] else a[0..0];
+    const db = if (b.len > 44) b[44..] else b[0..0];
+    var s: Sound = .{ .frames = db.len / 4, .reference_frames = da.len / 4 };
+    for (0..@min(s.frames, s.reference_frames)) |i| {
+        if (std.mem.eql(u8, da[4 * i ..][0..4], db[4 * i ..][0..4])) continue;
+        if (s.first == null) s.first = i;
+        s.differing += 1;
+        for (0..2) |k| {
+            const x = std.mem.readInt(i16, da[4 * i + 2 * k ..][0..2], .little);
+            const y = std.mem.readInt(i16, db[4 * i + 2 * k ..][0..2], .little);
+            s.largest = @max(s.largest, @abs(@as(i32, x) - y));
+        }
+    }
+    return s;
 }
 
 /// The number after `key` in `text`.

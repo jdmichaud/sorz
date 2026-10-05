@@ -157,9 +157,9 @@ catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (it
   programs, and their round scenes' traces are compared event by event (the camera and its stops,
   the timer, play's phases, the players' places, states, health, lives and deaths, the continue,
   the game over, the placed enemies coming out, the sounds asked for), the hit sparks left out;
-  all equal; and the game's clock as each script begins is the same. Play's sound itself (its
-  samples) is not compared yet: play's frames' transfers, which hold the sound's processor, are
-  not modelled, and its drums' samples differ from sor-remaster's. It writes
+  all equal; the game's clock as each script begins is the same; and the sound of the whole
+  run, from power-on, sample by sample (both programs' 48 kHz output, `--wav`): equal at every
+  display tick. It writes
   the runs and the report into `<prefix>/round` (`-Dround-out=DIR`); `-Dround-only=NAME,...`.
 
 ## The variants
