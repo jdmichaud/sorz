@@ -954,12 +954,17 @@ pub const Round = struct {
                 },
                 .back => {
                     p.shown = self.kept;
+                    self.colours_due = true;
                     continue;
                 },
             };
             const pal = palette orelse continue;
             switch (into) {
-                .shown => p.show(pal),
+                // The next frame copies the colours shown.
+                .shown => {
+                    p.show(pal);
+                    self.colours_due = true;
+                },
                 .target => p.aim(pal),
             }
         }
