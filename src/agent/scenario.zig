@@ -760,7 +760,7 @@ pub const Run = struct {
             }
             break :search null;
         };
-        if (found) |rec| x.spawn = spawnOf(rec);
+        if (found) |rec| x.spawn = world.script.placing(rec);
         const state = e.state orelse "";
         if (!std.mem.eql(u8, state, "appear")) x.spawn.traits.waits_for_camera = false;
         // A Galsia that has waited, or come out of a shutter, fights on as a plain one.
@@ -782,19 +782,6 @@ pub const Run = struct {
         const facing: world.entity.Facing = if (e.left) .left else .right;
         if (e.slot) |sl| if (w.spawnIn(kinds, kind, sl, at, facing)) |h| return h else |_| {};
         return w.spawn(kinds, kind, at, facing);
-    }
-
-    fn spawnOf(rec: *const sorz.content.round.Spawn) world.Spawn {
-        var sp: world.Spawn = .{ .strength = @intCast(rec.strength) };
-        if (rec.entrance) |way| sp.entrance = std.meta.stringToEnum(world.Entrance, @tagName(way)) orelse .approach;
-        inline for (comptime std.meta.fieldNames(sorz.content.round.Trait)) |t| {
-            if (@hasField(world.Traits, t)) @field(sp.traits, t) = rec.traits.contains(@field(sorz.content.round.Trait, t));
-        }
-        if (rec.offset) |o| {
-            sp.offset_x = o.x;
-            sp.offset_depth = o.depth;
-        }
-        return sp;
     }
 
     /// One logic tick: the script's pads, the world's tick, the observations. False when the

@@ -26,6 +26,7 @@ const tick_mod = @import("tick.zig");
 
 const Fixed = fixed.Fixed;
 const Tick = tick_mod.Tick;
+const World = @import("world.zig").World;
 const Round = content_round.Round;
 const Spawn = content_round.Spawn;
 
@@ -323,16 +324,21 @@ fn bring(t: *Tick, p: *const Plan, rec: *const Spawn) void {
     place(t, rec, at);
 }
 
-/// The entity of a record at `x` and its depth, on the ground. A kind the content does not
-/// define yet is skipped, with a warning. TODO(merge with PLAN item 12): an enemy is placed with
-/// its record's way in, traits, offset and strength (`World.spawnEnemy`).
+/// The entity of a record at `x` and its depth, on the ground; an enemy placed as its record
+/// says (`placing`). A kind the content does not define yet is skipped, with a warning.
 fn place(t: *Tick, rec: *const Spawn, x: i32) void {
     const kind = t.kinds.find(rec.kind) orelse {
         std.log.warn("the round's script brings a {s}, which the content does not define yet: skipped", .{rec.kind});
         return;
     };
     const position: fixed.Vec3 = .{ .x = .pixels(x), .depth = .pixels(rec.depth), .height = t.world.ground };
-    const h = t.world.spawn(t.kinds, kind, position, .right) catch {
+    // In the enemies' places, as the original's script takes its objects' (0xE46).
+    const places = World.enemy_places;
+    const made = switch (t.kinds.get(kind).family()) {
+        .enemy, .boss => t.world.spawnEnemy(t.kinds, kind, position, placing(rec)),
+        else => t.world.spawnWithin(t.kinds, kind, places.from, places.to, position, .right),
+    };
+    const h = made catch {
         std.log.warn("the world is full: the round's script's {s} is skipped", .{rec.kind});
         return;
     };
@@ -346,6 +352,23 @@ fn place(t: *Tick, rec: *const Spawn, x: i32) void {
         },
         else => {},
     }
+}
+
+/// How an enemy's record places it, in the world's terms: its way in, its traits, its place
+/// beside its target, its strength.
+pub fn placing(rec: *const Spawn) entity.Spawn {
+    var sp: entity.Spawn = .{ .strength = @intCast(@min(rec.strength, 3)) };
+    if (rec.entrance) |way| sp.entrance = switch (way) {
+        inline else => |w| @field(entity.Entrance, @tagName(w)),
+    };
+    inline for (comptime std.meta.fieldNames(content_round.Trait)) |name| {
+        @field(sp.traits, name) = rec.traits.contains(@field(content_round.Trait, name));
+    }
+    if (rec.offset) |o| {
+        sp.offset_x = o.x;
+        sp.offset_depth = o.depth;
+    }
+    return sp;
 }
 
 /// The section's enemies in the world: those of the enemies' and the bosses' families.

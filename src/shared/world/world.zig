@@ -175,11 +175,22 @@ pub const World = struct {
         if (k.definition.animations.len != 0) kinds.startAnimation(e, 0);
     }
 
+    /// The places the enemies take (the original's enemies' objects, its 3rd to its 34th).
+    pub const enemy_places: struct { from: usize, to: usize } = .{ .from = 2, .to = 34 };
+
+    /// `spawn` in the first free place from `from` to `to` (excluded).
+    pub fn spawnWithin(self: *World, kinds: *const Kinds, kind: KindId, from: usize, to: usize, position: Vec3, facing: entity.Facing) Full!Handle {
+        for (from..@min(to, capacity)) |i| {
+            if (!self.entities[i].alive()) return self.spawnIn(kinds, kind, i, position, facing);
+        }
+        return error.Full;
+    }
+
     /// An enemy the round's script places: a new entity of `kind` at `position`, facing right, in
-    /// its first state, placed as `how` says (its way in, its traits, its place beside its
-    /// target, its strength).
+    /// its first state, in the first of the enemies' free places, placed as `how` says (its way
+    /// in, its traits, its place beside its target, its strength).
     pub fn spawnEnemy(self: *World, kinds: *const Kinds, kind: KindId, position: Vec3, how: Spawn) Full!Handle {
-        const h = try self.spawn(kinds, kind, position, .right);
+        const h = try self.spawnWithin(kinds, kind, enemy_places.from, enemy_places.to, position, .right);
         self.get(h).?.spawn = how;
         return h;
     }

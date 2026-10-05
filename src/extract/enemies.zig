@@ -172,6 +172,8 @@ fn commonNumbers(d: *Def, kind: u8) Error!void {
     if (rom[0xA338] & 0xF1 != 0x51 or rom[0xA339] != 0x68) return error.BadData;
     try d.number("slam_hurt", @as(i32, rom[0xA338] >> 1) & 7, "ROM 0x0A338: subq.w #N,(50,a0) (slammed off a hold)");
     try d.number("slam_ticks", try moveByte(rom, 0xA300, 80), "ROM 0x0A300: move.b #N,(80,a0)");
+    try d.number("knocked_back_x", (try immediate(rom, 0x9534, &.{ 0x33, 0x7C }, 2)) << 16, "ROM 0x09534: move.w #N,(28,a1) (a player's new life, 0x9494)");
+    try d.number("knocked_back_up", (try immediate(rom, 0x953A, &.{ 0x33, 0x7C }, 2)) << 16, "ROM 0x0953A: move.w #N,(36,a1)");
     try d.number("slammed_x", try immediate(rom, 0xA358, &.{ 0x21, 0x7C }, 4), "ROM 0x0A358: move.l #N,(28,a0)");
     try d.number("slammed_up", try immediate(rom, 0xA360, &.{ 0x21, 0x7C }, 4), "ROM 0x0A360: move.l #N,(36,a0)");
     try d.number("grab_height", try immediate(rom, 0xAAF6, &.{ 0x0C, 0x42 }, 2), "ROM 0x0AAF6: cmpi.w #N,d2");

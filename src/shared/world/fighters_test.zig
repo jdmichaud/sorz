@@ -139,6 +139,7 @@ const enemy_numbers =
     \\ "bounce_slowing": 16384, "fall_most": 1048576, "first_blink": 16, "flipped_up": -327680,
     \\ "flipped_x": 196608, "gets_up_frame": 4, "grab_height": 8, "knocked_out_x": 655360,
     \\ "knocked_slowing": 21504, "knocked_up": -589824, "knocked_x": 458752, "lying": 16,
+    \\ "knocked_back_x": 262144, "knocked_back_up": -458752,
     \\ "lying_least": 3, "middle_from": 0, "middle_to": 320, "points": 500, "reel": 24,
     \\ "reel_nudge": 2, "slam_hurt": 5, "slam_ticks": 8, "slammed_up": -393216, "slammed_x": 294912,
     \\ "special_down_frame": 3, "special_shake_pace": 3, "special_shake_turn": 8,

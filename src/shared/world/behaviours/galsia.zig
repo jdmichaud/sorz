@@ -549,6 +549,10 @@ pub fn letGoBy(a: Actor, holder: Handle) void {
     Common.letGoBy(a, holder);
 }
 
+pub fn knockedBack(a: Actor) void {
+    Common.knockedBack(a);
+}
+
 pub fn specialCalled(a: Actor) void {
     Common.specialCalled(a);
 }

@@ -40,10 +40,6 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
     };
     defer script.deinit(gpa);
     const situation_path = options.situation orelse return runFromPowerOn(gpa, io, assets, options, &script, out);
-    if (script.start != .players) {
-        std.log.err("a situation is taken up by a start of characters (`start CHARACTER`)", .{});
-        return error.BadScenario;
-    }
     const situation_text = try cwd.readFileAlloc(io, situation_path, arena, .limited(1 << 30));
     const at: ?u64 = switch (script.start) {
         .players => null,

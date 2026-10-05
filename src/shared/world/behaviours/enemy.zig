@@ -178,6 +178,9 @@ pub const Common = struct {
     /// Thrown off a hold, slammed off one: the health it loses.
     thrown_hurt: u8,
     slam_hurt: u8,
+    /// Knocked back as a player's new life drops in: its speeds across and up (whole pixels).
+    knocked_back_x: Fixed,
+    knocked_back_up: Fixed,
     flipped_x: Fixed,
     flipped_up: Fixed,
     thrown_x: Fixed,
@@ -345,15 +348,16 @@ pub fn Of(comptime M: type) type {
 
         // Targets and places ------------------------------------------------------------------
 
-        /// It picks the player it goes after: with two players in play, the nearer across (the
-        /// second on a tie); with one, that one. With none, it stands and waits for one.
-        /// Returns whether it found one.
+        /// It picks the player it goes after: with two players in play (not hidden, waiting to
+        /// come back), the nearer across (the second on a tie); with one, that one. With none, it
+        /// stands and waits for one. Returns whether it found one.
         pub fn chooseTarget(a: A) bool {
             const w = a.tick.world;
             var found: [2]?Handle = .{ null, null };
             for (w.players, 0..) |p, k| {
                 const h = p.entity orelse continue;
-                if (w.getConst(h) == null) continue;
+                const e = w.getConst(h) orelse continue;
+                if (e.flags.hidden) continue;
                 found[k] = h;
             }
             const first = found[0] orelse {
@@ -1160,6 +1164,35 @@ pub fn Of(comptime M: type) type {
             if (b.right_side) v = v.neg();
             a.entity.velocity.x = v;
             a.pace(t.pacing_pace[k], 1);
+        }
+
+        // Knocked back -------------------------------------------------------------------------
+
+        /// A player's new life drops in while it is on the screen (Tick.knockBack): it is knocked
+        /// back where it stands, flying across and up (its speeds' whole pixels set, their
+        /// fractions kept), facing left, without the knock-down's set-up: its health and its
+        /// sound spared. Knocked out, or waiting to come in, it stays as it is.
+        pub fn knockedBack(a: A) void {
+            const n = a.numbers();
+            const b = body(a);
+            if (a.mind.state == .knocked_out) return;
+            if (@hasField(M.State, "shutter_entry") and a.mind.state == .shutter_entry) return;
+            if (@hasField(M.State, "enter") and a.mind.state == .enter) return;
+            a.endMove();
+            a.entity.animation.pace = null;
+            a.mind.state = .knocked_down;
+            b.fresh = false;
+            b.waits = false;
+            b.down = .flying;
+            b.bounces = 0;
+            b.slowing = false;
+            a.entity.facing = .left;
+            a.animate(.down);
+            a.pause(false);
+            const v = a.entity.velocity;
+            a.entity.velocity.x = .parts(@intCast(n.knocked_back_x.whole()), v.x.frac());
+            a.entity.velocity.height = .parts(@intCast(n.knocked_back_up.whole()), v.height.frac());
+            a.entity.flags.airborne = true;
         }
 
         // The special attack -----------------------------------------------------------------
