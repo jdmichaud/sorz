@@ -1019,7 +1019,7 @@ fn feelBlow(a: Actor) void {
     loses(a, t.by, t.damage);
     if (a.entity.health <= 0) return die(a, t.by);
     if (!knocked) a.sound(.hurt);
-    if (a.entity.holding != null or a.entity.holder != null) a.letGo();
+    letGoStruck(a);
     if (knocked) {
         change(a, .knocked_down);
         a.mind.bounces = 0;
@@ -1029,6 +1029,17 @@ fn feelBlow(a: Actor) void {
     }
     change(a, .hurt);
     a.mind.timer = n.hurt;
+}
+
+/// Struck, it lets go of its hold, or is let go; but held by the other player jumping over it (a
+/// throw, a throw back), it alone is freed: the other goes on over it, placed from it, as the
+/// original's holder keeps its partner to its landing.
+fn letGoStruck(a: Actor) void {
+    if (a.entity.holder) |h| if (a.tick.actor(@This(), h)) |o| if (o.mind.state == .throw or o.mind.state == .throw_back) {
+        a.entity.holder = null;
+        return;
+    };
+    if (a.entity.holding != null or a.entity.holder != null) a.letGo();
 }
 
 /// Struck by `by`, it faces it: left unless it is left of it (whole pixels), as the original's
@@ -1056,7 +1067,7 @@ fn die(a: Actor, by: ?Handle) void {
     dropWeapon(a);
     const n = a.numbers();
     a.sound(.death);
-    if (a.entity.holding != null or a.entity.holder != null) a.letGo();
+    letGoStruck(a);
     // Facing the one who struck: left when it is left of it (whole pixels).
     if (by) |h| if (a.other(h)) |o| {
         a.entity.facing = if (o.position.x.whole() < a.entity.position.x.whole()) .left else .right;
@@ -1249,6 +1260,11 @@ fn hold(a: Actor, c: Command) void {
         a.entity.holding = null;
         return change(a, .ready);
     }
+    // The other player freed while it jumped over it (struck meanwhile): the hold is over.
+    if (a.tick.actor(@This(), a.entity.holding.?)) |o| if (o.entity.holder == null) {
+        a.entity.holding = null;
+        return change(a, .ready);
+    };
     a.entity.velocity.height = .zero;
     const other = partnerOf(a);
     // Holding the other player from behind, it waits while the other jumps out.
