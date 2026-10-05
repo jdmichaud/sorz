@@ -75,6 +75,20 @@ pub const Frame = struct {
     /// In a hold: where the holder goes, from the one held (`x` toward the side the holder
     /// faces, `height` downward), as it moves around it.
     place: ?Place = null,
+    /// Holding a weapon: where the weapon is, from the holder, and how it shows; without, the
+    /// weapon is not seen.
+    hand: ?Hand = null,
+};
+
+/// A weapon in the hand: `x` ahead of the holder, `height` downward, a pixel in front of it in
+/// depth or behind; the weapon shows its animation `pose` (one of its own, facing the holder's
+/// way); `strikes`: its blow is under way.
+pub const Hand = struct {
+    x: i16 = 0,
+    height: i16 = 0,
+    pose: []const u8,
+    front: bool = false,
+    strikes: bool = false,
 };
 
 pub const Held = struct {
@@ -371,7 +385,7 @@ fn span(node: json.Node) json.Error!Span {
 }
 
 fn frame(node: json.Node, d: *const Definition, a: *const art.Art) json.Error!Frame {
-    try node.only(&.{ "frame", "ticks", "flip", "body", "attack", "blow", "sound", "held", "place" });
+    try node.only(&.{ "frame", "ticks", "flip", "body", "attack", "blow", "sound", "held", "place", "hand" });
     const name_node = try node.get("frame");
     const name = try name_node.string();
     if (a.frame(name) == null) return name_node.fail("no sprite frame of this name");
@@ -388,6 +402,18 @@ fn frame(node: json.Node, d: *const Definition, a: *const art.Art) json.Error!Fr
         .sound = if (try node.opt("sound")) |x| try soundName(x) else null,
         .held = if (try node.opt("held")) |h| try held(h) else null,
         .place = if (try node.opt("place")) |p| try place(p) else null,
+        .hand = if (try node.opt("hand")) |h| try hand(h) else null,
+    };
+}
+
+fn hand(node: json.Node) json.Error!Hand {
+    try node.only(&.{ "x", "height", "pose", "front", "strikes" });
+    return .{
+        .x = if (try node.opt("x")) |n| try n.int(i16) else 0,
+        .height = if (try node.opt("height")) |n| try n.int(i16) else 0,
+        .pose = try (try node.get("pose")).string(),
+        .front = if (try node.opt("front")) |n| try n.boolean() else false,
+        .strikes = if (try node.opt("strikes")) |n| try n.boolean() else false,
     };
 }
 
@@ -496,6 +522,15 @@ pub fn value(arena: std.mem.Allocator, d: *const Definition) error{OutOfMemory}!
                     if (p.height != 0) try ps.append(arena, .{ .key = "height", .value = json.Value.num(p.height) });
                     try fs.append(arena, .{ .key = "place", .value = .{ .object = ps.items } });
                 }
+                if (f.hand) |h| {
+                    var hs: std.ArrayList(json.Field) = .empty;
+                    if (h.x != 0) try hs.append(arena, .{ .key = "x", .value = json.Value.num(h.x) });
+                    if (h.height != 0) try hs.append(arena, .{ .key = "height", .value = json.Value.num(h.height) });
+                    try hs.append(arena, .{ .key = "pose", .value = .{ .str = h.pose } });
+                    if (h.front) try hs.append(arena, .{ .key = "front", .value = .{ .bool = true } });
+                    if (h.strikes) try hs.append(arena, .{ .key = "strikes", .value = .{ .bool = true } });
+                    try fs.append(arena, .{ .key = "hand", .value = .{ .object = hs.items } });
+                }
                 v.* = .{ .object = fs.items };
             }
             var fs: std.ArrayList(json.Field) = .empty;
@@ -591,6 +626,12 @@ const sample =
     \\        {
     \\          "body": "body",
     \\          "frame": "dummy/000",
+    \\          "hand": {
+    \\            "front": true,
+    \\            "height": -60,
+    \\            "pose": "upright",
+    \\            "x": -9
+    \\          },
     \\          "ticks": 8
     \\        }
     \\      ],
@@ -680,6 +721,9 @@ test "a definition reads, names its parts, and writes the same bytes again" {
     const body = d.boxes[d.box("body").?];
     try testing.expectEqual(Span{ .from = -8, .to = 8 }, body.across(true));
     try testing.expect(d.animations[d.animation("stand").?].loop);
+    const h = d.animations[d.animation("stand").?].frames[0].hand.?;
+    try testing.expectEqualStrings("upright", h.pose);
+    try testing.expect(h.front and !h.strikes and h.x == -9 and h.height == -60);
 
     const text = try json.write(arena, try value(arena, &d));
     try testing.expectEqualStrings(sample, text);
