@@ -294,6 +294,14 @@ fn betweenPlayers(t: *Tick) void {
 /// are (the original's places itself in its own turn). Their asks to grab end with the turns.
 fn turns(t: *Tick) void {
     t.out.turn_sounds = t.out.sounds.len;
+    // The players' bands of the draw's order, as the others' turns begin (draw_list.zig).
+    for (&t.world.players) |*p| {
+        const e = t.world.getConst(p.entity orelse {
+            p.band_depth = null;
+            continue;
+        }) orelse continue;
+        p.band_depth = @intCast(std.math.clamp(e.position.depth.whole(), ground_depths.far, ground_depths.near));
+    }
     for (0..capacity) |i| {
         const h = t.world.handleAt(i) orelse continue;
         if (t.world.playerOf(h) != null) continue;

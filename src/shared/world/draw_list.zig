@@ -112,6 +112,17 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
     }
     // The shadows' places far off the screen go too (shadows.zig).
     if (remove_far_off and !w.special) shadows.goFarOff(w, farOffAt);
+    // A hidden entity's shadow, held in its place, shows where that place lies (the original's
+    // shadow is an object of its own: a player out of lives as it starts to wait).
+    var shadow_only: [capacity]bool = @splat(false);
+    for (w.updateOrder(&buf)) |i| {
+        const e = &w.entities[i];
+        if (!e.flags.hidden or e.flags.blinked or !t.kindOf(e).definition.shadow) continue;
+        if (heldShadow(w, i) == null) continue;
+        shadow_only[i] = true;
+        drawn[n] = i;
+        n += 1;
+    }
     var front: [capacity]u8 = undefined;
     order(w, drawn[0..n], &front);
     var rank: [capacity]u8 = @splat(0);
@@ -123,6 +134,15 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
         k -= 1;
         const i = front[k];
         const e = &w.entities[i];
+        if (shadow_only[i]) {
+            const s = heldShadow(w, i).?;
+            const shadow = t.kinds.shadow orelse continue;
+            const x = s.position.x.whole() - w.camera.x.whole();
+            const y = s.position.screenY() - w.camera.y.whole();
+            out.sprites.append(.{ .frame = shadow, .x = x, .y = y, .palette = shadow.palette, .priority = shadow.priority or e.flags.in_front });
+            out.sprite_info.append(.{ .place = shadowPlace(w, i), .rank = rank[i], .depth = @intCast(depthOf(e)), .band_depth = @intCast(depthOf(e)), .shadow = true });
+            continue;
+        }
         const shown = out.shown[i].?;
         const p = screenPlace(w, e);
         // Over a hole of a floor by cells (round 4's) the shadow lies at the hole's floor, far
@@ -132,7 +152,7 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
             var y = (e.position.depth.whole() >> 1) + f.whole();
             if (!e.flags.on_screen) y -= w.camera.y.whole();
             out.sprites.append(.{ .frame = shadow, .x = p.x, .y = y, .palette = shadow.palette, .priority = shadow.priority or e.flags.in_front });
-            out.sprite_info.append(.{ .place = shadowPlace(w, i), .rank = rank[i], .depth = @intCast(depthOf(e)), .shadow = true });
+            out.sprite_info.append(.{ .place = shadowPlace(w, i), .rank = rank[i], .depth = @intCast(depthOf(e)), .band_depth = @intCast(depthOf(e)), .shadow = true });
         };
         out.sprites.append(.{
             .frame = shown.frame,
@@ -143,9 +163,15 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
             .priority = shown.frame.priority or e.flags.in_front,
             .colours = coloursOf(t, i, e),
         });
-        out.sprite_info.append(.{ .place = i, .rank = rank[i], .depth = @intCast(depthOf(e)), .behind = e.flags.behind });
+        out.sprite_info.append(.{ .place = i, .rank = rank[i], .depth = @intCast(depthOf(e)), .band_depth = @intCast(bandDepth(w, i)), .behind = e.flags.behind });
         e.flags.behind = false;
     }
+}
+
+/// The shadow the entity in place `i` holds, when it has had its turn (shadows.zig).
+fn heldShadow(w: *const World, i: usize) ?shadows.Shadow {
+    for (w.shadows) |s| if (s) |x| if (x.owner == i and x.turned) return x;
+    return null;
 }
 
 /// The place of the shadow of the entity in place `i` (shadows.zig), or `no_place` when none holds
@@ -173,19 +199,27 @@ pub fn order(w: *const World, places: []const u8, front: *[capacity]u8) void {
     // The bands' starts, by a count of each band's entities, then the entities in the world's
     // order within each band, the nearest band first.
     var starts: [band_count + 1]usize = @splat(0);
-    for (places) |i| starts[band_count - 1 - band(&w.entities[i]) + 1] += 1;
+    for (places) |i| starts[band_count - 1 - band(w, i) + 1] += 1;
     for (1..starts.len) |b| starts[b] += starts[b - 1];
     var next = starts;
     for (places) |i| {
-        const b = band_count - 1 - band(&w.entities[i]);
+        const b = band_count - 1 - band(w, i);
         front[next[b]] = i;
         next[b] += 1;
     }
     for (0..band_count) |b| selectionSort(w, front[starts[b]..starts[b + 1]]);
 }
 
-fn band(e: *const Entity) usize {
-    return @intCast(@divTrunc(depthOf(e), band_depth));
+/// The band of the entity in place `i`: by its depth; a player's, by its depth as the others'
+/// turns began (`Player.band_depth`: the original takes the players' bands before the other
+/// objects' handlers), though its depth now sorts it within that band.
+fn band(w: *const World, i: usize) usize {
+    return @intCast(@divTrunc(bandDepth(w, i), band_depth));
+}
+
+fn bandDepth(w: *const World, i: usize) i32 {
+    for (w.players) |p| if (p.entity) |h| if (h.index == i) if (p.band_depth) |d| return d;
+    return depthOf(&w.entities[i]);
 }
 
 /// The original's sort of a band: each position in turn takes the nearest of the rest, swapped

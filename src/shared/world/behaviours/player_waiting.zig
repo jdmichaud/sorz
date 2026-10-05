@@ -16,9 +16,10 @@
 //! question, or out; and the tick its name is entered), `name_entry`, `continue_choose`,
 //! `continue_chosen`, `countdown`, `game_over`.
 //!
-//! As it is made it takes a shadow's place (its definition's `shadow_place`: the original's
-//! record cleared, with no mark against a shadow, world/shadows.zig); from its first tick (the
-//! name entry's start, or the wait's) it takes none, and that shadow goes at its next turn.
+//! As it is made it takes a shadow (its definition's `shadow`: the original's record cleared,
+//! with no mark against a shadow, world/shadows.zig), shown though it is hidden, on the floor at
+//! its place; from its first tick (the name entry's start, or the wait's) it takes none, and that
+//! shadow goes at its next turn.
 const tick = @import("../tick.zig");
 const Command = @import("../world.zig").Command;
 const lives = @import("../lives.zig");

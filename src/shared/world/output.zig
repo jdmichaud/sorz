@@ -82,10 +82,10 @@ pub const ColourLoad = union(enum) {
 pub const Shown = struct { frame: *const art.Frame, mirrored: bool };
 
 /// What a sprite of the draw list was drawn for, as the order saw it: its entity's place, its
-/// rank in the world's order (the players' first), the depth the order compared, its `behind`
-/// mark; a shadow's, its own place (`no_place`: none was free) and its entity's depth (the checks
-/// draw the list again in the original's order).
-pub const SpriteInfo = struct { place: u8, rank: u8, depth: i16, behind: bool = false, shadow: bool = false };
+/// rank in the world's order (the players' first), the depth the order compared, the depth its
+/// band was taken at, its `behind` mark; a shadow's, its own place (`no_place`: none was free)
+/// and its entity's depth (the checks draw the list again in the original's order).
+pub const SpriteInfo = struct { place: u8, rank: u8, depth: i16, band_depth: i16, behind: bool = false, shadow: bool = false };
 
 /// A shadow's place when none holds it.
 pub const no_place: u8 = 255;

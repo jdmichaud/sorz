@@ -66,9 +66,7 @@ pub fn lifeOver(t: *Tick, h: Handle) void {
     }
     // The original clears its record: at the level's corner, which the camera's keeping the
     // players in view then moves (it stays hidden there), its mark of a shadow gone (it takes a
-    // shadow's place again: world/shadows.zig).
-    // TODO(PLAN item 23, exact): the original draws that shadow one display tick, at the floor's
-    // top (two display ticks differ from sor-remaster's pictures there); not drawn.
+    // shadow again, drawn at its first tick: world/shadows.zig, draw_list.zig).
     const e = t.world.get(h).?;
     e.position = .zero;
     e.flags.has_shadow = false;

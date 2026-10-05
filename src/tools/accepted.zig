@@ -162,6 +162,7 @@ fn originalOrder(sprites: []const Sprite, c: Context, out: []Sprite) usize {
             .sprite = @intCast(i),
             .key = @as(u32, in.place) * 256 + in.rank,
             .depth = std.math.clamp(in.depth, 0, 240),
+            .band = @intCast(@divTrunc(std.math.clamp(in.band_depth, 0, 240), 4)),
             .behind = in.behind,
         };
         len += 1;
@@ -178,7 +179,7 @@ fn originalOrder(sprites: []const Sprite, c: Context, out: []Sprite) usize {
     var b: i32 = 240 / 4;
     while (b >= 0) : (b -= 1) {
         const from = k;
-        for (entries[0..m0]) |e| if (@divTrunc(e.depth, 4) == b) {
+        for (entries[0..m0]) |e| if (e.band == b) {
             front[k] = e;
             k += 1;
         };
@@ -201,7 +202,7 @@ fn originalOrder(sprites: []const Sprite, c: Context, out: []Sprite) usize {
 
 const max_sprites = 160;
 
-const Entry = struct { sprite: u8, key: u32, depth: i32, behind: bool };
+const Entry = struct { sprite: u8, key: u32, depth: i32, band: i32, behind: bool };
 
 /// The original's sort of a band (draw_list.zig's): each position takes the nearest of the
 /// rest, swapped there; at an equal depth one marked `behind` gives way.
