@@ -171,7 +171,7 @@ fn betweenPlayers(t: *Tick) void {
         const ah = p.entity orelse continue;
         for (t.world.players) |q| {
             const th = q.entity orelse continue;
-            if (!th.eql(ah)) blow(t, ah, th);
+            if (!th.eql(ah)) _ = blow(t, ah, th);
         }
     }
     for (t.world.players) |p| {
@@ -290,20 +290,31 @@ fn blowsOn(t: *Tick, xh: Handle) void {
     for (order) |i| {
         const ah = t.world.handleAt(i) orelse continue;
         if (ah.eql(xh)) continue;
-        if (t.world.get(ah).?.missile == null) blow(t, ah, xh);
+        if (t.world.get(ah).?.missile == null) _ = blow(t, ah, xh);
     }
 }
 
 /// `x`'s blow under way, or `x` thrown or flying as a missile, meets the players: but not a
 /// player whose blow or reach meets `x`'s body. The original looks at the player's box first:
 /// then the player's blow, its grab, or neither (a reach that cannot grab: a weapon in hand, `x`
-/// too high) is the tick's meeting of the two, and `x`'s own blow is not looked at.
+/// too high) is the tick's meeting of the two, and `x`'s own blow is not looked at. A blow
+/// strikes one player a tick, the first it meets, player 1 before player 2, and none when player
+/// 1 was struck at this tick already: the original's enemy finds one hit a tick, and ends its
+/// search at a player 1 hit before it.
 fn blowsOnPlayers(t: *Tick, xh: Handle) void {
-    for (t.world.players) |p| {
+    for (t.world.players, 0..) |p, k| {
         const th = p.entity orelse continue;
         const x = t.world.get(xh) orelse return;
+        if (x.missile == null and !t.catchable(th)) {
+            if (k == 0) return;
+            continue;
+        }
         if (reachesBody(t, th, x)) continue;
-        if (x.missile != null) missileOn(t, xh, th) else blow(t, xh, th);
+        if (x.missile != null) {
+            missileOn(t, xh, th);
+            continue;
+        }
+        if (blow(t, xh, th)) return;
     }
 }
 
@@ -320,17 +331,17 @@ fn reachesBody(t: *Tick, ph: Handle, x: *const Entity) bool {
 /// the blow or not (`Tick.struck`: by default, its damage at once); a blow taken is told to the
 /// striker (`blowLanded`) and, on a fighter, asks for the move's hit sound (a breakable sounds
 /// its own). An attack box without a blow under way is a reach, which the grabs answer.
-fn blow(t: *Tick, ah: Handle, th: Handle) void {
-    const a = t.world.get(ah) orelse return;
-    const attack = a.boxes.attack orelse return;
-    const move_index = a.move orelse return;
+fn blow(t: *Tick, ah: Handle, th: Handle) bool {
+    const a = t.world.get(ah) orelse return false;
+    const attack = a.boxes.attack orelse return false;
+    const move_index = a.move orelse return false;
     const damage = t.power(a);
-    if (damage == 0) return;
-    const target = t.world.get(th) orelse return;
-    const body = target.boxes.body orelse return;
-    if (!blowsLand(a.team, target.team)) return;
+    if (damage == 0) return false;
+    const target = t.world.get(th) orelse return false;
+    const body = target.boxes.body orelse return false;
+    if (!blowsLand(a.team, target.team)) return false;
     const ak = t.kindOf(a);
-    if (!meet(a, &ak.definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return;
+    if (!meet(a, &ak.definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return false;
     const m = ak.definition.moves[move_index];
     const away: i32 = switch (target.position.x.order(a.position.x)) {
         .lt => -1,
@@ -343,13 +354,14 @@ fn blow(t: *Tick, ah: Handle, th: Handle) void {
         .reaction = m.reaction,
         .push = .{ .x = Fixed.of(m.push_x).times(away), .height = .of(m.push_height) },
     };
-    if (!t.struck(th, b)) return;
+    if (!t.struck(th, b)) return false;
     t.blowLanded(ah, th);
     const fighter = switch (t.kindOf(target).family()) {
         .player, .enemy, .boss => true,
         else => false,
     };
     if (fighter) if (m.hit_sound) |snd| t.sound(snd, ah);
+    return true;
 }
 
 /// A missile (`Missile`: a body thrown, a weapon swung or thrown) strikes with its attack box
@@ -481,18 +493,7 @@ fn camera(t: *Tick) void {
     };
     if (c.follows) |rules| {
         if (c.run == null) c.x_min = c.x;
-        // Where a player was drawn, in whole pixels on the screen.
-        var speed: i32 = 0;
-        for (c.drawn) |d| {
-            const x = d orelse continue;
-            const on_screen = x.whole() - c.x.whole();
-            if (on_screen < rules.band[0]) {
-                speed = on_screen - rules.band[0];
-            } else if (on_screen >= rules.band[1]) {
-                speed = on_screen - rules.band[1];
-            }
-        }
-        c.x = c.x.add(.pixels(std.math.clamp(speed, -rules.most, rules.most)));
+        c.x = c.x.add(.pixels(std.math.clamp(followSpeed(c, rules), -rules.most, rules.most)));
     }
     c.x = c.x.clamp(c.x_min, c.x_max);
     if (c.shake != 0) {
@@ -508,6 +509,39 @@ fn camera(t: *Tick) void {
             e.position.x = keptWithin(e.position.x, left + rules.kept_x[0], left + rules.kept_x[1]);
         }
         e.position.depth = keptWithin(e.position.depth, rules.kept_depth[0], rules.kept_depth[1]);
+    }
+}
+
+/// The camera's move across from where the players were drawn (whole pixels on the screen): one
+/// drawn before its band, or from the band's end on, moves it by as much. With two drawn, it
+/// moves only when both let it: ahead by the lesser of the foremost's way past the band's end
+/// and the hindmost's past its start (none while the hindmost is before the start), back by the
+/// lesser of the hindmost's way before the start and the foremost's before the end (none while
+/// the foremost is past the end), as the original's camera follows two players.
+fn followSpeed(c: *const world_mod.Camera, rules: world_mod.Camera.Rules) i32 {
+    var xs: [2]i32 = undefined;
+    var n: usize = 0;
+    for (c.drawn) |d| {
+        const x = d orelse continue;
+        xs[n] = x.whole() - c.x.whole();
+        n += 1;
+    }
+    const start: i32 = rules.band[0];
+    const end: i32 = rules.band[1];
+    switch (n) {
+        0 => return 0,
+        1 => {
+            if (xs[0] < start) return xs[0] - start;
+            if (xs[0] >= end) return xs[0] - end;
+            return 0;
+        },
+        else => {
+            const fore = @max(xs[0], xs[1]);
+            const hind = @min(xs[0], xs[1]);
+            if (fore >= end) return if (hind < start) 0 else @min(fore - end, hind - start);
+            if (hind >= start) return 0;
+            return @max(fore - end, hind - start);
+        },
     }
 }
 

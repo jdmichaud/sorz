@@ -897,6 +897,9 @@ fn die(a: Actor, by: ?Handle) void {
 pub fn struck(a: Actor, blow: tick.Blow) bool {
     if (!catchable(a)) return false;
     a.mind.taken = .{ .by = blow.attacker, .damage = blow.damage, .reaction = blow.reaction };
+    // A blow that lands frees the one it holds at once (the original's blow clears its hold's
+    // request as it lands: the one held lets go at its turn, before the blow is felt).
+    if (!blow.missile and a.entity.holding != null) a.tick.letGo(a.handle);
     return true;
 }
 
