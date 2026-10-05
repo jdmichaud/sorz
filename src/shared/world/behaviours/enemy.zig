@@ -152,7 +152,8 @@ pub fn ShutterEntry(comptime M: type) type {
             e.position.height = .parts(@intCast(ground), e.position.height.frac());
             b.let_out = false;
             b.dropping = false;
-            e.spawn = .{ .offset_x = e.spawn.offset_x, .offset_depth = e.spawn.offset_depth, .strength = e.spawn.strength, .entrance = .close_in };
+            const plain: entity.Entrance = if (@hasDecl(M, "plain_entrance")) M.plain_entrance else .close_in;
+            e.spawn = .{ .offset_x = e.spawn.offset_x, .offset_depth = e.spawn.offset_depth, .strength = e.spawn.strength, .entrance = plain };
             Of(M).enter(a, M.fights);
         }
 

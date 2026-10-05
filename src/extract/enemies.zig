@@ -626,8 +626,44 @@ pub fn galsiaKnife(arena: std.mem.Allocator, rom: []const u8) Error!entity.Defin
     return finish(&d, "galsia_knife", 0x20, "galsia_knife", "the knife Galsia (handler 0xD606)");
 }
 
+// --- The brawler --------------------------------------------------------------------------------
+
+/// The brawler (type $26, its handler 0xF038, its states at 0x10362): it follows its target
+/// (0xF0FC), closes in and punches (0xF1B0, a blow that knocks down: reaction 1, 0xF1F0), comes in
+/// through a rolling shutter (Galsia's, 0xDDE6); struck, it reels (0xF062), or shrugs the blow
+/// off when placed to (0xF078).
+pub fn brawler(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    var d = try begin(arena, rom, 0x26, "brawler", &.{.{ .name = "punch", .entry = try animEntry(rom, 0xF240) }});
+    blows(&d, "punch");
+    const power = powerOf(&d);
+    try d.moves.append(arena, .{ .name = "punch", .provenance = "the punch (0xF23A): a blow that lands knocks down (reaction 1, 0xF1F0), its damage the type's power", .animation = d.animationIndex("punch").?, .damage = power, .reaction = .knock_down });
+    try namedBox(&d, @intCast(try moveq(rom, 0xF218, 1)), @intCast(try moveq(rom, 0xF222, 1)), "punch", "reach");
+    try d.number_notes.print(arena, "; the punch's reach: ROM 0x0F218, 0x0F222: moveq #N,d1", .{});
+    try d.number("follow_speed", try immediate(rom, 0xF11E, &.{ 0x31, 0x7C }, 2) << 8, "ROM 0x0F11E: move.w #N,(100,a0) (8.8)");
+    try d.number("follow_first", try moveByte(rom, 0xF118, 13), "ROM 0x0F118: move.b #N,(13,a0)");
+    try d.number("follow_turns", try moveByte(rom, 0xF124, 80), "ROM 0x0F124: move.b #N,(80,a0)");
+    try d.number("follow_stops", try moveByte(rom, 0xF12A, 81), "ROM 0x0F12A: move.b #N,(81,a0)");
+    try d.number("follow_ticks", try moveByte(rom, 0xF130, 82), "ROM 0x0F130: move.b #N,(82,a0)");
+    try d.number("close_in_pace", (try immediate(rom, 0xF1D4, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0F1D4: move.w #N*$101,(12,a0)");
+    try d.number("close_in_punches", try moveByte(rom, 0xF1DA, 80), "ROM 0x0F1DA: move.b #N,(80,a0)");
+    try d.number("close_in_ticks", try moveByte(rom, 0xF1E0, 81), "ROM 0x0F1E0: move.b #N,(81,a0)");
+    try d.number("close_in_beside", try moveq(rom, 0xF22A, 1), "ROM 0x0F22A: moveq #N,d1");
+    try d.number("punch_ends", try frameCompared(rom, 0xF246), "ROM 0x0F246: cmpi.b #N,(10,a0)");
+    if (try animEntry(rom, 0xF096) != 2) return error.BadData;
+    try d.number("shrug_frame", try moveByte(rom, 0xF09C, 10), "ROM 0x0F09C: move.b #N,(10,a0) (of its animation 4: its fall's)");
+    try d.number("shrug_ticks", try moveByte(rom, 0xF0A8, 80), "ROM 0x0F0A8: move.b #N,(80,a0)");
+    try d.number("shrug_near", try immediate(rom, 0xF0CA, &.{ 0x0C, 0x40 }, 2), "ROM 0x0F0CA: cmpi.w #N,d0");
+    const drawn = try immediate(rom, 0xAF6E, &.{ 0x06, 0x42 }, 2);
+    try d.number("sides_from", try immediate(rom, 0x97E8, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x097E8: cmpi.w #N,(40,a0), less 0xAF6E's offset (0xF142)");
+    try d.number("sides_to", try immediate(rom, 0x97F0, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x097F0: cmpi.w #N,(40,a0), less 0xAF6E's offset (excluded)");
+    try d.sound("shrug", @bitCast(@as(i8, @intCast(try moveq(rom, 0xF090, 7)))));
+    try shutterNumbers(&d);
+    return finish(&d, "brawler", 0x26, "brawler", "the brawler (handler 0xF038)");
+}
+
 /// The definitions this module writes, appended to `out`.
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
+    try out.append(arena, try brawler(arena, rom));
     try out.append(arena, try galsiaKnife(arena, rom));
     try out.append(arena, try galsia(arena, rom));
     try out.append(arena, try stalker(arena, rom));

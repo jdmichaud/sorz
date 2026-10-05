@@ -42,8 +42,10 @@
 //! is the original's players' (PLAN item 11); `galsia` round 1's Galsias', on the enemies' common
 //! body (behaviours/enemy.zig, not a behaviour of its own: the states every enemy shares);
 //! `police_car` the special attack's, `go_arrow` the arrow a section's opening shows,
-//! `player_waiting` a player out of lives (PLAN item 13); `breakable` and `item` the street's
-//! breakables and what they leave (PLAN item 12).
+//! `player_waiting` a player out of lives (PLAN item 13); round 1's other enemies, `stalker`,
+//! `signal`, `galsia_pipe`, `galsia_knife`, `acrobat`, `brawler`, their weapons (`weapon`,
+//! `knife`), the rolling `shutter`, `breakable` and `item` the street's breakables and what they
+//! leave (PLAN item 12).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -57,6 +59,7 @@ pub const signal = @import("behaviours/signal.zig");
 pub const galsia_pipe = @import("behaviours/galsia_pipe.zig");
 pub const galsia_knife = @import("behaviours/galsia_knife.zig");
 pub const acrobat = @import("behaviours/acrobat.zig");
+pub const brawler = @import("behaviours/brawler.zig");
 pub const shutter = @import("behaviours/shutter.zig");
 pub const weapon = @import("behaviours/weapon.zig");
 pub const knife = @import("behaviours/knife.zig");
@@ -78,6 +81,7 @@ pub const Mind = union(enum) {
     galsia_pipe: galsia_pipe.Mind,
     galsia_knife: galsia_knife.Mind,
     acrobat: acrobat.Mind,
+    brawler: brawler.Mind,
     shutter: shutter.Mind,
     weapon: weapon.Mind,
     knife: knife.Mind,

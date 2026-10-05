@@ -394,6 +394,32 @@ const galsia_knife =
     \\   "jump_in": {"animation": "jump_in", "damage": 10, "reaction": "knock_down"}}}
 ;
 
+/// A brawler: it follows, closes in and punches (knocking down); struck it reels a tick later,
+/// or shrugs the blow off.
+const brawler =
+    \\{"family": "enemy", "team": "enemy", "behaviour": "brawler", "health": 12, "gravity": 73728,
+    \\ "shadow": true,
+    \\ "numbers": {
+++ enemy_numbers ++ ", " ++
+    \\ "power": 8, "follow_speed": 98304, "follow_first": 1, "follow_turns": 2, "follow_stops": 80,
+    \\   "follow_ticks": 80, "close_in_pace": 3, "close_in_punches": 3, "close_in_ticks": 80,
+    \\   "close_in_beside": 56, "punch_ends": 4, "shrug_frame": 3, "shrug_ticks": 128,
+    \\   "shrug_near": 80, "sides_from": -16, "sides_to": 336,
+    \\   "shutter_beside": 32, "shutter_above": 18, "shutter_drop": 1, "shutter_depth": 3},
+    \\ "tables": {
+++ pacing_tables ++ "}," ++
+    \\ "sounds": {
+++ enemy_sounds ++ ", \"shrug\": \"grunt\"}," ++
+    \\ "boxes": {"body": {"x": [-9, 9], "depth": [-8, 8], "height": [-60, 0]},
+    \\   "punch_reach": {"x": [0, 40], "depth": [-8, 8], "height": [-60, -20]},
+    \\   "fist": {"x": [10, 40], "depth": [-8, 8], "height": [-56, -40]}},
+    \\ "animations": {
+++ enemyAnimations(pf("5", "")) ++ "," ++
+    anim("punch", pf("3", "") ++ "," ++ pf("3", ", \"attack\": \"fist\", \"blow\": true") ++ "," ++ pf("3", "") ++ "," ++ pf("3", "") ++ "," ++ pf("3", "")) ++
+    \\ },
+    \\ "moves": {"punch": {"animation": "punch", "damage": 8, "reaction": "knock_down"}}}
+;
+
 const car =
     \\{"family": "effect", "team": "neutral", "behaviour": "police_car",
     \\ "numbers": {"run": 1048576, "run_most": 50331648, "comes": 33554432, "siren": 29,
@@ -428,6 +454,7 @@ const Fixture = struct {
             .{ .name = "pipe", .text = pipe },
             .{ .name = "knife", .text = knife },
             .{ .name = "galsia_knife", .text = galsia_knife },
+            .{ .name = "brawler", .text = brawler },
             .{ .name = "shutter", .text = shutter },
             .{ .name = "breakable", .text = breakable },
             .{ .name = "apple", .text = apple },
@@ -1163,4 +1190,40 @@ test "a knife Galsia closes in, sizes up, stabs near; far it throws its knife, w
     try testing.expect(flew);
     try testing.expectEqualStrings("knocked_down", r2.state());
     try testing.expectEqual(@as(i16, 75), r2.player().health);
+}
+
+test "a brawler: struck, it reels a tick later; placed to, it shrugs the blow off, then closes in and punches" {
+    var r = try Round.init();
+    defer r.deinit();
+    const b = try enemyAt(&r, "brawler", 830, .left, .stand);
+    r.step(.{});
+    // The jab lands: hit at its tick, the reel from the next, the blow's damage then.
+    r.step(b_pad);
+    var hit_at: ?usize = null;
+    var reel_at: ?usize = null;
+    for (0..6) |i| {
+        r.step(.{});
+        const st = r.w.get(b).?.mind.brawler.state;
+        if (st == .hit and hit_at == null) hit_at = i;
+        if (st == .reel and reel_at == null) reel_at = i;
+    }
+    try testing.expect(hit_at != null and reel_at != null);
+    try testing.expectEqual(hit_at.? + 1, reel_at.?);
+    // Unflinching: it shrugs the blow off (its damage taken), then closes in and punches the
+    // player down.
+    var r2 = try Round.init();
+    defer r2.deinit();
+    const b2 = try enemyAt(&r2, "brawler", 830, .left, .stand);
+    r2.w.get(b2).?.spawn.traits.unflinching = true;
+    r2.step(.{});
+    r2.step(b_pad);
+    var shrugged = false;
+    for (0..200) |_| {
+        r2.step(.{});
+        if (r2.w.get(b2).?.mind.brawler.state == .shrug_off) shrugged = true;
+        if (std.mem.eql(u8, r2.state(), "knocked_down")) break;
+    }
+    try testing.expect(shrugged);
+    try testing.expect(r2.w.get(b2).?.health < 12);
+    try testing.expectEqualStrings("knocked_down", r2.state());
 }
