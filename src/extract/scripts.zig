@@ -30,6 +30,7 @@ const nemesis = @import("nemesis.zig");
 const kosinski = @import("kosinski.zig");
 const rom_mod = @import("rom.zig");
 const sound_names = @import("sound_names.zig");
+const spawns = @import("spawns.zig");
 const rounds = @import("rounds.zig");
 
 const u16be = rom_mod.u16be;
@@ -215,8 +216,7 @@ fn arrivalTicks(rom: []const u8, t: u8) Error!u16 {
 // --- The entries -------------------------------------------------------------------------------
 
 /// What the enemy's code reads of an entry's three bytes (the variant, the offsets' nibbles, the
-/// palette row), in the game's terms. TODO(merge with PLAN item 12): "enemies" decodes these in
-/// src/extract/spawns.zig (`decode`); this is its rule, to be replaced by its function.
+/// palette row), in the game's terms (spawns.zig); a boss's: its twin, its bar.
 fn enemyRecord(rom: []const u8, s: *round.Spawn, t: u8, variant: u8, offsets: u8, palette: u8) Error!void {
     if (boss(t)) {
         if (variant != 0) s.traits.insert(.twin);
@@ -224,61 +224,11 @@ fn enemyRecord(rom: []const u8, s: *round.Spawn, t: u8, variant: u8, offsets: u8
         return;
     }
     if (!commonEnemy(t)) return;
-    if (variant & 0x80 != 0) s.traits.insert(.waits_for_camera);
-    const low = variant & 0xF;
-    s.entrance = switch (t) {
-        0x22 => switch (low) {
-            0 => .close_in,
-            1 => .edge,
-            2, 5 => .wait,
-            3 => .approach,
-            4 => .shutter,
-            6 => .square_up,
-            else => return error.BadData,
-        },
-        0x20 => switch (low) {
-            0 => .close_in,
-            1 => .jump_in,
-            2 => .size_up,
-            else => return error.BadData,
-        },
-        0x25 => switch (low) {
-            0, 1 => .approach,
-            2 => .close_in,
-            3 => .enter,
-            4 => .circle,
-            else => return error.BadData,
-        },
-        0x26 => switch (low) {
-            0 => .follow,
-            1 => .shutter,
-            2, 3 => .close_in,
-            else => return error.BadData,
-        },
-        else => .approach,
-    };
-    switch (t) {
-        0x22 => if (variant & 0x20 != 0) s.traits.insert(.slow),
-        0x25 => {
-            if (variant & 0x20 != 0) s.traits.insert(.slow);
-            if (variant & 0x10 != 0) s.traits.insert(.flips_away);
-            if (variant & 0x40 != 0) s.traits.insert(.drops_in);
-            if (variant & 0x7F != 0) s.traits.insert(.flips_at_close_range);
-        },
-        0x24 => if (variant & 0x7F != 0) s.traits.insert(.slides),
-        0x21 => if (variant & 0x7F == 1) s.traits.insert(.closes_in_after_lurking),
-        0x23 => if (variant & 0x7F != 0) s.traits.insert(.pipe_b),
-        0x26 => {
-            if (variant & 0x10 != 0) s.traits.insert(.unflinching);
-            if (variant & 0x02 != 0) s.traits.insert(.walks_off);
-        },
-        else => {},
-    }
-    s.offset = .{
-        .x = rom[target_offsets + @as(u32, offsets >> 4)],
-        .depth = @as(i8, @bitCast(rom[target_offsets + @as(u32, offsets & 0xF)])),
-    };
-    s.strength = palette;
+    const d = try spawns.decode(rom, t, variant, offsets, palette);
+    s.entrance = d.entrance;
+    s.traits = d.traits;
+    s.offset = d.offset;
+    s.strength = d.strength;
 }
 
 /// An entry's record: its kind, its depth (the Y, whose low two bits are its lowest level), and

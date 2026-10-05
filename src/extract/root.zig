@@ -24,6 +24,7 @@ pub const screen_data = @import("screen_data.zig");
 pub const sound = @import("sound.zig");
 pub const entities = @import("entities.zig");
 pub const scripts = @import("scripts.zig");
+pub const spawns = @import("spawns.zig");
 pub const play = @import("play.zig");
 
 /// The extractor's name and version, in the tree's manifest.
