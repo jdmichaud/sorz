@@ -403,7 +403,12 @@ fn blowsOnPlayers(t: *Tick, xh: Handle) void {
             missileOn(t, xh, th);
             continue;
         }
-        if (blow(t, xh, th)) return freedByBlow(t, xh, th);
+        if (blow(t, xh, th)) {
+            // A boss's blow leaves the hold's request (the original's bosses clear the
+            // reaction instead): the one held is let go as the player feels the blow.
+            if (t.kindOf(x).family() != .boss) freedByBlow(t, xh, th);
+            return;
+        }
     }
 }
 
