@@ -92,6 +92,9 @@ pub const Camera = struct {
     prev_x: Fixed = .zero,
     /// A shake under way (`Tick.shake`): its ticks left.
     shake: u8 = 0,
+    /// The ticks the round's water has rippled (`Water`, round 4's river), the round's start's
+    /// own among them.
+    ripple: u32 = 0,
 
     /// How it follows the players (the round's camera's, script.zig `cameraRules`): a player
     /// drawn left of `band[0]` or from `band[1]` on, across the screen, moves it by as much, at

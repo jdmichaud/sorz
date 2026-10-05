@@ -240,6 +240,57 @@ pub const Camera = struct {
     /// writes the column of blocks coming in, `rows` blocks high; as the camera crosses a row of
     /// blocks, the row (32 blocks).
     bands: [2][]const Band = .{ &.{}, &.{} },
+    /// Plane B is water that ripples by lines (round 4's river under the bridge).
+    water: ?Water = null,
+};
+
+/// Plane B's water, scrolled by lines: its first `from` lines at the plane's place; then `half`
+/// lines, each at the place less half of one of the ripple's last places (their whole pixels),
+/// the oldest first; then `whole` lines, each less a whole one of the next, the last line at the
+/// plane's place (the original never refreshes its copy's last place); the lines below at 0. The
+/// ripple's place starts at `start` and moves by `speed` a tick (1/65536 pixel), turning about
+/// at every `turn`th tick; the round's start runs it `half` + `whole` ticks.
+pub const Water = struct {
+    from: u8,
+    half: u8,
+    whole: u8,
+    start: i32,
+    speed: i32,
+    turn: u8,
+
+    /// The ripple's place after its `step`th tick (the ticks counted from the round's start,
+    /// the start's own among them), in 1/65536 pixel: up by `speed` until its first turn, then
+    /// down and up again by `turn` ticks.
+    pub fn place(w: Water, step: u32) i32 {
+        const t: u32 = w.turn;
+        const moves: i32 = if (step < t) @intCast(step) else blk: {
+            const m = (step - (t - 1)) % (2 * t);
+            break :blk if (m <= t) @as(i32, @intCast(t - 1)) - @as(i32, @intCast(m)) else @as(i32, @intCast(m)) - @as(i32, @intCast(t)) - 1;
+        };
+        return w.start +% w.speed *% moves;
+    }
+
+    /// The places across of the screen's lines (`left`, from the top) of plane B, the camera at
+    /// `camera_x`, after the ripple's `steps` ticks (its places before the first: 0). The plane's
+    /// place is half the camera's, rounded up (the original halves the scroll, its negation).
+    pub fn lines(w: Water, camera_x: i32, steps: u32, left: []i16) void {
+        @memset(left, 0);
+        const x = -@divFloor(-camera_x, 2);
+        const count = @as(u32, w.half) + w.whole;
+        for (left, 0..) |*l, i| {
+            if (i < w.from) {
+                l.* = @intCast(x);
+                continue;
+            }
+            const k = i - w.from;
+            if (k >= count) break;
+            // The place it showed: its ripple's before this tick's, the last never.
+            const was = steps -% count +% @as(u32, @intCast(k));
+            const whole: i32 = if (k + 1 == count or was == 0 or was > steps) 0 else w.place(was) >> 16;
+            // The original scrolls by the plane's place negated: half of the whole, rounded down.
+            l.* = @intCast(if (k < w.half) x - (@divFloor(-whole, 2)) else x + whole);
+        }
+    }
 };
 
 pub const Band = struct { rows: u8, times: u8, per: u8 };
@@ -290,7 +341,31 @@ pub const Round = struct {
     /// first stays), and a boss's art that leaves no slot to a waiting enemy's.
     art_from: u8 = 0,
     boss_art_full: u8 = 0,
+    /// Its floor by cells, when they differ (round 4's holes): null, its ground everywhere.
+    floor: ?Floor = null,
 };
+
+/// A round's floor by cells (round 4's bridge and its holes): the level in cells `cell[0]` pixels
+/// across and `cell[1]` in depth, from its top-left corner, a row of them by `cell[1]` pixels of
+/// depth, each cell one of `kinds` (a hex digit). A cell's kind has a floor at its height (where
+/// a thing stands, lands, falls to), or none (a hole: a thing over it falls through, toward its
+/// height far below). A place past the rows or the columns, or before them, takes the nearest
+/// cell.
+pub const Floor = struct {
+    provenance: []const u8 = "",
+    cell: [2]u8,
+    kinds: []const FloorKind,
+    rows: []const []const u8,
+
+    /// The kind of the cell at `x` across and `depth` (whole pixels).
+    pub fn at(f: *const Floor, x: i32, depth: i32) FloorKind {
+        const row = f.rows[@intCast(std.math.clamp(@divFloor(depth, f.cell[1]), 0, @as(i32, @intCast(f.rows.len)) - 1))];
+        const c = row[@intCast(std.math.clamp(@divFloor(x, f.cell[0]), 0, @as(i32, @intCast(row.len)) - 1))];
+        return f.kinds[std.fmt.charToDigit(c, 16) catch 0];
+    }
+};
+
+pub const FloorKind = struct { height: i32, floor: bool };
 
 /// A part of a round's planes it animates by itself (round 3's waves): every `every` ticks of
 /// play (the special attack's too), the next of its `steps` (after the last, the first again),
@@ -365,6 +440,14 @@ fn cameraValue(arena: std.mem.Allocator, c: *const Camera) !json.Value {
         .{ .key = "shake", .value = try pair(arena, c.shake[0], c.shake[1]) },
         .{ .key = "bands", .value = try bandsValue(arena, c.bands) },
     });
+    if (c.water) |w| try f.append(arena, .{ .key = "water", .value = try obj(arena, &.{
+        .{ .key = "from", .value = json.Value.num(w.from) },
+        .{ .key = "half", .value = json.Value.num(w.half) },
+        .{ .key = "whole", .value = json.Value.num(w.whole) },
+        .{ .key = "start", .value = json.Value.num(w.start) },
+        .{ .key = "speed", .value = json.Value.num(w.speed) },
+        .{ .key = "turn", .value = json.Value.num(w.turn) },
+    }) });
     if (c.plane_b_down) try f.append(arena, .{ .key = "plane_b_down", .value = .{ .bool = true } });
     if (c.scroll != .whole) try f.append(arena, .{ .key = "scroll", .value = .{ .str = @tagName(c.scroll) } });
     return withProvenance(arena, c.provenance, f.items);
@@ -512,6 +595,20 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
             .{ .key = "steps", .value = .{ .array = steps } },
         }) });
     }
+    if (r.floor) |fl| {
+        const kinds = try arena.alloc(json.Value, fl.kinds.len);
+        for (kinds, fl.kinds) |*v, k| v.* = try obj(arena, &.{
+            .{ .key = "height", .value = json.Value.num(k.height) },
+            .{ .key = "floor", .value = .{ .bool = k.floor } },
+        });
+        const rows = try arena.alloc(json.Value, fl.rows.len);
+        for (rows, fl.rows) |*v, row| v.* = .{ .str = row };
+        try fields.append(arena, .{ .key = "floor", .value = try withProvenance(arena, fl.provenance, &.{
+            .{ .key = "cell", .value = try pair(arena, fl.cell[0], fl.cell[1]) },
+            .{ .key = "kinds", .value = .{ .array = kinds } },
+            .{ .key = "rows", .value = .{ .array = rows } },
+        }) });
+    }
     if (r.own_sound) |o| try fields.append(arena, .{ .key = "own_sound", .value = try withProvenance(arena, o.provenance, &.{
         .{ .key = "sound", .value = .{ .str = o.sound } },
         .{ .key = "first", .value = json.Value.num(o.first) },
@@ -635,7 +732,7 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
@@ -661,7 +758,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     } else return (try root.get("art")).fail("no art set of this name");
 
     const c = try root.get("camera");
-    try c.only(&.{ "provenance", "at", "x_min", "y", "plane_b", "plane_b_down", "scroll", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "bands" });
+    try c.only(&.{ "provenance", "at", "x_min", "y", "plane_b", "plane_b_down", "scroll", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "bands", "water" });
     const at = try readPair(try c.get("at"), i32);
     const y = try readPair(try c.get("y"), i32);
     r.camera = .{
@@ -691,6 +788,19 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     if (r.camera.kept_depth[0] > r.camera.kept_depth[1]) return (try c.get("kept_depth")).fail("its first after its second");
     if (r.camera.plane_b[1] == 0) return (try c.get("plane_b")).fail("a ratio of 0 per");
     if (r.camera.y_min > r.camera.y_max) return (try c.get("y")).fail("its first above its second");
+    if (try c.opt("water")) |w| {
+        try w.only(&.{ "from", "half", "whole", "start", "speed", "turn" });
+        r.camera.water = .{
+            .from = try (try w.get("from")).int(u8),
+            .half = try (try w.get("half")).int(u8),
+            .whole = try (try w.get("whole")).int(u8),
+            .start = try (try w.get("start")).int(i32),
+            .speed = try (try w.get("speed")).int(i32),
+            .turn = try (try w.get("turn")).int(u8),
+        };
+        if (r.camera.water.?.turn == 0) return (try w.get("turn")).fail("not 1 or more");
+        if (r.camera.water.?.whole == 0) return (try w.get("whole")).fail("not 1 or more");
+    }
 
     const p = try root.get("players");
     try p.only(&.{ "provenance", "x", "depth", "height" });
@@ -749,6 +859,32 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         }
         r.animation = .{ .provenance = try provenanceOf(an), .every = try (try an.get("every")).int(u8), .steps = steps };
         if (r.animation.?.every == 0) return (try an.get("every")).fail("not 1 or more");
+    }
+    if (try root.opt("floor")) |fl| {
+        try fl.only(&.{ "provenance", "cell", "kinds", "rows" });
+        const cell = try readPair(try fl.get("cell"), u8);
+        if (cell[0] == 0 or cell[1] == 0) return (try fl.get("cell")).fail("a cell of no size");
+        const kn = try fl.get("kinds");
+        const kinds = try arena.alloc(FloorKind, try kn.len());
+        if (kinds.len == 0 or kinds.len > 16) return kn.fail("not 1 to 16 kinds");
+        for (kinds, 0..) |*k, i| {
+            const n = try kn.at(i);
+            try n.only(&.{ "height", "floor" });
+            k.* = .{ .height = try (try n.get("height")).int(i32), .floor = try (try n.get("floor")).boolean() };
+        }
+        const rn = try fl.get("rows");
+        const rows = try arena.alloc([]const u8, try rn.len());
+        if (rows.len == 0) return rn.fail("no row");
+        for (rows, 0..) |*row, i| {
+            const n = try rn.at(i);
+            row.* = try n.string();
+            if (row.len == 0 or row.len != rows[0].len) return n.fail("not a row as long as the first");
+            for (row.*) |ch| {
+                const d = std.fmt.charToDigit(ch, 16) catch return n.fail("not a hex digit a cell");
+                if (d >= kinds.len) return n.fail("a cell of no kind");
+            }
+        }
+        r.floor = .{ .provenance = try provenanceOf(fl), .cell = cell, .kinds = kinds, .rows = rows };
     }
     if (try root.opt("own_sound")) |o| {
         try o.only(&.{ "provenance", "sound", "first", "every", "times", "per_section" });

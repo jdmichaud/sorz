@@ -83,9 +83,9 @@ const wave_end: u16 = 0x0099;
 /// 1's at VBlank 1139, round 2's at 17526); the others' are the flow's until they are measured.
 const measured_loads = [_]u16{ 53, 49 };
 
-/// The rounds whose scripts the extractor writes (PLAN items 13 and 15: rounds 1 to 3; the others,
+/// The rounds whose scripts the extractor writes (PLAN items 13 and 15: rounds 1 to 4; the others,
 /// whose last sections differ, to come).
-pub const extracted = [_]u8{ 1, 2, 3 };
+pub const extracted = [_]u8{ 1, 2, 3, 4 };
 
 /// The kinds' names of the original's object types: the traces' (sor-remaster's docs/traces.md),
 /// but the pepper's (type $0C, the traces' bottle).
@@ -103,6 +103,9 @@ fn kindName(t: u8) ?[]const u8 {
         0x17 => "rain",
         0x18 => "crate",
         0x19 => "knockable",
+        0x1B => "obstacle_1b",
+        0x1C => "obstacle_1c",
+        0x1D => "obstacle_1d",
         0x1F => "obstacle_1f",
         0x20 => "galsia_knife",
         0x21 => "galsia_stalker",
@@ -189,15 +192,52 @@ fn atPlaneX(arena: std.mem.Allocator, bands: []const round.Band) Error![]const r
 
 /// A plane's bands in its mode (the round header's mode word): in mode 0 (plane A's 0x18C4A,
 /// plane B's 0x1934A) each band's place across is the camera's X times its layout record's
-/// ratio (0x190EA: muls.w, then divs.w), in mode 1 the plane's (`atPlaneX`). The other modes (the
-/// water's, the lift's) are refused until their rounds come (PLAN item 15).
+/// ratio (0x190EA: muls.w, then divs.w), in mode 1 the plane's (`atPlaneX`); in mode 2 plane A's
+/// is its mode 1 (the camera's table at 0x18C34 runs 0x18C70 for both), plane B's the water's
+/// (`waterOf`), the plane's too. The other modes (the lift's) are refused until their rounds come
+/// (PLAN item 15).
 fn bandsInMode(arena: std.mem.Allocator, rom: []const u8, r: u32, p: u32, mode: u16) Error![]const round.Band {
     const bands = try bandsOf(arena, rom, r, p);
     return switch (mode) {
         0 => bands,
         1 => atPlaneX(arena, bands),
+        2 => {
+            if (p == 0 and u16be(rom, 0x18C36) != u16be(rom, 0x18C38)) return error.BadData;
+            return atPlaneX(arena, bands);
+        },
         else => error.BadData,
     };
+}
+
+/// Plane B's water in its mode 2 (the camera's table at 0x1933A, entry 2: 0x1938A jumps to 0x191E0),
+/// set up by round `r`'s start (the table at 0x19C4C): its ripple's speed, its start and its turn
+/// (0x19C92, 0x19C9A, 0x19CA2: move.l #N,($FC18), ($FC1C), ($FB32) with $FB34), the ticks the
+/// start runs it (0x19CAA: moveq #N,d7, dbf); each tick (0x191E0) the copy of its places but the
+/// last (0x191FC: move.w #N,d7), the lines at the plane's place (0x19234: moveq #N,d7, dbf), the
+/// lines less half a place (0x19248, asr.w #1 at 0x1924E), the lines less a whole one (0x1925A).
+fn waterOf(rom: []const u8, r: u32) Error!round.Water {
+    if (u16be(rom, 0x1933A + 4) != 0x50 or u16be(rom, 0x1938A) != 0x4EFA) return error.BadData;
+    const scroll: u32 = @intCast(@as(i32, 0x1938C) + s16be(rom, 0x1938C));
+    if (scroll != 0x191E0) return error.BadData;
+    const setup: u32 = 0x19C4C + @as(u32, u16be(rom, 0x19C4C + 2 * r));
+    if (setup != 0x19C92) return error.BadData;
+    const long = struct {
+        fn f(rm: []const u8, at: u32, dest: u16) Error!i32 {
+            if (u16be(rm, at) != 0x21FC or u16be(rm, at + 6) != dest) return error.BadData;
+            return @bitCast(u32be(rm, at + 2));
+        }
+    }.f;
+    const speed = try long(rom, 0x19C92, 0xFC18);
+    const start = try long(rom, 0x19C9A, 0xFC1C);
+    const turns: u32 = @bitCast(try long(rom, 0x19CA2, 0xFB32));
+    if (turns >> 16 != turns & 0xFFFF or turns >> 16 == 0 or turns >> 16 > 255) return error.BadData;
+    const from = try immediate(rom, 0x19234, &.{0x7E}, 1) + 1;
+    const half = try immediate(rom, 0x19248, &.{0x7E}, 1) + 1;
+    const whole = try immediate(rom, 0x1925A, &.{0x7E}, 1) + 1;
+    if (u16be(rom, 0x1924E) != 0xE242 or u16be(rom, 0x19232) != 0xE241) return error.BadData;
+    if (try immediate(rom, 0x19CAA, &.{0x7E}, 1) + 1 != half + whole) return error.BadData;
+    if (try immediate(rom, 0x191FC, &.{ 0x3E, 0x3C }, 2) + 2 != half + whole) return error.BadData;
+    return .{ .from = @intCast(from), .half = @intCast(half), .whole = @intCast(whole), .start = start, .speed = speed, .turn = @intCast(turns >> 16) };
 }
 
 /// How the frames of play copy the planes' scroll (0x196A4, by plane A's mode: its table at
@@ -425,9 +465,10 @@ fn entry(rom: []const u8, type_byte: u8, bytes: [3]u8, y: u8) Error!round.Spawn 
         .two_players = type_byte & 0x80 != 0,
     };
     switch (t) {
-        0x11, 0x18, 0x19, 0x1F => {
-            // A breakable, a crate, an oil drum, round 5's obstacle: the item it holds (its byte
-            // $41, which 0x7E54 reads), an index from 1 (0 for none).
+        0x11, 0x18, 0x19, 0x1B, 0x1C, 0x1D, 0x1F => {
+            // A breakable, a crate, an oil drum, round 4's and 5's obstacles: the item it holds
+            // (its byte $41, which 0x7E54 reads), an index from 1 (0 for none).
+            if (t >= 0x1B and t <= 0x1D and (bytes[0] != 0 or bytes[2] != 0)) return error.BadData;
             if (bytes[1] != 0) {
                 if (bytes[1] > 11) return error.BadData;
                 s.holds = kindName(rom[breakable_items + @as(u32, bytes[1])]) orelse return error.BadData;
@@ -694,6 +735,8 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         // Round 5's plane B keeps its own place down and wobbles (0x1934A, 0x1916C): with round 5.
         0 => if (r == 4) return error.BadData else .{ 1, 1 },
         1 => .{ 1, if (r == 0) 1 else @as(u8, 1) << plane_b_shift },
+        // The water's: half the camera's (asr.w #1 at 0x19232).
+        2 => .{ 1, 2 },
         else => return error.BadData,
     };
     const camera: round.Camera = .{
@@ -715,6 +758,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .kept_depth = .{ @intCast(depth_from), @intCast(if (r == own_round) depth_to_own else depth_to_common) },
         .shake = .{ @intCast(shake_ticks), @intCast(shake_by) },
         .bands = .{ try bandsInMode(arena, rom, r, 0, mode_a), try bandsInMode(arena, rom, r, 1, mode_b) },
+        .water = if (mode_b == 2) try waterOf(rom, r) else null,
     };
     const first_wall: i32 = u16be(rom, limits + 6);
 
@@ -828,12 +872,42 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         if (ground != null and ground.? != at_height) return error.BadData;
         ground = at_height;
     };
-    // The floor is one kind of cell everywhere (round 1's), so its height is the ground's at
-    // every place: a round whose floor's cells differ needs them cell by cell (its walls, its
-    // pits, PLAN item 15), and is refused until then.
+    // The floor is one kind of cell everywhere (round 1's): its height is the ground's at every
+    // place. Else it is written cell by cell (round 4's holes): each kind's height and whether it
+    // has a floor (its attribute, the byte table the tables' first word gives: 1 a floor, 0 none;
+    // the others, walls and the like, refused until their rounds come).
     const kind = floor[0] >> 4;
-    for (floor) |byte| if (byte >> 4 != kind or byte & 0xF != kind) return error.BadData;
-    if (ground != null and ground.? != u16be(rom, heights + 2 * @as(u32, kind))) return error.BadData;
+    const uniform = for (floor) |byte| {
+        if (byte >> 4 != kind or byte & 0xF != kind) break false;
+    } else true;
+    if (uniform and ground != null and ground.? != u16be(rom, heights + 2 * @as(u32, kind))) return error.BadData;
+    const by_cells: ?round.Floor = if (uniform) null else blk: {
+        const attributes: u32 = tables + @as(u32, u16be(rom, tables));
+        var most: u8 = 0;
+        for (floor) |byte| most = @max(most, byte >> 4, byte & 0xF);
+        const cell_kinds = try arena.alloc(round.FloorKind, @as(usize, most) + 1);
+        for (cell_kinds, 0..) |*k, i| {
+            const attribute = rom[attributes + i];
+            if (attribute > 1) return error.BadData;
+            k.* = .{ .height = u16be(rom, heights + 2 * @as(u32, @intCast(i))), .floor = attribute == 1 };
+        }
+        if (floor.len % row_width != 0) return error.BadData;
+        const rows = try arena.alloc([]const u8, floor.len / row_width);
+        for (rows, 0..) |*row, y| {
+            const text = try arena.alloc(u8, 2 * row_width);
+            for (floor[y * row_width ..][0..row_width], 0..) |byte, i| {
+                text[2 * i] = std.fmt.digitToChar(byte >> 4, .lower);
+                text[2 * i + 1] = std.fmt.digitToChar(byte & 0xF, .lower);
+            }
+            row.* = text;
+        }
+        break :blk .{
+            .provenance = try std.fmt.allocPrint(arena, "the floor map (Kosinski at ROM 0x{X:0>5}): a nibble per 8 pixels across (the high one first), a row per 8 of depth, as wide as plane A's map (0xAD30: lsr.w #4 and the nibble by bit 3; lsr.w #3; muls.w ($E02E)); each kind's height (ROM 0x{X:0>5}, words) and attribute (ROM 0x{X:0>5}, bytes: 1 a floor, 0 none; 0xAD2A answers it at or below the height)", .{ floor_at, heights, attributes }),
+            .cell = .{ 8, 8 },
+            .kinds = cell_kinds,
+            .rows = rows,
+        };
+    };
 
     return .{
         .number = n,
@@ -841,6 +915,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .art = try std.fmt.allocPrint(arena, "round{d}", .{n}),
         .music = try soundName(rom[round_music + r]),
         .ground = ground orelse return error.BadData,
+        .floor = by_cells,
         .load = if (n <= measured_loads.len) measured_loads[n - 1] else null,
         .camera = camera,
         .players = .{

@@ -268,6 +268,8 @@ pub fn start(w: anytype, plan: *const Plan) void {
     c.y_min = .pixels(r.camera.y_min);
     c.y_max = .pixels(r.camera.y_max);
     c.follows = cameraRules(r);
+    // The round's start ripples its water by as many ticks as its lines show.
+    if (r.camera.water) |wt| c.ripple = @as(u32, wt.half) + wt.whole;
     w.script = .{};
     ownSoundAgain(w, r);
     if (r.animation) |an| w.script.animation.ticks = an.every;

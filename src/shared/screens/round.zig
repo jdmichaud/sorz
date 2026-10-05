@@ -244,6 +244,8 @@ pub const Round = struct {
     /// without its shake, which plane B does not take: the original shakes plane A alone).
     shown_phase: Phase = .setup,
     shown_camera: [3]i32 = .{ 0, 0, 0 },
+    /// The ticks the round's water had rippled then.
+    shown_ripple: u32 = 0,
     shown_banner: i16 = 0,
     shown_bar: Bar = .{},
     shown_game_over: bool = false,
@@ -339,6 +341,13 @@ pub const Round = struct {
 
     /// The round played's content. The flow plays only a round the content has (round 1, then
     /// the next round's stand-in after its clear, until PLAN item 15).
+    /// Through the round's fade in, the original's camera runs at each display tick: the round's
+    /// water ripples a tick on (round 4's river). Returns true.
+    fn ripple(self: *Round, a: *const Assets) bool {
+        if (self.stage(a).script.camera.water != null) self.play.world.camera.ripple +%= 1;
+        return true;
+    }
+
     fn stage(self: *const Round, a: *const Assets) *const library.RoundAssets {
         return a.rounds.of(self.number).?;
     }
@@ -423,6 +432,7 @@ pub const Round = struct {
         // The shake's move down, at an odd tick of it left (world/systems.zig).
         const shaken: i32 = if (cam.shake & 1 != 0) if (cam.follows) |rules| rules.shake_by else 0 else 0;
         self.shown_camera = .{ cam.x.whole(), cam.y.whole(), cam.y.whole() - shaken };
+        self.shown_ripple = cam.ripple;
         self.shown_bar = self.bar(a);
         self.shown_game_over = self.gameOver() != null;
         self.shown_animation = self.animation_shown;
@@ -490,7 +500,7 @@ pub const Round = struct {
                 // The demo has no banner: its music with the fade in.
                 if (self.demo) turn.play(self.stage(a).music);
             },
-            .intro => if (self.colours.stepFade()) {
+            .intro => if (self.ripple(a) and self.colours.stepFade()) {
                 self.phase = .play;
                 self.play.schedule = .{ .rate = .play };
                 // The first section's art, queued with the round's load, streams in from play's
@@ -1232,8 +1242,14 @@ pub const Round = struct {
         // A plane whose bands scroll at their own ratios scrolls by lines, each band's at its
         // place across.
         for ([_]view.Plane{ .a, .b }, r.camera.bands, [_]i32{ v.screen.plane_a.x, v.screen.plane_b.x }) |p, bands, x| {
-            if (!ownRatios(bands)) continue;
             var left: [render.height]i16 = undefined;
+            // Plane B's water ripples by lines.
+            if (p == .b) if (r.camera.water) |w| {
+                w.lines(c[0], self.shown_ripple, &left);
+                v.lineScroll(p, &left);
+                continue;
+            };
+            if (!ownRatios(bands)) continue;
             bandLines(bands, x, &left);
             v.lineScroll(p, &left);
         }

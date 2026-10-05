@@ -596,6 +596,10 @@ fn pickups(t: *Tick) void {
 fn camera(t: *Tick) void {
     const c = &t.world.camera;
     c.prev_x = c.x;
+    // The round's water ripples a tick on (round 4's river).
+    if (t.plan) |p| if (p.round.camera.water != null) {
+        c.ripple +%= 1;
+    };
     if (c.run) |*r| switch (r.state) {
         // At the call's tick it follows as before, but its limit is already the run's.
         .called => {
