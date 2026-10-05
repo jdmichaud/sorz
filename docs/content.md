@@ -473,6 +473,27 @@ play).
   every `every` ticks of play, the next of its `steps` (after the last, the first again), each a
   `map` of the round's art set written at its place, repeated across its plane, and `colours` of
   the art set put in the colours shown; until the first step, the planes show their own.
+- `lift`, optional: the round's lift (round 7's). The camera stays where it starts, its sections'
+  walls the first's, and plane B rides by. Plane B starts `from` pixels down. Each section's
+  opening starts the lift (the first section's, by a hidden piece of it), and plane B moves up
+  `speed` pixels a tick to the section's entry of `heights`, where the lift stops. As it starts
+  and as it stops, the camera jolts down by each of `jolts` in turn, one every `period` ticks. A
+  section's wave waits `wait` ticks from its opening, then for the lift's next jolt.
+- `exit`, optional: how a round without a boss ends (round 7's, which has no `boss`). Once its
+  last section is cleared, the timer stops and the players walk out by themselves: each goes left
+  until it is before `x`, then into the depths `depth` (from the first, before the second), then
+  left again. The round ends `ticks` turns of a player there later, as a boss's beating ends one.
+- `depth_walls`, optional, true when absent: whether the floor's walls stop the players' moves in
+  depth, as they stop those across (false in round 7's).
+- `enemy_walk`, optional: how the enemies walk on the round's own floor (round 7's lift),
+  whatever their kinds'.
+  - They walk across past `x_least` and in depth short of `depth_most`.
+  - Walking, a cell deeper than `deep` `ahead` pixels to their right stops them. Going left and
+    up, so does the level's top `back` behind them.
+  - Knocked away from `flight_low` down, they fly on across over a cell deeper than `deep`, else
+    while the cell `flight_ahead` ahead of them is neither the level's top nor deeper.
+- `knocked_back_left`, optional: a new life knocks the enemies on the screen back to the left,
+  facing right (rounds 7 and 8); else to the right.
 - `streamed` (a section's, the boss's, a reserve record's): the art the game decodes while it
   plays, a little each display tick, for what comes (the original streams it in, five tiles a
   display tick): a section's kinds' and the boss's, from the section's start (the first

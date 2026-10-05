@@ -84,9 +84,9 @@ const wave_end: u16 = 0x0099;
 /// 1's at VBlank 1139, round 2's at 17526); the others' are the flow's until they are measured.
 const measured_loads = [_]u16{ 53, 49 };
 
-/// The rounds whose scripts the extractor writes (PLAN items 13 and 15: rounds 1 to 6; the others
+/// The rounds whose scripts the extractor writes (PLAN items 13 and 15: rounds 1 to 7; the others
 /// to come).
-pub const extracted = [_]u8{ 1, 2, 3, 4, 5, 6 };
+pub const extracted = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
 
 /// The kinds' names of the original's object types: the traces' (sor-remaster's docs/traces.md),
 /// but the pepper's (type $0C, the traces' bottle).
