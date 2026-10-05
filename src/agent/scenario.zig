@@ -349,8 +349,12 @@ pub const Situation = struct {
     /// The enemies and things the round's script brings after the situation, at their ticks,
     /// in the order they came (a stand-in for the round's script: PLAN item 13).
     later: []const Later = &.{},
+    /// The other things the other program made after the situation, by tick: the ids of the
+    /// kinds the world does not make (sor-remaster's hit sparks) are not the world's.
+    others: []const Other = &.{},
 
     pub const Later = struct { t: u64, seen: Seen };
+    pub const Other = struct { t: u64, id: u32, kind: []const u8 };
     pub const Count = struct { seconds: u8, t: u64 };
     pub const PlayerX = struct { t: u64, x: i32 };
 
@@ -572,8 +576,10 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
     const entities = try arena.dupe(Situation.Seen, seen.values());
     s.entities = entities;
     s.players_x = players_x.items;
-    // The round's script's spawns after the situation, in the same round scene.
+    // The round's script's spawns after the situation, in the same round scene; the other
+    // things' made then.
     var later: std.ArrayList(Situation.Later) = .empty;
+    var others: std.ArrayList(Situation.Other) = .empty;
     while (after orelse lines.next()) |line| {
         after = null;
         if (line.len == 0) continue;
@@ -596,7 +602,10 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
         }
         if (!std.mem.eql(u8, ev, "spawn")) continue;
         const kind = str(o, "kind") orelse return error.BadTrace;
-        if (!scripted(kind)) continue;
+        if (!scripted(kind)) {
+            try others.append(arena, .{ .t = @intCast(int(o, "t") orelse 0), .id = @intCast(int(o, "e") orelse continue), .kind = try arena.dupe(u8, kind) });
+            continue;
+        }
         const x: i32 = @intCast(int(o, "x") orelse 0);
         const d: i32 = @intCast(int(o, "d") orelse 0);
         try later.append(arena, .{ .t = @intCast(int(o, "t") orelse 0), .seen = .{
@@ -611,6 +620,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
         } });
     }
     s.later = later.items;
+    s.others = others.items;
     return s;
 }
 
@@ -733,6 +743,8 @@ pub const Run = struct {
     /// The round's script's stand-in: the spawns still to come, and the records they take.
     later: []const Situation.Later = &.{},
     next_later: usize = 0,
+    others: []const Situation.Other = &.{},
+    next_other: usize = 0,
     round: ?*const sorz.content.round.Round = null,
     used: [256]bool = @splat(false),
     /// The round's plan, its records left to the stand-in: the timer and the new lives follow
@@ -776,6 +788,7 @@ pub const Run = struct {
             .follows = world.script.cameraRules(round),
         };
         r.later = situation.later;
+        r.others = situation.others;
         r.round = extras.round;
         takeUpScript(&r, round, situation);
         var made: [world.entity.capacity]?struct { h: world.Handle, e: *const Situation.Seen } = @splat(null);
@@ -1036,6 +1049,12 @@ pub const Run = struct {
         try self.bringLater();
         const w = &self.play.world;
         if (self.trace) |tw| {
+            // The ids the other program's things the world does not make took are not the
+            // world's things'.
+            while (self.next_other < self.others.len and self.others[self.next_other].t <= self.t) : (self.next_other += 1) {
+                const o = &self.others[self.next_other];
+                if (self.kinds.find(o.kind) == null) tw.next_id = @max(tw.next_id, o.id + 1);
+            }
             tw.setPhase(if (w.special) "special" else "play");
             try tw.observe(self.v, w, self.kinds, &self.out);
         }
