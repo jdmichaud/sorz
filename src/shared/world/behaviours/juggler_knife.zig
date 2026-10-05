@@ -50,6 +50,9 @@ pub const Mind = struct {
     deflected: bool = false,
     /// Its blow's damage.
     power: u8 = 0,
+    /// Its place across on the screen as its last tick drew it (where the original's flight looks
+    /// for the screen's sides).
+    drawn: i16 = 0,
 };
 
 pub const Animation = enum { knife, knife_b };
@@ -141,6 +144,7 @@ pub fn begin(a: Actor) void {
 pub fn think(a: Actor) void {
     const m = a.mind;
     a.entity.flags.still = true;
+    defer m.drawn = @intCast(a.entity.position.x.whole() - a.tick.world.camera.x.whole());
     switch (m.state) {
         .maker => return maker(a),
         .start => {},
@@ -435,13 +439,13 @@ fn inHand(a: Actor) void {
     if (!throwing(a, h)) turnBack(a);
 }
 
-/// In flight: into the ground, or out of the screen's sides, it goes; else it flies on. False
-/// when it went.
+/// In flight: into the ground, or drawn out of the screen's sides at its last tick (its first in
+/// flight: where its juggler's hand held it), it goes; else it flies on. False when it went.
 fn flying(a: Actor) bool {
     const n = a.numbers();
     const e = a.entity;
     if (!a.mind.back) return true;
-    const from_camera = e.position.x.whole() - a.tick.world.camera.x.whole();
+    const from_camera = a.mind.drawn;
     if (a.atGround() or from_camera < n.flight_from or from_camera >= n.flight_to) {
         a.remove();
         return false;
