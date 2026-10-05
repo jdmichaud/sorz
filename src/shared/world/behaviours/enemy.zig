@@ -1716,7 +1716,8 @@ pub fn Of(comptime M: type) type {
             // Knocked down, on the ground, its speed unchanged a tick at least (in the air its
             // gravity changes it every tick): it lies (its speeds as its last landing left them).
             if (a.mind.state == .knocked_down and body(a).down == .flying and ago >= 1 and a.atGround()) return takeUpLying(a);
-            if (a.mind.state != .walk_off or a.entity.velocity.x.raw == 0) return;
+            // Entered at the situation's tick, its set-up still due, its speed is its last state's.
+            if (a.mind.state != .walk_off or a.entity.velocity.x.raw == 0 or body(a).fresh) return;
             const b = body(a);
             b.fresh = false;
             b.pacing = true;
