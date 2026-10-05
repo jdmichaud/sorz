@@ -8,7 +8,8 @@
 //! fight again after sizing up.
 //!
 //! Knocked down, it drops its knife and fights on as a plain Galsia (galsia.zig), its blows its
-//! own; one that rushed in keeps its knife, unless the blow took the last of its health.
+//! own; one that rushed in keeps its knife. The blow that took the last of its health makes it
+//! drop its knife, a knife Galsia still.
 //! Knocked out, it lets its knife fall. Its common states are every enemy's (enemy.zig); its knife
 //! is seen in its hand only in the frames that hold it. Its numbers, animations, stab and sounds
 //! are its definition's (`entities/galsia_knife.json`).
@@ -299,14 +300,15 @@ fn throw(a: Actor) void {
     Common.enter(a, fights);
 }
 
-/// Knocked down: one that rushed in keeps its knife unless the blow took the last of its health
-/// (then it lets it fall); any other drops it and is a plain Galsia from now. Whether it became
-/// one.
+/// Knocked down: the blow that took the last of its health makes it let its knife fall, a knife
+/// Galsia still; else one that rushed in keeps its knife, and any other drops it and is a plain
+/// Galsia from now. Whether it became one.
 fn knockedDown(a: Actor) bool {
-    if (a.entity.spawn.entrance == .jump_in) {
-        if (a.entity.health < 0) Common.drop(a);
+    if (a.entity.health < 0) {
+        Common.drop(a);
         return false;
     }
+    if (a.entity.spawn.entrance == .jump_in) return false;
     Common.drop(a);
     a.endMove();
     a.entity.animation.pace = null;
