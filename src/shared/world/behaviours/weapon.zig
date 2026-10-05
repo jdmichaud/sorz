@@ -52,6 +52,9 @@ pub const Body = struct {
     blink: u8 = 0,
     /// In a player's hand: the ticks its blow has struck, which it leaves a tick at a time.
     strikes: u8 = 0,
+    /// The last who held it, kept once it is let go (the original's weapon keeps its holder's
+    /// word): the one a blow it lands came from (`heldLastBy`).
+    held_by: ?Handle = null,
 };
 
 pub fn think(a: Actor) void {
@@ -73,6 +76,10 @@ pub fn putDown(a: Actor) void {
 
 pub fn pickedUp(a: Actor, by: Handle) bool {
     return Of(@This()).pickedUp(a, by);
+}
+
+pub fn heldLastBy(a: Actor) ?Handle {
+    return Of(@This()).heldLastBy(a);
 }
 
 pub fn takeable(a: Actor) bool {
@@ -201,7 +208,13 @@ pub fn Of(comptime M: type) type {
         /// Picked up: in its taker's hand (counted at its next tick).
         pub fn pickedUp(a: A, by: Handle) bool {
             a.entity.holder = by;
+            a.mind.body.held_by = by;
             return true;
+        }
+
+        /// The last who held it, in a hand or let go.
+        pub fn heldLastBy(a: A) ?Handle {
+            return a.mind.body.held_by;
         }
 
         /// Whether it may be taken: out of a hand, not worn out.
@@ -218,6 +231,7 @@ pub fn Of(comptime M: type) type {
             if (a.mind.state != .held) return;
             const hh = a.entity.holder orelse return;
             const holder = a.other(hh) orelse return;
+            a.mind.body.held_by = hh;
             const e = a.entity;
             const by_player = a.tick.kindOf(holder).family() == .player;
             const f = a.tick.frameOf(holder);

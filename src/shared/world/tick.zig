@@ -400,6 +400,12 @@ pub const Tick = struct {
         return dispatch(t, h, "catchable", bool, true, .{});
     }
 
+    /// The last who held the entity (a weapon, let go or not): its behaviour's `heldLastBy`
+    /// says; by default, none.
+    pub fn heldLastBy(t: *Tick, h: Handle) ?Handle {
+        return dispatch(t, h, "heldLastBy", ?Handle, null, .{});
+    }
+
     /// The grab began: the entity `holder` holds `held`.
     pub fn grabbed(t: *Tick, holder: Handle, held: Handle) void {
         dispatch(t, holder, "holds", void, {}, .{held});

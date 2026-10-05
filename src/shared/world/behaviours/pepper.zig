@@ -233,6 +233,10 @@ pub fn pickedUp(a: Actor, by: Handle) bool {
     return C.pickedUp(a, by);
 }
 
+pub fn heldLastBy(a: Actor) ?Handle {
+    return C.heldLastBy(a);
+}
+
 pub fn takeable(a: Actor) bool {
     return a.mind.part == .shaker and C.takeable(a);
 }

@@ -560,7 +560,7 @@ pub fn Of(comptime M: type) type {
         }
 
         /// The one a blow or a hold on it came from: the one who struck or holds it, or who threw
-        /// or swung what struck it.
+        /// or swung what struck it (a weapon let go since: the last who held it).
         pub fn striker(a: A) ?*Entity {
             const h = body(a).other orelse return null;
             const o = a.other(h) orelse return null;
@@ -571,6 +571,7 @@ pub fn Of(comptime M: type) type {
                 if (m.by.eql(h)) return null;
                 return a.other(m.by) orelse o;
             }
+            if (a.tick.heldLastBy(h)) |by| return a.other(by) orelse o;
             return o;
         }
 
