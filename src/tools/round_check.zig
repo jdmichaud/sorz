@@ -563,12 +563,23 @@ const PictureTaker = struct {
         defer gpa.free(own);
         var by: [accepted.list.len]bool = @splat(false);
         if (same_size) {
-            const sprites = try gpa.alloc(sorz.render.Sprite, drawn.sprites().len);
-            defer gpa.free(sprites);
+            const len = drawn.sprites().len;
+            const buffers = try gpa.alloc(sorz.render.Sprite, 2 * len);
+            defer gpa.free(buffers);
             const context: accepted.Context = .{ .shadow = drawn.shadow, .kinds = drawn.kinds };
-            for (accepted.list, &by) |a, *found| for (a.redraws) |redraw| {
-                const count = redraw(drawn.sprites(), context, sprites);
-                const again = try drawn.redraw(sprites[0..count]);
+            // Each way of drawing again: one of each difference's redraws or none (all none
+            // left out), the differences' redraws applied one after the other, so that a pixel
+            // two of them make is theirs.
+            var choice: [accepted.list.len]usize = @splat(0);
+            while (nextChoice(&choice)) {
+                var sprites: []const sorz.render.Sprite = drawn.sprites();
+                var into: usize = 0;
+                for (accepted.list, choice) |a, way| if (way != 0) {
+                    const out = buffers[into * len ..][0..len];
+                    sprites = out[0..a.redraws[way - 1](sprites, context, out)];
+                    into = 1 - into;
+                };
+                const again = try drawn.redraw(sprites);
                 for (0..picture.height) |y| for (0..picture.width) |x| {
                     const d = diff[(y * picture.width + x) * 4 ..][0..4];
                     if (!std.mem.eql(u8, d, &red)) continue;
@@ -576,10 +587,12 @@ const PictureTaker = struct {
                     if (!std.mem.eql(u8, &want, again.pixels[y * again.stride + x * 4 ..][0..3])) continue;
                     // An accepted difference's pixel: yellow.
                     d.* = .{ 255, 255, 0, 255 };
-                    found.* = true;
+                    for (&by, choice) |*found, way| if (way != 0) {
+                        found.* = true;
+                    };
                     n -= 1;
                 };
-            };
+            }
         }
         if (n == 0) {
             for (by, &self.result.accepted) |found, *runs| if (found) runs.note(frame);
@@ -648,6 +661,17 @@ fn fieldStr(e: compare.Event, name: []const u8) ?[]const u8 {
         .string => |s| s,
         else => null,
     };
+}
+
+/// The next way of drawing again (`take`): each accepted difference's choice counts through none
+/// and its redraws, the first the fastest; false after the last.
+fn nextChoice(choice: *[accepted.list.len]usize) bool {
+    for (choice, accepted.list) |*c, a| {
+        c.* += 1;
+        if (c.* <= a.redraws.len) return true;
+        c.* = 0;
+    }
+    return false;
 }
 
 /// The tick of a trace's difference: its earlier event's.
