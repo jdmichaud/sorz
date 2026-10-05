@@ -56,6 +56,7 @@ const round: content_round.Round = .{
     .number = 1,
     .art = "t",
     .music = "music",
+    .ground = 0,
     .camera = .{ .x = 0, .y = 0, .x_min = 0, .y_min = 0, .y_max = 0 },
     .players = .{ .x = 0, .depth = .{ 64, 32 }, .height = 0 },
     .timer = .{ .pace = 10 },

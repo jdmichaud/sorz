@@ -155,6 +155,9 @@ pub const Round = struct {
     art: []const u8,
     /// The sound of its music.
     music: []const u8,
+    /// The height of its ground, where its enemies stand and its players land (it grows
+    /// downward, as the screen's lines).
+    ground: i32,
     camera: Camera,
     players: Players,
     timer: Timer,
@@ -241,6 +244,7 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         .{ .key = "round", .value = json.Value.num(r.number) },
         .{ .key = "art", .value = .{ .str = r.art } },
         .{ .key = "music", .value = .{ .str = r.music } },
+        .{ .key = "ground", .value = json.Value.num(r.ground) },
         .{ .key = "camera", .value = try withProvenance(arena, c.provenance, &.{
             .{ .key = "at", .value = try pair(arena, c.x, c.y) },
             .{ .key = "x_min", .value = json.Value.num(c.x_min) },
@@ -335,13 +339,14 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "camera", "players", "timer", "sections", "boss" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "camera", "players", "timer", "sections", "boss" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
         .provenance = try provenanceOf(root),
         .art = try (try root.get("art")).string(),
         .music = try (try root.get("music")).string(),
+        .ground = try (try root.get("ground")).int(i32),
         .camera = undefined,
         .players = undefined,
         .timer = undefined,
@@ -430,6 +435,7 @@ pub const example: Round = .{
     .provenance = "synthetic",
     .art = "round1",
     .music = "round 1 music",
+    .ground = 160,
     .camera = .{ .x = 768, .y = 0, .x_min = 768, .y_min = 0, .y_max = 0 },
     .players = .{ .x = 0, .depth = .{ 64, 32 }, .height = 0 },
     .timer = .{ .pace = 90 },

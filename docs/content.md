@@ -263,7 +263,11 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   layer (`[x, y]`, 40 by 4) where each player's parts go (`players`: its `name`, a text of
   `fonts/main`, and `at` its `name`, `score`, `health` bar, `lives` and `specials` (a digit two
   cells high) and the `lives_mark` and `specials_mark` before them, and the special attack's
-  `icon`) and the timer's (`time`). The parts' pictures are the `play` set's: `play/status_bar`
+  `icon`) and the timer's (`time`), and `join`, player 2's invitation to join while it does not
+  play: its `text` (`fonts/main`, its words only: a space leaves the bar's cell) `at` its cell,
+  shown and hidden in turn every `blink` logic ticks of play. The status bar shows each tick
+  what the tick before left (the original copies its image as a frame starts, as the sprites).
+  The parts' pictures are the `play` set's: `play/status_bar`
   under them, `play/time_digits` (the big digits, a column of two cells each), `play/health_1`
   and `_2` and `play/enemy_bar_1` and `_2` (a bar's ten full cells, its partial cell, ten empty:
   a bar of n full cells shows the ten from the (10 - n)th, and its partial cell is the tile of
@@ -284,7 +288,7 @@ editing it.
   "provenance": "…",
   "round": 1,
   "art": "round1",
-  "music": "round 1 music",
+  "music": "round 1 music", "ground": 160,
   "camera": {"provenance": "…", "at": [768, 0], "x_min": 768, "y": [0, 0], "plane_b": [1, 1],
              "wall_within": 4, "edges": [-8, 328], "left_behind": [-32, 96]},
   "players": {"provenance": "…", "x": 0, "depth": [64, 32], "height": 0},
@@ -307,7 +311,8 @@ The units are pixels of the level (x across, depth on the ground) and logic tick
 play).
 
 - `art`: the art set of the round's planes (`plane_a`, `plane_b`), colours and cycles. `music`:
-  the round's music, a name of the sound content.
+  the round's music, a name of the sound content. `ground`: the ground's height, where the
+  enemies stand and the players land (heights grow downward, as the screen's lines).
 - `camera`: the view's top-left corner at the start (`at`), how far back it may go at the start
   (`x_min`; it never goes back after), its limits down (`y`), and plane B's scroll across,
   `plane_b` = [times, per] of the camera's. It has reached a wall when it is less than

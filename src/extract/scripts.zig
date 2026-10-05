@@ -27,6 +27,7 @@ const std = @import("std");
 const sorz = @import("sorz");
 const round = sorz.content.round;
 const nemesis = @import("nemesis.zig");
+const kosinski = @import("kosinski.zig");
 const rom_mod = @import("rom.zig");
 const sound_names = @import("sound_names.zig");
 const rounds = @import("rounds.zig");
@@ -35,7 +36,7 @@ const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
 const s16be = rom_mod.s16be;
 
-pub const Error = error{ OutOfMemory, BadData } || nemesis.Error;
+pub const Error = error{ OutOfMemory, BadData } || nemesis.Error || kosinski.Error;
 
 /// Word offsets per round to its spawn lists (Nemesis).
 const spawn_lists = 0x1B036;
@@ -57,6 +58,9 @@ const art_of_type = 0xA4E;
 const first_art_load = 0xB;
 /// The items a breakable holds, by its entry's index from 1 (0x7E54).
 const breakable_items = 0x7E85;
+/// Per round, a word offset to its pair of word offsets to the floor cells' attributes and
+/// heights (0x19BD8).
+const floor_tables = 0x19C04;
 /// The offsets an enemy keeps from its target, by a nibble (0x9484).
 const target_offsets = 0x9484;
 /// The tiles one display tick streams (0x8510).
@@ -500,11 +504,29 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .reserve = try reserve(arena, rom, &l),
     };
 
+    // The ground: the floor's height (0xAD2A probes the floor map) at every place the script
+    // places an enemy, the same in all.
+    const floor_at = u32be(rom, rounds.header(rom, r) + 24);
+    const floor = (try kosinski.decompress(arena, rom, floor_at)).bytes;
+    const row_width: u32 = u16be(rom, h);
+    const tables: u32 = floor_tables + @as(u32, u16be(rom, floor_tables + 2 * r));
+    const heights: u32 = tables + @as(u32, u16be(rom, tables + 2));
+    var ground: ?u16 = null;
+    for (sections) |s| for (s.placed) |rec| {
+        const at = @as(u32, @intCast(rec.depth >> 3)) * row_width + @as(u32, @intCast(rec.x >> 4));
+        if (at >= floor.len) return error.BadData;
+        const cell = if (rec.x & 0xF < 8) floor[at] >> 4 else floor[at] & 0xF;
+        const at_height = u16be(rom, heights + 2 * @as(u32, cell));
+        if (ground != null and ground.? != at_height) return error.BadData;
+        ground = at_height;
+    };
+
     return .{
         .number = n,
-        .provenance = try std.fmt.allocPrint(arena, "round {d}'s level events (0x436): the spawn lists (Nemesis at ROM 0x{X:0>5}), the sections (0x1C1C4), the walls (0x195D8), the music (0x11B44)", .{ n, lists_at }),
+        .provenance = try std.fmt.allocPrint(arena, "round {d}'s level events (0x436): the spawn lists (Nemesis at ROM 0x{X:0>5}), the sections (0x1C1C4), the walls (0x195D8), the music (0x11B44); its ground the height of the floor map (Kosinski at ROM 0x{X:0>5}, the cells' heights at ROM 0x{X:0>5}, 0x19C04) at every place it places an enemy (0xAD2A)", .{ n, lists_at, floor_at, heights }),
         .art = try std.fmt.allocPrint(arena, "round{d}", .{n}),
         .music = try soundName(rom[round_music + r]),
+        .ground = ground orelse return error.BadData,
         .camera = camera,
         .players = .{
             .provenance = "a life starts at the camera's X, at the depth and height of ROM 0x01E60 and 0x01E66 (move.w #N,($14,a0), ($18,a0)); player 2's depth less ROM 0x01EA6 (subi.w #N,($14,a0)) (0x1E0E)",

@@ -251,6 +251,38 @@ fn rowText(arena: std.mem.Allocator, rom: []const u8, row: u32) ![]const u8 {
     return out.items;
 }
 
+/// Player 2's invitation to join (0x11682): three rows of the font (lea at ROM 0x1168A), each
+/// ending at its byte $FF, written from the image's offset of ROM 0x1169C's (lea $FF60xx), a cell
+/// left between them; a counter set to ROM 0x1163C's (move.b #N,($FA21)) times its blinks.
+const join_rows = 0x1168A;
+const join_place = 0x1169A;
+const join_blink = 0x11638;
+/// Where the game keeps the status bar's image in its memory ($FF6000, header first): a place in
+/// it is an offset of the image.
+const image_ram = 0x6000;
+
+/// The join's text, its rows one space apart.
+fn joinText(arena: std.mem.Allocator, rom: []const u8) ![]const u8 {
+    if (u16be(rom, join_rows) != 0x47FA) return error.BadData;
+    var row: u32 = join_rows + 2 + @as(u32, u16be(rom, join_rows + 2));
+    var out: std.ArrayList(u8) = .empty;
+    for (0..3) |r| {
+        if (r > 0) try out.append(arena, ' ');
+        const n = u16be(rom, row) + 1;
+        if (u16be(rom, row + 2) != font_base) return error.BadData;
+        for (0..n) |k| {
+            const tile = rom[row + 4 + k];
+            if (tile == 0xFF) break;
+            const g = for (fonts.main_glyphs) |g| {
+                if (g.tile == tile) break g;
+            } else return error.BadData;
+            try out.appendSlice(arena, g.text);
+        }
+        row += 4 + n;
+    }
+    return out.items;
+}
+
 fn romWords(arena: std.mem.Allocator, rom: []const u8, at: u32, n: usize) ![]u16 {
     const out = try arena.alloc(u16, n);
     for (out, 0..) |*w, k| w.* = u16be(rom, at + 2 * @as(u32, @intCast(k)));
@@ -373,9 +405,18 @@ pub fn extract(b: *Builder) !records.Round {
             .seconds = try decimal(try immediate(rom, 0x1099A, &.{ 0x31, 0xFC }, 2)),
         },
         .status_bar = .{
-            .provenance = "the status bar's image (0x110AC: window rows 1 to 3, 40 cells a row): the players' names (0x4CD0, the rows at 0x4D30 and 0x4D38) and their special attack's mark, their scores (0x4D60), their lives and special attacks (0x4E14) and the marks before them (0x4CD0), their health bars (0x4E6C), player 2's 26 cells on but its lives and special attacks swapped; the timer (0x10C88)",
+            .provenance = "the status bar's image (0x110AC: window rows 1 to 3, 40 cells a row): the players' names (0x4CD0, the rows at 0x4D30 and 0x4D38) and their special attack's mark, their scores (0x4D60), their lives and special attacks (0x4E14) and the marks before them (0x4CD0), their health bars (0x4E6C), player 2's 26 cells on but its lives and special attacks swapped; the timer (0x10C88); player 2's invitation to join (0x11682: its rows at ROM 0x1168A's, its place ROM 0x1169C's, its blinks ROM 0x1163C's)",
             .players = players,
             .time = cellAt(0x2E),
+            .join = .{
+                .text = try joinText(arena, rom),
+                .at = at: {
+                    if (u16be(rom, join_place) != 0x45F9 or u16be(rom, join_place + 2) != 0xFF or u16be(rom, join_place + 4) -% image_ram >= 0x100)
+                        return error.BadData;
+                    break :at cellAt(u16be(rom, join_place + 4) - image_ram);
+                },
+                .blink = @intCast(try immediate(rom, join_blink, &.{ 0x11, 0xFC }, 2)),
+            },
         },
     };
 }

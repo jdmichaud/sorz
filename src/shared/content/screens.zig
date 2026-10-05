@@ -126,11 +126,16 @@ pub const BarPlayer = struct {
     specials_mark: Cell,
 };
 
-/// The status bar, on the fixed layer: each player's parts, and the timer's.
+/// Player 2's invitation to join while it does not play: its text (`fonts/main`) from its cell,
+/// shown and hidden in turn every `blink` logic ticks of play.
+pub const Join = struct { text: []const u8, at: Cell, blink: u8 };
+
+/// The status bar, on the fixed layer: each player's parts, the timer's, the invitation to join.
 pub const StatusBar = struct {
     provenance: []const u8 = "",
     players: [2]BarPlayer,
     time: Cell,
+    join: Join,
 };
 
 /// Play's screen (`screens/round`): its fixed texts and its status bar.
@@ -255,6 +260,11 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
         .{ .key = "status_bar", .value = try withProvenance(arena, r.status_bar.provenance, &.{
             .{ .key = "players", .value = .{ .array = players } },
             .{ .key = "time", .value = try cellValue(arena, r.status_bar.time) },
+            .{ .key = "join", .value = try obj(arena, &.{
+                .{ .key = "text", .value = .{ .str = r.status_bar.join.text } },
+                .{ .key = "at", .value = try cellValue(arena, r.status_bar.join.at) },
+                .{ .key = "blink", .value = json.Value.num(r.status_bar.join.blink) },
+            }) },
         }) },
     });
 }
@@ -385,7 +395,9 @@ fn readRound(n: json.Node, a: ?*const art.Art) Error!Round {
     const t = try n.get("time_over");
     try t.only(&.{ "provenance", "frame", "ticks", "health", "seconds" });
     const s = try n.get("status_bar");
-    try s.only(&.{ "provenance", "players", "time" });
+    try s.only(&.{ "provenance", "players", "time", "join" });
+    const j = try s.get("join");
+    try j.only(&.{ "text", "at", "blink" });
     const ps = try s.get("players");
     if (try ps.len() != 2) return ps.fail("not the two players'");
     var players: [2]BarPlayer = undefined;
@@ -432,8 +444,10 @@ fn readRound(n: json.Node, a: ?*const art.Art) Error!Round {
             .provenance = if (try s.opt("provenance")) |x| try x.string() else "",
             .players = players,
             .time = try readCell(try s.get("time")),
+            .join = .{ .text = try (try j.get("text")).string(), .at = try readCell(try j.get("at")), .blink = try (try j.get("blink")).int(u8) },
         },
     };
+    if (r.status_bar.join.blink == 0) return (try j.get("blink")).fail("not 1 or more");
     if (r.banner.fade == 0 or r.banner.fade > 64) return (try b.get("fade")).fail("not 1 to 64 colours");
     if (r.banner.in_ticks == 0 or r.banner.out_ticks == 0 or r.banner.wait == 0 or r.banner.after == 0) return b.fail("a part of no ticks");
     if (r.time_over.ticks == 0) return (try t.get("ticks")).fail("not 1 or more");
@@ -571,6 +585,7 @@ test "the screens' records write and read back the same" {
             .status_bar = .{
                 .players = @splat(.{ .name = "1UP-", .name_at = .{ .x = 1, .y = 1 }, .score = .{ .x = 5, .y = 1 }, .health = .{ .x = 1, .y = 2 }, .lives = .{ .x = 12, .y = 1 }, .lives_mark = .{ .x = 11, .y = 2 }, .icon = .{ .x = 14, .y = 1 }, .specials = .{ .x = 17, .y = 1 }, .specials_mark = .{ .x = 16, .y = 2 } }),
                 .time = .{ .x = 19, .y = 1 },
+                .join = .{ .text = "PRESS 2UP START", .at = .{ .x = 24, .y = 1 }, .blink = 8 },
             },
         },
     };
