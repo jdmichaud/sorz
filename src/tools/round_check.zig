@@ -50,10 +50,8 @@ pub const scenarios = [_]Scenario{
     .{ .name = "continue", .what = "the continue's YES: a new game's lives, the next life" },
     .{ .name = "gameover", .what = "the continue's NO: the game over's count, the fade out, the high scores" },
     .{ .name = "pause", .what = "two pauses: the pause's sounds, its ticks on the game's clock, play after it" },
-    // TODO(PLAN item 14): the joining player's kind, Adam in sor-remaster, is player 1's (Axel)
-    // in sorz until the content has Adam: the kinds are left out, and the scenario ends before
-    // Adam's own moves (his idle) would part the two.
-    .{ .name = "join", .what = "player 2's PRESS 2UP START mid-round, the timer down: its drop-in, the timer again", .ignore_fields = &.{"kind"} },
+    .{ .name = "join", .what = "player 2's PRESS 2UP START mid-round, the timer down: its drop-in as Adam, the timer again" },
+    .{ .name = "blaze", .what = "Blaze chosen at the select: her walk to the first Galsia, her blows, her jump kick" },
 };
 
 /// The front end's objects (sor-remaster's) and the hit sparks (PLAN item 12): their events

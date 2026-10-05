@@ -367,12 +367,11 @@ fn atSelect(f: *Flow, r: *Room) !void {
     try f.until(r, guest, playing, 100, "round 1 on the guest");
     try same(f, r, host, guest, "the same round");
     const w = &roundOf(host).?.play.world;
-    try f.check(w.players[0].entity != null and host.game.state.setup.players == .two, "two players in the round");
+    try f.check(w.players[0].entity != null and w.players[1].entity != null and host.game.state.setup.players == .two, "two players in the round");
     try f.check(song(host) != null and song(host) == song(guest), "the guest's sound plays the round's music");
     try sameFor(f, r, host, guest, 600);
-    // Player 1's START in play (player 2 sits out until the content has Adam): its settings, in
-    // place of the pause; both games hold, the guest says why; Escape (save and leave), and both
-    // go on.
+    // Player 1's START in play: its settings, in place of the pause; both games hold, the guest
+    // says why; Escape (save and leave), and both go on.
     try r.press(host, .enter);
     try r.step(12);
     try f.check(host.game.settingsOpen() and !guest.game.settingsOpen() and roundOf(host).?.phase == .play, "player 1's START opens its settings, the round not paused");

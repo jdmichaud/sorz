@@ -642,7 +642,7 @@ pub const Round = struct {
         const w = &self.play.world;
         if (self.join_as) |c| {
             self.join_as = null;
-            if (w.players[1].entity == null) if (self.joinOf(a, c, turn.setup.characters[0])) |x| return x;
+            if (w.players[1].entity == null) if (self.joinOf(a, c)) |x| return x;
         }
         if (!self.join.due(w.players[1].entity == null, self.waiting(0), j.blink)) return null;
         const first = turn.setup.characters[0];
@@ -650,7 +650,7 @@ pub const Round = struct {
             self.join.turn();
             return null;
         }
-        const x = self.joinOf(a, j.next[@backingInt(first.?)], first.?) orelse {
+        const x = self.joinOf(a, j.next[@backingInt(first.?)]) orelse {
             self.join.turn();
             return null;
         };
@@ -658,14 +658,10 @@ pub const Round = struct {
         return x;
     }
 
-    /// The join of player 2 as `character` (player 1 playing `first`): null when the content has
-    /// neither.
-    fn joinOf(self: *Round, a: *const Assets, character: setup_mod.Character, first: ?setup_mod.Character) ?world.tick.Join {
-        // TODO(PLAN item 14): Adam and Blaze. Until the content has them, a player who joins as
-        // one of them joins as player 1's character, a stand-in that round-check's join scenario
-        // allows for (its kind left aside).
-        const kind = a.kinds.find(@tagName(character)) orelse (if (first) |f| a.kinds.find(@tagName(f)) else null) orelse {
-            std.log.warn("the content defines no {s} yet: player 2 cannot join", .{@tagName(character)});
+    /// The join of player 2 as `character`: null when the content lacks it.
+    fn joinOf(self: *Round, a: *const Assets, character: setup_mod.Character) ?world.tick.Join {
+        const kind = a.kinds.find(@tagName(character)) orelse {
+            std.log.warn("the content defines no {s}: player 2 cannot join", .{@tagName(character)});
             return null;
         };
         self.joining = character;

@@ -1,0 +1,21 @@
+# round 1 with Blaze: from power-on, 1 PLAYER and the select's cursor to Blaze; she walks right
+# to the first Galsia, strikes it (B four times), jumps and kicks, and walks on.
+start blaze
+until state 1 ready
++right
+until near galsia 75 8
+-right
+attack
+wait 8
+attack
+wait 8
+attack
+wait 8
+attack
+wait 30
+jump
+wait 8
+attack
+wait 40
+right 60
+wait 10
