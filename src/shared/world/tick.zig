@@ -131,11 +131,14 @@ pub const Tick = struct {
     }
 
     /// The damage `e`'s blow does at this tick: its move's, while the frame it shows has the
-    /// blow under way; 0 otherwise.
+    /// blow under way (one whose frames the animation runs: the frame its boxes are of, which it
+    /// showed at the last tick, as the original's hits read the frame drawn last); 0 otherwise.
     pub fn power(t: *const Tick, e: *const Entity) i16 {
         const m = e.move orelse return 0;
-        const f = t.frameOf(e) orelse return 0;
-        if (!f.blow) return 0;
+        if (behaviours.drivesAnimation(&e.mind)) {
+            const f = t.frameOf(e) orelse return 0;
+            if (!f.blow) return 0;
+        } else if (!e.boxes.blow) return 0;
         if (e.power != 0) return e.power;
         return std.math.cast(i16, t.kindOf(e).definition.moves[m].damage) orelse std.math.maxInt(i16);
     }
@@ -940,7 +943,7 @@ pub fn Actor(comptime M: type) type {
         pub fn showBoxes(a: Self) void {
             const an = a.currentAnimation() orelse return;
             const f = an.frames[a.entity.animation.frame];
-            a.entity.boxes = .{ .body = f.body, .attack = f.attack, .mirrored = a.entity.facingLeft() != f.flip };
+            a.entity.boxes = .{ .body = f.body, .attack = f.attack, .mirrored = a.entity.facingLeft() != f.flip, .blow = f.blow };
         }
 
         fn currentAnimation(a: Self) ?*const content_entity.Animation {

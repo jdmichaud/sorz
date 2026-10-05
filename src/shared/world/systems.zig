@@ -1017,7 +1017,7 @@ fn animation(t: *Tick) void {
             continue;
         }
         t.out.shown[i] = .{ .frame = k.frames[index][e.animation.frame], .mirrored = mirrored };
-        e.boxes = .{ .body = step.body, .attack = step.attack, .mirrored = mirrored };
+        e.boxes = .{ .body = step.body, .attack = step.attack, .mirrored = mirrored, .blow = step.blow };
         if (e.animation.left == step.ticks) t.out.new_frames[i] = true;
         if (e.animation.left == step.ticks and !(e.animation.done and !an.loop)) {
             if (step.sound) |sound| t.sound(sound, t.world.handleAt(i));
