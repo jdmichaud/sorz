@@ -873,7 +873,8 @@ fn vaultEnds(a: Actor) void {
     change(a, .land);
 }
 
-/// In a vault, the player goes around the one held, at each new frame of its hold (`place`).
+/// In a vault or a throw, the player goes around the one held, at each new frame of its hold
+/// (`place`): the held one's whole pixels and the place's, its own fractions kept.
 fn goAround(a: Actor) void {
     const h = a.entity.holding orelse return;
     const f = a.currentFrame() orelse return;
@@ -881,8 +882,10 @@ fn goAround(a: Actor) void {
     if (a.mind.placed_frame == a.frame()) return;
     a.mind.placed_frame = a.frame();
     const held = a.other(h) orelse return;
-    a.entity.position.x = held.position.x.add(Fixed.pixels(p.x).times(a.entity.facing.sign()));
-    a.entity.position.height = held.position.height.add(.pixels(p.height));
+    const at = held.position;
+    const e = a.entity;
+    e.position.x = .parts(@intCast(at.x.whole() + @as(i32, p.x) * e.facing.sign()), e.position.x.frac());
+    e.position.height = .parts(@intCast(at.height.whole() + p.height), e.position.height.frac());
 }
 
 /// The one held, where the frame of the hold puts it (`held`): its whole pixels the holder's and

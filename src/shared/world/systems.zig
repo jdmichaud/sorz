@@ -157,14 +157,10 @@ fn betweenPlayers(t: *Tick) void {
 /// sets itself up); the blows that meet it land (`blowsOn`); a player asking to grab it holds it,
 /// before its own blows land on the players (the original looks at a player's reach before its
 /// blow); and it decides. What each draws from the random generator is thus drawn in the
-/// original's order. An entity that appears during the turns in a later
-/// place has its turn in the same tick, as in the original. Through the turns, the players' boxes
-/// stay where the players stood when they began (`Boxes.at`); their asks to grab end with them.
+/// original's order. An entity that appears during the turns in a later place has its turn in
+/// the same tick, as in the original. Through the turns, the players' boxes stay where the
+/// players' own turn left them (`Boxes.at`, `playersMove`); their asks to grab end with them.
 fn turns(t: *Tick) void {
-    for (t.world.players) |p| {
-        const h = p.entity orelse continue;
-        if (t.world.get(h)) |e| e.boxes.at = e.position;
-    }
     for (0..capacity) |i| {
         const h = t.world.handleAt(i) orelse continue;
         if (t.world.playerOf(h) != null) continue;
@@ -189,13 +185,16 @@ fn turns(t: *Tick) void {
 pub const ground_depths: struct { near: i32, far: i32 } = .{ .far = 0, .near = 240 };
 
 /// The entities the players play move, in their turn; one that moved into a solid thing is
-/// kept out of it (`Tick.keptOut`).
+/// kept out of it (`Tick.keptOut`). Their boxes stay where their turn left them through the
+/// others' turns (`Boxes.at`), before the camera keeps them in its view: the original's players
+/// set their boxes in the world at the end of their own turn.
 fn playersMove(t: *Tick) void {
     for (t.world.players) |p| {
         const h = p.entity orelse continue;
         move(t, h);
         const e = t.world.get(h) orelse continue;
         if (e.holder == null) _ = t.keptOut(h);
+        e.boxes.at = e.position;
     }
 }
 

@@ -1020,7 +1020,11 @@ pub fn Of(comptime M: type) type {
                 a.animate(.down);
                 a.pause(true);
                 a.setFrame(2);
-                a.entity.velocity.x = if (a.entity.facingLeft()) n.flipped_x else n.flipped_x.neg();
+                // Its speed across: its whole pixels set, its fraction kept (the original writes
+                // the word alone); up, all of it.
+                const v = a.entity.velocity;
+                const across: i32 = if (a.entity.facingLeft()) n.flipped_x.whole() else -n.flipped_x.whole();
+                a.entity.velocity.x = .parts(@intCast(across), v.x.frac());
                 a.entity.velocity.height = n.flipped_up;
                 a.entity.flags.airborne = true;
                 b.down = .flying;
