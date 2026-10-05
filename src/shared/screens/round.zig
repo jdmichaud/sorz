@@ -116,7 +116,7 @@ pub const Bar = struct {
     players: [2]PlayerBar = .{ .none, .none },
     time: u8 = 0,
     join: bool = false,
-    /// The bosses' bars, from the tick after a boss's first in its section.
+    /// The bosses' bars, from the second tick after a boss's first in its section.
     bosses: ?BossesBar = null,
 };
 
@@ -205,6 +205,10 @@ pub const Round = struct {
     start_pressed: ?u1 = null,
     /// The logic tick ran at this display tick (the traces observe the world then).
     logic_ran: bool = false,
+    /// The bosses' bars as the last logic tick left them, and as the one before did (which the
+    /// status bar shows: the original draws them a logic tick after the sprites).
+    bosses_last: ?BossesBar = null,
+    bosses_before: ?BossesBar = null,
     /// The display tick was the first of a logic tick's two (no picture ends there).
     split: bool = false,
     /// What the next picture's frame carries (screens/transfers.zig): each player's art for its
@@ -433,6 +437,10 @@ pub const Round = struct {
         const shaken: i32 = if (cam.shake & 1 != 0) if (cam.follows) |rules| rules.shake_by else 0 else 0;
         self.shown_camera = .{ cam.x.whole(), cam.y.whole(), cam.y.whole() - shaken };
         self.shown_ripple = cam.ripple;
+        if (self.logic_ran) {
+            self.bosses_before = self.bosses_last;
+            self.bosses_last = self.bossesBar(a);
+        }
         self.shown_bar = self.bar(a);
         self.shown_game_over = self.gameOver() != null;
         self.shown_animation = self.animation_shown;
@@ -1196,18 +1204,23 @@ pub const Round = struct {
                 else => .none,
             };
         }
-        // The bosses' bars: their entry, set at a boss's first tick in its section, shows them
-        // from the next tick, each its boss's health (none once the boss is gone).
-        if (w.boss_bar) |entry| {
-            const bs = &a.screen.status_bar.bosses;
-            var b: BossesBar = .{ .second = entry < bs.second.len and bs.second[entry], .pixels = .{ 0, 0 } };
-            for (w.bosses, &b.pixels) |h, *px| {
-                const e = w.getConst(h orelse continue) orelse continue;
-                px.* = @intCast(@min(@as(u32, @intCast(@max(e.health, 0))) * bs.points, std.math.maxInt(u16)));
-            }
-            out.bosses = b;
-        }
+        // The bosses' bars, a logic tick behind the sprites.
+        out.bosses = self.bosses_before;
         return out;
+    }
+
+    /// The bosses' bars as the world is: their entry, set at a boss's first tick in its section,
+    /// each its boss's health (none once the boss is gone).
+    fn bossesBar(self: *const Round, a: *const Assets) ?BossesBar {
+        const w = &self.play.world;
+        const entry = w.boss_bar orelse return null;
+        const bs = &a.screen.status_bar.bosses;
+        var b: BossesBar = .{ .second = entry < bs.second.len and bs.second[entry], .pixels = .{ 0, 0 } };
+        for (w.bosses, &b.pixels) |h, *px| {
+            const e = w.getConst(h orelse continue) orelse continue;
+            px.* = @intCast(@min(@as(u32, @intCast(@max(e.health, 0))) * bs.points, std.math.maxInt(u16)));
+        }
+        return b;
     }
 
     pub fn draw(self: *const Round, prev: ?*const Round, v: *view.View, a: *const Assets) !void {
