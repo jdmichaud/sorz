@@ -51,8 +51,9 @@ const usage =
     \\  --pair           two games in one process over the in-memory network, the host's keys
     \\                   from --key and the guest's from --guest-key, and a third game alone
     \\                   with their merged pads; prints the three and whether they are the same;
-    \\                   --corrupt flips a bit of the guest's tick count before that tick (a
-    \\                   negative control: both games stop and name the field)
+    \\                   --corrupt flips a bit of the guest's state before that tick (in a
+    \\                   round its random generator's, else the tick count's: a negative
+    \\                   control, both games stop and name the first field that differs)
     \\  --server         server mode, as sorz-server: serve the page and the game's files of
     \\                   DIR|ROM, and relay network play between two browsers, with no game
     \\  --scenario FILE  run a scenario (sor-remaster's format): from power-on, the whole game

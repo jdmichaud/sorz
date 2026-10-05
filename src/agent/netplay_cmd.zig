@@ -8,7 +8,8 @@
 //! - `pair`: `sorz-agent [DIR] --pair`, two games in one process over the in-memory network, the
 //!   host's keys from `--key` and the guest's from `--guest-key`, then a third game alone with the
 //!   merged pads: the three states must be the same. `--corrupt TICK` flips a bit of the guest's
-//!   state before that tick: both games must stop at the next check and name the field.
+//!   state before that tick (the random generator's in a round, else the tick count): both games
+//!   must stop at the next check and name the first field that differs.
 //!
 //! In a session a key is pressed by tick: `--key F:NAME:H` holds the key from the update that
 //! samples the pad of tick F + D (D the input delay) and releases it H ticks later. The keys are
@@ -199,7 +200,11 @@ pub fn pair(
         for (&sides, 0..) |*s, i| {
             const t: u64 = if (s.game.started) s.game.netplay.?.tick() else 0;
             if (i == 1 and corrupt != null and corrupted == null and t == corrupt.? and s.game.net_epoch != 0) {
-                s.game.state.tick ^= 64;
+                // In a round, a bit of its world's random generator, deep in the state; else of
+                // the tick count.
+                if (s.game.state.scenes.base == .round) {
+                    s.game.state.random.state ^= 1;
+                } else s.game.state.tick ^= 64;
                 corrupted = t;
             }
             if (t < frames) {

@@ -8,7 +8,7 @@
 #     defaults where they are damaged; the player is told (the agent host's `notice`), the damaged
 #     record is kept as settings-damaged.json and written back repaired, so the next start has
 #     nothing to tell.
-# The settings screen that changes them is a scene still to come (PLAN item 19).
+# The settings screen that changes them is checked by the unit tests and variants-check.
 set -eu
 bin="${1:?usage: check_settings.sh AGENT}"
 dir="$(mktemp -d)"
