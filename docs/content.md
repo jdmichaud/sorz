@@ -275,7 +275,14 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   part, and each player's places (`players`: the first cell `cleared` of each row, the
   `question`, the `answer`, the cursor's `yes` and `no`, and `out`, where a player out of the game
   has `game_over` blink); `frame`, the game over's text over the picture while the last player
-  counts the game over down.
+  counts the game over down. `clear`, the round's clear: the `header` ("ROUND n CLEAR", a map of
+  the `round_end` set) on plane A from `header_at`, the round's number a big digit at its cell
+  `number`; the bonuses' `lines` (the clear's, the time's, the level's: each a `text` from its
+  cell `at` of plane A), a bonus's six digits from the line's `digits`th letter, in the `normal`
+  palette or the `counted` one while it is counted; the `wait` between the steps; the bonuses
+  (`clear_bonus` for the round and each special attack left, `time_bonus` a second left,
+  `level_bonus` a LEVEL), counted `count` points a tick; the `colours` faded in over the status
+  bar's.
   The parts' pictures are the `play` set's: `play/status_bar`
   under them, `play/time_digits` (the big digits, a column of two cells each), `play/health_1`
   and `_2` and `play/enemy_bar_1` and `_2` (a bar's ten full cells, its partial cell, ten empty:

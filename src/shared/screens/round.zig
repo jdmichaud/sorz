@@ -479,6 +479,7 @@ pub const Round = struct {
             .lives = wp.lives,
             .specials = wp.specials,
             .continues = wp.continues,
+            .health = if (wp.entity) |h| if (w.getConst(h)) |e| @intCast(std.math.clamp(e.health, 0, 80)) else 0 else 0,
         };
     }
 
@@ -603,7 +604,7 @@ pub const Round = struct {
 
 /// The status bar's parts that changed since `was` (all of them when null). A player's part
 /// that changes its kind (playing, asking, out) is cleared, then drawn whole.
-fn drawBar(v: *view.View, a: *const Round.Assets, now: Bar, was: ?Bar) !void {
+pub fn drawBar(v: *view.View, a: anytype, now: Bar, was: ?Bar) !void {
     const board = v.board(.window);
     for (now.players, 0..) |p, k| {
         const before: ?PlayerBar = if (was) |w| w.players[k] else null;
@@ -625,7 +626,7 @@ fn drawBar(v: *view.View, a: *const Round.Assets, now: Bar, was: ?Bar) !void {
 }
 
 /// Player `k`'s part of the bar, the parts that changed since `was` (all when null).
-fn drawPlayer(v: *view.View, a: *const Round.Assets, k: usize, now: PlayerBar, was: ?PlayerBar) !void {
+pub fn drawPlayer(v: *view.View, a: anytype, k: usize, now: PlayerBar, was: ?PlayerBar) !void {
     const board = v.board(.window);
     const p = &a.screen.status_bar.players[k];
     const cq = &a.screen.continue_question;
@@ -680,7 +681,7 @@ fn drawPlayer(v: *view.View, a: *const Round.Assets, k: usize, now: PlayerBar, w
 }
 
 /// A score's six digits at `at`.
-fn drawScore(v: *view.View, a: *const Round.Assets, at: records.Cell, score: u32) !void {
+pub fn drawScore(v: *view.View, a: anytype, at: records.Cell, score: u32) !void {
     var buf: [8]u8 = undefined;
     const text = std.fmt.bufPrint(&buf, "{d:0>6}", .{@min(score, 999_999)}) catch unreachable;
     try v.write(.window, a.text, at.x, at.y, text, .{});
@@ -688,13 +689,13 @@ fn drawScore(v: *view.View, a: *const Round.Assets, at: records.Cell, score: u32
 
 /// Player `k`'s cells of the bar, back to the bar's own: on each row, the original's count
 /// from its first.
-fn clearPlayer(v: *view.View, a: *const Round.Assets, k: usize) !void {
+pub fn clearPlayer(v: *view.View, a: anytype, k: usize) !void {
     const cq = &a.screen.continue_question;
     for (cq.players[k].cleared) |at| restore(v.board(.window), a, at, cq.cleared);
 }
 
 /// `n` cells from `at`, back to the status bar's own.
-fn restore(board: *render.Board, a: *const Round.Assets, at: records.Cell, n: u8) void {
+pub fn restore(board: *render.Board, a: anytype, at: records.Cell, n: u8) void {
     const place = a.status_bar.place orelse art.Place{ .layer = .window, .x = 0, .y = 0 };
     for (0..n) |i| {
         const x = @as(i32, at.x) + @as(i32, @intCast(i));
@@ -707,21 +708,21 @@ fn restore(board: *render.Board, a: *const Round.Assets, at: records.Cell, n: u8
 }
 
 /// A text's words from `at`: a space leaves the bar's cell.
-fn writeWords(v: *view.View, a: *const Round.Assets, at: records.Cell, text: []const u8) !void {
+pub fn writeWords(v: *view.View, a: anytype, at: records.Cell, text: []const u8) !void {
     var x: i32 = at.x;
     var words = std.mem.splitScalar(u8, text, ' ');
     while (words.next()) |word| : (x += @intCast(word.len + 1)) try v.write(.window, a.text, x, at.y, word, .{});
 }
 
 /// Player 2's invitation to join, or the status bar's cells under it.
-fn drawJoin(v: *view.View, a: *const Round.Assets, shown: bool) !void {
+pub fn drawJoin(v: *view.View, a: anytype, shown: bool) !void {
     const j = &a.screen.status_bar.join;
     if (shown) return writeWords(v, a, j.at, j.text);
     restore(v.board(.window), a, j.at, @intCast(j.text.len));
 }
 
 /// A digit two cells high (`play/time_digits`) at `at`; 10 or more shows 9.
-fn bigDigit(board: *render.Board, a: *const Round.Assets, at: records.Cell, n: u8) !void {
+pub fn bigDigit(board: *render.Board, a: anytype, at: records.Cell, n: u8) !void {
     const d = @min(n, 9);
     try putCell(board, a.time_digits, d, 0, at.x, at.y);
     try putCell(board, a.time_digits, d, 1, at.x, at.y + 1);
@@ -729,7 +730,7 @@ fn bigDigit(board: *render.Board, a: *const Round.Assets, at: records.Cell, n: u
 
 /// A health bar of `health` points: its full cells, its partial cell of the eighths left
 /// (`play/fills`), its empty cells, from the bar map's cells (`(10 - full)` on).
-fn healthBar(board: *render.Board, a: *const Round.Assets, map: *const art.TileMap, at: records.Cell, health: u8) !void {
+pub fn healthBar(board: *render.Board, a: anytype, map: *const art.TileMap, at: records.Cell, health: u8) !void {
     const full = health / 8;
     const rest = health % 8;
     for (0..10) |i| {
@@ -742,7 +743,7 @@ fn healthBar(board: *render.Board, a: *const Round.Assets, map: *const art.TileM
 }
 
 /// Cell (mx, my) of `map` at (x, y) of the board.
-fn putCell(board: *render.Board, map: *const art.TileMap, mx: usize, my: usize, x: u8, y: u8) !void {
+pub fn putCell(board: *render.Board, map: *const art.TileMap, mx: usize, my: usize, x: u8, y: u8) !void {
     const c = map.cell(mx, my);
     if (c.isEmpty()) return;
     try board.put(x, y, &map.tiles[c.tile], .{ .palette = c.palette, .flip_x = c.flip_x, .flip_y = c.flip_y, .priority = c.priority });

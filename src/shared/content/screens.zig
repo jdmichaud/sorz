@@ -170,6 +170,36 @@ pub const Continue = struct {
     frame: []const u8,
 };
 
+/// A line of the round's clear: its text (`fonts/main`) from its cell of plane A.
+pub const ClearLine = struct { text: []const u8, at: Cell };
+
+/// The round's clear and its bonuses.
+pub const Clear = struct {
+    provenance: []const u8 = "",
+    /// "ROUND n CLEAR": its map on plane A from its cell, the round's number a big digit at the
+    /// map's cell `number`.
+    header: []const u8,
+    header_at: Cell,
+    number: Cell,
+    /// The bonuses' lines (the clear's, the time's, the level's); a bonus's six digits from the
+    /// line's `digits`th letter on.
+    lines: [3]ClearLine,
+    digits: u8,
+    /// The palettes of a line, and of the line counted.
+    normal: u2,
+    counted: u2,
+    /// The waits between the steps, in ticks.
+    wait: u8,
+    /// The bonuses: the clear's, for the round and each special attack left; the time's, a second
+    /// left; the level's, a LEVEL of the options; the points a tick of the count gives.
+    clear_bonus: u32,
+    time_bonus: u32,
+    level_bonus: u32,
+    count: u32,
+    /// The colours faded in, over the status bar's.
+    colours: []const u8,
+};
+
 /// Play's screen (`screens/round`): its fixed texts and its status bar.
 pub const Round = struct {
     banner: Banner,
@@ -177,6 +207,7 @@ pub const Round = struct {
     time_over: TimeOver,
     status_bar: StatusBar,
     continue_question: Continue,
+    clear: Clear,
 };
 
 /// The screens' records a tree has.
@@ -253,6 +284,60 @@ fn withProvenance(arena: std.mem.Allocator, provenance: []const u8, rest: []cons
     return .{ .object = fields.items };
 }
 
+fn clearValue(arena: std.mem.Allocator, c: *const Clear) !json.Value {
+    const lines = try arena.alloc(json.Value, 3);
+    for (lines, c.lines) |*o, l| o.* = try obj(arena, &.{
+        .{ .key = "text", .value = .{ .str = l.text } },
+        .{ .key = "at", .value = try cellValue(arena, l.at) },
+    });
+    return withProvenance(arena, c.provenance, &.{
+        .{ .key = "header", .value = .{ .str = c.header } },
+        .{ .key = "header_at", .value = try cellValue(arena, c.header_at) },
+        .{ .key = "number", .value = try cellValue(arena, c.number) },
+        .{ .key = "lines", .value = .{ .array = lines } },
+        .{ .key = "digits", .value = json.Value.num(c.digits) },
+        .{ .key = "normal", .value = json.Value.num(c.normal) },
+        .{ .key = "counted", .value = json.Value.num(c.counted) },
+        .{ .key = "wait", .value = json.Value.num(c.wait) },
+        .{ .key = "clear_bonus", .value = json.Value.num(c.clear_bonus) },
+        .{ .key = "time_bonus", .value = json.Value.num(c.time_bonus) },
+        .{ .key = "level_bonus", .value = json.Value.num(c.level_bonus) },
+        .{ .key = "count", .value = json.Value.num(c.count) },
+        .{ .key = "colours", .value = .{ .str = c.colours } },
+    });
+}
+
+fn readClear(n: json.Node) Error!Clear {
+    try n.only(&.{ "provenance", "header", "header_at", "number", "lines", "digits", "normal", "counted", "wait", "clear_bonus", "time_bonus", "level_bonus", "count", "colours" });
+    const ls = try n.get("lines");
+    if (try ls.len() != 3) return ls.fail("not the three bonuses' lines");
+    var lines: [3]ClearLine = undefined;
+    for (&lines, 0..) |*l, k| {
+        const e = try ls.at(k);
+        try e.only(&.{ "text", "at" });
+        l.* = .{ .text = try (try e.get("text")).string(), .at = try readPlaneCell(try e.get("at")) };
+    }
+    const c: Clear = .{
+        .provenance = if (try n.opt("provenance")) |x| try x.string() else "",
+        .header = try (try n.get("header")).string(),
+        .header_at = try readPlaneCell(try n.get("header_at")),
+        .number = try readPlaneCell(try n.get("number")),
+        .lines = lines,
+        .digits = try (try n.get("digits")).int(u8),
+        .normal = try (try n.get("normal")).int(u2),
+        .counted = try (try n.get("counted")).int(u2),
+        .wait = try (try n.get("wait")).int(u8),
+        .clear_bonus = try (try n.get("clear_bonus")).int(u32),
+        .time_bonus = try (try n.get("time_bonus")).int(u32),
+        .level_bonus = try (try n.get("level_bonus")).int(u32),
+        .count = try (try n.get("count")).int(u32),
+        .colours = try (try n.get("colours")).string(),
+    };
+    for (c.lines, 0..) |l, k| if (l.text.len < @as(usize, c.digits) + 6) return (try ls.at(k)).fail("shorter than its digits");
+    if (c.wait == 0 or c.count == 0) return n.fail("a wait or a count of none");
+    return c;
+}
+
 fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
     const b = &r.banner;
     const players = try arena.alloc(json.Value, 2);
@@ -309,6 +394,7 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
                 .{ .key = "blink", .value = json.Value.num(r.status_bar.join.blink) },
             }) },
         }) },
+        .{ .key = "clear", .value = try clearValue(arena, &r.clear) },
         .{ .key = "continue", .value = try withProvenance(arena, cq.provenance, &.{
             .{ .key = "question", .value = .{ .str = cq.question } },
             .{ .key = "count", .value = json.Value.num(cq.count) },
@@ -426,9 +512,16 @@ fn readSteps(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error![
 }
 
 fn readCell(n: json.Node) Error!Cell {
+    const c = try readPlaneCell(n);
+    if (c.x >= 40 or c.y >= 4) return n.fail("not a cell of the status bar (40 x 4)");
+    return c;
+}
+
+/// A cell of a plane (64 x 32).
+fn readPlaneCell(n: json.Node) Error!Cell {
     if (try n.len() != 2) return n.fail("not [x, y]");
     const c: Cell = .{ .x = try (try n.at(0)).int(u8), .y = try (try n.at(1)).int(u8) };
-    if (c.x >= 40 or c.y >= 4) return n.fail("not a cell of the status bar (40 x 4)");
+    if (c.x >= 64 or c.y >= 32) return n.fail("not a cell of a plane (64 x 32)");
     return c;
 }
 
@@ -440,7 +533,7 @@ fn readFrame(n: json.Node, a: ?*const art.Art) Error![]const u8 {
 }
 
 fn readRound(n: json.Node, a: ?*const art.Art) Error!Round {
-    try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue" });
+    try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue", "clear" });
     const b = try n.get("banner");
     try b.only(&.{ "provenance", "left", "number", "right", "fade", "in", "in_ticks", "wait", "out", "out_ticks", "after" });
     const p = try n.get("pause");
@@ -491,6 +584,7 @@ fn readRound(n: json.Node, a: ?*const art.Art) Error!Round {
         };
     }
     const r: Round = .{
+        .clear = try readClear(try n.get("clear")),
         .continue_question = .{
             .provenance = if (try c.opt("provenance")) |x| try x.string() else "",
             .question = try (try c.get("question")).string(),
@@ -682,6 +776,25 @@ test "the screens' records write and read back the same" {
                     .{ .cleared = .{ .{ .x = 21, .y = 1 }, .{ .x = 21, .y = 2 } }, .question = .{ .x = 29, .y = 1 }, .answer = .{ .x = 29, .y = 2 }, .yes = .{ .x = 27, .y = 1 }, .no = .{ .x = 27, .y = 2 }, .out = .{ .x = 27, .y = 2 } },
                 },
                 .frame = "play/game_over",
+            },
+            .clear = .{
+                .header = "round_end/header",
+                .header_at = .{ .x = 7, .y = 7 },
+                .number = .{ .x = 13, .y = 0 },
+                .lines = .{
+                    .{ .text = "CLEAR BONUS  000000 PTS", .at = .{ .x = 8, .y = 12 } },
+                    .{ .text = " TIME BONUS  000000 PTS", .at = .{ .x = 8, .y = 14 } },
+                    .{ .text = "LEVEL BONUS  000000 PTS", .at = .{ .x = 8, .y = 16 } },
+                },
+                .digits = 13,
+                .normal = 1,
+                .counted = 2,
+                .wait = 32,
+                .clear_bonus = 10000,
+                .time_bonus = 100,
+                .level_bonus = 10000,
+                .count = 100,
+                .colours = "round_end/colours",
             },
         },
     };

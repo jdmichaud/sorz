@@ -305,6 +305,83 @@ fn joinText(arena: std.mem.Allocator, rom: []const u8) ![]const u8 {
     return rowsText(arena, rom, try leaPc(rom, join_rows), 3);
 }
 
+// --- The round's clear ---------------------------------------------------------------------------
+
+/// The round's end (0x181EA, its steps 0x1833C): "round N clear" (0x183F0: the 13 letters at
+/// 0x18468 of the big font's table at 0x6EE4E, two cells by two each, palette 1 with priority, a
+/// word rectangle for plane A at $C38E; the round's number, a big digit, over the seventh
+/// letter's right half), the bonuses' lines (0x18564, 28 bytes each: a write command, 23 letters
+/// of the font from $7C0, $FF), their palettes (0x18532 and 0x1852C: move.w #N,d7), the waits
+/// (0x18476: move.b #N,($FB4E)), the bonuses (0x18296).
+const clear_letters = 0x18468;
+const big_font = 0x6EE4E;
+const clear_lines = [3]u32{ 0x18564, 0x18580, 0x1859C };
+
+/// The plane A cell of video memory address `address` (a 64 cells wide plane at $C000).
+fn planeCell(address: u32) !records.Cell {
+    if (address < 0xC000 or address >= 0xE000) return error.BadData;
+    const k = (address - 0xC000) / 2;
+    return .{ .x = @intCast(k % 64), .y = @intCast(k / 64) };
+}
+
+fn roundClear(b: *Builder, play_v: *const Vram) !records.Clear {
+    const rom = b.rom;
+    const arena = b.arena;
+    // The round's end's video memory: play's, the big letters (pattern-load entry $20) over it.
+    const v = try arena.create(Vram);
+    v.* = play_v.*;
+    const e: u32 = screens.pattern_loads + (0x20 - 1) * 8;
+    const d = try b.lib.get(u32be(rom, e + 4));
+    try v.writeTiles(vram_mod.commandAddress(u32be(rom, e)), d.block.source, 0, d.bytes);
+    // The header: 13 letters, 26 cells by 2; a letter 0 is four empty cells.
+    var words: [52]u16 = @splat(0);
+    for (0..13) |i| {
+        const letter: u32 = rom[clear_letters + i];
+        if (letter == 0) continue;
+        const f = big_font + letter * 4;
+        words[2 * i] = 0x2100 | @as(u16, rom[f]);
+        words[2 * i + 1] = 0x2100 | @as(u16, rom[f + 2]);
+        words[26 + 2 * i] = 0x2100 | @as(u16, rom[f + 1]);
+        words[26 + 2 * i + 1] = 0x2100 | @as(u16, rom[f + 3]);
+    }
+    // The header's place (move.l #N,(a4)+ at 0x18400: a write to $C38E).
+    if (u16be(rom, 0x18400) != 0x28FC) return error.BadData;
+    const header_at = try planeCell(vram_mod.commandAddress(u32be(rom, 0x18402)));
+    const screen: screens.Screen = .{ .name = "round_end", .what = "", .steps = &.{} };
+    var run: screens.Run = .{ .b = b, .v = v, .screen = &screen };
+    try run.mapAt("round_end/header", &words, 26, 2, null, "ROUND n CLEAR (0x183F0): the letters at ROM 0x18468, each two cells by two from the big font's table at ROM 0x6EE4E; the round's number goes over the seventh letter's right half", .code);
+    try run.finish();
+    var lines: [3]records.ClearLine = undefined;
+    for (&lines, clear_lines) |*l, at| {
+        var text: std.ArrayList(u8) = .empty;
+        var k: u32 = at + 4;
+        while (rom[k] != 0xFF) : (k += 1) {
+            const g = for (fonts.main_glyphs) |g| {
+                if (g.tile == rom[k]) break g;
+            } else return error.BadData;
+            try text.appendSlice(arena, g.text);
+        }
+        l.* = .{ .text = text.items, .at = try planeCell(vram_mod.commandAddress(u32be(rom, at))) };
+    }
+    if (u16be(rom, 0x18532) != 0x3E3C or u16be(rom, 0x1852C) != 0x3E3C) return error.BadData;
+    return .{
+        .provenance = "the round's end (0x181EA, its steps 0x1833C): the header (0x183F0: ROM 0x18468's letters, the round's number over the seventh's right half), the bonuses' lines (ROM 0x18564, 0x18580, 0x1859C: a write command and 23 letters; a bonus's six digits from the 14th, 0x1850C), their palettes (ROM 0x18534, 0x1852E: move.w #N,d7), the waits (ROM 0x18478: move.b #N,($FB4E)); the bonuses (0x18296): the clear's 10000 and 10000 a special attack left, the time's 100 a second left, the level's 10000 a LEVEL, counted 100 points a tick (0x187D0)",
+        .header = "round_end/header",
+        .header_at = header_at,
+        .number = .{ .x = 13, .y = 0 },
+        .lines = lines,
+        .digits = 13,
+        .normal = @intCast(u16be(rom, 0x18534) >> 13),
+        .counted = @intCast(u16be(rom, 0x1852E) >> 13),
+        .wait = @intCast(try immediate(rom, 0x18476, &.{ 0x11, 0xFC }, 2)),
+        .clear_bonus = 10000,
+        .time_bonus = 100,
+        .level_bonus = 10000,
+        .count = 100,
+        .colours = "round_end/colours",
+    };
+}
+
 /// The continue's question (0x5432): player 1's and player 2's places, from the instructions that
 /// write them (0x54B0, 0x5590: the question and its answers; 0x5456, 0x5526: the game over's
 /// text; 0x5620, 0x563E: the cells cleared, 0x103FE clearing a row's 18), and the answers' places
@@ -425,6 +502,7 @@ pub fn extract(b: *Builder) !records.Round {
     }
     try run.mapAt("play/police_icon", &.{ 0x6DC, 0x6DD, 0x6DE, 0x6DF }, 2, 2, null, "the special attack's mark beside a player's name (0x4CD0: $06DC06DD over $06DE06DF)", .code);
     try run.finish();
+    const clear = try roundClear(b, v);
 
     // The banner's steps (0x11A50): the fade of the first colours (moveq #N,d6: the colours less
     // one), the slide in (addq.w #4; until the last entry's place is below cmpi.w #N), the wait
@@ -500,5 +578,6 @@ pub fn extract(b: *Builder) !records.Round {
             },
         },
         .continue_question = try continueQuestion(arena, rom),
+        .clear = clear,
     };
 }

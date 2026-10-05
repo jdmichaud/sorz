@@ -33,6 +33,8 @@ pub const Gamer = struct {
     specials: u8 = 0,
     /// The continues left.
     continues: u8 = 0,
+    /// The health its fighter had as the round ended (the round's clear shows it).
+    health: u8 = 0,
 };
 
 /// The game under way, kept from one round to the next (the original keeps it in its memory):
