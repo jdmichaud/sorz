@@ -257,9 +257,11 @@ pub const Tick = struct {
     /// the air again or its landing keeps it, that speed is gone.
     pub fn land(t: *Tick, h: Handle, how: Landing) void {
         const e = t.world.get(h) orelse return;
+        // On the floor under it (the ground over a hole).
+        const floor = t.floorUnder(e.position) orelse t.world.ground;
         e.position.height = switch (how) {
-            .whole => t.world.ground,
-            .fraction_kept => .parts(@intCast(t.world.ground.whole()), e.position.height.frac()),
+            .whole => floor,
+            .fraction_kept => .parts(@intCast(floor.whole()), e.position.height.frac()),
         };
         e.flags.airborne = false;
         e.flags.landed = true;

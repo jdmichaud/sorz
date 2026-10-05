@@ -160,6 +160,10 @@ fn commonNumbers(d: *Def, kind: u8) Error!void {
     try d.number("bounce_slowing", try immediate(rom, 0x9A92, &.{ 0x20, 0x3C }, 4), "ROM 0x09A92: move.l #N,d0");
     try d.number("fall_most", try immediate(rom, 0x974E, &.{ 0x0C, 0xA8 }, 4), "ROM 0x0974E: cmpi.l #N,(36,a0)");
     try d.number("hole_deep", try immediate(rom, 0x976E, &.{ 0x0C, 0x46 }, 2), "ROM 0x0976E: cmpi.w #N,d6 (a hole's floor this far down or more: drawn in front, 0x9774)");
+    // Its knock-down's animation (0x97A6: its number, bit 1 cleared, `cmpi.w #4`) lands only
+    // from less than `cmpi.w #N,d0` below the floor's top (0x97B4: its height less the floor's).
+    if (u16be(rom, 0x97AE) != 0x0C41 or u16be(rom, 0x97B0) != 4 or u16be(rom, 0x97B4) != 0x9046) return error.BadData;
+    try d.number("land_within", try immediate(rom, 0x97B6, &.{ 0x0C, 0x40 }, 2), "ROM 0x097B6: cmpi.w #N,d0 (its knock-down's height below the floor's top, 0x979C; from it, it flies on)");
     try d.number("fall_out", try immediate(rom, 0x977A, &.{ 0x0C, 0x68 }, 2), "ROM 0x0977A: cmpi.w #N,(24,a0) (fallen this far, out of the fight, 0x9782)");
     try d.number("floor_ahead_x", try moveq(rom, 0x9E90, 1), "ROM 0x09E90: moveq #N,d1 (the walk's look ahead for a floor, 0x9E68; none there: it walks off, 0x9EBE)");
     try d.number("floor_ahead_depth", try moveq(rom, 0x9E92, 2), "ROM 0x09E92: moveq #N,d2");

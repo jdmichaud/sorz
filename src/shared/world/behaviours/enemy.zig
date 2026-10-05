@@ -253,6 +253,9 @@ pub const Common = struct {
     /// or farther, it is drawn in front of the planes; fallen this far, it is out of the fight.
     hole_deep: ?i16 = null,
     fall_out: ?i16 = null,
+    /// Knocked down, it lands on a floor only from less than this far below its top (a wall's
+    /// top, round 7's railing): deeper, it flies on.
+    land_within: ?i16 = null,
     /// Walking, it looks this far ahead of its way for a floor (across, in depth): none there,
     /// it walks off; a wall there (a cell with no height) stops it.
     floor_ahead_x: ?i16 = null,
@@ -1298,10 +1301,15 @@ pub fn Of(comptime M: type) type {
         /// In the air after its move: down on the floor or below it, it lands, rising or not,
         /// the fraction of its height kept; its gravity is applied before its move. Over a hole
         /// it falls on: a deep one draws it in front of the planes, and fallen far enough it is
-        /// knocked out, crying out.
+        /// knocked out, crying out. Knocked down, it lands only from less than `land_within` below
+        /// the floor's top.
         pub fn fall(a: A) void {
-            if (a.atGround()) return a.land(.fraction_kept);
             const n = a.numbers();
+            if (a.atGround()) {
+                const floor = a.tick.floorUnder(a.entity.position).?.whole();
+                if (n.land_within) |within| if (a.mind.state == .knocked_down and a.entity.position.height.whole() - floor >= within) return;
+                return a.land(.fraction_kept);
+            }
             if (a.tick.floorUnder(a.entity.position) != null) return;
             const p = a.tick.plan orelse return;
             const f = p.round.floor orelse return;
@@ -1337,7 +1345,10 @@ pub fn Of(comptime M: type) type {
                 a.pause(true);
                 a.setFrame(2);
                 var v = a.entity.velocity.height;
-                if (v.whole() >= n.bounce_most.whole()) {
+                // The original compares its speed's whole pixels unsigned: one landing as it
+                // rises (onto a wall's top) bounces as hard as the most.
+                const whole: u16 = @bitCast(@as(i16, @intCast(v.whole())));
+                if (whole >= n.bounce_most.whole()) {
                     v = .parts(@intCast(n.bounce_most.whole()), v.frac());
                     a.sound(.thud);
                 }
