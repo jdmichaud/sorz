@@ -1,5 +1,6 @@
-//! `sorz-agent DIR --scenario FILE [--situation TRACE] [--trace-events OUT] [--probe OUT]`: a
-//! scenario's run, its trace and its probe written, and one JSON line: the scenario's end
+//! `sorz-agent DIR --scenario FILE [--situation TRACE] [--trace-events OUT] [--probe OUT]
+//! [--shot FRAME:PATH]...`: a scenario's run, its trace, its probe and the pictures asked for
+//! written, and one JSON line: the scenario's end
 //! (`done`, or what stopped it, with the `line` of a condition that did not come in time), the
 //! display tick of the script's tick 0 and the kinds the situation had that the content does not
 //! define. Without a situation, the whole game runs from power-on (game_run.zig: its probe needs
@@ -11,7 +12,12 @@ const sorz = @import("sorz");
 const scenario = @import("scenario.zig");
 const game_run = @import("game_run.zig");
 const agent_wav = @import("wav.zig");
+const png = @import("png.zig");
 const input = sorz.input;
+
+/// A picture to write: the one presented after display tick `frame` (from 0, the first), as the
+/// host's `--shot` counts them.
+pub const Shot = struct { frame: u64, path: []const u8 };
 
 pub const Options = struct {
     scenario: []const u8,
@@ -31,6 +37,8 @@ pub const Options = struct {
     reload: bool = false,
     /// A run from power-on: where the form's size at each display tick is written.
     form_sizes: ?[]const u8 = null,
+    /// A run from power-on: the pictures to write (the scenes drawn at every display tick).
+    shots: []const Shot = &.{},
 };
 
 /// Runs the scenario on the content of `assets`; returns whether it ran to its end.
@@ -213,11 +221,29 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
         null;
     defer if (forms) |*f| f.deinit();
     if (forms) |*f| r.forms = f;
+    // The pictures, as the game draws them: at every display tick, from the world's output.
+    var view: ?sorz.view.View = if (options.shots.len != 0) try .init(gpa) else null;
+    defer if (view) |*v| v.deinit();
+    var drawn: sorz.scene.Scene = .{ .load = .{} };
+    var shots_written: usize = 0;
     // The start's display ticks, then two a logic tick of the script's.
     var ticks: u64 = 0;
     while (ticks < 2 * options.ticks + 10_000) : (ticks += 1) {
         if (!try r.step()) break;
+        if (view) |*v| {
+            v.world_out = r.out;
+            try sorz.scene.draw(&r.state.scenes, &drawn, v, r.assets);
+            _ = try v.compose();
+            for (options.shots) |s| if (s.frame == ticks) {
+                const f = v.frame();
+                const bytes = try png.encode(gpa, f.width, f.height, f.pixels[0 .. f.stride * f.height]);
+                defer gpa.free(bytes);
+                try cwd.writeFile(io, .{ .sub_path = s.path, .data = bytes });
+                shots_written += 1;
+            };
+        }
     } else r.failure = "the run reached its most ticks";
+    if (shots_written != options.shots.len) r.failure = r.failure orelse "a picture asked for was past the run's end";
     if (options.trace != null) {
         try tw.end();
         try trace_writer.interface.flush();

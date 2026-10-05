@@ -25,7 +25,7 @@ const usage =
     \\       sorz-agent DIR|ROM --server [ADDRESS:]PORT
     \\       sorz-agent DIR|ROM --scenario FILE [--situation TRACE [--situation-probe PROBE]
     \\                  [--game-tick N]] [--trace-events OUT] [--probe OUT] [--reload]
-    \\                  [--form-sizes OUT]
+    \\                  [--form-sizes OUT] [--wav PATH] [--shot FRAME:PATH]...
     \\       sorz-agent trace-compare FIRST SECOND [--ticks M] [--pos PIXELS] [--tol FIELD=N]...
     \\                  [--ignore EV[,EV...]] [--scene NAME] [--after TICK] [--ignore-kind K[,K...]]
     \\                  [--ignore-field F[,F...]] [--sounds SOUNDS_JSON] [--renumber] [--close-ids]
@@ -71,7 +71,8 @@ const usage =
     \\                   the run with status 1; from power-on, --reload reads the state back
     \\                   from its canonical form at each display tick and goes on from the state
     \\                   read (a round trip: it must be the state written), --form-sizes writes
-    \\                   the form's size at each (tick, scene, entities, bytes)
+    \\                   the form's size at each (tick, scene, entities, bytes), --wav its sound,
+    \\                   --shot its pictures (FRAME the display tick from 0, as without one)
     \\  trace-compare    compare two semantic traces (sor-remaster's docs/traces.md): the first
     \\                   difference and the counts per kind of event; events match within
     \\                   --ticks M ticks, positions and speeds within --pos PIXELS, a field
@@ -213,13 +214,17 @@ pub fn main(init: std.process.Init) !void {
 
     // A scenario's run, on the game's data.
     if (scenario) |*sc| {
-        if (options.assets == null or pair or presses.items.len != 0 or shots.items.len != 0 or (wav_path != null and situation != null)) return fail(io);
+        if (options.assets == null or pair or presses.items.len != 0 or (situation != null and (wav_path != null or shots.items.len != 0))) return fail(io);
         sc.situation = situation;
         sc.situation_probe = situation_probe;
         sc.game_tick = game_tick;
         sc.trace = trace_events;
         sc.probe = probe;
         sc.wav = wav_path;
+        const scenario_shots = try gpa.alloc(agent.scenario_cmd.Shot, shots.items.len);
+        defer gpa.free(scenario_shots);
+        for (scenario_shots, shots.items) |*o, s| o.* = .{ .frame = s.frame, .path = s.path };
+        sc.shots = scenario_shots;
         sc.reload = reload;
         sc.form_sizes = form_sizes;
         var obuf: [512]u8 = undefined;
