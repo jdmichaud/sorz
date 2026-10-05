@@ -192,7 +192,9 @@ fn jumpIn(a: Actor) void {
         return;
     }
     a.entity.animation.pace = null;
-    a.endMove();
+    // Its rush's look stays as it sizes up, and its blow with it, which no longer knocks down
+    // (the original's size-up looks at the blows both ways, and writes no reaction).
+    a.entity.flags.plain_blows = true;
     Common.enter(a, .size_up);
 }
 
