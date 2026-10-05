@@ -580,11 +580,13 @@ pub const Round = struct {
         if (e.animation.left > 1) e.animation.left -= 1;
     }
 
-    /// START on the pad of a player in play (not waiting to continue): the player, player 1's
-    /// first.
+    /// START on the pad of a player in play (world/lives.zig's `inPlay`: a fighter, or out of
+    /// lives at the tick its last life ended, its wait not begun, whose START pauses then): the
+    /// player, player 1's first.
     fn startPressed(self: *const Round, turn: *const scene.Turn) ?u1 {
-        if (self.fighting(0) and turn.pressed.pad1.start) return 0;
-        if (self.fighting(1) and turn.pressed.pad2.start) return 1;
+        const w = &self.play.world;
+        if (world.lives.inPlay(w, 0) and turn.pressed.pad1.start) return 0;
+        if (world.lives.inPlay(w, 1) and turn.pressed.pad2.start) return 1;
         return null;
     }
 
