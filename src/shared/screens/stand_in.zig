@@ -1,6 +1,6 @@
-//! A stand-in for a scene the game does not have yet: a next round the content does not have
-//! (PLAN items 15 and on). It says so on a dark screen, in the game's font, naming the round, and
-//! stays.
+//! A stand-in for a scene the game does not have yet: a round the content does not have (PLAN
+//! items 15 and on), next after a clear or the first of a game (the options' hidden ROUND NO.).
+//! It says so on a dark screen, in the game's font, naming the round, and stays.
 const std = @import("std");
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
@@ -13,7 +13,7 @@ const Setup = setup_mod.Setup;
 pub const StandIn = struct {
     what: flow.Kind,
     ticks: u32 = 0,
-    /// The round the game would go on with, as the clear left it.
+    /// The round the game would go on with, as the clear left it, or would begin with.
     round: u8 = 0,
 
     pub const Assets = struct {
@@ -24,7 +24,8 @@ pub const StandIn = struct {
     pub const layout: view.Layout = .{ .a = .{ .width = 64, .height = 32 } };
 
     pub fn of(what: flow.Kind, setup: *const Setup) StandIn {
-        return .{ .what = what, .round = setup.progress.round };
+        const round = if (setup.progress.round != 0) setup.progress.round else setup.first_round + 1;
+        return .{ .what = what, .round = round };
     }
 
     pub fn tick(self: *StandIn, turn: *scene.Turn, _: *const Assets) ?flow.Exit {

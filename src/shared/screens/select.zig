@@ -11,7 +11,8 @@
 //! on its left, right to the one on its right, round the ends and past the other player's; A, B,
 //! C or START chooses the character, once. The presses before the first such tick are lost.
 //! When every player has chosen, the picture holds for 18 ticks, fades out, and the select ends
-//! with "stop": round 1 follows.
+//! with "stop": round 1 follows (the options' first round; one the content does not have, its
+//! stand-in).
 //!
 //! Network play (DESIGN.md 9): a second player may come to a select of one (`join`), its cursor
 //! on the first portrait free from Blaze's, and go (`leave`); a character another machine's
@@ -255,6 +256,8 @@ pub const Select = struct {
         swing: library.Sound,
         landing: library.Sound,
         stop: library.Sound,
+        /// The rounds the content has, the game's first among them or not.
+        rounds: library.Rounds,
         pub const names = .{
             .frame = "select/frame",
             .eye_open = "select/eye_open",
@@ -283,6 +286,7 @@ pub const Select = struct {
             .swing = "swing",
             .landing = "landing",
             .stop = "stop",
+            .rounds = "rounds",
         };
 
         fn dim(a: *const Assets, c: Character) *const art.Palette {
@@ -379,7 +383,7 @@ pub const Select = struct {
             .leaving => {
                 turn.play(a.stop);
                 turn.frame = .{ .colours = self.colours.copy, .first_line = true };
-                return .chosen;
+                return if (a.rounds.of(turn.setup.first_round + 1) != null) .chosen else .missing;
             },
         }
         turn.frame = .{ .colours = self.colours.copy, .tiles = self.copies(a), .first_line = true };
@@ -606,6 +610,7 @@ test "the select: lost presses before its first tick, a move, a choice, the wait
         .swing = 4,
         .landing = 5,
         .stop = 6,
+        .rounds = .{},
     };
     var setup: Setup = .{};
     var s: Select = .start(&setup);
@@ -652,6 +657,8 @@ test "the select: lost presses before its first tick, a move, a choice, the wait
         exit = s.tick(&turn, &a);
     }
     try testing.expectEqual(@as(usize, 18 + 64 + 1), ticks);
+    // No round 1 in this content: the stand-in follows.
+    try testing.expectEqual(flow.Exit.missing, exit.?);
     try testing.expectEqualSlices(library.Sound, &.{6}, turn.requests.slice());
 }
 
@@ -687,6 +694,7 @@ test "two players: a move skips the other player's portrait; Blaze's jumps keep 
         .swing = 4,
         .landing = 5,
         .stop = 6,
+        .rounds = .{},
     };
     var setup: Setup = .{ .players = .two };
     var s: Select = .start(&setup);
