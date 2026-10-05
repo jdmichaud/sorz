@@ -17,10 +17,9 @@
 //! (agent/scenario.zig), and writes its own. Then, per run:
 //!
 //! - the traces from that start (agent/trace_compare.zig), with what sorz does not have yet left
-//!   out: the hit sparks (`ignored_kinds`), the round's timer (PLAN item 13), and the speed up
-//!   and down (`vh`): after a knock-down's last landing the original's Galsia keeps its last
-//!   bounce's, which nothing reads, where sorz's landing clears it (the places it would move,
-//!   compared, are equal);
+//!   out: the round's timer (PLAN item 13), and the speed up and down (`vh`): after a
+//!   knock-down's last landing the original's Galsia keeps its last bounce's, which nothing
+//!   reads, where sorz's landing clears it (the places it would move, compared, are equal);
 //! - the probes, tick by tick: each fighter's boxes and power, the frame's index within its
 //!   animation and the ticks frames start (where sorz composes an animation of another's frames,
 //!   `composed`, its frames are taken as that other's);
@@ -131,8 +130,8 @@ pub const scenarios = [_]Scenario{
     .{ .dir = "two", .name = "two-special-second", .kind = .special, .move = "two players: player 2's special attack", .pad = 2 },
 };
 
-/// The hit sparks (PLAN item 12): their events are left out of the traces' comparison.
-const ignored_kinds = [_][]const u8{"hit_spark"};
+/// The kinds whose events are left out of the traces' comparison: none.
+const ignored_kinds = [_][]const u8{};
 const ignored_events = [_][]const u8{"timer"};
 const ignored_fields = [_][]const u8{"vh"};
 

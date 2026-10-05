@@ -83,9 +83,9 @@ pub const scenarios = [_]Scenario{
     .{ .name = "two", .what = "two players, Axel and Blaze, chosen at the select: their walk and a jump, the Galsias coming" },
 };
 
-/// The front end's objects (sor-remaster's) and the hit sparks (PLAN item 12): their events
-/// are left out; and sorz's own section events.
-const ignored_kinds = [_][]const u8{ "screen_object", "select_cursor", "select_portrait", "hit_spark" };
+/// The front end's objects (sor-remaster's): their events are left out; and sorz's own section
+/// events.
+const ignored_kinds = [_][]const u8{ "screen_object", "select_cursor", "select_portrait" };
 const ignored_events = [_][]const u8{"section"};
 
 const Context = struct {

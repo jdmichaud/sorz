@@ -73,8 +73,8 @@ const fighters = [_][]const u8{ "galsia", "galsia_stalker", "galsia_knife", "gal
 const thrown = [_][]const u8{ "knife", "boomerang", "pipe" };
 /// The states that are attacks: their place at the start and their blows are measured.
 const attacks = [_][]const u8{ "punch", "slide", "hold", "stab", "throw", "swing", "grab", "sneak", "jump_in", "jump_kick", "somersault", "dash", "lunge", "throw_knives", "charge", "slash", "burst", "hug", "close_in", "flip" };
-/// Left out of the traces, as the moves' comparison leaves them.
-const ignored_kinds = [_][]const u8{"hit_spark"};
+/// Left out of the traces, as the moves' comparison leaves them: none.
+const ignored_kinds = [_][]const u8{};
 const ignored_events = [_][]const u8{"timer"};
 const ignored_fields = [_][]const u8{"vh"};
 
