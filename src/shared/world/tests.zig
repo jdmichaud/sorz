@@ -642,14 +642,11 @@ test "the semantic trace: sor-remaster's vocabulary, line by line" {
         \\{"v":2,"t":0,"ev":"scene","scene":"round","round":1,"demo":false}
         \\{"v":2,"t":0,"ev":"phase","phase":"play"}
         \\{"v":2,"t":0,"ev":"pad","pad":1,"held":"B"}
-        \\{"v":2,"t":0,"ev":"pad","pad":2,"held":""}
         \\{"v":2,"t":0,"ev":"rng","draws":1,"values":[32743],"_draws":["sparring_wait"]}
         \\{"v":2,"t":0,"ev":"spawn","e":1,"kind":"hero","player":1,"x":6553600,"d":6553600,"h":0,"vx":0,"vd":0,"vh":0,"state":"attack","facing":"right","health":80,"_slot":0}
         \\{"v":2,"t":0,"ev":"spawn","e":3,"kind":"dummy","x":7864320,"d":6553600,"h":0,"vx":0,"vd":0,"vh":0,"state":"stand","facing":"left","health":24,"_slot":1}
         \\{"v":2,"t":0,"ev":"lives","player":1,"lives":0,"specials":0}
         \\{"v":2,"t":0,"ev":"lives","player":2,"lives":0,"specials":0}
-        \\{"v":2,"t":0,"ev":"score","player":1,"score":0}
-        \\{"v":2,"t":0,"ev":"score","player":2,"score":0}
         \\{"v":2,"t":0,"ev":"camera","x":0,"y":0}
         \\{"v":2,"t":0,"ev":"camera_stop","x":2147483647,"y_min":0,"y_max":2147483647}
         \\{"v":2,"t":0,"ev":"section","section":0}
@@ -660,7 +657,7 @@ test "the semantic trace: sor-remaster's vocabulary, line by line" {
         \\{"v":8,"t":3,"ev":"health","e":3,"health":14,"delta":-10}
         \\{"v":8,"t":3,"ev":"sound","sound":"ouch"}
         \\{"v":8,"t":3,"ev":"sound","sound":"smack"}
-        \\{"v":10,"t":4,"ev":"end","events":22}
+        \\{"v":10,"t":4,"ev":"end","events":19}
         \\
     , text.written());
 }

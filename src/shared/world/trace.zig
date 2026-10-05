@@ -178,7 +178,7 @@ pub const Writer = struct {
 
         for (world.players, 0..) |p, k| {
             const pad = if (self.held) |h| h[k] else p.last;
-            if (!self.first and pad == self.pads[k]) continue;
+            if (pad == self.pads[k]) continue;
             self.pads[k] = pad;
             var l = try self.line("pad");
             try l.int("pad", k + 1);
@@ -201,8 +201,10 @@ pub const Writer = struct {
                 try l.close();
             }
         }
+        // The scores as they change from none (sor-remaster's observer tells them from power-on,
+        // where they are none).
         for (world.players, 0..) |p, k| {
-            if (!self.first and p.score == self.scores[k]) continue;
+            if (p.score == self.scores[k]) continue;
             self.scores[k] = p.score;
             var l = try self.line("score");
             try l.int("player", k + 1);
