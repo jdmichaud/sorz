@@ -248,8 +248,11 @@ pub const Round = struct {
     /// The art play streams in (a section's, the boss's, an arriving enemy's, the special
     /// attack's): its list, and the display tick of it that comes next.
     art: world.script.ArtQueue = .{},
-    /// The players' scores as the status bar draws them (those the last logic tick began with).
+    /// The players' scores as the status bar draws them (those the last logic tick began with,
+    /// but a new life's from a continue: its own at once), and whether each was waiting to
+    /// continue as that tick began.
     drawn_scores: [2]u32 = .{ 0, 0 },
+    continuing: [2]bool = .{ false, false },
     /// The colours shown as the special attack was called, which it gives back.
     kept: render.palettes.Colours = render.palettes.black,
     /// The round ended (its last tick).
@@ -947,8 +950,9 @@ pub const Round = struct {
         const join = if (self.play.logicNext()) self.joinTick(turn, a) else null;
         // The players' turn draws their scores as the tick begins: points scored later in the
         // tick (an enemy's turn) show at the next.
-        if (self.play.logicNext()) for (&self.drawn_scores, self.play.world.players) |*d, pl| {
+        if (self.play.logicNext()) for (&self.drawn_scores, &self.continuing, self.play.world.players) |*d, *cont, pl| {
             d.* = pl.score;
+            cont.* = if (pl.entity) |h| if (self.play.world.getConst(h)) |e| e.mind == .player_waiting else false else false;
         };
         if (!self.play.roundTickJoined(a.kinds, turn.random.?, turn.pads, out, &p, join)) {
             self.split = true;
@@ -956,6 +960,13 @@ pub const Round = struct {
         }
         self.logic_ran = true;
         self.trace_t += 1;
+        // A player's continue: the original's new life draws the status bar's part anew, its
+        // score cleared, at once.
+        for (&self.drawn_scores, self.continuing, self.play.world.players) |*d, cont, pl| {
+            if (!cont) continue;
+            const e = self.play.world.getConst(pl.entity orelse continue) orelse continue;
+            if (e.mind == .player) d.* = pl.score;
+        }
         if (out.streamed) |of| self.art.start(of);
         self.loadColours(a, out.colour_loads.slice(), .shown);
         self.noteTransfers(a.kinds, out);
