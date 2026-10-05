@@ -157,6 +157,11 @@ pub const Run = struct {
     /// Sounds the trace writes with the next scene.
     deferred: [8]library.Sound = undefined,
     deferred_len: u8 = 0,
+    /// The other program's situation at the script's tick 0, which the round's world is taken
+    /// up from there (`takeUp`), and the allocator its take-up uses.
+    take_up: ?TakeUp = null,
+
+    pub const TakeUp = struct { gpa: std.mem.Allocator, situation: *const scenario.Situation };
 
     const Stage = enum { to_menu, menu, select_wait, select, to_play, pads, body, done };
 
@@ -230,6 +235,10 @@ pub const Run = struct {
         if (!starts) return self.current;
         if (self.body_v == null) {
             self.body_v = self.state.tick;
+            if (self.take_up) |tu| self.takeUp(tu) catch |e| {
+                std.log.err("the round's world is not taken up at display tick {d}: {s}", .{ self.state.tick, @errorName(e) });
+                return self.fail("the round's world was not taken up");
+            };
             if (self.round()) |r| self.body_clock = r.play.world.tick -% 1;
         }
         self.current = self.body.tick(self, holds) orelse {
@@ -238,6 +247,51 @@ pub const Run = struct {
             return null;
         };
         return self.current;
+    }
+
+    /// The round's world replaced by the other program's at the situation (the script's tick 0,
+    /// a logic tick's end in play in both): its entities, players, camera, script, timer and
+    /// random generator, as the situation's runner takes them up (scenario.zig); the game's
+    /// clock and the bosses' bar stay the round's own, the bar showing the bosses taken up. The
+    /// trace numbers the entities as the other program's did, and observes the world again at
+    /// the tick: the comparisons of such a run start after it.
+    fn takeUp(self: *Run, tu: TakeUp) !void {
+        const r = self.round() orelse return error.NotInARound;
+        if (r.phase != .play) return error.NotInPlay;
+        const round_script = (self.assets.round.rounds.of(r.number) orelse return error.NoRound).script;
+        var taken = try scenario.Run.init(tu.gpa, &self.content.kinds, self.script, tu.situation, .{ .round = round_script }, null, null);
+        defer taken.deinit();
+        if (!taken.scripted) return error.ScriptNotReplayed;
+        if (taken.skipped.items.len != 0) return error.KindsMissing;
+        const w = &r.play.world;
+        const was = w.*;
+        w.* = taken.play.world;
+        w.tick = was.tick;
+        w.score_most = was.score_most;
+        w.boss_bar = was.boss_bar;
+        w.bosses = .{ null, null };
+        // The bosses beaten (none left with health) stopped the timer with their last blow.
+        var beaten = false;
+        var standing = false;
+        for (&w.entities, 0..) |*e, i| {
+            if (!e.alive() or e.spawn.bar == null) continue;
+            w.bosses[@intFromBool(e.spawn.traits.twin)] = w.handleAt(i);
+            if (e.health > 0) standing = true else beaten = true;
+        }
+        if (beaten and !standing) w.timer.stopped = true;
+        if (scenario.generatorOf(tu.situation)) |g| self.state.random = g;
+        for (&r.drawn_scores, w.players) |*d, p| d.* = p.score;
+        const tw = self.trace orelse return;
+        tw.seen = @splat(.{});
+        for (taken.ids, taken.generations, 0..) |id, generation, i| if (id != 0) tw.assignId(i, generation, id);
+        tw.next_id = @max(tw.next_id, tu.situation.next_id);
+        try tw.observeAt(self.state.tick, r.trace_t, w, &self.content.kinds, &self.out);
+        self.noteIds(w);
+        // The probe tells every fighter's frame again, as taken up.
+        if (self.probe) |p| {
+            p.last = @splat(null);
+            try p.observe(self.state.tick, r.trace_t, w, &self.content.kinds, &self.ids);
+        }
     }
 
     fn fail(self: *Run, why: []const u8) ?input.Pads {

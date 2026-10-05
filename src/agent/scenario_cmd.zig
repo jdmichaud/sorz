@@ -34,6 +34,10 @@ pub const Options = struct {
     situation: ?[]const u8 = null,
     /// The other program's probe of the same run, for the entities' frames at the situation.
     situation_probe: ?[]const u8 = null,
+    /// The situation is taken up in a run of the whole game from power-on (a recorded play's,
+    /// `start pads`): the round's world becomes the situation's at the script's tick 0, and the
+    /// game goes on from there (game_run.zig `takeUp`).
+    take_up: bool = false,
     /// The other program's tick counter at the script's start (its `script_game_tick`).
     game_tick: ?u32 = null,
     trace: ?[]const u8 = null,
@@ -70,7 +74,11 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
         else => return e,
     };
     defer script.deinit(gpa);
-    const situation_path = options.situation orelse return runFromPowerOn(gpa, io, assets, options, &script, out);
+    const situation_path = options.situation orelse return runFromPowerOn(gpa, io, assets, options, &script, null, out);
+    if (options.take_up and script.start != .pads) {
+        std.log.err("a situation is taken up in a recorded play (`start pads`)", .{});
+        return error.BadOptions;
+    }
     const situation_text = try cwd.readFileAlloc(io, situation_path, arena, .limited(1 << 30));
     const at: ?u64 = switch (script.start) {
         .players => null,
@@ -87,6 +95,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
             return e;
         };
     }
+    if (options.take_up) return runFromPowerOn(gpa, io, assets, options, &script, &situation, out);
 
     var content_diag: sorz.content.Diagnostic = .{};
     const c = sorz.content.load(arena, assets, &content_diag) catch |e| {
@@ -166,7 +175,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
 }
 
 /// The scenario from power-on: the whole game, its start through the screens (game_run.zig).
-fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, options: Options, script: *const scenario.Script, out: *std.Io.Writer) !bool {
+fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, options: Options, script: *const scenario.Script, take_up: ?*const scenario.Situation, out: *std.Io.Writer) !bool {
     if (options.probe != null and options.trace == null) {
         std.log.err("a run from power-on writes its probe with its trace (--probe needs --trace-events)", .{});
         return error.BadOptions;
@@ -222,6 +231,7 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
     }
     var r: game_run.Run = .init(c, &assets_found, script, pads, if (options.trace != null) &tw else null);
     if (options.probe != null) r.probe = &probe;
+    if (take_up) |s| r.take_up = .{ .gpa = gpa, .situation = s };
     var sound: ?game_run.Sound = if (options.wav != null) try .init(gpa, &c.sounds) else null;
     defer if (sound) |*s| s.deinit();
     if (sound) |*s| r.sound = s;

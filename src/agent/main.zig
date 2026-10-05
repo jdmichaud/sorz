@@ -22,7 +22,7 @@ const usage =
     \\                  [--frames N] [--until-session N] [--key FRAME:NAME[:HOLD]]...
     \\       sorz-agent DIR|ROM --server [ADDRESS:]PORT
     \\       sorz-agent DIR|ROM --scenario FILE [--situation TRACE [--situation-probe PROBE]
-    \\                  [--game-tick N]] [--trace-events OUT] [--probe OUT] [--reload]
+    \\                  [--game-tick N | --take-up]] [--trace-events OUT] [--probe OUT] [--reload]
     \\                  [--form-sizes OUT] [--wav PATH] [--shot FRAME:PATH]...
     \\       sorz-agent trace-compare FIRST SECOND [--ticks M] [--pos PIXELS] [--tol FIELD=N]...
     \\                  [--ignore EV[,EV...]] [--scene NAME] [--after TICK] [--ignore-kind K[,K...]]
@@ -56,7 +56,10 @@ const usage =
     \\                   its script of pad events to its end; --situation-probe gives the other
     \\                   program's probe of the same run (the frames its entities show);
     \\                   --game-tick gives the round's clock (the other program's tick counter at
-    \\                   the script's start, its `script_game_tick`); --trace-events writes its
+    \\                   the script's start, its `script_game_tick`); --take-up runs the whole
+    \\                   game from power-on with the recorded play's pads, the round's world
+    \\                   taken up from TRACE's at the script's start (from there, the other
+    \\                   program's world goes on in sorz's game); --trace-events writes its
     \\                   semantic trace, --probe the fighters' frames, boxes and power (from
     \\                   power-on, with the trace); a condition that does not come in time ends
     \\                   the run with status 1; from power-on, --reload reads the state back
@@ -107,6 +110,7 @@ pub fn main(init: std.process.Init) !void {
     var situation: ?[]const u8 = null;
     var situation_probe: ?[]const u8 = null;
     var game_tick: ?u32 = null;
+    var take_up = false;
     var trace_events: ?[]const u8 = null;
     var probe: ?[]const u8 = null;
     var reload = false;
@@ -148,6 +152,8 @@ pub fn main(init: std.process.Init) !void {
             situation_probe = args.next() orelse return fail(io);
         } else if (std.mem.eql(u8, arg, "--game-tick")) {
             game_tick = std.fmt.parseInt(u32, args.next() orelse return fail(io), 10) catch return fail(io);
+        } else if (std.mem.eql(u8, arg, "--take-up")) {
+            take_up = true;
         } else if (std.mem.eql(u8, arg, "--trace-events")) {
             trace_events = args.next() orelse return fail(io);
         } else if (std.mem.eql(u8, arg, "--probe")) {
@@ -198,10 +204,15 @@ pub fn main(init: std.process.Init) !void {
 
     // A scenario's run, on the game's data.
     if (scenario) |*sc| {
-        if (options.assets == null or until_session != null or presses.items.len != 0 or (situation != null and (wav_path != null or shots.items.len != 0))) return fail(io);
+        if (options.assets == null or until_session != null or presses.items.len != 0) return fail(io);
+        // A situation's world alone has no sound and no pictures; one taken up in the whole
+        // game has, and no clock of its own.
+        if (take_up and (situation == null or game_tick != null)) return fail(io);
+        if (situation != null and !take_up and (wav_path != null or shots.items.len != 0)) return fail(io);
         sc.situation = situation;
         sc.situation_probe = situation_probe;
         sc.game_tick = game_tick;
+        sc.take_up = take_up;
         sc.trace = trace_events;
         sc.probe = probe;
         sc.wav = wav_path;
@@ -221,7 +232,7 @@ pub fn main(init: std.process.Init) !void {
         if (!done) std.process.exit(1);
         return;
     }
-    if (situation != null or situation_probe != null or game_tick != null or trace_events != null or probe != null or reload or form_sizes != null) return fail(io);
+    if (situation != null or situation_probe != null or game_tick != null or take_up or trace_events != null or probe != null or reload or form_sizes != null) return fail(io);
 
     // Network play over WebSockets (`--delay` goes with `--netplay`).
     const network = options.network() catch return fail(io);
