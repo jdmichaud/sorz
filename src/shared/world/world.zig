@@ -101,7 +101,11 @@ pub const Script = script.State;
 pub const Timer = script.Timer;
 
 pub const World = struct {
-    /// Logic ticks since the world began.
+    /// The game's clock, as the original's tick counter, which some of the enemies' choices
+    /// read: it counts every tick of the game's logic that ends, a logic tick in play (the
+    /// world's), a display tick while the world waits (the round's start, the pause, the time
+    /// over, the end: the round scene counts them), never a load's. The round's load clears it:
+    /// a round's world starts it at 0.
     tick: u32 = 0,
     entities: [capacity]Entity = @splat(.{}),
     players: [2]Player = @splat(.{}),

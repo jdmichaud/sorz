@@ -274,7 +274,8 @@ pub const Round = struct {
         self.shown_game_over = self.gameOver() != null;
         if (turn.world_out) |o| o.latch();
         self.logic_ran = false;
-        if (self.phase != .setup and self.phase != .play) self.trace_t += 1;
+        // A tick of the pause is counted as it goes on: the one it ends at is play's.
+        if (self.phase != .setup and self.phase != .play and self.phase != .paused) self.waited();
         const b = &a.screen.banner;
         switch (self.phase) {
             .setup => {
@@ -338,7 +339,7 @@ pub const Round = struct {
                 turn.play(a.pause);
                 self.play.schedule = .{ .rate = .play };
                 return self.playTick(turn, a, false);
-            },
+            } else self.waited(),
             .time_over => {
                 if (self.left == a.screen.time_over.ticks) turn.play(a.time_up);
                 self.left -|= 1;
@@ -399,6 +400,14 @@ pub const Round = struct {
         return null;
     }
 
+    /// A display tick ends while the world waits (the round's start, the pause, the time over, the
+    /// end): the game's clock counts it, as the original counts every tick of its logic that ends
+    /// (`World.tick`; in play the world counts its own logic ticks), and so does the trace's.
+    fn waited(self: *Round) void {
+        self.play.world.tick +%= 1;
+        self.trace_t += 1;
+    }
+
     /// A display tick of play: START is heard (`hear_start`: not at the tick a pause ends; a pause
     /// at the next logic tick's start), and at a logic tick's end the world's sounds go out, the
     /// colours cycle, and the time running out, the round won, the game over end play.
@@ -407,7 +416,7 @@ pub const Round = struct {
         if (self.play.schedule.into == 0 and self.start_pressed) {
             self.start_pressed = false;
             self.phase = .paused;
-            self.trace_t += 1;
+            self.waited();
             turn.play(a.pause);
             return null;
         }

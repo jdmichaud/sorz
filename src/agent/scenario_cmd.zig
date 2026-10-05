@@ -171,6 +171,8 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
     }
     try out.print("{{\"scenario\":\"{s}\"", .{r.failure orelse "done"});
     if (r.body.timed_out) |line| try out.print(",\"line\":{d}", .{line});
-    try out.print(",\"script_vblank\":{d},\"ticks\":{d}}}\n", .{ r.body_v orelse 0, ticks });
+    try out.print(",\"script_vblank\":{d}", .{r.body_v orelse 0});
+    if (r.body_clock) |clock| try out.print(",\"script_game_tick\":{d}", .{clock});
+    try out.print(",\"ticks\":{d}}}\n", .{ticks});
     return r.failure == null;
 }

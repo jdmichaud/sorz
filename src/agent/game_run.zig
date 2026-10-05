@@ -48,6 +48,9 @@ pub const Run = struct {
     current: input.Pads = .{},
     /// The display tick of the body's tick 0.
     body_v: ?u64 = null,
+    /// The game's clock as the script's tick 0 begins, as sor-remaster tells it: its value at
+    /// the display tick before (the world reads one more during the tick).
+    body_clock: ?u32 = null,
     failure: ?[]const u8 = null,
     /// What the trace saw last: the scene (its serial, its trace name), the round's tick.
     seen_serial: u32 = 0,
@@ -122,7 +125,10 @@ pub const Run = struct {
         // then its pads.
         const starts = if (self.round()) |r| r.phase != .play or r.play.schedule.into == 0 else true;
         if (!starts) return self.current;
-        if (self.body_v == null) self.body_v = self.state.tick;
+        if (self.body_v == null) {
+            self.body_v = self.state.tick;
+            if (self.round()) |r| self.body_clock = r.play.world.tick -% 1;
+        }
         self.current = self.body.tick(self, holds) orelse {
             if (self.body.timed_out != null) self.failure = "a condition did not come in time";
             self.stage = .done;

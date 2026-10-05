@@ -13,7 +13,8 @@
 //! extracted from the ROM (agent/game_run.zig), and writes its own. The comparison takes each
 //! trace's round scene, its entities numbered by their order of appearance (sor-remaster's front
 //! end makes objects that sorz's screens do not), without the effects sorz does not have yet (the
-//! hit sparks) and sorz's own section events. Prints a line per scenario, its events and the
+//! hit sparks) and sorz's own section events; and the game's clock as each script begins (which
+//! the enemies' choices read) must be the same. Prints a line per scenario, its events and the
 //! first difference; writes the comparisons into OUT_DIR/report.txt; exits with 1 when a
 //! scenario's traces differ or a run fails.
 const std = @import("std");
@@ -76,6 +77,14 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
         return false;
     }
 
+    // The game's clock as the script begins, which the enemies' choices read: the same.
+    const ref_clock = numberAfter(ran.stdout, "\"script_game_tick\":");
+    const z_clock = numberAfter(said.written(), "\"script_game_tick\":");
+    if (ref_clock == null or z_clock == null or ref_clock.? != z_clock.?) {
+        try w.print("{s}: the game's clock as the script begins differs: {?d} against {?d}\n", .{ sc.name, ref_clock, z_clock });
+        return false;
+    }
+
     const options: compare.Options = .{
         .from_scene = "round",
         .renumber = true,
@@ -98,6 +107,14 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     }
     try w.print("{s}: {d} differences in {d} events ({s})\n{s}\n", .{ sc.name, result.differences, events, sc.what, written.written() });
     return false;
+}
+
+/// The number after `key` in `text`.
+fn numberAfter(text: []const u8, key: []const u8) ?u64 {
+    const at = (std.mem.indexOf(u8, text, key) orelse return null) + key.len;
+    var end = at;
+    while (end < text.len and std.ascii.isDigit(text[end])) end += 1;
+    return std.fmt.parseInt(u64, text[at..end], 10) catch null;
 }
 
 pub fn main(init: std.process.Init) !void {
