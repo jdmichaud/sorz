@@ -16,6 +16,12 @@
 //! - The obstacle (type $1F, its handler 0x7CBC, sor-remaster's obj/obstacle.zig): it stands
 //!   solid until a player's blow or a thing thrown knocks it away; it leaves the item it holds
 //!   (0x7E54), flies off to the side the one that struck it faces, bouncing (0x7104), and goes.
+//!
+//! Round 6's:
+//!
+//! - The press (type $42, its handler 0x7A6C, sor-remaster's obj/press.zig): it hangs until a
+//!   player comes near, shakes, drops striking what is under it, bounces on the floor, and rises
+//!   back; its links (type $43, 0x7C70) are left behind as it drops, and go as it rises.
 const std = @import("std");
 const sorz = @import("sorz");
 const entity = sorz.content.entity;
@@ -266,6 +272,104 @@ fn flight(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
     };
 }
 
+/// The heights the press passes as it drops, each leaving a link (0x7BC4: words; the last past
+/// the floor, never passed).
+const link_heights = 0x7BC4;
+
+/// The press (type $42): its look (entry 0, its frame's attack box what the others meet as it
+/// drops), the two boxes it strikes with at its own turn (0x7B48: $F4, then $EA, written as its
+/// frame's attack box), its heights, speeds and waits, its bounce's sound, the shake's thud.
+fn press(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set: u32 = @bitCast(try immediate(rom, 0x7A9A, &.{ 0x43, 0xF9 }, 4));
+    var d = try defIn(arena, rom, "round6", "press", set);
+    const raw = try entities.readAnimation(arena, rom, set, 0);
+    if (raw.frames.len != 1 or raw.frames[0].mirrored or raw.frames[0].body != 0) return error.BadData;
+    // The drop writes its look's attack box back after its own two (0x7B5C: move.b #N,(2,a0)).
+    const own = try moveByte(rom, 0x7B5C, 2);
+    if (raw.frames[0].attack != own) return error.BadData;
+    const look = try d.arena.alloc(entity.Frame, 1);
+    look[0] = .{ .frame = try d.frameName(raw.frames[0].address), .ticks = @max(raw.timing, 1), .attack = try d.box(1, @intCast(own), @intCast(own), "hang", "attack") };
+    try d.animations.append(arena, .{ .name = "hang", .loop = true, .frames = look });
+    const front = try moveByte(rom, 0x7B48, 2);
+    const back = try moveByte(rom, 0x7B52, 2);
+    _ = try d.box(1, @intCast(front), @intCast(front), "drop", "front");
+    _ = try d.box(1, @intCast(back), @intCast(back), "drop", "back");
+
+    try d.number("height", try moveWord(rom, 0x7A8E, 24), "ROM 0x07A8E: move.w #N,(24,a0)");
+    try d.number("power", try moveByte(rom, 0x7A94, 52), "ROM 0x07A94: move.b #N,(52,a0)");
+    if (u16be(rom, 0xA9EC) != 0xB2FC or u16be(rom, 0xA9EE) != 0xC900 or rom[0xA9F2] & 0xF1 != 0x51 or rom[0xA9F3] != 0x68) return error.BadData;
+    try d.number("enemy_damage", @as(i32, rom[0xA9F2] >> 1) & 7, "ROM 0x0A9F2: subq.w #N,(50,a0) (a thing in the enemies' places hitting an enemy, 0x0A9EC: the press is one)");
+    try d.number("near_behind", try immediate(rom, 0x7AA8, &.{ 0x04, 0x40 }, 2), "ROM 0x07AA8: subi.w #N,d0 (from its place across, excluded)");
+    try d.number("near_span", try immediate(rom, 0x7AAE, &.{ 0x06, 0x41 }, 2), "ROM 0x07AAE: addi.w #N,d1 (included; unsigned, 0x7AB6)");
+    try d.number("shake", try moveByte(rom, 0x7AD6, 87), "ROM 0x07AD6: move.b #N,(87,a0)");
+    try d.number("drop_speed", (try moveWord(rom, 0x7B1A, 36)) << 16, "ROM 0x07B1A: move.w #N,(36,a0), whole pixels");
+    try d.number("drop_gravity", try immediate(rom, 0x7B62, &.{ 0x06, 0xA8 }, 4), "ROM 0x07B62: addi.l #N,(36,a0)");
+    const floor = try immediate(rom, 0x7BA2, &.{ 0x0C, 0x68 }, 2);
+    if (u16be(rom, 0x7BA6) != 24 or try immediate(rom, 0x7C06, &.{ 0x0C, 0x68 }, 2) != floor or u16be(rom, 0x7C0A) != 24) return error.BadData;
+    try d.number("floor", floor, "ROM 0x07BA2: cmpi.w #N,(24,a0) (and 0x7C06 as it bounces)");
+    if (u16be(rom, 0x7BB0) != 36 or u16be(rom, 0x7C42) != 36) return error.BadData;
+    try d.number("bounce_speed", try immediate(rom, 0x7BAA, &.{ 0x21, 0x7C }, 4), "ROM 0x07BAA: move.l #N,(36,a0)");
+    try d.number("bounce_gravity", try immediate(rom, 0x7BFA, &.{ 0x06, 0xA8 }, 4), "ROM 0x07BFA: addi.l #N,(36,a0)");
+    if (u16be(rom, 0x7C26) != 82) return error.BadData;
+    try d.number("bounces", try immediate(rom, 0x7C22, &.{ 0x0C, 0x28, 0x00 }, 1), "ROM 0x07C22: cmpi.b #N,(82,a0)");
+    const rest = try moveByte(rom, 0x7C2A, 80);
+    if (try moveByte(rom, 0x7C5A, 80) != rest) return error.BadData;
+    try d.number("rest", rest, "ROM 0x07C2A: move.b #N,(80,a0) (and 0x7C5A, risen)");
+    try d.number("rise_speed", try immediate(rom, 0x7C3C, &.{ 0x21, 0x7C }, 4), "ROM 0x07C3C: move.l #N,(36,a0)");
+    if (u16be(rom, 0x7B72) != 0x303B or u16be(rom, 0x7B74) != link_heights - 0x7B74) return error.BadData;
+    var heights: [5]i32 = undefined;
+    for (&heights, 0..) |*h, k| {
+        h.* = u16be(rom, link_heights + 2 * @as(u32, @intCast(k)));
+        if (k > 0 and h.* <= heights[k - 1]) return error.BadData;
+    }
+    if (heights[heights.len - 1] <= floor or heights[heights.len - 2] >= floor) return error.BadData;
+    try d.table("link_heights", &heights, "ROM 0x07BC4: words (the last past the floor)");
+    // Drawn this far left of the screen, it goes (0xAF46: the drawing's left edge, from its place
+    // across less the camera's plus 0xAF6E's offset).
+    try d.number("drawn_left", try immediate(rom, 0xAFA0, &.{ 0x30, 0x3C }, 2), "ROM 0x0AFA0: move.w #N,d0 (signed)");
+    try d.number("drawn_offset", try items.drawnOffset(rom), "ROM 0x0AF6E: addi.w #N,d2");
+    try d.sound("bounce", @bitCast(@as(i8, @intCast(try moveq(rom, 0x7C14, 7)))));
+    try d.sound("thud", @bitCast(@as(i8, @intCast(try moveq(rom, 0x4D58, 7)))));
+    return .{
+        .name = "press",
+        .provenance = try std.fmt.allocPrint(arena, "round 6's presses, type $42 (handler 0x7A6C): the animation set at ROM 0x{X:0>5}; its boxes front and back: ROM 0x07B48 and 0x07B52, move.b #N,(2,a0){s}", .{ set, d.number_notes.items }),
+        .family = .scenery,
+        .team = .neutral,
+        .behaviour = "press",
+        .numbers = d.numbers.items,
+        .tables = d.tables.items,
+        .sounds = d.sounds.items,
+        .boxes = d.boxes.items,
+        .animations = d.animations.items,
+    };
+}
+
+/// A link of the press's rod (type $43): its look (animation 2 of the press's set: its entry 1,
+/// 0x7C90: jsr 0xB1DA), how much higher than the press it starts, how near the press rising
+/// takes it away.
+fn pressLink(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set: u32 = @bitCast(try immediate(rom, 0x7C88, &.{ 0x43, 0xF9 }, 4));
+    if (set != @as(u32, @bitCast(try immediate(rom, 0x7A9A, &.{ 0x43, 0xF9 }, 4)))) return error.BadData;
+    // 0x7C90: jsr 0xB1DA (moveq #2,d0: the animation 2).
+    if (u16be(rom, 0x7C90) != 0x4EBA or 0x7C92 + @as(u32, @intCast(s16be(rom, 0x7C92))) != 0xB1DA or try moveq(rom, 0xB1DA, 0) != 2) return error.BadData;
+    var d = try defIn(arena, rom, "round6", "press", set);
+    try d.animations.append(arena, .{ .name = "link", .loop = true, .frames = try entryFrames(&d, "link", 1, null, true) });
+    if (u16be(rom, 0x7C80) != 24) return error.BadData;
+    try d.number("above", try immediate(rom, 0x7C7C, &.{ 0x04, 0x68 }, 2), "ROM 0x07C7C: subi.w #N,(24,a0)");
+    try d.number("reach", try immediate(rom, 0x7CAE, &.{ 0x06, 0x40 }, 2), "ROM 0x07CAE: addi.w #N,d0 (below it, the press rising takes it away)");
+    try d.number("drawn_left", try immediate(rom, 0xAFA0, &.{ 0x30, 0x3C }, 2), "ROM 0x0AFA0: move.w #N,d0 (signed)");
+    try d.number("drawn_offset", try items.drawnOffset(rom), "ROM 0x0AF6E: addi.w #N,d2");
+    return .{
+        .name = "press_link",
+        .provenance = try std.fmt.allocPrint(arena, "round 6's presses' links, type $43 (handler 0x7C70): the animation set at ROM 0x{X:0>5}{s}", .{ set, d.number_notes.items }),
+        .family = .scenery,
+        .team = .neutral,
+        .behaviour = "press_link",
+        .numbers = d.numbers.items,
+        .animations = d.animations.items,
+    };
+}
+
 /// The definitions this module writes, appended to `out`.
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
     try out.append(arena, try knockable(arena, rom));
@@ -274,4 +378,6 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity
     try out.append(arena, try corner(arena, rom));
     try out.append(arena, try flier(arena, rom));
     try out.append(arena, try flight(arena, rom));
+    try out.append(arena, try press(arena, rom));
+    try out.append(arena, try pressLink(arena, rom));
 }

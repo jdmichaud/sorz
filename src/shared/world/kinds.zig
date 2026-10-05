@@ -1,9 +1,9 @@
 //! The kinds of entity a world may hold (DESIGN.md W3): the content's definitions
 //! (content/entity.zig) bound to their art and to their behaviours. Binding checks that each
-//! definition gives what its behaviour reads (its animations, moves, numbers and sounds, by the
-//! names the behaviour declares), and turns those names into indices, so that a behaviour reaches
-//! its numbers and animations by a typed name and without a search; a definition that lacks one
-//! is refused, naming its file and the missing field.
+//! definition gives what its behaviour reads (its animations, moves, boxes, numbers and sounds, by
+//! the names the behaviour declares), and turns those names into indices, so that a behaviour
+//! reaches its numbers and animations by a typed name and without a search; a definition that
+//! lacks one is refused, naming its file and the missing field.
 const std = @import("std");
 const art = @import("../content/art.zig");
 const json = @import("../formats/json.zig");
@@ -22,10 +22,11 @@ pub const Kind = struct {
     /// Each animation's frames' art, by animation and frame.
     frames: []const []const *const art.Frame,
     /// The behaviour's names, in the order it declares them, as the definition's indices: its
-    /// animations, its moves, its numbers' values (null: an optional one the definition leaves
-    /// out) and its sounds' names.
+    /// animations, its moves, its boxes, its numbers' values (null: an optional one the
+    /// definition leaves out) and its sounds' names.
     animation_of: []const u8 = &.{},
     move_of: []const u8 = &.{},
+    box_of: []const u8 = &.{},
     numbers: []const ?i32 = &.{},
     sound_of: []const []const u8 = &.{},
     /// The behaviour's colours (`M.Colours`), their palettes found in the art.
@@ -130,6 +131,12 @@ fn bindNames(arena: std.mem.Allocator, comptime M: type, k: *Kind, a: *const art
         const out = try arena.alloc(u8, names.len);
         inline for (names, 0..) |n, i| out[i] = d.move(n) orelse return refuse(diag, file, "moves." ++ n, missing);
         k.move_of = out;
+    }
+    if (@hasDecl(M, "Box")) {
+        const names = comptime std.meta.fieldNames(M.Box);
+        const out = try arena.alloc(u8, names.len);
+        inline for (names, 0..) |n, i| out[i] = d.box(n) orelse return refuse(diag, file, "boxes." ++ n, missing);
+        k.box_of = out;
     }
     if (@hasDecl(M, "Numbers")) {
         const fields = comptime @typeInfo(M.Numbers).@"struct".field_names;

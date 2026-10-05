@@ -972,6 +972,12 @@ pub fn Actor(comptime M: type) type {
             a.entity.move = null;
         }
 
+        /// Its blow `blow` with its box `which`, outside its moves: it strikes the players as a
+        /// blow under way at its turn does (systems.zig).
+        pub fn strikePlayers(a: Self, which: M.Box, blow: Blow) void {
+            systems.strikePlayers(a.tick, a.handle, a.kind.box_of[@backingInt(which)], blow);
+        }
+
         /// Asks for the sound `which` of its definition.
         pub fn sound(a: Self, which: M.Sound) void {
             a.tick.sound(a.kind.sound_of[@backingInt(which)], a.handle);

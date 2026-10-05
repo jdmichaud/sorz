@@ -7,9 +7,10 @@
 //! - `Mind`, a struct with defaults: the entity's memory, its field `state` an enum of the named
 //!   states (the semantic traces' names), the first the state it starts in;
 //! - what it reads of its definition, by name, each optional: `Animation` and `Move` (enums of
-//!   the animations and moves it starts), `Numbers` (a struct of the numbers it reads: whole
-//!   numbers, or `Fixed` for speeds in 1/65536 pixel), `Sound` (an enum of the sounds it asks
-//!   for), `Colours` (an enum of the colours of the art it shows, the definition's `colours`).
+//!   the animations and moves it starts), `Box` (an enum of the boxes it strikes with outside
+//!   its moves), `Numbers` (a struct of the numbers it reads: whole numbers, or `Fixed` for
+//!   speeds in 1/65536 pixel), `Sound` (an enum of the sounds it asks for), `Colours` (an enum
+//!   of the colours of the art it shows, the definition's `colours`).
 //!   Binding the kinds refuses a definition that lacks one (kinds.zig);
 //! - its hooks, each optional, each taking its `Actor` first (tick.zig):
 //!   - `control(a, command)` for the entity a player plays, `think(a)` for the others, and
@@ -60,7 +61,8 @@
 //! for two players, the helper that watches a pair of them (`boss_r3_helper`); round 4's: the
 //! cones, posts and barriers a blow knocks away (`obstacle`, round 5's things on the deck too),
 //! its boss `boss_r4` and his shoulder (`boss_r4_shoulder`); round 5's: its bosses the twins
-//! (`boss_r5`); round 6's: the crates that shatter (`shatter`).
+//! (`boss_r5`); round 6's: the crates that shatter (`shatter`), the presses (`press`) and
+//! their rods' links (`press_link`).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -115,6 +117,8 @@ pub const boss_r4 = @import("behaviours/boss_r4.zig");
 pub const boss_r4_shoulder = @import("behaviours/boss_r4_shoulder.zig");
 pub const boss_r5 = @import("behaviours/boss_r5.zig");
 pub const shatter = @import("behaviours/shatter.zig");
+pub const press = @import("behaviours/press.zig");
+pub const press_link = @import("behaviours/press_link.zig");
 
 /// An entity's behaviour and its memory: one line a behaviour module.
 pub const Mind = union(enum) {
@@ -169,6 +173,8 @@ pub const Mind = union(enum) {
     boss_r4_shoulder: boss_r4_shoulder.Mind,
     boss_r5: boss_r5.Mind,
     shatter: shatter.Mind,
+    press: press.Mind,
+    press_link: press_link.Mind,
 };
 
 pub const Behaviour = std.meta.Tag(Mind);

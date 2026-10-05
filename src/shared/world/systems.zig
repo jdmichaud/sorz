@@ -436,28 +436,58 @@ fn blowsOn(t: *Tick, xh: Handle) void {
 /// 1 was struck at this tick already: the original's enemy finds one hit a tick, and ends its
 /// search at a player 1 hit before it.
 fn blowsOnPlayers(t: *Tick, xh: Handle) void {
+    onPlayers(t, xh, null);
+}
+
+/// `x`'s blow `b` with the box `box` of its kind, outside its moves (round 6's press strikes
+/// with two boxes at its turn): it strikes the players as a blow under way does at `x`'s turn
+/// (`blowsOnPlayers`), `x` thrown or not.
+pub fn strikePlayers(t: *Tick, xh: Handle, box: u8, b: tick_mod.Blow) void {
+    onPlayers(t, xh, .{ .box = box, .blow = b });
+}
+
+/// A blow dealt outside the moves: its box, by its index in the striker's definition.
+const Dealt = struct { box: u8, blow: tick_mod.Blow };
+
+/// `blowsOnPlayers`, the blow under way `x`'s move's, or the one `dealt`.
+fn onPlayers(t: *Tick, xh: Handle, dealt: ?Dealt) void {
     for (t.world.players, 0..) |p, k| {
         const th = p.entity orelse continue;
         const x = t.world.get(xh) orelse return;
-        if (x.missile == null and !t.catchable(th)) {
+        const thrown = dealt == null and x.missile != null;
+        if (!thrown and !t.catchable(th)) {
             if (k == 0) return;
             continue;
         }
         if (reachesBody(t, th, x)) continue;
-        if (x.missile != null) {
+        if (thrown) {
             missileOn(t, xh, th);
             continue;
         }
-        if (blow(t, xh, th)) {
+        const landed = if (dealt) |d| dealtOn(t, xh, th, d) else blow(t, xh, th);
+        if (landed) {
             // A boss's blow leaves the hold's request (the original's bosses clear the
             // reaction instead), and so does a blow that knocks down (its striker asks for the
             // hold in front again): the one held is let go as the player feels the blow.
             if (t.kindOf(x).family() == .boss) return;
-            if (knocksDown(t, x)) return heldInFront(t, xh, th);
+            const knocks = if (dealt) |d| d.blow.reaction == .knock_down else knocksDown(t, x);
+            if (knocks) return heldInFront(t, xh, th);
             freedByBlow(t, xh, th);
             return;
         }
     }
+}
+
+/// The blow `d` of `x` strikes `target` when its box meets its body: the target's behaviour
+/// takes it or not (`Tick.struck`); a blow taken is told to the striker.
+fn dealtOn(t: *Tick, xh: Handle, th: Handle, d: Dealt) bool {
+    const x = t.world.get(xh) orelse return false;
+    const target = t.world.get(th) orelse return false;
+    const body = target.boxes.body orelse return false;
+    if (!meet(x, &t.kindOf(x).definition.boxes[d.box], target, &t.kindOf(target).definition.boxes[body])) return false;
+    if (!t.struck(th, d.blow)) return false;
+    t.blowLanded(xh, th);
+    return true;
 }
 
 /// An enemy's blow that lands on a player who holds an enemy frees the one held at its turn of
@@ -549,8 +579,8 @@ fn strike(t: *Tick, ah: Handle, th: Handle) bool {
 /// A missile (`Missile`: a body thrown, a weapon swung or thrown) strikes with its attack box
 /// `target` when it meets its body and is of a team the blows of the one who threw or swings it
 /// land on (a player's on the enemies and the breakables; with `on_players`, the players but its
-/// thrower too): the struck one's behaviour takes the blow, its damage and its reaction the
-/// missile's (knocking down, or the pepper's sneeze).
+/// thrower too; with `on_enemies`, the enemies): the struck one's behaviour takes the blow, its
+/// damage and its reaction the missile's (knocking down, or the pepper's sneeze).
 fn missileOn(t: *Tick, ah: Handle, th: Handle) void {
     const a = t.world.get(ah) orelse return;
     const m = a.missile orelse return;
@@ -561,7 +591,8 @@ fn missileOn(t: *Tick, ah: Handle, th: Handle) void {
     const by_team = if (t.world.getConst(m.by)) |b| b.team else a.team;
     const lands = switch (target.team) {
         .player => m.on_players or by_team == .enemy,
-        .enemy, .neutral => by_team == .player,
+        .enemy => m.on_enemies or by_team == .player,
+        .neutral => by_team == .player,
     };
     if (!lands) return;
     if (!meet(a, &t.kindOf(a).definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return;

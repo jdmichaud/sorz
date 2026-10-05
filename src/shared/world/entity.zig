@@ -185,6 +185,8 @@ pub const Missile = struct {
     by: Handle,
     damage: u8,
     on_players: bool = false,
+    /// It lands on the enemies whoever let it go (round 6's press, which lets itself drop).
+    on_enemies: bool = false,
     reaction: content_entity.Reaction = .knock_down,
 };
 
