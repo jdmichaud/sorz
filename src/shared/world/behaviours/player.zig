@@ -1745,8 +1745,10 @@ fn shaken(a: Actor) void {
 }
 
 /// Tossed over by an enemy holding it from the front: its first frame a while, then a step
-/// ahead and down; its next frame, then it falls ahead, knocked down, the throw's damage at its
-/// landing. At each frame it is placed from its holder by its holder's kind (`placeByHolderKind`).
+/// ahead and down, which its holder's places undo at once (the original places the one held from
+/// its holder at every tick of the hold); its next frame, then it falls ahead, knocked down, the
+/// throw's damage at its landing. At each frame it is placed from its holder by its holder's kind
+/// (`placeByHolderKind`).
 fn tossed(a: Actor) void {
     const n = a.numbers();
     const e = a.entity;
@@ -1757,6 +1759,8 @@ fn tossed(a: Actor) void {
         e.position.x = e.position.x.add(Fixed.pixels(n.tossed_step).times(e.facing.sign()));
         e.position.height = e.position.height.add(.pixels(n.tossed_drop));
         a.mind.throw_ticks = n.tossed_pace;
+        a.mind.placed_frame = null;
+        _ = placeByHolderKind(a, "thrown");
         return;
     }
     if (a.frame() == n.tossed_falls) return throwFall(a);
