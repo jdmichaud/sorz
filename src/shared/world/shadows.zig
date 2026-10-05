@@ -11,11 +11,15 @@
 //!   (the enemies'), or their move (from the weapons' places on: the world's order of the
 //!   original's handlers, each with its move).
 //! - At its own place's turn (the movement's, in the world's order) a shadow follows its entity:
-//!   it stays while its entity is above the floor under it (in the air, or over a hole), and
-//!   then takes a shadow's place itself, as any object of the first 50 (a shadow's shadow, which
-//!   goes at its first turn: it lies on the floor); else it goes, and its entity may take another.
-//!   An entity that went leaves its shadow following its empty place (the original reads the
-//!   place's cleared record: in the air at 0), until a new entity there is down.
+//!   it stays while its entity is above the floor under it (in the air, or over a hole), lying
+//!   at that floor's height (a hole's floor far below), and then takes a shadow's place itself,
+//!   as any object of the first 50 (a shadow's shadow, which goes at its first turn: it lies on
+//!   the floor); else it goes, and its entity may take another. An entity that went leaves its
+//!   shadow following its empty place (the original reads the place's cleared record: in the
+//!   air at 0), until a new entity there is down.
+//! - A shadow that has had a turn and lies far off the screen goes with the entities that do, at
+//!   the draw list (draw_list.zig's `far_off_screen`; none while the special attack is under
+//!   way): over a hole, below it. Its entity keeps its mark of a shadow and takes none again.
 const std = @import("std");
 const fixed = @import("fixed.zig");
 const entity = @import("entity.zig");
@@ -37,11 +41,13 @@ const owners_below = 50;
 
 /// A shadow in its place: the place of its entity (an entity's, or another shadow's), whether it
 /// holds a shadow of its own, where it lies (its entity's place across and in depth, on the
-/// floor), and whether it has had its first turn.
+/// floor), and whether it has had its first turn (only then is it drawn, and may go far off
+/// the screen).
 pub const Shadow = struct {
     owner: u8,
     has_shadow: bool = false,
     position: Vec3 = .zero,
+    turned: bool = false,
 };
 
 /// The shadow in place `i`, if one holds it.
@@ -98,15 +104,25 @@ pub fn turn(t: *Tick, i: usize) void {
             place = e.position;
         }
     }
-    const floor = floorAt(t, place) orelse {
-        // Over a hole: it stays, at the hole's floor.
-        s.position = place;
-        return;
-    };
-    // The original's look at the cell under it: above its floor, nothing there.
+    // The original's look at the cell under it: above its floor, nothing there; over a hole,
+    // nothing ever. It stays at the floor's height.
+    const cell = cellAt(t, place);
     const z = @max(place.height.whole(), 0);
-    if (z >= floor) return free(w, i);
-    s.position = .{ .x = place.x, .depth = place.depth, .height = .pixels(floor) };
+    if (cell.floor and z >= cell.height) return free(w, i);
+    s.position = .{ .x = place.x, .depth = place.depth, .height = .pixels(cell.height) };
+    s.turned = true;
+}
+
+/// The shadows that have had a turn and lie far off the screen (`farOff`, given where they show:
+/// the draw list's rule) go, their entities keeping their marks of a shadow.
+pub fn goFarOff(w: *World, farOff: *const fn (x: i32, y: i32) bool) void {
+    for (&w.shadows) |*slot| {
+        const s = slot.* orelse continue;
+        if (!s.turned) continue;
+        const x = s.position.x.whole() - w.camera.x.whole();
+        const y = s.position.screenY() - w.camera.y.whole();
+        if (farOff(x, y)) slot.* = null;
+    }
 }
 
 /// The shadow in place `i` goes: its entity holds none any more.
@@ -119,13 +135,14 @@ fn free(w: *World, i: usize) void {
     w.shadows[i - first] = null;
 }
 
-/// The floor's height under `p` (the round's floor by cells, else its ground); null over a hole.
-fn floorAt(t: *const Tick, p: Vec3) ?i32 {
+/// The floor's cell under `p` (the round's floor by cells, else its ground): its height, and
+/// whether it has a floor (none: a hole).
+fn cellAt(t: *const Tick, p: Vec3) struct { height: i32, floor: bool } {
     var q = p;
     if (q.x.raw < 0) q.x = .zero;
     if (q.depth.raw < 0) q.depth = .zero;
-    const f = t.floorUnder(q) orelse return null;
-    return f.whole();
+    const c = t.cellAt(q) orelse return .{ .height = t.world.ground.whole(), .floor = true };
+    return .{ .height = c.height, .floor = c.floor };
 }
 
 test "the shadows' places are the weapons'" {

@@ -74,6 +74,10 @@ fn farOff(p: Place) bool {
     return p.x < f.left or p.x >= f.right or p.y < f.top or p.y >= f.bottom;
 }
 
+fn farOffAt(x: i32, y: i32) bool {
+    return farOff(.{ .x = x, .y = y });
+}
+
 /// The depth the order compares, on the ground's depths.
 fn depthOf(e: *const Entity) i32 {
     return std.math.clamp(e.position.depth.whole(), systems.ground_depths.far, systems.ground_depths.near);
@@ -106,6 +110,8 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
         drawn[n] = i;
         n += 1;
     }
+    // The shadows' places far off the screen go too (shadows.zig).
+    if (remove_far_off and !w.special) shadows.goFarOff(w, farOffAt);
     var front: [capacity]u8 = undefined;
     order(w, drawn[0..n], &front);
     var rank: [capacity]u8 = @splat(0);

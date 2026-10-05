@@ -1125,9 +1125,10 @@ pub fn playerWaiting(arena: std.mem.Allocator, rom: []const u8) Error!entity.Def
     try d.sound("game_over", rom[0x5289]);
     return .{
         .name = "player_waiting",
-        .provenance = try std.fmt.allocPrint(arena, "the waiting player (type $F, 0x5218): the continue's question (0x52AE), the game over's count (0x5278); its sounds ROM 0x052CA and 0x05288 (moveq #N,d7); the count after a NO, 256 ticks (its timer cleared, 0x5256); marked at its death for the high scores (0x2B48, 0x12730), the name entry first (0x56E6: its start 0x56F6, its tick 0x57D2, its end 0x5846 and the table's entry 0x12784){s}", .{d.number_notes.items}),
+        .provenance = try std.fmt.allocPrint(arena, "the waiting player (type $F, 0x5218): the continue's question (0x52AE), the game over's count (0x5278); its sounds ROM 0x052CA and 0x05288 (moveq #N,d7); the count after a NO, 256 ticks (its timer cleared, 0x5256); marked at its death for the high scores (0x2B48, 0x12730), the name entry first (0x56E6: its start 0x56F6, its tick 0x57D2, its end 0x5846 and the table's entry 0x12784); a shadow's place as it is made, its record cleared but for its type (0x2B48), none from its first tick (the wait's start 0x5256, the name entry's 0x56F6: its flags $41){s}", .{d.number_notes.items}),
         .family = .player,
         .team = .neutral,
+        .shadow_place = true,
         .behaviour = "player_waiting",
         .numbers = d.numbers.items,
         .sounds = d.sounds.items,

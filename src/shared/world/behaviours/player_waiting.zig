@@ -15,6 +15,10 @@
 //! Its states, the semantic traces' names: `begin` (its first tick: the name entry, the
 //! question, or out; and the tick its name is entered), `name_entry`, `continue_choose`,
 //! `continue_chosen`, `countdown`, `game_over`.
+//!
+//! As it is made it takes a shadow's place (its definition's `shadow_place`: the original's
+//! record cleared, with no mark against a shadow, world/shadows.zig); from its first tick (the
+//! name entry's start, or the wait's) it takes none, and that shadow goes at its next turn.
 const tick = @import("../tick.zig");
 const Command = @import("../world.zig").Command;
 const lives = @import("../lives.zig");
@@ -116,6 +120,7 @@ pub fn control(a: Actor, c: Command) void {
 /// the game.
 fn begin(a: Actor) void {
     const n = a.numbers();
+    a.entity.flags.shadowless = true;
     if (a.mind.entering) return startEntry(a);
     const w = a.tick.world;
     const k = w.playerOf(a.handle) orelse return a.remove();
