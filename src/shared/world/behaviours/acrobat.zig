@@ -13,7 +13,11 @@
 //! and away, turning to its target in the air; down again it crouches a while, then jump kicks or
 //! closes in fast.
 //!
-//! Not in round 1, and not yet here: its leap or drop in from the screen's edge (`enter`).
+//! Placed so (round 5), it comes in leaping from behind the wall (`enter`): hidden once out,
+//! below its place in depth 0, it waits until the camera nears it; then it rises in its flip's
+//! pose, drawn in front from its top, and comes down deeper each tick to the ground, where it
+//! closes in, from then on placed as a plain acrobat. Placed to drop in instead, it falls from
+//! above at a drawn place.
 const std = @import("std");
 const tick = @import("../tick.zig");
 const fixed = @import("../fixed.zig");
@@ -67,6 +71,9 @@ pub const Mind = struct {
     seen_speed: i32 = 0,
     /// Knocked down, it has looked whether to flip away.
     looked: bool = false,
+    /// Coming in: the camera has neared it; it has passed its top.
+    reached: bool = false,
+    risen: bool = false,
 };
 
 pub const Animation = enum { walk, down, reel, stand, thrown, slammed, punch, jump_kick, flip, turn };
@@ -131,6 +138,20 @@ pub const Numbers = enemy.Numbers(struct {
     flip_away_turns: u8,
     flip_away_crouch: u8,
     flip_away_ticks: u8,
+    /// Coming in: how far below its place it waits, its speed up and its gravity; how near
+    /// the camera's place it waits (twice that unless `slow`), its frame from then; how much
+    /// deeper it comes each tick down. Dropping in: its height, its place across (a draw's low
+    /// bits added), its depth.
+    enter_below: i16,
+    enter_up: i16,
+    enter_gravity: Fixed,
+    enter_near: i16,
+    enter_frame: u8,
+    enter_deeper: i16,
+    drop_height: i16,
+    drop_x: i16,
+    drop_spread: u16,
+    drop_depth: i16,
 });
 
 pub const Tables = enemy.Tables(struct {});
@@ -159,6 +180,7 @@ pub fn begin(a: Actor) void {
         .jump_kick => jumpKickSetUp(a),
         .flip => flipSetUp(a),
         .flip_away => flipAwaySetUp(a),
+        .enter => enterSetUp(a),
         else => Common.setUp(a),
     }
     _ = Common.leftAt(a, was);
@@ -167,7 +189,11 @@ pub fn begin(a: Actor) void {
 pub fn think(a: Actor) void {
     defer Common.endTick(a);
     if (!Common.tickStarts(a)) return;
-    if (Common.act(a)) return;
+    if (Common.act(a)) {
+        // Placed to come in leaping, it stays hidden once out, until its leap begins.
+        if (a.mind.state == fights and a.entity.spawn.entrance == .enter) a.entity.flags.hidden = true;
+        return;
+    }
     switch (a.mind.state) {
         .choose => choose(a),
         .approach => approach(a),
@@ -180,8 +206,7 @@ pub fn think(a: Actor) void {
         .jump_kick => jumpKick(a),
         .flip => flip(a),
         .flip_away => flipAway(a),
-        // Not in round 1: it takes up the fight at once.
-        .enter => Common.enter(a, .approach),
+        .enter => enter(a),
         else => {},
     }
 }
@@ -480,6 +505,71 @@ fn flip(a: Actor) void {
     if (!Common.falls(a)) return;
     a.sound(.land);
     a.entity.velocity.height = .zero;
+    go(a, .close_in, .{});
+}
+
+/// Its leap in: shown, behind the wall, in depth 0 and `enter_below` lower, facing its target
+/// in its flip's first pose, its speed up `enter_up` (whole pixels, the fractions kept). Placed
+/// to drop in: from `drop_height` at a drawn place across, at `drop_depth`, still.
+fn enterSetUp(a: Actor) void {
+    const n = a.numbers();
+    const e = a.entity;
+    e.flags.hidden = false;
+    e.flags.in_front = false;
+    e.position.depth = .parts(0, e.position.depth.frac());
+    e.velocity.height = .parts(n.enter_up, e.velocity.height.frac());
+    Common.faceTarget(a);
+    a.animate(.flip);
+    e.position.height = e.position.height.add(.pixels(n.enter_below));
+    a.mind.reached = false;
+    a.mind.risen = false;
+    if (!e.spawn.traits.drops_in) return;
+    e.position.height = .parts(n.drop_height, e.position.height.frac());
+    e.velocity.height = .parts(0, e.velocity.height.frac());
+    const x: i32 = @as(i32, a.draw(.drop_place) & n.drop_spread) + n.drop_x;
+    e.position.x = .parts(@intCast(x), e.position.x.frac());
+    e.position.depth = .parts(n.drop_depth, e.position.depth.frac());
+}
+
+/// It waits until the camera's place is within `enter_near` of its own (twice that unless
+/// `slow`); then in its flip's frame `enter_frame` facing its target it rises, its frames
+/// running; at its top it is drawn in front (its frames held when at that frame); down, deeper
+/// each tick, until it lands: then it closes in, a plain acrobat.
+fn enter(a: Actor) void {
+    const n = a.numbers();
+    const e = a.entity;
+    if (!e.spawn.traits.drops_in) {
+        if (!a.mind.reached) {
+            var near: i32 = a.tick.world.camera.x.whole() + n.enter_near;
+            if (!e.spawn.traits.slow) near += n.enter_near;
+            if (near < e.position.x.whole()) return;
+            a.mind.reached = true;
+            a.setFrame(n.enter_frame);
+            Common.faceTarget(a);
+        }
+        if (a.mind.risen or e.velocity.height.raw < 0) return enterFlight(a);
+        a.mind.risen = true;
+        a.pause(false);
+        e.flags.in_front = true;
+    }
+    if (!e.animation.paused and a.frame() == n.enter_frame) a.pause(true);
+    enterFlight(a);
+}
+
+/// Its leap's flight: its gravity, its height; coming down, deeper each tick, and on the ground
+/// it lands (its height's fraction kept), placed from then as a plain acrobat, and closes in.
+fn enterFlight(a: Actor) void {
+    const n = a.numbers();
+    const e = a.entity;
+    e.velocity.height = e.velocity.height.add(n.enter_gravity);
+    e.position.height = e.position.height.add(e.velocity.height);
+    if (e.velocity.height.raw < 0) return;
+    e.position.depth = e.position.depth.add(.pixels(n.enter_deeper));
+    if (!a.atGround()) return;
+    e.position.height = .parts(@intCast(a.tick.world.ground.whole()), e.position.height.frac());
+    a.sound(.land);
+    e.spawn = .{ .offset_x = e.spawn.offset_x, .offset_depth = e.spawn.offset_depth, .strength = e.spawn.strength, .colours = e.spawn.colours };
+    e.velocity.height = .zero;
     go(a, .close_in, .{});
 }
 

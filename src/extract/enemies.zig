@@ -604,6 +604,24 @@ pub fn acrobat(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definitio
     if (try animEntry(rom, 0xEAF0) != 2) return error.BadData;
     try d.number("flip_away_crouch", try moveByte(rom, 0xEAF6, 10), "ROM 0x0EAF6: move.b #N,(10,a0) (its knock-down's frame, held)");
     try d.number("flip_away_ticks", try moveByte(rom, 0xEB02, 80), "ROM 0x0EB02: move.b #N,(80,a0)");
+    // Coming in (0xE952): its leap from below the wall, its drop from above.
+    if (try animEntry(rom, 0xE972) != try animEntry(rom, 0xEE9E)) return error.BadData;
+    if (u16be(rom, 0xE97C) != 24) return error.BadData;
+    try d.number("enter_below", try immediate(rom, 0xE978, &.{ 0x06, 0x68 }, 2), "ROM 0x0E978: addi.w #N,(24,a0)");
+    try d.number("enter_up", try moveWord(rom, 0xE96C, 36), "ROM 0x0E96C: move.w #N,(36,a0) (whole pixels)");
+    if (u16be(rom, 0xEA20) != 36) return error.BadData;
+    try d.number("enter_gravity", try immediate(rom, 0xEA1A, &.{ 0x06, 0xA8 }, 4), "ROM 0x0EA1A: addi.l #N,(36,a0)");
+    if (try immediate(rom, 0xE9C8, &.{ 0x06, 0x40 }, 2) != try immediate(rom, 0xE9BC, &.{ 0x06, 0x40 }, 2)) return error.BadData;
+    try d.number("enter_near", try immediate(rom, 0xE9BC, &.{ 0x06, 0x40 }, 2), "ROM 0x0E9BC: addi.w #N,d0 (to the camera's place; 0x0E9C8 as much again unless its record's bit 5)");
+    if (try frameCompared(rom, 0xEA0C) != try moveByte(rom, 0xE9DA, 10)) return error.BadData;
+    try d.number("enter_frame", try moveByte(rom, 0xE9DA, 10), "ROM 0x0E9DA: move.b #N,(10,a0)");
+    if (u16be(rom, 0xEA32) != 20) return error.BadData;
+    try d.number("enter_deeper", try quick(rom, 0xEA30, 0x5068), "ROM 0x0EA30: addq.w #N,(20,a0)");
+    try d.number("drop_height", try moveWord(rom, 0xE986, 24), "ROM 0x0E986: move.w #N,(24,a0)");
+    try d.number("drop_spread", try immediate(rom, 0xE996, &.{ 0x02, 0x40 }, 2), "ROM 0x0E996: andi.w #N,d0 (a draw)");
+    try d.number("drop_x", try immediate(rom, 0xE99A, &.{ 0x06, 0x40 }, 2), "ROM 0x0E99A: addi.w #N,d0");
+    try d.number("drop_depth", try moveWord(rom, 0xE9A2, 20), "ROM 0x0E9A2: move.w #N,(20,a0)");
+    if (try moveq(rom, 0xEA44, 7) != try moveq(rom, 0xEEF6, 7)) return error.BadData;
     try d.sound("leap", @bitCast(@as(i8, @intCast(try moveq(rom, 0xEDE0, 7)))));
     try d.sound("land", @bitCast(@as(i8, @intCast(try moveq(rom, 0xEEF6, 7)))));
     try d.sound("flip_away", @bitCast(@as(i8, @intCast(try moveq(rom, 0xEA92, 7)))));
