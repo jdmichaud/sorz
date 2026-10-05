@@ -179,6 +179,8 @@ pub const Mind = struct {
     /// Its knee's spark is made (once a knee), or due after its move.
     knee_sparked: bool = false,
     knee_spark_due: bool = false,
+    /// Its new life began at this tick, fallen out of a hole: it neither moves nor drops yet.
+    fell_out: bool = false,
     /// The enemy it holds or held, drawn behind the others at its depth, and the state it held
     /// it in (`drawnBehind`).
     marked: ?Handle = null,
@@ -320,6 +322,8 @@ pub const Numbers = struct {
     kick_falling_gravity: Fixed,
     fall_most: Fixed,
     drop: Fixed,
+    /// Fallen into a hole this far down, a life is lost (none: no hole takes one).
+    fall_out: ?i16 = null,
     /// Knocked down: its speed back across (negative: away from the one who hit) and up.
     knocked_down_x: Fixed,
     knocked_down_up: Fixed,
@@ -421,8 +425,9 @@ pub const Numbers = struct {
     /// Back over the other player held after its vault, it lets go this far back.
     vault_off_step: i16,
     /// Walls are looked for this far above its feet: fallen deeper into the ground, its move
-    /// across and in depth stops there.
+    /// across and in depth stops there; across, this far ahead of it (none: under it).
     wall_above: i16,
+    wall_ahead: ?i16 = null,
     /// Armed: the frames at which the plain blow and the stab end, and the swing; the plain
     /// blow's frame at which a knife leaves the hand; a knife stabs at a thing ahead within
     /// `stab_reach` across and `stab_level` either way in depth.
@@ -636,6 +641,9 @@ pub fn control(a: Actor, c: Command) void {
     if (!a.mind.started) {
         a.mind.started = true;
         a.mind.blink = n.blink;
+        // A player's fighter never leaves the world for being far off the screen (fallen into a
+        // hole, it falls on until it is out).
+        a.entity.flags.stays = true;
     }
     // The combo's window closes.
     if (a.mind.window != 0) a.mind.window -= 1;
@@ -647,6 +655,7 @@ pub fn control(a: Actor, c: Command) void {
     feelCatch(a);
     if (a.mind.blink != 0) a.mind.blink -= 1;
     if (a.mind.landed_blow) spark(a);
+    if (fellOut(a)) return;
     act(a, c);
     if (a.entity.velocity.height.order(n.fall_most) == .gt) a.entity.velocity.height = n.fall_most;
     if (partnerOf(a) == null) {
@@ -1061,6 +1070,54 @@ fn loses(a: Actor, by: ?Handle, damage: i16) void {
     a.takeDamage(by, @min(damage, @max(a.entity.health, 0)));
 }
 
+/// Not on a floor (over a hole, none under its feet; or above it, a new life put there), neither
+/// rising nor falling, in no state that flies: it falls, straight down from `drop`, its weapon
+/// gone, a hold it was in let go.
+fn ledge(a: Actor) void {
+    const e = a.entity;
+    if (e.velocity.height.raw != 0 or flies(a.mind.state)) return;
+    if (a.tick.onFloor(e.position)) return;
+    if (e.holding != null or e.holder != null) a.letGo();
+    if (a.mind.weapon) |w| {
+        a.mind.weapon = null;
+        a.tick.world.remove(w);
+    }
+    change(a, .fall);
+    e.velocity.height = a.numbers().drop;
+    e.flags.airborne = true;
+}
+
+/// The states in which it flies (falling, thrown, dying...), which no hole changes.
+fn flies(state: State) bool {
+    return switch (state) {
+        .fall, .dying, .thrown_fall, .throw, .throw_back, .thrown, .slammed, .lift, .air_slam, .air_fall => true,
+        else => false,
+    };
+}
+
+/// Fallen into a hole as far as `fall_out`: a life less (none when its health had run out), its
+/// cry, and its next life (or the wait to continue). True when it was.
+fn fellOut(a: Actor) bool {
+    const out = a.numbers().fall_out orelse return false;
+    if (a.entity.position.height.whole() < out) return false;
+    // TODO(PLAN item 15): round 8's balcony ends the round instead.
+    if (a.entity.health != 0) lives.lose(a.tick, a.handle);
+    a.sound(.death);
+    const h = a.handle;
+    const t = a.tick;
+    lives.lifeOver(t, h);
+    // Its next life stands still at its place up there at this tick (the original's start of a
+    // life, its tick over at once), and walks off into its drop at the next.
+    if (t.actor(@This(), h)) |next| {
+        change(next, .ready);
+        next.entity.velocity = .zero;
+        next.entity.flags.airborne = false;
+        next.entity.flags.still = true;
+        next.mind.fell_out = true;
+    }
+    return true;
+}
+
 /// It dies: its cry, a hold let go, thrown back from the one who struck (facing it) and up, a
 /// life less.
 fn die(a: Actor, by: ?Handle) void {
@@ -1143,21 +1200,25 @@ pub fn fall(a: Actor) void {
     // Fallen so deep into the ground that the look for walls above its feet finds it (the
     // original's walls are the level's cells, the ground's among them): its move in depth, then
     // its move across, is undone and stops.
+    // The floor under it, and ahead across where it goes (a hole's has none: no wall there).
     const looked_at = e.position.height.whole() - n.wall_above;
-    const ground = a.tick.world.ground.whole();
-    if (e.velocity.depth.raw != 0 and looked_at > ground) {
+    const reach_ahead: i32 = n.wall_ahead orelse 0;
+    const way: i32 = if (e.velocity.x.raw < 0) -reach_ahead else reach_ahead;
+    const ahead: fixed.Vec3 = .{ .x = e.position.x.add(.pixels(way)), .depth = e.position.depth, .height = e.position.height };
+    if (a.tick.floorUnder(e.position)) |under| if (e.velocity.depth.raw != 0 and looked_at > under.whole()) {
         e.position.depth = e.position.depth.sub(e.velocity.depth);
         e.velocity.depth = .zero;
-    }
-    if (looked_at >= ground) {
+    };
+    if (a.tick.floorUnder(ahead)) |wall| if (looked_at >= wall.whole()) {
         e.position.x = e.position.x.sub(e.velocity.x);
         e.position.depth = e.position.depth.sub(e.velocity.depth);
         e.velocity.x = .zero;
         e.velocity.depth = .zero;
-    }
+    };
     if (e.velocity.height.raw < 0) return;
     const reach: i16 = if (a.mind.state == .air_fall) n.air_fall_reach else 0;
-    if (e.position.height.add(.pixels(reach)).lessThan(a.tick.world.ground)) return;
+    const floor = a.tick.floorUnder(e.position) orelse return;
+    if (e.position.height.add(.pixels(reach)).lessThan(floor)) return;
     a.land(.whole);
 }
 
@@ -1716,6 +1777,7 @@ fn onGround(a: Actor) void {
 /// side it faces (or the other goes the other way from it), its height from the other's, and in
 /// the holds its depth (whole pixels, its fractions kept).
 pub fn moved(a: Actor) void {
+    if (a.mind.fell_out) a.mind.fell_out = false else ledge(a);
     if (a.mind.knee_spark_due) {
         a.mind.knee_spark_due = false;
         spark(a);

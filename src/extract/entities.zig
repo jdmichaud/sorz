@@ -817,6 +817,8 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     try d.number("kick_falling_gravity", try immediate(rom, 0x38B4, &.{ 0x20, 0x3C }, 4), "ROM 0x038B4: move.l #N,d0");
     try d.number("fall_most", try immediate(rom, 0x3886, &.{ 0x0C, 0xA8 }, 4), "ROM 0x03886: cmpi.l #N,(36,a0)");
     try d.number("drop", try immediate(rom, 0x3E20, &.{ 0x21, 0x7C }, 4), "ROM 0x03E20: move.l #N,(36,a0)");
+    if (u16be(rom, 0x3590) != 24) return error.BadData;
+    try d.number("fall_out", try immediate(rom, 0x358C, &.{ 0x0C, 0x68 }, 2), "ROM 0x0358C: cmpi.w #N,(24,a0) (fallen this far into a hole, a life is lost)");
     try d.number("knocked_down_up", try immediate(rom, 0x34DA, &.{ 0x21, 0x7C }, 4), "ROM 0x034DA: move.l #N,(36,a0)");
     try d.number("dying_up", try immediate(rom, 0x3440, &.{ 0x21, 0x7C }, 4), "ROM 0x03440: move.l #N,(36,a0)");
     try d.number("dead", try moveByte(rom, 0x3F18, 0x41), "ROM 0x03F18: move.b #N,($41,a0)");
@@ -914,6 +916,7 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     const wall_above = -(try moveq(rom, 0x3C94, 3));
     if (-(try moveq(rom, 0x3B60, 1)) != wall_above) return error.BadData;
     try d.number("wall_above", wall_above, "ROM 0x03C94: moveq #-N,d3 (the walls ahead, 0x3C92), the same at 0x03B60 (in depth)");
+    try d.number("wall_ahead", try moveq(rom, 0x3C96, 1), "ROM 0x03C96: moveq #N,d1 (the walls this far ahead, 0x3C92; negated when it goes left)");
     try playerPartners(&d, character);
 
     // Held from behind by a stalker, it is kept this far ahead of it (0xDB18's table at 0xDBC8,
