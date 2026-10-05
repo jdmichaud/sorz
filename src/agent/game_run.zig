@@ -178,6 +178,7 @@ pub const Run = struct {
             .stage = switch (script.start) {
                 .players => .to_menu,
                 .pads => .pads,
+                .power_on => .body,
             },
         };
     }
@@ -188,7 +189,11 @@ pub const Run = struct {
         const pads = self.next() orelse return false;
         const turn = self.state.stepWith(pads, .{}, self.assets, &self.out);
         if (self.sound) |s| try s.pcm.appendSlice(s.gpa, sorz.game.tickSound(&s.out, &s.due, &turn, 0));
-        if (self.trace) |tw| tw.held = .{ pads.pad1, pads.pad2 };
+        if (self.trace) |tw| {
+            // The pads the game read: the attract demo's own.
+            const read = if (self.round()) |r| r.pads_read else pads;
+            tw.held = .{ read.pad1, read.pad2 };
+        }
         try self.observe(&turn);
         if (self.forms) |f| if (!try f.after(&self.state)) {
             self.failure = "the state read from its form is not the one written";
@@ -197,11 +202,12 @@ pub const Run = struct {
         return true;
     }
 
-    /// The round scene, when it is the game's scene (no overlay over it).
+    /// The round scene (a round, or the attract demo's), when it is the game's scene (no overlay
+    /// over it).
     fn round(self: *Run) ?*scene.Round {
         const s = self.topScene() orelse return null;
         return switch (s.*) {
-            .round => |*r| r,
+            .round, .demo => |*r| r,
             else => null,
         };
     }
@@ -280,7 +286,11 @@ pub const Run = struct {
         }
         if (beaten and !standing) w.timer.stopped = true;
         if (scenario.generatorOf(tu.situation)) |g| self.state.random = g;
-        for (&r.drawn_scores, w.players) |*d, p| d.* = p.score;
+        for (&r.drawn_scores, &r.bar_specials, &r.seen_specials, w.players) |*d, *shown, *seen, p| {
+            d.* = p.score;
+            shown.* = p.specials;
+            seen.* = p.specials;
+        }
         const tw = self.trace orelse return;
         tw.seen = @splat(.{});
         for (taken.ids, taken.generations, 0..) |id, generation, i| if (id != 0) tw.assignId(i, generation, id);
@@ -429,11 +439,16 @@ pub const Run = struct {
             // scene's start's, as sor-remaster's trace has them.
             if (r.phase == .leaving and r.colours.fade == null) return self.holdSounds(turn);
             if (serial != self.seen_serial or !std.mem.eql(u8, name, self.seen_scene)) {
-                tw.startScene(.{ .name = name, .round = r.number, .demo = false });
+                tw.startScene(.{ .name = name, .round = r.number, .demo = r.demo });
                 self.seen_serial = serial;
                 self.seen_scene = name;
                 self.seen_t = r.trace_t;
-                if (r.trace_scene == .round) {
+                // The demo's first tick after its load is its tick 1: its scene at its tick 0 (its
+                // set-up, under the load), then the world.
+                if (r.demo) {
+                    tw.forgetRound();
+                    try tw.atTick(v, 0);
+                } else if (r.trace_scene == .round) {
                     // Its tick 0 tells the scene; the world from its tick 1, its camera and
                     // timer written again (as sor-remaster's observer has them).
                     tw.forgetRound();

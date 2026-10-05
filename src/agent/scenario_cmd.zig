@@ -81,7 +81,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
     }
     const situation_text = try cwd.readFileAlloc(io, situation_path, arena, .limited(1 << 30));
     const at: ?u64 = switch (script.start) {
-        .players => null,
+        .players, .power_on => null,
         .pads => |p| p.vblanks + 1,
     };
     var situation = scenario.situationOf(arena, situation_text, at) catch |e| {

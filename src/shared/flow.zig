@@ -64,6 +64,9 @@ pub const Edge = struct {
     load: u16 = 0,
     sound_held: bool = true,
     driver_once: bool = false,
+    /// The load loads the sound's driver again: its first update after the load stops every
+    /// sound (the music held through the load ends there).
+    driver_reloaded: bool = false,
 };
 
 /// A flow graph: its edges, and the scene the game starts on at power-on, after `power_on`
@@ -90,10 +93,10 @@ pub const original: Graph = .{
     .power_on = 76,
     .edges = &.{
         .{ .from = .sega_logo, .exit = .done, .to = .intro, .load = 35 },
-        .{ .from = .intro, .exit = .done, .to = .demo, .load = 47 },
+        .{ .from = .intro, .exit = .done, .to = .demo, .load = 47, .driver_reloaded = true },
         .{ .from = .intro, .exit = .start, .to = .title },
         .{ .from = .intro, .exit = .menu, .to = .menu, .load = 3 },
-        .{ .from = .title, .exit = .done, .to = .demo, .load = 47 },
+        .{ .from = .title, .exit = .done, .to = .demo, .load = 47, .driver_reloaded = true },
         .{ .from = .title, .exit = .start, .to = .menu, .load = 3 },
         // The high scores' set-up holds 5 ticks (the game over's), its last showing the table
         // (high_scores.zig); the demo's stand-in, timed to their first picture, ends a tick late

@@ -55,6 +55,9 @@ pub const Start = union(enum) {
     /// buttons in hexadecimal, sor-remaster's `--pads` format), for its first `vblanks` display
     /// ticks; the file is named from the scenario's directory.
     pads: struct { path: []const u8, vblanks: u64 },
+    /// Nothing: the script's ticks are the game's from its first display tick (the screens by
+    /// hand, the attract demo).
+    power_on,
 };
 
 /// The pads of a recorded play's file (`start pads`); null for a malformed line.
@@ -147,6 +150,10 @@ pub fn parse(gpa: std.mem.Allocator, text: []const u8, diag: *Diagnostic) !Scrip
         const w = words[0..count];
         if (std.mem.eql(u8, w[0], "start")) {
             if (start != null or commands.items.len != 0) return refuse(diag, n, "the start comes first, once");
+            if (w.len == 2 and std.mem.eql(u8, w[1], "power-on")) {
+                start = .power_on;
+                continue;
+            }
             if (w.len == 4 and std.mem.eql(u8, w[1], "pads")) {
                 start = .{ .pads = .{ .path = w[2], .vblanks = number(w[3]) orelse return refuse(diag, n, "`start pads FILE VBLANKS`") } };
                 continue;
@@ -159,7 +166,7 @@ pub fn parse(gpa: std.mem.Allocator, text: []const u8, diag: *Diagnostic) !Scrip
                 round = @intCast(r);
                 who = who[0 .. who.len - 2];
             }
-            if (who.len < 1 or who.len > 2) return refuse(diag, n, "a start is `start CHARACTER [CHARACTER] [round N]` or `start pads FILE VBLANKS`");
+            if (who.len < 1 or who.len > 2) return refuse(diag, n, "a start is `start CHARACTER [CHARACTER] [round N]`, `start pads FILE VBLANKS` or `start power-on`");
             start = .{ .players = .{ .first = who[0], .second = if (who.len == 2) who[1] else null, .round = round } };
             continue;
         }
@@ -1016,7 +1023,7 @@ pub const Run = struct {
             if (e.player) |p| switch (script.start) {
                 // The trace names a player by its character; the script chose it.
                 .players => |players| kind_name = if (p == 1) players.first else players.second orelse e.kind,
-                .pads => {},
+                .pads, .power_on => {},
             };
             const kind = kinds.find(kind_name) orelse {
                 try r.skipped.append(gpa, e.kind);

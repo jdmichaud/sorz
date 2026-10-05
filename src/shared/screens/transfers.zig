@@ -95,8 +95,10 @@ fn transfer(words: u32, colours: bool) u32 {
     return 64 + words * per_word / 205;
 }
 
-/// The cycles the pads' reading stops it, at each frame but a load's.
+/// The cycles the pads' reading stops it, at each frame but a load's; the attract demo's, which
+/// reads its pads' stream inside the hold.
 pub const pads = 235;
+pub const demo_pads = 286;
 
 /// The frame's work before the sound's driver, each part's cost in the sound processor's cycles
 /// (sor-remaster's fit over the original's captures).

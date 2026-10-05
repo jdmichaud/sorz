@@ -63,7 +63,7 @@ pub const Scene = union(Kind) {
     menu: Menu,
     options: Options,
     select: Select,
-    demo: StandIn,
+    demo: Round,
     high_scores: HighScores,
     round: Round,
     round_clear: RoundClear,
@@ -76,6 +76,8 @@ pub const Scene = union(Kind) {
             .load => unreachable,
             inline else => |tag| blk: {
                 const T = @FieldType(Scene, @tagName(tag));
+                // The attract demo is a round the game plays itself.
+                if (tag == .demo) break :blk .{ .demo = Round.startDemo(setup) };
                 break :blk @unionInit(Scene, @tagName(tag), if (T == StandIn) StandIn.of(tag, setup) else T.start(setup));
             },
         };
@@ -128,6 +130,8 @@ pub const Turn = struct {
     sound_driver: bool = true,
     /// Whether the pads are read at this tick: a load reads none.
     read_pads: bool = true,
+    /// The pads read at this tick are the attract demo's (its stream: the reading takes longer).
+    demo_pads: bool = false,
     /// A display tick that ends no frame of the logic, at which the sound's driver runs alone,
     /// without a frame's work: `middle`, an interrupt a load left waiting, which the logic takes
     /// in its middle (the requests of the ticks before come after it); `load`, one of a load that
@@ -239,7 +243,7 @@ pub const Stack = struct {
     load_after_setup: Load = .{},
     setup_left: u8 = 0,
 
-    pub const Next = struct { kind: Kind, load: u16, sound_held: bool, driver_once: bool = false };
+    pub const Next = struct { kind: Kind, load: u16, sound_held: bool, driver_once: bool = false, driver_reloaded: bool = false };
 
     /// The scene on top: the last overlay, or the base.
     pub const Top = union(enum) { scene: *Scene, overlay: *Overlay };
@@ -299,7 +303,7 @@ pub fn tick(stack: *Stack, graph: *const flow.Graph, turn: *Turn, assets: ?*cons
     if (stack.next) |n| {
         stack.replace(.start(n.kind, turn.setup));
         const load = if (n.kind == .round and assets != null) roundLoad(assets.?, turn.setup) orelse n.load else n.load;
-        stack.load_after_setup = .{ .left = load, .sound_held = n.sound_held, .driver_once = n.driver_once };
+        stack.load_after_setup = .{ .left = load, .sound_held = n.sound_held, .driver_once = n.driver_once, .driver_reloaded = n.driver_reloaded };
         stack.setup_left = setupTicks(n.kind);
         stack.next = null;
     }
@@ -334,7 +338,7 @@ pub fn tick(stack: *Stack, graph: *const flow.Graph, turn: *Turn, assets: ?*cons
         std.log.warn("the scene {s} ended by {s}, which the flow does not follow", .{ @tagName(s.*), @tagName(how) });
         return;
     };
-    stack.next = .{ .kind = edge.to, .load = edge.load, .sound_held = edge.sound_held, .driver_once = edge.driver_once };
+    stack.next = .{ .kind = edge.to, .load = edge.load, .sound_held = edge.sound_held, .driver_once = edge.driver_once, .driver_reloaded = edge.driver_reloaded };
 }
 
 /// The load of the round about to start (the game's next, or the options' first round of a new
@@ -461,14 +465,12 @@ test "the canonical state's most fits a session's state" {
     try testing.expect(@import("game.zig").Game.join_max <= protocol.max_state_len);
 }
 
-test "the flow: a set-up, its load over the scene, the scene again; an exit, its edge" {
+test "the flow: a set-up, its load over the scene, the scene again" {
     var setup: Setup = .{};
     var turn: Turn = .{ .setup = &setup };
     const assets: Assets = undefined;
-    // The stand-ins need no content.
-    const graph: flow.Graph = .{ .first = .demo, .power_on = 3, .edges = &.{
-        .{ .from = .demo, .exit = .done, .to = .next_round, .load = 2 },
-    } };
+    // The stand-in needs no content.
+    const graph: flow.Graph = .{ .first = .next_round, .power_on = 3, .edges = &.{} };
     var s = powerOn(&graph, &setup);
     // The set-up's tick, then three ticks of the load, then the scene's own ticks.
     tick(&s, &graph, &turn, &assets);
@@ -478,14 +480,7 @@ test "the flow: a set-up, its load over the scene, the scene again; an exit, its
     }
     try testing.expect(s.topKind() == .load and s.top().overlay.load.left == 0);
     tick(&s, &graph, &turn, &assets);
-    try testing.expect(s.topKind() == .demo and s.overlay_count == 0);
-    var ticks: usize = 0;
-    while (s.next == null) : (ticks += 1) {
-        try testing.expect(ticks < 10_000);
-        tick(&s, &graph, &turn, &assets);
-    }
-    // The demo's last picture stays; the next scene's set-up at the next tick, then its load.
-    try testing.expect(s.topKind() == .demo and s.next.?.kind == .next_round);
+    try testing.expect(s.topKind() == .next_round and s.overlay_count == 0);
     tick(&s, &graph, &turn, &assets);
-    try testing.expect(s.topKind() == .load and s.base == .next_round);
+    try testing.expect(s.topKind() == .next_round and s.next == null);
 }

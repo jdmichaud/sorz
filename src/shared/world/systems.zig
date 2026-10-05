@@ -76,10 +76,19 @@ pub fn loadTurns(t: *Tick) void {
 /// (a round's set-up, whose picture shows its entities before they first move). No shadows: they
 /// come with play (the original makes them in its play's mode only).
 pub fn picture(t: *Tick) void {
+    pictureOf(t, false);
+}
+
+/// `picture`, the shadows with it: a set-up in play's mode (the attract demo's load).
+pub fn pictureInPlay(t: *Tick) void {
+    pictureOf(t, true);
+}
+
+fn pictureOf(t: *Tick, shadows: bool) void {
     const kinds = t.kinds;
     defer t.kinds = kinds;
     var no_shadows = kinds.*;
-    no_shadows.shadow = null;
+    if (!shadows) no_shadows.shadow = null;
     t.kinds = &no_shadows;
     t.out.begin();
     for (&t.world.entities, 0..) |*e, i| {
@@ -597,6 +606,13 @@ fn camera(t: *Tick) void {
         const by: i32 = if (c.follows) |rules| rules.shake_by else 0;
         c.y = c.y.add(.pixels(if (c.shake & 1 != 0) by else -by));
     } else c.y = c.y.clamp(c.y_min, c.y_max);
+    keepPlayers(t);
+}
+
+/// The players kept inside the camera's view (by its rules, when it follows them): across, but
+/// one that holds or is held; and in depth.
+pub fn keepPlayers(t: *Tick) void {
+    const c = &t.world.camera;
     const rules = c.follows orelse return;
     for (t.world.players) |p| {
         const e = t.world.get(p.entity orelse continue) orelse continue;

@@ -82,7 +82,7 @@ pub fn transfersOf(due: *Due, turn: *const scene.Turn) Due {
     if (turn.lag != .none) return .{ .held = 0, .work = transfers.costs.lag };
     var now: Due = .{ .held = 0, .work = due.work };
     if (turn.sound_driver) {
-        now.held = due.held + transfers.pads;
+        now.held = due.held + @as(u32, if (turn.demo_pads) transfers.demo_pads else transfers.pads);
         due.held = 0;
     }
     // A load's ticks leave what the frame before it carries for the frame after it.

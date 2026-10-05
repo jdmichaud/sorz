@@ -247,6 +247,17 @@ pub const Round = struct {
     out_blinks: [2]OutBlink = .{ .{}, .{} },
     /// The last player out of the game is at its game over: the round ends at the next tick.
     over: bool = false,
+    /// The attract demo (`startDemo`): the round played on the content's pads (`records.Demo`),
+    /// their next reading, and its play's ticks left.
+    demo: bool = false,
+    demo_reading: u16 = 0,
+    demo_left: u16 = 0,
+    /// The pads the tick read: the hosts' (the demo's: its readings, the real START).
+    pads_read: input.Pads = .{},
+    /// The special attacks the status bar shows of each player, and the world's when it last
+    /// drew them: it draws them as they change (the demo's own are not drawn until then).
+    bar_specials: [2]u8 = .{ 0, 0 },
+    seen_specials: [2]u8 = .{ 0, 0 },
 
     pub const Assets = struct {
         kinds: *const world.Kinds,
@@ -337,6 +348,12 @@ pub const Round = struct {
         return .{};
     }
 
+    /// The attract demo: round 1 played on the pads the content holds, its own players; its
+    /// load leads straight to the round's fade in (no banner), its trace's scene the round's.
+    pub fn startDemo(_: *const Setup) Round {
+        return .{ .demo = true, .trace_scene = .round };
+    }
+
     /// The plan of the round's script the world follows: the script, the options' level, the
     /// lives a continue gives (the options'), the high-score table's last entry.
     fn plan(self: *const Round, setup: *const Setup, a: *const Assets) world.script.Plan {
@@ -346,7 +363,8 @@ pub const Round = struct {
             .round = self.stage(a).script,
             .level = @intCast(@min(setup.level, 3)),
             .lives = setup_mod.Progress.livesOf(setup),
-            .buttons = a.screen.buttons.of(setup.control),
+            // The demo's pads are read as they are (the cartridge's first layout).
+            .buttons = a.screen.buttons.of(if (self.demo) 0 else setup.control),
             .last_score = .{ .score = last.score, .level = last.level, .round = last.round },
             .art_loading = self.art.loading(self.stage(a).script),
             .colour_lines = a.enemy_colours.lines,
@@ -395,6 +413,11 @@ pub const Round = struct {
         if (turn.world_out) |o| o.latch();
         self.logic_ran = false;
         self.split = false;
+        if (self.demo) {
+            self.readDemo(turn, a);
+            turn.demo_pads = true;
+        }
+        self.pads_read = turn.pads;
         // A tick of the pause is counted as it goes on: the one it ends at is play's.
         if (self.phase != .setup and self.phase != .play and self.phase != .paused) self.waited();
         const b = &a.screen.banner;
@@ -402,7 +425,8 @@ pub const Round = struct {
             .setup => {
                 turn.releasePads();
                 self.setUp(turn, a);
-                self.phase = .loaded;
+                // The demo's load leads to the round's fade in, its music then.
+                self.phase = if (self.demo) .fade_in else .loaded;
             },
             .loaded => {
                 self.colours.startFade(.target);
@@ -447,6 +471,8 @@ pub const Round = struct {
             .fade_in => {
                 self.colours.startFade(.target);
                 self.phase = .intro;
+                // The demo has no banner: its music with the fade in.
+                if (self.demo) turn.play(self.stage(a).music);
             },
             .intro => if (self.colours.stepFade()) {
                 self.phase = .play;
@@ -476,6 +502,38 @@ pub const Round = struct {
             },
         }
         return null;
+    }
+
+    /// The demo's pads at this display tick: the next reading of each pad (one at each tick but
+    /// the load's, from the set-up's), the hosts' START over it (it ends the demo).
+    fn readDemo(self: *Round, turn: *scene.Turn, a: *const Assets) void {
+        const d = &a.screen.demo;
+        const k = self.demo_reading;
+        self.demo_reading +|= 1;
+        var pads: input.Pads = .{ .pad1 = @bitCast(d.reading(0, k)), .pad2 = @bitCast(d.reading(1, k)) };
+        pads.pad1.start = pads.pad1.start or turn.pads.pad1.start;
+        pads.pad2.start = pads.pad2.start or turn.pads.pad2.start;
+        turn.pads = pads;
+    }
+
+    /// The demo's sign, fixed on the screen at its definition's place, in front of the layers,
+    /// never culled.
+    fn placeSign(w: *world.World, a: *const Assets, name: []const u8) void {
+        const kind = a.kinds.find(name) orelse return;
+        const def = a.kinds.get(kind).definition;
+        const n = struct {
+            fn of(dd: anytype, key: []const u8) i32 {
+                return dd.number(key) orelse 0;
+            }
+        };
+        const at: world.Vec3 = .pixels(n.of(def, "x"), n.of(def, "depth"), n.of(def, "height"));
+        const h = w.spawn(a.kinds, kind, at, .right) catch return;
+        const e = w.get(h).?;
+        e.flags.on_screen = true;
+        e.flags.stays = true;
+        e.flags.in_front = true;
+        // The load's turn drew it once: its frame's first tick is gone.
+        if (e.animation.left > 1) e.animation.left -= 1;
     }
 
     /// START on the pad of a player in play (not waiting to continue): the player, player 1's
@@ -774,6 +832,11 @@ pub const Round = struct {
         if (self.play.schedule.into == 0) if (self.start_pressed) |who| {
             self.start_pressed = null;
             self.waited();
+            // START ends the demo: its fade out, then the start-up.
+            if (self.demo) {
+                self.leave(turn, a, .start);
+                return null;
+            }
             if (turn.policies.start_opens_settings) return self.startOpensSettings(turn, who);
             self.phase = .paused;
             turn.play(a.pause);
@@ -816,6 +879,18 @@ pub const Round = struct {
         const w = &self.play.world;
         if (join != null) self.joined(turn);
         for (&self.out_blinks, w.players) |*b, pl| b.blink(pl.out, !self.answeredNo(pl), a.screen.status_bar.join.blink);
+        for (w.players, &self.seen_specials, &self.bar_specials) |pl, *seen, *shown| if (pl.specials != seen.*) {
+            seen.* = pl.specials;
+            shown.* = pl.specials;
+        };
+        // The demo's ticks of play counted down: at the last, it ends.
+        if (self.demo) {
+            self.demo_left -|= 1;
+            if (self.demo_left == 0) {
+                self.leave(turn, a, .done);
+                return null;
+            }
+        }
         if (w.timer.up) {
             // The timer is the logic tick's first half's: its sound with the players'.
             turn.playNow(a.stop);
@@ -858,6 +933,8 @@ pub const Round = struct {
         self.outcome = outcome;
         self.phase = .leaving;
         self.colours.startFade(.black);
+        // The demo plays no game.
+        if (self.demo) return;
         const g = &turn.setup.progress;
         if (outcome == .game_over) {
             g.* = .{};
@@ -882,9 +959,18 @@ pub const Round = struct {
     /// colours to fade in.
     fn setUp(self: *Round, turn: *scene.Turn, a: *const Assets) void {
         const setup = turn.setup;
-        const g = &setup.progress;
+        // The demo's players, round 1: a game of its own, which leaves the game's alone.
+        const d = &a.screen.demo;
+        var demo_game: setup_mod.Progress = .{ .round = 1 };
+        var characters = setup.characters;
+        if (self.demo) for (&demo_game.players, &characters, d.players) |*gp, *c, name| {
+            gp.* = .{ .in_play = true, .lives = d.lives };
+            c.* = std.meta.stringToEnum(setup_mod.Character, name);
+        };
+        const g = if (self.demo) &demo_game else &setup.progress;
         if (g.round == 0) g.* = .new(setup);
         self.number = g.round;
+        self.demo_left = d.ticks;
         const s = self.stage(a);
         self.planes = .{
             .{ .width = s.plane_a.width, .height = s.plane_a.height },
@@ -905,7 +991,7 @@ pub const Round = struct {
             wp.* = .{ .lives = gp.lives, .specials = gp.specials, .score = gp.score, .continues = gp.continues };
             self.drawn_scores[k] = gp.score;
             if (!gp.in_play) continue;
-            const character = setup.characters[k] orelse continue;
+            const character = characters[k] orelse continue;
             const kind = a.kinds.find(@tagName(character)) orelse {
                 std.log.warn("the content defines no {s} yet: player {d} sits out", .{ @tagName(character), k + 1 });
                 continue;
@@ -918,10 +1004,23 @@ pub const Round = struct {
             wp.specials = 1;
             if (t.actor(world.behaviours.player, h)) |act| world.behaviours.player.startLife(act);
         }
+        // The status bar shows the special attacks a new life gives; the demo's players have
+        // their own, which it shows once they change.
+        for (&w.players, &self.bar_specials, &self.seen_specials) |*wp, *shown, *seen| {
+            shown.* = wp.specials;
+            if (self.demo and wp.entity != null) wp.specials = d.specials;
+            seen.* = wp.specials;
+        }
         world.script.placeFirst(&t, &p);
         world.systems.loadTurns(&t);
+        if (self.demo) {
+            placeSign(w, a, d.sign);
+            // The demo's load runs its players' turn too: the camera keeps them in its view.
+            world.systems.keepPlayers(&t);
+        }
         const first_colours = out.colour_loads;
-        world.systems.picture(&t);
+        // The demo's load is in play's mode: the shadows with it.
+        if (self.demo) world.systems.pictureInPlay(&t) else world.systems.picture(&t);
         self.noteTransfers(a.kinds, out);
         self.join = .{ .ticks = a.screen.status_bar.join.blink };
         self.colours.palettes = .{};
@@ -991,7 +1090,7 @@ pub const Round = struct {
         const w = &self.play.world;
         var out: Bar = .{ .time = w.timer.shown, .join = self.join.shown };
         for (w.players, &out.players, self.out_blinks, 0..) |p, *o, ob, k| {
-            const playing: PlayerBar = .{ .playing = .{ .score = self.drawn_scores[k], .lives = p.lives, .specials = p.specials, .health = 0 } };
+            const playing: PlayerBar = .{ .playing = .{ .score = self.drawn_scores[k], .lives = p.lives, .specials = self.bar_specials[k], .health = 0 } };
             const gone: PlayerBar = .{ .out = .{ .name = true, .score = p.score, .game_over = ob.shown } };
             const h = p.entity orelse {
                 if (p.out) o.* = gone;
@@ -1000,7 +1099,7 @@ pub const Round = struct {
             const e = w.getConst(h) orelse continue;
             const new_game = k == 0 and w.players[1].entity == null and !w.players[1].out;
             o.* = switch (e.mind) {
-                .player => .{ .playing = .{ .score = self.drawn_scores[k], .lives = p.lives, .specials = p.specials, .health = healthOf(a, e) } },
+                .player => .{ .playing = .{ .score = self.drawn_scores[k], .lives = p.lives, .specials = self.bar_specials[k], .health = healthOf(a, e) } },
                 .player_waiting => |m| switch (m.state) {
                     // Its first tick: the bar as it was (the question still, after a NO; the name,
                     // the tick it was entered).

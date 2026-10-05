@@ -1,10 +1,5 @@
-//! A stand-in for a scene the game does not have yet: the attract demo (round 1 played by the
-//! game, PLAN item 13 and on) and the next round (round 2, PLAN item 15). It says
-//! so on a dark screen, in the game's font, and keeps the flow's time and sound: the demo's
-//! stand-in plays round 1's music when the demo does, lasts as long as the original's demo and
-//! stops the music at its end, so that the high scores come at the original's tick; START on
-//! either pad leaves it as the demo's START does, after its fade. The next round's stand-in names
-//! the characters chosen, and stays.
+//! A stand-in for a scene the game does not have yet: the next round (round 2, PLAN item 15). It
+//! says so on a dark screen, in the game's font, naming the characters chosen, and stays.
 const std = @import("std");
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
@@ -14,26 +9,16 @@ const art = @import("../content/art.zig");
 const setup_mod = @import("../setup.zig");
 const Setup = setup_mod.Setup;
 
-/// The demo's ticks from its set-up to its last, the load after its set-up left out (sor-remaster:
-/// the high scores' set-up 1977 display ticks after the demo's, its load 47 of them).
-const demo_ticks = 1930;
-/// START during the demo: its fade, then the start-up.
-const demo_leave_ticks = 64;
-
 pub const StandIn = struct {
     what: flow.Kind,
     ticks: u32 = 0,
-    /// The tick at which START leaves (after the demo's fade).
-    leaving_at: ?u32 = null,
     /// The players' characters, as the select left them.
     characters: [2]?setup_mod.Character = .{ null, null },
 
     pub const Assets = struct {
         text: library.Text,
         colours: *const art.Palette,
-        round_1_music: library.Sound,
-        stop: library.Sound,
-        pub const names = .{ .text = "fonts/main", .colours = "menu/two_pads", .round_1_music = "round 1 music", .stop = "stop" };
+        pub const names = .{ .text = "fonts/main", .colours = "menu/two_pads" };
     };
     pub const layout: view.Layout = .{ .a = .{ .width = 64, .height = 32 } };
 
@@ -41,34 +26,16 @@ pub const StandIn = struct {
         return .{ .what = what, .characters = setup.characters };
     }
 
-    pub fn tick(self: *StandIn, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
+    pub fn tick(self: *StandIn, turn: *scene.Turn, _: *const Assets) ?flow.Exit {
         self.ticks +|= 1;
         turn.frame = .{};
-        switch (self.what) {
-            .demo => {
-                if (self.ticks == 1) turn.releasePads();
-                // The demo's music after its load, as the round's set-up asks for it.
-                if (self.ticks == 2) turn.play(a.round_1_music);
-                if (self.leaving_at) |t| {
-                    if (self.ticks >= t) return .start;
-                } else if (turn.pressed.pad1.start or turn.pressed.pad2.start) {
-                    self.leaving_at = self.ticks + demo_leave_ticks;
-                }
-                if (self.ticks >= demo_ticks) {
-                    turn.play(a.stop);
-                    return .done;
-                }
-            },
-            .next_round => if (self.ticks == 1) turn.releasePads(),
-            else => {},
-        }
+        if (self.ticks == 1) turn.releasePads();
         return null;
     }
 
     /// What it says, a line a row (`buf` holds the characters' names).
     fn lines(self: *const StandIn, buf: []u8) [3][]const u8 {
         return switch (self.what) {
-            .demo => .{ "THE ATTRACT DEMO", "PLAYS ROUND 1:", "NOT IN SORZ YET" },
             .next_round => .{ "ROUND 2 WITH", self.names(buf), "IS NOT IN SORZ YET" },
             else => .{ @tagName(self.what), "IS NOT IN SORZ YET", "" },
         };

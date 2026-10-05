@@ -15,6 +15,8 @@ pub const Load = struct {
     sound_held: bool = true,
     /// The sound's driver runs at its first tick all the same (flow.zig).
     driver_once: bool = false,
+    /// The load loads the sound's driver again: it starts again after it (flow.zig).
+    driver_reloaded: bool = false,
 
     pub const Assets = struct {
         pub const names = .{};
@@ -29,6 +31,8 @@ pub const Load = struct {
             turn.sound_driver = true;
             turn.lag = .middle;
         }
+        // The driver loaded again: its first update after the load stops every sound.
+        if (self.driver_reloaded and self.left == 1) turn.sound_restart = true;
         turn.read_pads = false;
         self.left -|= 1;
         return null;
