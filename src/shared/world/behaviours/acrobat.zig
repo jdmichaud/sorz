@@ -526,6 +526,10 @@ pub fn takeUpCourse(a: Actor, ago: u32) void {
     a.mind.body.timer = n.dash_back_ticks -| @as(u8, @intCast(@min(ago, 255)));
 }
 
+pub fn takeUpHeld(a: Actor) void {
+    Common.takeUpHeld(a);
+}
+
 pub fn takeUpBounces(a: Actor, times: u8) void {
     Common.takeUpBounces(a, times);
 }

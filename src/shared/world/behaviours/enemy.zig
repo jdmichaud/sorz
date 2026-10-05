@@ -1441,6 +1441,13 @@ pub fn Of(comptime M: type) type {
 
         /// Taken up out of hiding: the one whose blow it took last, and the player it goes after
         /// (chosen now, its state kept, when the situation did not say).
+        /// Taken up held: its holder's move under way was taken already.
+        pub fn takeUpHeld(a: A) void {
+            const hh = a.entity.holder orelse return;
+            const holder = a.other(hh) orelse return;
+            body(a).hold_move = holder.move;
+        }
+
         /// Taken up, it bounced `times` times in its fall.
         pub fn takeUpBounces(a: A, times: u8) void {
             body(a).bounces = times;

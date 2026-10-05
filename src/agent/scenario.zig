@@ -783,32 +783,6 @@ pub const Run = struct {
                 t.takeUpWeapon(o.h, m.h);
             }
         }
-        // A fighter held, and its holder: the nearest across at its depth in a state that holds
-        // (the traces do not say who holds whom); they hold as a grab would make them.
-        for (made) |m_| {
-            const m = m_ orelse continue;
-            if (!stateIn(m.e.state, &.{ "held", "held_behind" }) or m.e.holder != null) continue;
-            const x = w.get(m.h) orelse continue;
-            if (x.holder != null) continue;
-            var best: ?world.Handle = null;
-            var best_dx: i32 = std.math.maxInt(i32);
-            for (made) |o_| {
-                const o = o_ orelse continue;
-                if (o.h.eql(m.h) or !stateIn(o.e.state, &holding_states)) continue;
-                const y = w.get(o.h) orelse continue;
-                if (y.holding != null) continue;
-                if (@abs(y.position.depth.whole() - x.position.depth.whole()) > 2) continue;
-                const dx: i32 = @intCast(@abs(y.position.x.whole() - x.position.x.whole()));
-                if (dx >= best_dx) continue;
-                best = o.h;
-                best_dx = dx;
-            }
-            const hh = best orelse continue;
-            w.get(hh).?.holding = m.h;
-            x.holder = hh;
-            var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
-            t.grabbed(hh, m.h);
-        }
         for (made) |m_| {
             const m = m_ orelse continue;
             const h = m.h;
@@ -843,6 +817,34 @@ pub const Run = struct {
                 };
                 t.takeUpStruck(h, @intCast(situation.t - at), striking);
             };
+        }
+        // A fighter held, and its holder: the nearest across at its depth in a state that holds
+        // (the traces do not say who holds whom); they hold as a grab would make them, the blow
+        // its holder's move has under way taken already.
+        for (made) |m_| {
+            const m = m_ orelse continue;
+            if (!stateIn(m.e.state, &.{ "held", "held_behind" }) or m.e.holder != null) continue;
+            const x = w.get(m.h) orelse continue;
+            if (x.holder != null) continue;
+            var best: ?world.Handle = null;
+            var best_dx: i32 = std.math.maxInt(i32);
+            for (made) |o_| {
+                const o = o_ orelse continue;
+                if (o.h.eql(m.h) or !stateIn(o.e.state, &holding_states)) continue;
+                const y = w.get(o.h) orelse continue;
+                if (y.holding != null) continue;
+                if (@abs(y.position.depth.whole() - x.position.depth.whole()) > 2) continue;
+                const dx: i32 = @intCast(@abs(y.position.x.whole() - x.position.x.whole()));
+                if (dx >= best_dx) continue;
+                best = o.h;
+                best_dx = dx;
+            }
+            const hh = best orelse continue;
+            w.get(hh).?.holding = m.h;
+            x.holder = hh;
+            var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
+            t.grabbed(hh, m.h);
+            t.takeUpHeld(m.h);
         }
         // A shutter waiting opened when its player first came near it since it was put up.
         if (kinds.find(world.tick.Tick.shutter_kind)) |sk| {

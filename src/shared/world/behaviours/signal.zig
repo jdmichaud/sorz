@@ -391,6 +391,10 @@ pub fn takeUp(a: Actor, elapsed: u32) void {
     Common.takeUp(a, elapsed);
 }
 
+pub fn takeUpHeld(a: Actor) void {
+    Common.takeUpHeld(a);
+}
+
 pub fn takeUpBounces(a: Actor, times: u8) void {
     Common.takeUpBounces(a, times);
 }
