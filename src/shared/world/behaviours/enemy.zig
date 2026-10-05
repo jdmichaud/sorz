@@ -1527,7 +1527,10 @@ pub fn Of(comptime M: type) type {
             var v = n.walk_off_depth;
             if (b.retreats >= n.walk_off_faster_after) v = n.walk_off_faster;
             if (b.retreats >= n.walk_off_fastest_after) v = n.walk_off_fastest;
-            const up = if (@hasDecl(M, "walks_off_down") and M.walks_off_down) false else t.position.depth.whole() >= n.walk_off_up_from;
+            const kind_way = if (@hasDecl(M, "walks_off_down") and M.walks_off_down) false else t.position.depth.whole() >= n.walk_off_up_from;
+            // The round's own way, whatever its kind's (round 4's: up).
+            const round_way: ?bool = if (a.tick.plan) |p| if (p.round.walk_off) |wo| (if (wo.down_before) |x| a.entity.position.x.whole() >= x else wo.up) else null else null;
+            const up = round_way orelse kind_way;
             if (up) v = v.neg();
             a.entity.velocity.depth = v;
             const now = a.tick.world.tick;

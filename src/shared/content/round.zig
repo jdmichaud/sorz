@@ -343,7 +343,14 @@ pub const Round = struct {
     boss_art_full: u8 = 0,
     /// Its floor by cells, when they differ (round 4's holes): null, its ground everywhere.
     floor: ?Floor = null,
+    /// The way its enemies walk off in depth, whatever their kind's and their target's (round
+    /// 4's: up, away from the screen); null: theirs.
+    walk_off: ?WalkOff = null,
 };
+
+/// A round's way for its enemies' walk off: up (away from the screen) or down; with
+/// `down_before`, down before that place across and up from it.
+pub const WalkOff = struct { up: bool = false, down_before: ?i32 = null };
 
 /// A round's floor by cells (round 4's bridge and its holes): the level in cells `cell[0]` pixels
 /// across and `cell[1]` in depth, from its top-left corner, a row of them by `cell[1]` pixels of
@@ -609,6 +616,12 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
             .{ .key = "rows", .value = .{ .array = rows } },
         }) });
     }
+    if (r.walk_off) |wo| {
+        var wf: std.ArrayList(json.Field) = .empty;
+        try wf.append(arena, .{ .key = "up", .value = .{ .bool = wo.up } });
+        if (wo.down_before) |x| try wf.append(arena, .{ .key = "down_before", .value = json.Value.num(x) });
+        try fields.append(arena, .{ .key = "walk_off", .value = .{ .object = wf.items } });
+    }
     if (r.own_sound) |o| try fields.append(arena, .{ .key = "own_sound", .value = try withProvenance(arena, o.provenance, &.{
         .{ .key = "sound", .value = .{ .str = o.sound } },
         .{ .key = "first", .value = json.Value.num(o.first) },
@@ -732,7 +745,7 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
@@ -859,6 +872,13 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         }
         r.animation = .{ .provenance = try provenanceOf(an), .every = try (try an.get("every")).int(u8), .steps = steps };
         if (r.animation.?.every == 0) return (try an.get("every")).fail("not 1 or more");
+    }
+    if (try root.opt("walk_off")) |wo| {
+        try wo.only(&.{ "up", "down_before" });
+        r.walk_off = .{
+            .up = try (try wo.get("up")).boolean(),
+            .down_before = if (try wo.opt("down_before")) |x| try x.int(i32) else null,
+        };
     }
     if (try root.opt("floor")) |fl| {
         try fl.only(&.{ "provenance", "cell", "kinds", "rows" });

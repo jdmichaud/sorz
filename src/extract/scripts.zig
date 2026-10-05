@@ -209,6 +209,20 @@ fn bandsInMode(arena: std.mem.Allocator, rom: []const u8, r: u32, p: u32, mode: 
     };
 }
 
+/// The way round `r`'s enemies walk off in depth, when the round has its own (0xDBCC: tested on
+/// the round's number before the kind's and the target's way): round 6's down (0xDC3C), round
+/// 7's down before a place across and up from it (0xDC44, 0xDC4C), round 4's up (0xDC56).
+fn walkOffOf(rom: []const u8, r: u32) Error!?round.WalkOff {
+    if (u16be(rom, 0xDC3E + 2) != 0xFF02 or u16be(rom, 0xDC46 + 2) != 0xFF02 or u16be(rom, 0xDC58 + 2) != 0xFF02) return error.BadData;
+    if (r == try immediate(rom, 0xDC3C, &.{ 0x0C, 0x78 }, 2)) return .{ .up = false };
+    if (r == try immediate(rom, 0xDC44, &.{ 0x0C, 0x78 }, 2)) {
+        if (u16be(rom, 0xDC50) != 0x0010) return error.BadData;
+        return .{ .up = true, .down_before = @intCast(try immediate(rom, 0xDC4C, &.{ 0x0C, 0x68 }, 2)) };
+    }
+    if (r == try immediate(rom, 0xDC56, &.{ 0x0C, 0x78 }, 2)) return .{ .up = true };
+    return null;
+}
+
 /// Plane B's water in its mode 2 (the camera's table at 0x1933A, entry 2: 0x1938A jumps to 0x191E0),
 /// set up by round `r`'s start (the table at 0x19C4C): its ripple's speed, its start and its turn
 /// (0x19C92, 0x19C9A, 0x19CA2: move.l #N,($FC18), ($FC1C), ($FB32) with $FB34), the ticks the
@@ -916,6 +930,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .music = try soundName(rom[round_music + r]),
         .ground = ground orelse return error.BadData,
         .floor = by_cells,
+        .walk_off = try walkOffOf(rom, r),
         .load = if (n <= measured_loads.len) measured_loads[n - 1] else null,
         .camera = camera,
         .players = .{
