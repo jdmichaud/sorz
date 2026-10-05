@@ -434,17 +434,18 @@ pub const EnemyWalk = struct {
     flight_ahead: i32,
 };
 
-/// How a round without a boss ends (round 7's): once its last section is cleared, its timer stops
-/// and the players walk out by themselves (their pads but in the air not theirs; nothing keeps
-/// them on the screen): each left until it is before `x`, then up or down into the depths
-/// `depth` (from the first, before the second); there it walks on left, and the round ends
-/// `ticks` turns of a player there later (the last to get there counts them again), as a boss's
-/// beating ends one.
+/// How a round without a boss ends (round 7's): once its last section is cleared, its timer stops,
+/// the enemies' `colours` are loaded as a section's opening loads its own, and the players walk
+/// out by themselves (their pads but in the air not theirs; nothing keeps them on the screen):
+/// each left until it is before `x`, then up or down into the depths `depth` (from the first,
+/// before the second); there it walks on left, and the round ends `ticks` turns of a player there
+/// later (the last to get there counts them again), as a boss's beating ends one.
 pub const Exit = struct {
     provenance: []const u8 = "",
     x: i32,
     depth: [2]i32,
     ticks: u16,
+    colours: Colours = .{},
 };
 
 /// What a round draws in front of its layers' cells that are in front of the sprites: the
@@ -775,6 +776,7 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         .{ .key = "x", .value = json.Value.num(ex.x) },
         .{ .key = "depth", .value = try pair(arena, ex.depth[0], ex.depth[1]) },
         .{ .key = "ticks", .value = json.Value.num(ex.ticks) },
+        .{ .key = "colours", .value = try coloursValue(arena, ex.colours) },
     }) });
     if (r.in_front.script or r.in_front.players or r.in_front.things) try fields.append(arena, .{ .key = "in_front", .value = try withProvenance(arena, r.in_front.provenance, &.{
         .{ .key = "script", .value = .{ .bool = r.in_front.script } },
@@ -1118,12 +1120,13 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         };
     }
     if (try root.opt("exit")) |ex| {
-        try ex.only(&.{ "provenance", "x", "depth", "ticks" });
+        try ex.only(&.{ "provenance", "x", "depth", "ticks", "colours" });
         r.exit = .{
             .provenance = try provenanceOf(ex),
             .x = try (try ex.get("x")).int(i32),
             .depth = try readPair(try ex.get("depth"), i32),
             .ticks = try (try ex.get("ticks")).int(u16),
+            .colours = if (try ex.opt("colours")) |x| try readColours(x) else .{},
         };
         if (r.exit.?.ticks == 0) return (try ex.get("ticks")).fail("not 1 or more");
     }

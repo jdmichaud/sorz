@@ -964,9 +964,11 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     const boss_from = try immediate(rom, if (r < late_sections) 0x67A else 0x63E, &.{ 0x0C, 0x78 }, 2);
     // The round of 0x646's `cmpi.w` (round 7's) ends there without a boss: its players walk out
     // (0x656, `exitOf`).
-    const exit = try exitOf(arena, rom, r);
+    var exit = try exitOf(arena, rom, r);
     const section_count: u32 = @intCast(if (exit != null) boss_from else boss_from + 1);
     const lift = try liftOf(arena, rom, r, mode_a, mode_b, u16be(rom, h + 12 + 8), section_count);
+    // The walk out's opening loads the enemies' colours of the next entry, as a section's does.
+    if (exit) |*ex| ex.colours = try sectionColours(rom, entryAt(rom, part, if (lift != null) section_count + 1 else section_count));
     const sections = try arena.alloc(round.Section, section_count);
     for (sections, 0..) |*s, k| {
         const lists_from = l.at;
@@ -1221,7 +1223,7 @@ fn exitOf(arena: std.mem.Allocator, rom: []const u8, r: u32) Error!?round.Exit {
     if (u32be(rom, 0x656) != 0x11FC0001 or u16be(rom, 0x65A) != 0xFA79 or u32be(rom, 0x65C) != 0x11FC0001 or u16be(rom, 0x660) != 0xFA73) return error.BadData;
     if (u16be(rom, 0x508E) != 0xFA74 or u32be(rom, 0x5098) != 0x11FC0001 or u16be(rom, 0x509C) != 0xFA71) return error.BadData;
     return .{
-        .provenance = try std.fmt.allocPrint(arena, "the players' walk out (0x502C, set at 0x656 with the timer stopped): left while at or past ROM 0x05064's place across, then into the depths of ROM 0x05076 to ROM 0x0507E's (excluded), then left ROM 0x0508A's turns of a player there; then the round ends (0x5098)", .{}),
+        .provenance = try std.fmt.allocPrint(arena, "the players' walk out (0x502C, set at 0x656 with the timer stopped): left while at or past ROM 0x05064's place across, then into the depths of ROM 0x05076 to ROM 0x0507E's (excluded), then left ROM 0x0508A's turns of a player there; then the round ends (0x5098); the colours of the round's next entry (0x608)", .{}),
         .x = @intCast(try immediate(rom, 0x5062, &.{ 0x0C, 0x40 }, 2)),
         .depth = .{ @intCast(try immediate(rom, 0x5074, &.{ 0x0C, 0x40 }, 2)), @intCast(try immediate(rom, 0x507C, &.{ 0x0C, 0x40 }, 2)) },
         .ticks = @intCast(try immediate(rom, 0x508A, &.{ 0x11, 0xFC, 0x00 }, 1)),

@@ -480,9 +480,10 @@ play).
   and as it stops, the camera jolts down by each of `jolts` in turn, one every `period` ticks. A
   section's wave waits `wait` ticks from its opening, then for the lift's next jolt.
 - `exit`, optional: how a round without a boss ends (round 7's, which has no `boss`). Once its
-  last section is cleared, the timer stops and the players walk out by themselves: each goes left
-  until it is before `x`, then into the depths `depth` (from the first, before the second), then
-  left again. The round ends `ticks` turns of a player there later, as a boss's beating ends one.
+  last section is cleared, the timer stops, the enemies' `colours` are loaded (as a section's
+  `colours`), and the players walk out by themselves: each goes left until it is before `x`, then
+  into the depths `depth` (from the first, before the second), then left again. The round ends
+  `ticks` turns of a player there later, as a boss's beating ends one.
 - `depth_walls`, optional, true when absent: whether the floor's walls stop the players' moves in
   depth, as they stop those across (false in round 7's).
 - `enemy_walk`, optional: how the enemies walk on the round's own floor (round 7's lift),

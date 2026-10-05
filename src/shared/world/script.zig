@@ -737,8 +737,9 @@ fn clearIfDone(t: *Tick, p: *const Plan) void {
     }
     const k = s.part + 1;
     if (k < r.sections.len) return beginSection(t, p, k);
-    if (r.exit != null) {
-        // The players walk out; the timer stops.
+    if (r.exit) |ex| {
+        // The players walk out; the timer stops; the next entry's colours are loaded.
+        holdColours(t, ex.colours);
         s.stage = .exit;
         s.exit = .{ .on = true };
         t.world.timer.stopped = true;
