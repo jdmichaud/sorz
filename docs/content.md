@@ -412,7 +412,10 @@ play).
 - `camera`: the view's top-left corner at the start (`at`), how far back it may go at the start
   (`x_min`; it never goes back after), its limits down (`y`), and plane B's scroll across,
   `plane_b` = [times, per] of the camera's; `plane_b_down`, optional: true when plane B moves
-  down as plane A does (the camera's shake too), else it keeps its place down. It has reached a wall when it is less than
+  down as plane A does (the camera's shake too), else it keeps its place down; `scroll`,
+  optional: how each frame of play copies the planes' scroll, `cells` (a value a row of cells)
+  or `lines` (a value a line), else none (the planes scroll whole); its time comes before the
+  sound's driver (A4). It has reached a wall when it is less than
   `wall_within` pixels from it. A wave's records come in at `edges`, across from its left edge on
   the left and on the right; when it reaches a wall, the section's enemies at or behind
   `left_behind`'s first (across from its left edge) come back there, at its second's depth. In

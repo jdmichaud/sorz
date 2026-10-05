@@ -197,6 +197,28 @@ fn bandsInMode(arena: std.mem.Allocator, rom: []const u8, r: u32, p: u32, mode: 
     };
 }
 
+/// How the frames of play copy the planes' scroll (0x196A4, by plane A's mode: its table at
+/// 0x196B2): by cells (0x196CA: two copies of $20 words, but by lines in the round of its
+/// `cmpi.w`), by lines (0x19758: two copies of $100 words), or not at all (0x197D8: the planes
+/// scroll whole).
+fn scrollOf(rom: []const u8, r: u32, mode_a: u16) Error!round.Scroll {
+    const table: u32 = 0x196B2;
+    if (mode_a >= 12 or u16be(rom, 0x196AA) != 0x303B or u16be(rom, 0x196B0) != 0x0002) return error.BadData;
+    const cells: u32 = 0x196CA;
+    const lines: u32 = 0x19758;
+    // The copies' lengths ($93LL $94HH), as transfers.zig counts them.
+    if (u32be(rom, 0x196E8) != 0x93209400 or u32be(rom, lines + 20) != 0x93009401) return error.BadData;
+    return switch (table + u16be(rom, table + 2 * mode_a)) {
+        cells => {
+            if (u16be(rom, cells) != 0x0C78 or u16be(rom, cells + 4) != 0xFF02 or u16be(rom, cells + 6) != 0x6700 or cells + 8 + u16be(rom, cells + 8) != lines) return error.BadData;
+            return if (u16be(rom, cells + 2) == r) .lines else .cells;
+        },
+        lines => .lines,
+        0x197D8 => .whole,
+        else => error.BadData,
+    };
+}
+
 /// The pixels of a long immediate's whole part (its high word), after `opcode` at `at`; its low
 /// word, the fraction, is none.
 fn longPixels(rom: []const u8, at: u32, opcode: []const u8) Error!u32 {
@@ -662,7 +684,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         else => return error.BadData,
     };
     const camera: round.Camera = .{
-        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down; the planes in their modes (the header's mode words): in mode 0 (0x18C4A, 0x1934A) their bands at the camera's X times their ratios, plane B at plane A's X and Y; in mode 1 plane A at the camera's X, plane B at it in round 1, a quarter of it in the others (ROM 0x19378: asr.w #2); the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282); the planes' bands, their rows and ratios, from the layout records (0x199C6, the table at ROM 0x5F788), the strips the camera brings in (0x18B3C)", .{ h, limits_set / 8 }),
+        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down; the planes in their modes (the header's mode words): in mode 0 (0x18C4A, 0x1934A) their bands at the camera's X times their ratios, plane B at plane A's X and Y; in mode 1 plane A at the camera's X, plane B at it in round 1, a quarter of it in the others (ROM 0x19378: asr.w #2); the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282); the planes' bands, their rows and ratios, from the layout records (0x199C6, the table at ROM 0x5F788), the strips the camera brings in (0x18B3C); how the frames copy the planes' scroll by plane A's mode (0x196A4)", .{ h, limits_set / 8 }),
         .x = u16be(rom, h + 6),
         .y = u16be(rom, h + 8),
         .x_min = u16be(rom, limits + 4),
@@ -670,6 +692,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .y_max = u16be(rom, limits + 2),
         .plane_b = plane_b,
         .plane_b_down = mode_b == 0,
+        .scroll = try scrollOf(rom, r, mode_a),
         .wall_within = @intCast(wall_within),
         .edges = .{ -8, @intCast(right_edge) },
         .left_behind = .{ -@as(i32, @intCast(behind_x)), @intCast(behind_depth) },

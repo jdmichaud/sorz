@@ -204,6 +204,9 @@ pub const Camera = struct {
     /// Plane B moves down as plane A does (the camera's shake too); else it keeps its place
     /// down, the camera's at the start.
     plane_b_down: bool = false,
+    /// How each frame of play copies the planes' scroll: not at all (they scroll whole), a value
+    /// a row of cells, or a value a line.
+    scroll: Scroll = .whole,
     /// The camera has reached a section's wall when it is less than this from it.
     wall_within: i32 = 4,
     /// Where a wave's or a reserve's record comes in, across from the camera's left edge: on the
@@ -230,6 +233,8 @@ pub const Camera = struct {
 };
 
 pub const Band = struct { rows: u8, times: u8, per: u8 };
+
+pub const Scroll = enum { whole, cells, lines };
 
 pub const Players = struct {
     provenance: []const u8 = "",
@@ -345,6 +350,7 @@ fn cameraValue(arena: std.mem.Allocator, c: *const Camera) !json.Value {
         .{ .key = "bands", .value = try bandsValue(arena, c.bands) },
     });
     if (c.plane_b_down) try f.append(arena, .{ .key = "plane_b_down", .value = .{ .bool = true } });
+    if (c.scroll != .whole) try f.append(arena, .{ .key = "scroll", .value = .{ .str = @tagName(c.scroll) } });
     return withProvenance(arena, c.provenance, f.items);
 }
 
@@ -614,7 +620,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     } else return (try root.get("art")).fail("no art set of this name");
 
     const c = try root.get("camera");
-    try c.only(&.{ "provenance", "at", "x_min", "y", "plane_b", "plane_b_down", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "bands" });
+    try c.only(&.{ "provenance", "at", "x_min", "y", "plane_b", "plane_b_down", "scroll", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "bands" });
     const at = try readPair(try c.get("at"), i32);
     const y = try readPair(try c.get("y"), i32);
     r.camera = .{
@@ -626,6 +632,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         .y_max = y[1],
         .plane_b = try readPair(try c.get("plane_b"), u8),
         .plane_b_down = if (try c.opt("plane_b_down")) |n| try n.boolean() else false,
+        .scroll = if (try c.opt("scroll")) |n| std.meta.stringToEnum(Scroll, try n.string()) orelse return n.fail("not whole, cells or lines") else .whole,
         .wall_within = try (try c.get("wall_within")).int(i32),
         .edges = try readPair(try c.get("edges"), i32),
         .left_behind = try readPair(try c.get("left_behind"), i32),

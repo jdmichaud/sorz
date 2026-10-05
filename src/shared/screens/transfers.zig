@@ -28,8 +28,10 @@ pub const Frame = struct {
     /// A table of scroll a line, both planes' (the intro, the title).
     line_scroll: bool = false,
     /// The scroll by cells, both planes' (the Sega logo's frames: play's way, with nothing to
-    /// scroll).
+    /// scroll; a round whose planes scroll by cells).
     cell_scroll: bool = false,
+    /// The scroll by lines of play, both planes', a transfer each (round 3's).
+    plane_lines: bool = false,
     /// Tiles the game copies, a transfer each (Axel's picture revealed, the title's set-up, the
     /// select's portraits' frames, a player's new frame in play).
     tiles: Tiles = .{},
@@ -91,6 +93,8 @@ const colour_words = 64;
 const line_scroll_words = 512;
 /// Two transfers of 32 words.
 const cell_scroll_words = 32;
+/// Two transfers of 256 words.
+const plane_line_words = 256;
 
 /// The cycles a transfer of `words` stops the sound's processor; `colours` at half the cost a
 /// word.
@@ -190,6 +194,10 @@ pub fn work(f: ?Frame) i32 {
         b.transfer_(cell_scroll_words, false);
         b.transfer_(cell_scroll_words, false);
     }
+    if (x.plane_lines) {
+        b.transfer_(plane_line_words, false);
+        b.transfer_(plane_line_words, false);
+    }
     // A column of n blocks is 2n half blocks of two cells each.
     if (x.strips != 0) {
         b.spend(costs.strip * @as(i32, x.strips));
@@ -222,6 +230,7 @@ pub fn hold(f: Frame) u32 {
     if (f.colours) h += transfer(colour_words, true);
     if (f.line_scroll) h += transfer(line_scroll_words, false);
     if (f.cell_scroll) h += 2 * transfer(cell_scroll_words, false);
+    if (f.plane_lines) h += 2 * transfer(plane_line_words, false);
     for (f.tiles.words[0..f.tiles.len]) |w| h += transfer(w, false);
     return h;
 }

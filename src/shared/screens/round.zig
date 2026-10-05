@@ -607,6 +607,11 @@ pub const Round = struct {
         if (was == .setup or self.split) return null;
         const sb = &a.screen.status_bar;
         var f: transfers.Frame = .{ .play = true, .colours = self.colours_due, .status_rows = sb.image_rows, .status_cells = sb.image_cells };
+        switch (self.stage(a).script.camera.scroll) {
+            .whole => {},
+            .cells => f.cell_scroll = true,
+            .lines => f.plane_lines = true,
+        }
         // The round ended at this tick: its next frame is the next scene's set-up's, without the
         // bar after a game over; the clear's writes the bar, without the bosses' bars.
         if (self.done and self.outcome != .cleared) f.status_rows = 0;
