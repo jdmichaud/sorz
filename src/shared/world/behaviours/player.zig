@@ -1848,6 +1848,7 @@ fn armedChoose(a: Actor, c: Command) void {
             a.sound(.swing_weapon);
             return change(a, .armed_swing);
         }
+        if (a.mind.weapon) |wh| if (a.tick.stabs(wh)) return change(a, .armed_stab);
         if ((def.number("stabs") orelse 0) != 0 and thingAhead(a)) return change(a, .armed_stab);
         return change(a, .armed_attack);
     }

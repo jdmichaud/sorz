@@ -75,6 +75,12 @@ fn splinter(a: Actor) void {
     }
 }
 
+/// Splintered, its blow in a hand is the stab, whatever is ahead (the original's B with the bat:
+/// the plain blow while whole, the stab once splintered).
+pub fn stabs(a: Actor) bool {
+    return a.mind.splintered;
+}
+
 /// Splintered, its poses are the splintered bat's.
 pub fn prefixed(a: Actor) ?[]const u8 {
     return if (a.mind.splintered) "broken_" else null;

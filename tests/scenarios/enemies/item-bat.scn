@@ -1,7 +1,8 @@
 # The recorded play (game.pads) to VBlank 3941 (past the first stop, the breakable that holds the
 # bat ahead); the player walks to the breakable and breaks it (B), walks to the bat and picks it up
 # (B); armed, it turns to the enemies that come and swings (B) until the bat splinters and its
-# splinters fall. (Written for sorz's similar-check, PLAN item 12.)
+# splinters fall, then stabs with the splintered bat (B). (Written for sorz's similar-check,
+# PLAN item 12.)
 start pads ../../game.pads 3941
 +right
 until near breakable 24 within 80
@@ -26,5 +27,11 @@ attack
 wait 8
 attack
 wait 8
+attack
+until state 1 armed_stand within 60
+attack
+wait 30
+attack
+wait 30
 attack
 wait 60

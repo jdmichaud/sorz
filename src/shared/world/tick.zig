@@ -184,6 +184,11 @@ pub const Tick = struct {
         dispatch(t, h, "blowLanded", void, {}, .{target});
     }
 
+    /// Whether the weapon `h` stabs in its holder's hand whatever is ahead (a splintered bat).
+    pub fn stabs(t: *Tick, h: Handle) bool {
+        return dispatch(t, h, "stabs", bool, false, .{});
+    }
+
     /// The blows the entity landed at this tick are forgotten (a breakable it broke cleared
     /// them).
     pub fn landingCleared(t: *Tick, h: Handle) void {

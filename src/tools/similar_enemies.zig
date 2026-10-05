@@ -68,7 +68,7 @@ pub const families = [_]Family{
     // Not the catalogue's: the knife in a player's hand, its stab and its throw.
     .{ .name = "item-knife", .what = "the knife: dropped by its Galsia, picked up, stabbed and thrown", .item = true },
     // Not the catalogue's: the bat out of its breakable, swung until it splinters.
-    .{ .name = "item-bat", .what = "the bat: out of its breakable, picked up, swung until it splinters", .item = true },
+    .{ .name = "item-bat", .what = "the bat: out of its breakable, picked up, swung until it splinters, then a stab", .item = true },
 };
 
 /// The kinds measured: the enemies, and the things they throw (and the players pick up).
