@@ -81,10 +81,12 @@ pub const Body = struct {
     lift_due: bool = false,
     lifted: bool = false,
     reel_still: bool = false,
-    /// Knocked down: how it goes on, its bounces, its flight slowing.
+    /// Knocked down: how it goes on, its bounces, its flight slowing; its draw of how long it
+    /// lies, made in its turn before the landing that lays it down (`drawLying`).
     down: Down = .flying,
     bounces: u8 = 0,
     slowing: bool = false,
+    lying_drawn: ?u8 = null,
     /// Held: the holder's move it last took a blow from, a slam's ticks under way.
     hold_move: ?u8 = null,
     slam: u8 = 0,
@@ -1011,6 +1013,7 @@ pub fn Of(comptime M: type) type {
                     if (b.slowing and b.bounces == 0) slow(a, n.knocked_slowing);
                     gravity(a);
                     go(a);
+                    drawLying(a);
                 },
                 .sliding => {
                     b.timer -%= 1;
@@ -1053,15 +1056,29 @@ pub fn Of(comptime M: type) type {
             a.entity.flags.airborne = true;
         }
 
-        /// Lying: a while drawn at its first tick, then it gets up.
+        /// Lying: a while drawn at its first tick (in its turn when it landed then), then it gets
+        /// up.
         fn lie(a: A) void {
             const n = a.numbers();
+            const b = body(a);
             if (a.entity.animation.paused) {
                 if (a.tick.world.special) return;
-                a.entity.animation.left = 2 * @as(u8, @intCast(a.pick(.lying, 4))) + n.lying_least;
+                const k: u8 = b.lying_drawn orelse @intCast(a.pick(.lying, 4));
+                b.lying_drawn = null;
+                a.entity.animation.left = 2 * k + n.lying_least;
                 a.pause(false);
             }
             if (a.frame() == n.gets_up_frame) enter(a, M.fights);
+        }
+
+        /// At the tick its flight lands it to lie (its last bounce), its draw of how long it lies
+        /// comes in its own turn, before the draws of the turns after it, as the original's,
+        /// which lands in its turn; its landing after the turns (the movement, `lie`) takes it.
+        fn drawLying(a: A) void {
+            const b = body(a);
+            if (b.bounces != 2 or a.entity.health < 0 or a.tick.world.special) return;
+            if (a.entity.position.height.add(a.entity.velocity.height).lessThan(a.tick.world.ground)) return;
+            b.lying_drawn = @intCast(a.pick(.lying, 4));
         }
 
         /// A throw's slide ends: it turns, lies on its back, and flies on to its bounces.
