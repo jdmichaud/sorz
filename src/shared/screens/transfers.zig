@@ -14,8 +14,11 @@
 //! player later in the frame (`work`, in the sound processor's cycles: sor-remaster's fit of the
 //! original's timing, audio/clock.zig): the frame's start, its drawing (play's way or a screen's),
 //! each transfer's set-up, the status bar's rows of play, the planes' strips as the camera moves,
-//! the health bars' partial cells, the screens' first line's scroll.
+//! the health bars' partial cells, the screens' first line's scroll; and in play, the art the
+//! round streams in, which every frame decodes a little of (`streamWork`), the middle of a
+//! logic tick's too.
 const std = @import("std");
+const Streamed = @import("../content/round.zig").Streamed;
 
 /// What a tick's picture transfers as the next frame starts.
 pub const Frame = struct {
@@ -115,6 +118,12 @@ pub const costs = struct {
     pub const bar_part = 195;
     /// A cell written alone.
     pub const cell = -8;
+    /// The art streamed in: each tile decoded, each code read (and each written out in full),
+    /// each byte read.
+    pub const stream_tile = 1593;
+    pub const stream_code = 78;
+    pub const stream_long_code = 14;
+    pub const stream_byte = 9;
     /// The writes of cells go at the processor's pace until the picture's blanking ends, this
     /// far into the frame, then each takes at least `slot` (the video chip's free slots).
     pub const blanking_end = 8180;
@@ -179,6 +188,12 @@ pub fn work(f: ?Frame) i32 {
     return b.work;
 }
 
+/// The work of a frame's decoding of the art streamed in, after its picture's work.
+pub fn streamWork(s: Streamed) i32 {
+    return @as(i32, s.tiles) * costs.stream_tile + @as(i32, s.codes) * costs.stream_code +
+        @as(i32, s.long_codes) * costs.stream_long_code + @as(i32, s.bytes) * costs.stream_byte;
+}
+
 /// The cycles the transfers of `f` stop the sound's processor.
 pub fn hold(f: Frame) u32 {
     var h = transfer(sprite_list_words, false);
@@ -197,6 +212,12 @@ test "a frame's work before the sound's driver" {
     try std.testing.expectEqual(@as(i32, 2362), work(.{ .play = true, .colours = true, .status_rows = 3, .status_cells = 40 }));
     // The Sega logo: play's way, its scroll by cells.
     try std.testing.expectEqual(@as(i32, 453), work(.{ .play = true, .colours = true, .cell_scroll = true }));
+}
+
+test "a frame's decoding of the art streamed in" {
+    // Round 1's first: five tiles, 181 codes (3 written out in full), 111 bytes.
+    try std.testing.expectEqual(@as(i32, 5 * 1593 + 181 * 78 + 3 * 14 + 111 * 9), streamWork(.{ .tiles = 5, .codes = 181, .long_codes = 3, .bytes = 111 }));
+    try std.testing.expectEqual(@as(i32, 0), streamWork(.{}));
 }
 
 test "the transfers' cycles, as sor-remaster measured them" {

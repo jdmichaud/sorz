@@ -22,7 +22,9 @@
 //! The times between the events are the original's loads of art: a section opens, and a waiting
 //! entry comes in, once its kinds' art is in video memory (0xD70, 0xB76). The loads are streamed
 //! at five tiles a display tick (0x8510) one block after the other (0x84BA), which this module
-//! counts from the blocks' sizes (the load lists at 0x8672) to give the script its ticks.
+//! counts from the blocks' sizes (the load lists at 0x8672) to give the script its ticks; and the
+//! decoding's display ticks themselves, the work the sound's timing reads (stream.zig: each
+//! section's, the boss's, each waiting entry's `streamed`).
 const std = @import("std");
 const sorz = @import("sorz");
 const round = sorz.content.round;
@@ -32,6 +34,7 @@ const rom_mod = @import("rom.zig");
 const sound_names = @import("sound_names.zig");
 const spawns = @import("spawns.zig");
 const rounds = @import("rounds.zig");
+const stream = @import("stream.zig");
 
 const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
@@ -231,6 +234,40 @@ pub fn artTicks(rom: []const u8, kinds: [4]u8) Error!u32 {
     return t;
 }
 
+/// The blocks of load list `n`, each its display ticks of decoding.
+fn loadStream(arena: std.mem.Allocator, rom: []const u8, n: u16) Error![]const []const round.Streamed {
+    const off: i16 = @bitCast(u16be(rom, load_lists + 2 * @as(u32, n)));
+    const at: u32 = @intCast(@as(i32, load_lists) + off);
+    const count = s16be(rom, at);
+    if (count < 0) return &.{};
+    const out = try arena.alloc([]const round.Streamed, @intCast(count + 1));
+    for (out, 0..) |*b, i| b.* = try stream.batches(arena, rom, u32be(rom, at + 2 + 6 * @as(u32, @intCast(i))));
+    return out;
+}
+
+/// A section's art loads (0xD70) as `artTicks` counts them: art slots 2, 1 and 0, then the
+/// boss's slot, the first looked at `first` ticks after the stream's tick, each next one a tick
+/// after the one before is done.
+fn artLoads(arena: std.mem.Allocator, rom: []const u8, kinds: [4]u8, first: u32, out: *std.ArrayList(stream.Load)) Error!void {
+    var after = first;
+    for ([_]u8{ 2, 1, 0 }) |slot| {
+        const kind = kinds[slot];
+        const blocks = if (kind == 0) &.{} else try loadStream(arena, rom, @as(u16, kind - 1) * 3 + (2 - slot) + first_art_load);
+        try out.append(arena, .{ .after = after, .blocks = blocks });
+        after = 1;
+    }
+    if (kinds[3] != 0) try out.append(arena, .{ .after = after, .blocks = try loadStream(arena, rom, kinds[3]) });
+}
+
+/// A waiting entry's kind's art streamed from its call: a tick, then its load (0xB76).
+fn arrivalStream(arena: std.mem.Allocator, rom: []const u8, t: u8) Error![]const round.Streamed {
+    if (!commonEnemy(t)) return &.{};
+    const kind = rom[art_of_type + @as(u32, t - 0x20)];
+    if (kind & 0x80 != 0 or kind == 0) return &.{};
+    const blocks = try loadStream(arena, rom, @as(u16, kind - 1) * 3 + first_art_load);
+    return stream.schedule(arena, &.{.{ .after = 1, .blocks = blocks }});
+}
+
 /// The ticks from a waiting entry's call (its turn chosen) to its coming in: a tick, then its
 /// kind's art load (0xB76).
 fn arrivalTicks(rom: []const u8, t: u8) Error!u16 {
@@ -350,6 +387,7 @@ fn reserve(arena: std.mem.Allocator, rom: []const u8, l: *Lists) Error![]const r
         var s = try entry(rom, t, b, y);
         s.side = if (side == 0) .right else .left;
         s.arrives_after = try arrivalTicks(rom, t & 0x7F);
+        s.streamed = try arrivalStream(arena, rom, t & 0x7F);
         try out.append(arena, s);
     }
     l.at = next;
@@ -464,6 +502,11 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         const art_at = if (k == 0) first + 6 else entryAt(rom, part, @intCast(k));
         const kinds = artKinds(rom, art_at);
         const art = try artTicks(rom, kinds);
+        // The first section's loads count from the round's start (its first queued with the
+        // round's load, started at the first tick of play); a later one's from its clear, its
+        // first look the tick after.
+        var loads: std.ArrayList(stream.Load) = .empty;
+        try artLoads(arena, rom, kinds, if (k == 0) 0 else 1, &loads);
         const wall: i32 = if (k == 0) first_wall else u16be(rom, camera_stops + 2 * @as(u32, @intCast(k)));
         s.* = .{
             .provenance = try std.fmt.allocPrint(arena, "section {d}: its wall {s} 0x{X:0>5}; its entry at ROM 0x{X:0>5} (0x1C1C4), its art kinds {any} loaded in {d} ticks (0xD70, the load lists at 0x8672 streamed by 0x8510){s}; its lists from byte {d} of the spawn lists (Nemesis at ROM 0x{X:0>5})", .{
@@ -480,6 +523,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
             .wall = wall,
             .timer = if (k < later_from) timer_first else timer_later,
             .opens_after = @intCast(if (k == 0) art + 1 else art + 2),
+            .streamed = try stream.schedule(arena, loads.items),
             .placed = placed.items,
             .wave = try wave(arena, rom, &l),
             .reserve = try reserve(arena, rom, &l),
@@ -500,12 +544,18 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     var kinds = boss_art;
     kinds[3] = boss_load;
     const wave_after = 1 + try artTicks(rom, kinds);
+    // From the last section's clear: the boss's art a tick later, then the wait, then the art
+    // loads, their first look the tick after the music's.
+    var boss_loads: std.ArrayList(stream.Load) = .empty;
+    try boss_loads.append(arena, .{ .after = 1, .blocks = try loadStream(arena, rom, boss_load) });
+    try artLoads(arena, rom, kinds, @intCast(wait), &boss_loads);
     const boss_section: round.Boss = .{
         .provenance = try std.fmt.allocPrint(arena, "the boss's section (0x59C): the fade's request at ROM 0x{X:0>5}, the boss's art (load {d}, 0x1C378) streamed, then the wait of ROM 0x{X:0>5}, the music's request at ROM 0x{X:0>5}; then the section's art and the boss's (0xD70) before its wave", .{ 0x5A7, boss_load, 0x5D0, 0x5E3 }),
         .fade = try soundName(@intCast(fade)),
         .music = try soundName(@intCast(music)),
         .music_after = @intCast(music_after),
         .wave_after = @intCast(wave_after),
+        .streamed = try stream.schedule(arena, boss_loads.items),
         .wave = try wave(arena, rom, &l),
         .reserve = try reserve(arena, rom, &l),
     };
@@ -588,6 +638,8 @@ test "a section's lists: the groups placed by page, the timed wave, the waiting 
     std.mem.writeInt(u16, rom[load_lists + 0x100 ..][0..2], 0, .big);
     std.mem.writeInt(u32, rom[load_lists + 0x102 ..][0..4], 0x9000, .big);
     std.mem.writeInt(u16, rom[0x9000..][0..2], 10, .big);
+    // Its code table: value 0, eight of them a code of 1 bit (0); the codes all 0.
+    @memcpy(rom[0x9002..][0..4], &[_]u8{ 0x00, 0x71, 0x00, 0xFF });
     const lists = [_]u8{
         0x00, 0x01, // a group of two
         0x22, 0x80, 0x1F, 0x00, 0x50, 0x41, // Galsia, waits for the camera, X $x50, Y $41 (level 1)

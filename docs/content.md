@@ -322,14 +322,16 @@ editing it.
   "timer": {"provenance": "…", "pace": 90},
   "sections": [
     {"provenance": "…", "wall": 1216, "timer": 40, "opens_after": 62,
+     "streamed": [[0, 0, 0, 0], [0, 0, 0, 0], [5, 181, 3, 111], …],
      "placed": [{"kind": "galsia", "x": 1104, "depth": 64, "entrance": "close_in", "slow": true,
                  "offset": {"x": 64, "depth": -48}}],
      "wave": [{"kind": "galsia_stalker", "side": "left", "depth": 32, "after": 16,
                "entrance": "approach", "offset": {"x": 64, "depth": 0}}],
-     "reserve": [{"kind": "galsia", "side": "left", "depth": 72, "arrives_after": 32}]}
+     "reserve": [{"kind": "galsia", "side": "left", "depth": 72, "arrives_after": 32,
+                  "streamed": […]}]}
   ],
   "boss": {"provenance": "…", "fade": "fade out", "music": "boss music", "music_after": 86,
-           "wave_after": 59, "wave": [{"kind": "antonio", "side": "right", "depth": 16,
+           "wave_after": 59, "streamed": […], "wave": [{"kind": "antonio", "side": "right", "depth": 16,
            "after": 16, "bar": 4}], "reserve": []}
 }
 ```
@@ -374,13 +376,22 @@ play).
 - `boss`: after the last section's clear, the camera stops where it is and `fade` is asked for;
   `music_after` ticks after the clear, the boss's `music`; `wave_after` ticks after the music,
   its `wave` and `reserve` as a section's. A beaten boss ends the round.
+- `streamed` (a section's, the boss's, a reserve record's): the art the game decodes while it
+  plays, a little each display tick, for what comes (the original streams it in, five tiles a
+  display tick): a section's kinds' and the boss's, from the section's start (the first
+  section's, from the round's start), the boss's from the last section's clear, an arriving
+  enemy's kind's from its call. Each entry is a display tick, the first the one that ends that
+  tick, then the next tick's middle, its end and so on: `[tiles, codes, long codes, bytes]`, the
+  tiles it decodes and the decoder's reads (its codes, those written out in full among them, and
+  its bytes); `[0, 0, 0, 0]` where it decodes nothing. Their time comes before the sound's
+  driver (A4).
 
 A record of `placed`, `wave` or `reserve` is one entity:
 
 - `kind`, a kind of entity (`entities/NAME.json`). A kind the tree does not define yet is kept:
   the game skips it with a warning.
 - `x` (placed) or `side` (`right` or `left`, wave and reserve), `depth`; `after` (wave),
-  `arrives_after` (reserve).
+  `arrives_after` and `streamed` (reserve).
 - `level`, the lowest LEVEL of the options it comes at (0, the easiest, when absent); in the
   original the depth's low two bits, which the depth keeps. `two_players`: it comes only with two
   players.

@@ -34,6 +34,7 @@ const json = @import("formats/json.zig");
 const View = @import("view.zig").View;
 const Setup = @import("setup.zig").Setup;
 const transfers = @import("screens/transfers.zig");
+const content_round = @import("content/round.zig");
 const world = @import("world/root.zig");
 const variant = @import("variant.zig");
 
@@ -126,6 +127,9 @@ pub const Turn = struct {
     /// What this tick's picture transfers as the next frame starts (screens/transfers.zig);
     /// null for a tick that ends no frame (a load's, a tick split in two).
     frame: ?transfers.Frame = null,
+    /// The art the frame that follows decodes of what play streams in (the middle of a logic
+    /// tick's frames too).
+    streamed: content_round.Streamed = .{},
     /// The game's random generator (the canonical state's), which play draws from; null in the
     /// tests of scenes that draw none.
     random: ?*world.Random = null,

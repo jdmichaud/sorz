@@ -234,6 +234,8 @@ pub fn run(t: *Tick) void {
                 s.enemies = countEnemies(t);
             } else if (s.calls != 0 and s.next < list.len) {
                 s.arriving = @max(list[s.next].arrives_after, 1);
+                // Its kind's art is loaded as it is called.
+                if (list[s.next].streamed.len != 0) t.out.streamed = .{ .part = s.part, .record = s.next };
                 return;
             }
             clearIfDone(t, p);
@@ -310,8 +312,9 @@ fn clearIfDone(t: *Tick, p: *const Plan) void {
     const k = s.part + 1;
     if (k < r.sections.len) return beginSection(t, p, k);
     if (r.boss == null) return;
-    // The boss's section opens as a section does: its colours.
+    // The boss's section opens as a section does: its colours; its art loads.
     t.out.colours = true;
+    t.out.streamed = .{ .part = k };
     s.part = k;
     s.stage = .boss_opening;
     s.ticks = 1;
@@ -321,8 +324,9 @@ fn clearIfDone(t: *Tick, p: *const Plan) void {
 fn beginSection(t: *Tick, p: *const Plan, k: u8) void {
     const s = &t.world.script;
     const sec = &p.round.sections[k];
-    // A section's art's colours are set as it begins.
+    // A section's art's colours are set as it begins, and its art loads.
     t.out.colours = true;
+    t.out.streamed = .{ .part = k };
     s.part = k;
     s.stage = .opening;
     s.ticks = @max(sec.opens_after, 1);

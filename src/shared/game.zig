@@ -84,8 +84,8 @@ pub fn transfersOf(due: *Due, turn: *const scene.Turn) Due {
     // A load's ticks leave what the frame before it carries for the frame after it.
     if (turn.frame) |f| {
         due.held = transfers.hold(f);
-        due.work = transfers.work(f);
-    } else if (turn.sound_driver) due.work = transfers.work(null);
+        due.work = transfers.work(f) + transfers.streamWork(turn.streamed);
+    } else if (turn.sound_driver) due.work = transfers.work(null) + transfers.streamWork(turn.streamed);
     return now;
 }
 

@@ -8,6 +8,7 @@ const art = @import("../content/art.zig");
 const render = @import("../render/root.zig");
 const entity = @import("entity.zig");
 const random = @import("random.zig");
+const content_round = @import("../content/round.zig");
 
 const Handle = entity.Handle;
 const capacity = entity.capacity;
@@ -73,6 +74,9 @@ pub const Output = struct {
     /// The round's script set its enemies' colours at this tick (a section's, an arriving
     /// enemy's, the boss's): the picture copies the colours.
     colours: bool = false,
+    /// The art the round's script began to load at this tick (a section's, the boss's, an
+    /// arriving enemy's), streamed in from the tick's end: the picture's display ticks decode it.
+    streamed: ?content_round.StreamOf = null,
     /// The draw list, back to front: what the renderer's `Screen.sprites` takes. It stays until
     /// the next logic tick, so the display ticks in between draw it again.
     sprites: List(render.Sprite, 2 * capacity) = .{},
@@ -96,6 +100,7 @@ pub const Output = struct {
         @memset(&self.shown, null);
         @memset(&self.new_frames, false);
         self.colours = false;
+        self.streamed = null;
     }
 };
 
