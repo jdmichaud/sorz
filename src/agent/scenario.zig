@@ -359,8 +359,11 @@ pub const Situation = struct {
         /// The states it has been in, joined by spaces; the scene's tick its state began at.
         states: []const u8 = "",
         since: u64 = 0,
-        /// The id of the last one whose blow cost it health.
+        /// The id of the last one whose blow cost it health; the tick its own blow last cost
+        /// another's (up to the situation's next tick, which tells of a blow struck at its own).
         struck_by: ?u32 = null,
+        struck_at: ?u64 = null,
+        landed: ?u64 = null,
         /// The other program's place for it (its object slot), which the order of updates
         /// follows.
         slot: ?u8 = null,
@@ -452,8 +455,13 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             x.position = .{ @intCast(int(o, "x") orelse 0), @intCast(int(o, "d") orelse 0), @intCast(int(o, "h") orelse 0) };
             x.velocity = .{ @intCast(int(o, "vx") orelse 0), @intCast(int(o, "vd") orelse 0), @intCast(int(o, "vh") orelse 0) };
         } else if (std.mem.eql(u8, ev, "hit")) {
+            const by: ?u32 = if (int(o, "by")) |b| @intCast(b) else null;
+            if (by) |b| if (seen.getPtr(b)) |s_| {
+                s_.landed = @intCast(int(o, "t") orelse 0);
+            };
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
-            if (int(o, "by")) |by| x.struck_by = @intCast(by);
+            if (by) |b| x.struck_by = b;
+            x.struck_at = @intCast(int(o, "t") orelse 0);
         } else if (std.mem.eql(u8, ev, "health")) {
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             x.health = @intCast(int(o, "health") orelse 0);
@@ -485,7 +493,8 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
     const l = last orelse return error.NoPlay;
     s.v = l.v;
     s.t = l.t;
-    s.entities = try arena.dupe(Situation.Seen, seen.values());
+    const entities = try arena.dupe(Situation.Seen, seen.values());
+    s.entities = entities;
     // The round's script's spawns after the situation, in the same round scene.
     var later: std.ArrayList(Situation.Later) = .empty;
     while (after orelse lines.next()) |line| {
@@ -496,6 +505,18 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
         const o = v.object;
         const ev = str(o, "ev") orelse return error.BadTrace;
         if (std.mem.eql(u8, ev, "end") or std.mem.eql(u8, ev, "scene")) break;
+        if (std.mem.eql(u8, ev, "hit")) {
+            // A blow struck at the situation's tick costs its health at the next, where the
+            // trace names the striker: who struck the one that entered its state then.
+            if ((int(o, "t") orelse 0) != s.t + 1) continue;
+            const id: u32 = @intCast(int(o, "e") orelse continue);
+            const by: u32 = @intCast(int(o, "by") orelse continue);
+            for (entities) |*x| {
+                if (x.id == id and x.since == s.t) x.struck_by = by;
+                if (x.id == by) x.landed = s.t + 1;
+            }
+            continue;
+        }
         if (!std.mem.eql(u8, ev, "spawn")) continue;
         const kind = str(o, "kind") orelse return error.BadTrace;
         if (!scripted(kind)) continue;
@@ -651,6 +672,8 @@ pub const Run = struct {
             if (e.state) |st| _ = world.behaviours.setState(&x.mind, st);
             if (e.player) |p| {
                 w.players[p - 1] = .{ .entity = h, .lives = situation.lives[p - 1][0], .specials = situation.lives[p - 1][1], .score = situation.scores[p - 1] };
+                // The camera follows from where the situation's tick drew the player.
+                w.camera.drawn[p - 1] = x.position.x;
             }
             if (x.team == .enemy) takeUpSpawn(kinds, x, e, extras.round, &r.used);
             made[h.index] = .{ .h = h, .e = e };
@@ -672,7 +695,21 @@ pub const Run = struct {
             if (trace) |tw| tw.assignId(h.index, h.generation, e.id);
             var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
             t.takeUp(h, @intCast(situation.t -| e.since));
+            // Its blow that cost another health in its state: at the situation's tick (the
+            // trace tells it at the next), or so many ticks before.
+            if (e.landed) |at| if (at > e.since) t.takeUpLanded(h, if (at > situation.t) null else @intCast(situation.t - at));
+            // A blow that cost it health in its state, so many ticks before, its striker still in
+            // the state it struck in (its blow may still touch).
+            if (e.struck_at) |at| if (at > e.since) {
+                var striking = false;
+                for (situation.entities) |*o| if (e.struck_by == o.id) {
+                    striking = o.since < at;
+                };
+                t.takeUpStruck(h, @intCast(situation.t - at), striking);
+            };
         }
+        // What the take-ups asked for is not the tick's.
+        r.out.begin();
         if (trace) |tw| {
             tw.next_id = situation.next_id;
             tw.takeUpScene(.{ .name = "round", .round = situation.round }, situation.t);

@@ -1189,8 +1189,9 @@ pub fn Of(comptime M: type) type {
 
         /// Taken up in its state from a situation another program recorded, `elapsed` ticks
         /// after it entered it (its set-up at the tick after): knocked out, its blinks counted
-        /// down by then; in a state its module says counts down every tick (`countdowns`), set up
-        /// now and its count gone down by the ticks since; another, set up at its next tick.
+        /// down by then; reeling, its blow taken and its reel gone on since; in a state its
+        /// module says counts down every tick (`countdowns`), set up now and its count gone down
+        /// by the ticks since; another, set up at its next tick.
         pub fn takeUp(a: A, elapsed: u32) void {
             if (elapsed >= 1 and @hasDecl(M, "countdowns")) {
                 for (M.countdowns) |st| if (a.mind.state == st) {
@@ -1222,11 +1223,35 @@ pub fn Of(comptime M: type) type {
                         b.timer = n.blink;
                     }
                 },
+                // Reeling since its first tick at least: the blow taken then, its frame turned and
+                // its count down at each tick since.
+                .reel => if (elapsed >= 1) {
+                    const b = body(a);
+                    b.fresh = false;
+                    b.reel_taken = true;
+                    b.touch_taken = false;
+                    a.animate(.reel);
+                    a.pause(true);
+                    a.setFrame(@intCast((elapsed - 1) & 1));
+                    b.timer = a.numbers().reel -| @as(u8, @intCast(@min(elapsed, 255)));
+                } else {
+                    body(a).fresh = true;
+                    if (a.entity.animation.index == null) a.animate(.walk);
+                },
                 else => {
                     body(a).fresh = true;
                     if (a.entity.animation.index == null) a.animate(.walk);
                 },
             }
+        }
+
+        /// Taken up reeling, a blow taken `ago` ticks before: its reel started again then, and the
+        /// blow touches it still while its striker is in the state it struck in.
+        pub fn takeUpStruck(a: A, ago: u32, striking: bool) void {
+            const b = body(a);
+            if (a.mind.state != .reel or !b.reel_taken) return;
+            b.timer = a.numbers().reel -| @as(u8, @intCast(@min(ago + 1, 255)));
+            b.touch_taken = striking;
         }
 
         /// Taken up out of hiding: the one whose blow it took last, and the player it goes after

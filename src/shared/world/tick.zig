@@ -206,6 +206,18 @@ pub const Tick = struct {
         dispatch(t, h, "takeUp", void, {}, .{elapsed});
     }
 
+    /// Taken up from a situation, the entity's blow cost another health `ago` ticks before
+    /// (null: at the situation's tick, felt at its next).
+    pub fn takeUpLanded(t: *Tick, h: Handle, ago: ?u32) void {
+        dispatch(t, h, "takeUpLanded", void, {}, .{ago});
+    }
+
+    /// Taken up from a situation, a blow cost the entity health `ago` ticks before, in its state;
+    /// `striking`: its striker is still in the state it struck in.
+    pub fn takeUpStruck(t: *Tick, h: Handle, ago: u32, striking: bool) void {
+        dispatch(t, h, "takeUpStruck", void, {}, .{ ago, striking });
+    }
+
     /// The entity landed on the ground (the movement system).
     pub fn landed(t: *Tick, h: Handle) void {
         dispatch(t, h, "landed", void, {}, .{});

@@ -287,13 +287,34 @@ pub fn startLife(a: Actor) void {
     a.entity.flags.airborne = true;
 }
 
-/// Taken up in its state from a situation another program recorded: its state's animation and
-/// move, its speed kept.
+/// Taken up in its state from a situation another program recorded, `elapsed` ticks after it
+/// entered it: its state's animation and move, its speed kept, its frames on by the ticks since;
+/// but dropping in, its life already started (its blinking over).
 pub fn takeUp(a: Actor, elapsed: u32) void {
-    _ = elapsed;
+    if (a.mind.state != .fall) a.mind.started = true;
     const v = a.entity.velocity;
     begin(a, a.mind.state);
     a.entity.velocity = v;
+    for (0..@min(elapsed, 255)) |_| _ = a.step();
+    switch (a.mind.state) {
+        .attack1, .attack2, .attack3, .attack4 => a.mind.chain = a.mind.state,
+        else => {},
+    }
+}
+
+/// Taken up, its blow in this state landed `ago` ticks before (null: at the situation's tick):
+/// the combo's window it opened is open for the rest of its ticks.
+pub fn takeUpLanded(a: Actor, ago: ?u32) void {
+    const n = a.numbers();
+    const t = ago orelse {
+        a.mind.landed_blow = true;
+        return;
+    };
+    switch (a.mind.state) {
+        .attack1, .attack2, .attack3, .attack4 => {},
+        else => return,
+    }
+    if (t < n.combo_window) a.mind.window = n.combo_window - @as(u8, @intCast(t));
 }
 
 /// The state's animation, move and speed across. A blow queued in the combo's first blows is
