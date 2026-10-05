@@ -26,6 +26,7 @@ const items = @import("items.zig");
 
 const u16be = rom_mod.u16be;
 const s16be = rom_mod.s16be;
+const u32be = rom_mod.u32be;
 const Def = entities.Def;
 const Error = entities.Error;
 const immediate = entities.immediate;
@@ -116,9 +117,16 @@ fn obstacle(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
     try d.number("height", try moveWord(rom, 0x7CD4, 24), "ROM 0x07CD4: move.w #N,(24,a0)");
     // The speeds across by side (0x7D0C: move.w (0x7D46,pc,d6.w),(28,a0)): to the left, then the
     // right, the same speed.
-    const speed = s16be(rom, 0x7D48);
-    if (s16be(rom, 0x7D46) != -speed or u16be(rom, 0x7D0C) != 0x317B or u16be(rom, 0x7D10) != 28) return error.BadData;
-    try d.number("speed", @as(i32, speed) << 16, "ROM 0x07D46: the second word, whole pixels (the first, to the left, its opposite)");
+    if (u16be(rom, 0x7D0C) != 0x317B or u16be(rom, 0x7D10) != 28) return error.BadData;
+    try d.number("speed_left", @as(i32, s16be(rom, 0x7D46)) << 16, "ROM 0x07D46: the first word, whole pixels");
+    try d.number("speed_right", @as(i32, s16be(rom, 0x7D48)) << 16, "ROM 0x07D48: the second word, whole pixels");
+    // Standing it is solid and in front (0x7CE0: ori.b #1,(58,a0); 0x7CCE: ori.b #16,(1,a0));
+    // knocked away, its flight's look runs (0x7D2E: bset.b #2,(1,a0)), whichever way it flies.
+    if (u32be(rom, 0x7CE0) != 0x00280001 or u16be(rom, 0x7CE4) != 58 or u32be(rom, 0x7CCE) != 0x00280010 or u16be(rom, 0x7CD2) != 1 or u32be(rom, 0x7D2E) != 0x08E80002 or u16be(rom, 0x7D32) != 1) return error.BadData;
+    try d.number("solid", 1, "ROM 0x07CE0: ori.b #1,(58,a0)");
+    try d.number("in_front", 1, "ROM 0x07CCE: ori.b #16,(1,a0)");
+    try d.number("turns", 0, "ROM 0x07D12: moveq #2,d0, its flight's animation whichever way it flies");
+    try d.number("held", 0, "ROM 0x07D2E: bset.b #2,(1,a0), its flight's look running");
     try d.number("up", (try moveWord(rom, 0x7D1C, 36)) << 16, "ROM 0x07D1C: move.w #N,(36,a0), whole pixels");
     if (u16be(rom, 0x710A) != 36) return error.BadData;
     try d.number("falling", try immediate(rom, 0x7104, &.{ 0x06, 0xA8 }, 4), "ROM 0x07104: addi.l #N,(36,a0)");

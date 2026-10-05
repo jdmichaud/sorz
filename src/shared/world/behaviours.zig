@@ -56,8 +56,8 @@
 //! (`juggler_knife`), round 2's boss `boss_r2` with his claws (`boss_r2_claws`) and his trail
 //! (`boss_r2_trail`); round 3's: the `lamp`s, the `crate`s, the `drifter`s, the `rain`, the
 //! acrobats of a trio (`acrobat_trio`); round 4's: the cones, posts and barriers a blow knocks
-//! away (`obstacle_r4`), its boss `boss_r4` and his shoulder (`boss_r4_shoulder`); round 5's: the
-//! things on the deck a blow knocks away (`obstacle`).
+//! away (`obstacle`, round 5's things on the deck too), its boss `boss_r4` and his shoulder
+//! (`boss_r4_shoulder`).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -105,7 +105,6 @@ pub const crate = @import("behaviours/crate.zig");
 pub const drifter = @import("behaviours/drifter.zig");
 pub const rain = @import("behaviours/rain.zig");
 pub const obstacle = @import("behaviours/obstacle.zig");
-pub const obstacle_r4 = @import("behaviours/obstacle_r4.zig");
 pub const boss_r4 = @import("behaviours/boss_r4.zig");
 pub const boss_r4_shoulder = @import("behaviours/boss_r4_shoulder.zig");
 
@@ -155,7 +154,6 @@ pub const Mind = union(enum) {
     drifter: drifter.Mind,
     rain: rain.Mind,
     obstacle: obstacle.Mind,
-    obstacle_r4: obstacle_r4.Mind,
     boss_r4: boss_r4.Mind,
     boss_r4_shoulder: boss_r4_shoulder.Mind,
 };
