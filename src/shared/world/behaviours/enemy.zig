@@ -755,8 +755,11 @@ pub fn Of(comptime M: type) type {
             return true;
         }
 
-        /// Whether its state takes blows and grabs now.
+        /// Whether its state takes blows and grabs now. A state it entered at this tick before
+        /// its own tick (let go by a holder struck between the players) takes none until then:
+        /// the original's enemy leaves the state it was in at its own tick, without its tests.
         pub fn hurtable(a: A) bool {
+            if (body(a).waits) return false;
             switch (a.mind.state) {
                 .appear, .knocked_down, .knocked_out, .held => return false,
                 else => return M.hurtable(a.mind.state),
