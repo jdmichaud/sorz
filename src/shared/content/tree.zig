@@ -276,13 +276,16 @@ fn writeSet(arena: std.mem.Allocator, a: *const art.Art, s: *const art.ArtSet, f
         for (entries, s.frames) |*e, *f| {
             const pieces = try arena.alloc(json.Value, f.pieces.len);
             for (pieces, f.pieces) |*v, p| v.* = try ints(arena, &[_]i32{ p.x, p.y, p.width, p.height });
-            e.* = .{ .key = f.name, .value = try assetFields(arena, f.provenance, &.{
+            var fields: std.ArrayList(json.Field) = .empty;
+            try fields.appendSlice(arena, &.{
                 .{ .key = "file", .value = .{ .str = f.file } },
                 .{ .key = "origin", .value = try ints(arena, &[_]i16{ f.origin_x, f.origin_y }) },
                 .{ .key = "palette", .value = json.Value.num(f.palette) },
                 .{ .key = "priority", .value = .{ .bool = f.priority } },
                 .{ .key = "pieces", .value = .{ .array = pieces } },
-            }) };
+            });
+            if (f.copied.len != 0) try fields.append(arena, .{ .key = "copied", .value = try ints(arena, f.copied) });
+            e.* = .{ .key = f.name, .value = try assetFields(arena, f.provenance, fields.items) };
             try files.append(arena, .{ .path = try setPath(arena, s.name, f.file), .bytes = try picture(arena, f.width, f.height, f.pixels, f.view) });
         }
         try top.append(arena, .{ .key = "frames", .value = .{ .object = entries } });
@@ -697,7 +700,7 @@ fn loadFrames(p: Pass, node: json.Node, root: json.Node) Error![]const art.Frame
     for (out) |*f| {
         const e = (try it.next()).?;
         try checkName(e.value, e.key);
-        try e.value.only(&.{ "provenance", "file", "origin", "palette", "priority", "pieces" });
+        try e.value.only(&.{ "provenance", "file", "origin", "palette", "priority", "pieces", "copied" });
         const file = try fileField(e.value);
         const pic = try loadPicture(p, file);
         const origin = try e.value.get("origin");
@@ -722,6 +725,11 @@ fn loadFrames(p: Pass, node: json.Node, root: json.Node) Error![]const art.Frame
             .palette = try (try e.value.get("palette")).int(u2),
             .priority = try (try e.value.get("priority")).boolean(),
             .pieces = pieces,
+            .copied = if (try e.value.opt("copied")) |c| blk: {
+                const copied = try p.arena.alloc(u16, try c.len());
+                for (copied, 0..) |*o, i| o.* = try (try c.at(i)).int(u16);
+                break :blk copied;
+            } else &.{},
             .view = pic.view,
         };
     }

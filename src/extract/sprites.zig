@@ -433,6 +433,9 @@ pub fn extract(b: *Builder) !void {
             // A frame without pieces draws nothing: no picture (the ROM's sets have none).
             if (parsed.pieces.len == 0) continue;
             var player_tiles: PlayerTiles = .{};
+            // A player's frame: the tiles of each part of the players' art the display routine
+            // copies when it comes (34 and 32, those it has: 0x1A0D6).
+            var copied: std.ArrayList(u16) = .empty;
             var sheet_tiles: SheetTiles = undefined;
             var vram_tiles: VramTiles = undefined;
             const tiles: Tiles = switch (set.art) {
@@ -442,6 +445,7 @@ pub fn extract(b: *Builder) !void {
                         .{ .table = transfers_b, .index = parsed.transfers[1], .first = 32, .count = 32 },
                     }) |t| {
                         if (t.index == 0) continue;
+                        try copied.append(arena, @intCast(t.count));
                         const src = transferSource(rom, t.table, t.index) orelse return error.BadData;
                         if (src + 32 * t.count > rom.len) return error.BadData;
                         const ts = try blocks.tilesOf(arena, rom[src..][0 .. 32 * t.count]);
@@ -496,6 +500,7 @@ pub fn extract(b: *Builder) !void {
                 .palette = palette,
                 .priority = first & 0x8000 != 0,
                 .pieces = pieces,
+                .copied = copied.items,
                 .view = switch (set.view) {
                     .grey => art.grey,
                     .play => play[palette],

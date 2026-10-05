@@ -128,7 +128,9 @@ Every field is optional. The kinds of asset are separate: a sheet and a map may 
   mirrored about it (column c to -1 - c). `pieces` are the hardware sprites the original drew the
   frame with, `[x, y, width, height]`: the top-left corner relative to the origin, in pixels, and
   the size in cells (1 to 4). The renderer draws the picture; the pieces are kept for the
-  original's sprite limits, which are not reproduced (decision D4).
+  original's sprite limits, which are not reproduced (decision D4). `copied`, when there: the
+  tiles the game copies to show the frame, a copy each (a player's frames: the parts of the
+  players' art it has, 34 and 32 tiles), whose time holds the sound's processor (A4).
 - **Fonts.** `tiles` is the full name of the font's sheet; `glyphs` maps each glyph's text to its
   tile. A glyph may be several characters (`"->"`, `"(c)"`); a text is read longest glyph first.
 
@@ -270,7 +272,9 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   `icon`) and the timer's (`time`), and `join`, player 2's invitation to join while it does not
   play: its `text` (`fonts/main`, its words only: a space leaves the bar's cell) `at` its cell,
   shown and hidden in turn every `blink` logic ticks of play; `score_most`, the most a score
-  holds (points past it are lost), its digits the bar's score's. The status bar shows each tick
+  holds (points past it are lost), its digits the bar's score's; `image`, the bar's rows and
+  cells the game writes at every frame of play (their time comes before the sound's driver, A4).
+  The status bar shows each tick
   what the tick before left (the original copies its image as a frame starts, as the sprites).
   `continue`, the continue's question that a player out of lives answers on the bar: the
   `question` with the continues left a digit `count` cells after its first, the second answer
@@ -348,7 +352,11 @@ play).
   play it follows the players: one drawn before `follow`'s first pixel across the screen, or from
   its second on, moves it by as much, at most `follow_most` pixels a tick; the players are kept
   within `kept_x` across from its left edge (but in a hold) and on the depths `kept_depth`; a
-  heavy fall shakes it `shake`'s first ticks, its second's pixels down and up in turn.
+  heavy fall shakes it `shake`'s first ticks, its second's pixels down and up in turn. `bands`,
+  each plane's bands (plane A's, then B's): `[rows, times, per]`, a band `rows` blocks high whose
+  place across is its plane's times `times` / `per`; as it crosses a column of blocks (16
+  pixels) the game writes the column coming in (and a row as the camera crosses one): their time
+  comes before the sound's driver (A4).
 - `players`: where a life starts: `x` from the camera's left edge, each player's `depth`, and the
   `height` it drops in from.
 - `timer`: `pace`, the ticks a second of the round's timer lasts.

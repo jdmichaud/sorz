@@ -139,6 +139,10 @@ pub const StatusBar = struct {
     time: Cell,
     join: Join,
     score_most: u32,
+    /// The bar's image the game keeps and writes at every frame of play: its rows of cells
+    /// (from the bar's second), and the cells of a row.
+    image_rows: u8,
+    image_cells: u8,
 };
 
 /// A player's cells on the status bar for the continue's question and the game over.
@@ -392,6 +396,7 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
             .{ .key = "players", .value = .{ .array = players } },
             .{ .key = "time", .value = try cellValue(arena, r.status_bar.time) },
             .{ .key = "score_most", .value = json.Value.num(r.status_bar.score_most) },
+            .{ .key = "image", .value = .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(r.status_bar.image_rows), json.Value.num(r.status_bar.image_cells) }) } },
             .{ .key = "join", .value = try obj(arena, &.{
                 .{ .key = "text", .value = .{ .str = r.status_bar.join.text } },
                 .{ .key = "at", .value = try cellValue(arena, r.status_bar.join.at) },
@@ -550,7 +555,9 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
     const t = try n.get("time_over");
     try t.only(&.{ "provenance", "frame", "ticks", "health", "seconds" });
     const s = try n.get("status_bar");
-    try s.only(&.{ "provenance", "players", "time", "join", "score_most" });
+    try s.only(&.{ "provenance", "players", "time", "join", "score_most", "image" });
+    const image = try s.get("image");
+    if (try image.len() != 2) return image.fail("not [rows, cells]");
     const j = try s.get("join");
     try j.only(&.{ "text", "at", "blink" });
     const ps = try s.get("players");
@@ -632,6 +639,8 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
             .time = try readCell(try s.get("time")),
             .join = .{ .text = try (try j.get("text")).string(), .at = try readCell(try j.get("at")), .blink = try (try j.get("blink")).int(u8) },
             .score_most = try (try s.get("score_most")).int(u32),
+            .image_rows = try (try image.at(0)).int(u8),
+            .image_cells = try (try image.at(1)).int(u8),
         },
     };
     if (r.status_bar.join.blink == 0) return (try j.get("blink")).fail("not 1 or more");
@@ -775,6 +784,8 @@ test "the screens' records write and read back the same" {
                 .time = .{ .x = 19, .y = 1 },
                 .join = .{ .text = "PRESS 2UP START", .at = .{ .x = 24, .y = 1 }, .blink = 8 },
                 .score_most = 999_900,
+                .image_rows = 3,
+                .image_cells = 40,
             },
             .continue_question = .{
                 .question = "CONTINUE",

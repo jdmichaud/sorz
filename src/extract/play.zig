@@ -474,6 +474,20 @@ fn decimal(b: u32) !u8 {
     return @intCast((b >> 4) * 10 + (b & 0xF));
 }
 
+/// The status bar's image the game writes at every frame of play (0x110AC: its header, move.l
+/// #$50800003, then move.w #N,($FF6004) its cells less one and move.w #N,($FF6006) its rows
+/// less one): its rows and cells.
+fn barImage(rom: []const u8) ![2]u8 {
+    const at = 0x11136;
+    if (u16be(rom, at) != 0x23FC or u16be(rom, at + 6) != 0xFF or u16be(rom, at + 8) != image_ram) return error.BadData;
+    if (u16be(rom, at + 10) != 0x33FC or u16be(rom, at + 18) != 0x33FC) return error.BadData;
+    if (u16be(rom, at + 16) != image_ram + 4 or u16be(rom, at + 24) != image_ram + 6) return error.BadData;
+    const cells = u16be(rom, at + 12) + 1;
+    const rows = u16be(rom, at + 20) + 1;
+    if (cells > 40 or rows > 4) return error.BadData;
+    return .{ @intCast(rows), @intCast(cells) };
+}
+
 /// The most a score holds: what 0x10DA6 writes over a score its sum overflows (move.l
 /// #$00999900,(-1,a6) at 0x10DC0), its packed decimal digits.
 fn scoreMost(rom: []const u8) !u32 {
@@ -568,6 +582,7 @@ pub fn extract(b: *Builder) !records.Round {
             .specials_mark = cellAt(name_end + (if (k == 0) @as(u16, 102) else 66)),
         };
     }
+    const image = try barImage(rom);
     return .{
         .banner = .{
             .provenance = try std.fmt.allocPrint(arena, "the round's banner (0x10780, its steps 0x11A50): the status bar's first {d} colours fade in (ROM 0x11A69); its parts slide in by {d} pixels a tick (ROM 0x11A7C) until its last entry's place (ROM 0x{X:0>5}) is below ${X} (ROM 0x11AA2), {d} ticks; it stays ROM 0x11AAE's ticks (the round's music at their start); it slides out by ROM 0x11ACC's until ${X} (ROM 0x11AF2), {d} ticks; then ROM 0x11AFE's ticks", .{ fade, in, banner_list + 86, stop, in_ticks, gone, out_ticks }),
@@ -591,7 +606,7 @@ pub fn extract(b: *Builder) !records.Round {
             .seconds = try decimal(try immediate(rom, 0x1099A, &.{ 0x31, 0xFC }, 2)),
         },
         .status_bar = .{
-            .provenance = "the status bar's image (0x110AC: window rows 1 to 3, 40 cells a row): the players' names (0x4CD0, the rows at 0x4D30 and 0x4D38) and their special attack's mark, their scores (0x4D60), their lives and special attacks (0x4E14) and the marks before them (0x4CD0), their health bars (0x4E6C), player 2's 26 cells on but its lives and special attacks swapped; the timer (0x10C88); player 2's invitation to join (0x11682: its rows at ROM 0x1168A's, its place ROM 0x1169C's, its blinks ROM 0x1163C's); the most a score holds, where a score's overflow holds it (0x10DA6: move.l #N,(-1,a6) at ROM 0x10DC0, packed decimal)",
+            .provenance = "the status bar's image (0x110AC: window rows 1 to 3, 40 cells a row): the players' names (0x4CD0, the rows at 0x4D30 and 0x4D38) and their special attack's mark, their scores (0x4D60), their lives and special attacks (0x4E14) and the marks before them (0x4CD0), their health bars (0x4E6C), player 2's 26 cells on but its lives and special attacks swapped; the timer (0x10C88); player 2's invitation to join (0x11682: its rows at ROM 0x1168A's, its place ROM 0x1169C's, its blinks ROM 0x1163C's); its image written at every frame of play, its rows and cells (ROM 0x11142's and 0x1114A's, 0x110AC); the most a score holds, where a score's overflow holds it (0x10DA6: move.l #N,(-1,a6) at ROM 0x10DC0, packed decimal)",
             .players = players,
             .time = cellAt(0x2E),
             .join = .{
@@ -604,6 +619,8 @@ pub fn extract(b: *Builder) !records.Round {
                 .blink = @intCast(try immediate(rom, join_blink, &.{ 0x11, 0xFC }, 2)),
             },
             .score_most = try scoreMost(rom),
+            .image_rows = image[0],
+            .image_cells = image[1],
         },
         .continue_question = try continueQuestion(arena, rom),
         .clear = clear,

@@ -133,6 +133,27 @@ fn immediate(rom: []const u8, at: u32, opcode: []const u8, width: u8) Error!u32 
     };
 }
 
+/// Plane `p`'s bands in round `r`'s layout record (0x199C6: per band its rows less one, its
+/// ratio's times and per, its first row, then its chunks to a negative word and the next band's
+/// offset; a negative word ends the list).
+fn bandsOf(arena: std.mem.Allocator, rom: []const u8, r: u32, p: u32) Error![]const round.Band {
+    var a: u32 = rounds.layout_table + @as(u32, u16be(rom, rounds.layout_table + 4 * r + 2 * p)) + 6;
+    var out: std.ArrayList(round.Band) = .empty;
+    while (true) {
+        const rows_less = s16be(rom, a);
+        if (rows_less < 0) break;
+        const times = u16be(rom, a + 2);
+        const per = u16be(rom, a + 4);
+        if (rows_less > 63 or times == 0 or per == 0 or times > 255 or per > 255) return error.BadData;
+        try out.append(arena, .{ .rows = @intCast(rows_less + 1), .times = @intCast(times), .per = @intCast(per) });
+        a += 8;
+        while (s16be(rom, a) >= 0) a += 2;
+        a += 4;
+        if (out.items.len > 8) return error.BadData;
+    }
+    return out.items;
+}
+
 /// The pixels of a long immediate's whole part (its high word), after `opcode` at `at`; its low
 /// word, the fraction, is none.
 fn longPixels(rom: []const u8, at: u32, opcode: []const u8) Error!u32 {
@@ -398,7 +419,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     if (u16be(rom, 0x4D56) != 0xFA45) return error.BadData;
     const shake_by = try immediate(rom, 0x19292, &.{0x70}, 1);
     const camera: round.Camera = .{
-        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down; plane B in its mode 1 (0x19368): the camera's X in round 1; the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282)", .{ h, limits_set / 8 }),
+        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down; plane B in its mode 1 (0x19368): the camera's X in round 1; the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282); the planes' bands, their rows and ratios, from the layout records (0x199C6, the table at ROM 0x5F788), the strips the camera brings in (0x18B3C)", .{ h, limits_set / 8 }),
         .x = u16be(rom, h + 6),
         .y = u16be(rom, h + 8),
         .x_min = u16be(rom, limits + 4),
@@ -413,6 +434,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .kept_x = .{ @intCast(kept_left), @intCast(kept_left + kept_width) },
         .kept_depth = .{ @intCast(depth_from), @intCast(if (r == own_round) depth_to_own else depth_to_common) },
         .shake = .{ @intCast(shake_ticks), @intCast(shake_by) },
+        .bands = .{ try bandsOf(arena, rom, r, 0), try bandsOf(arena, rom, r, 1) },
     };
     const first_wall: i32 = u16be(rom, limits + 6);
 

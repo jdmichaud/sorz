@@ -140,7 +140,14 @@ pub const Camera = struct {
     kept_depth: [2]i16,
     /// A heavy fall shakes the camera `shake[0]` ticks, `shake[1]` pixels down and up in turn.
     shake: [2]i16,
+    /// Each plane's bands (plane A's, then plane B's), from the top: as a band's place across
+    /// (its plane's times `times` / `per`) crosses a column of blocks (16 pixels), the game
+    /// writes the column of blocks coming in, `rows` blocks high; as the camera crosses a row of
+    /// blocks, the row (32 blocks).
+    bands: [2][]const Band = .{ &.{}, &.{} },
 };
+
+pub const Band = struct { rows: u8, times: u8, per: u8 };
 
 pub const Players = struct {
     provenance: []const u8 = "",
@@ -189,6 +196,16 @@ pub fn nameOf(buf: []u8, number: u8) []const u8 {
 
 fn obj(arena: std.mem.Allocator, fields: []const json.Field) !json.Value {
     return .{ .object = try arena.dupe(json.Field, fields) };
+}
+
+fn bandsValue(arena: std.mem.Allocator, bands: [2][]const Band) !json.Value {
+    const planes = try arena.alloc(json.Value, 2);
+    for (planes, bands) |*o, list| {
+        const items = try arena.alloc(json.Value, list.len);
+        for (items, list) |*v, b| v.* = .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(b.rows), json.Value.num(b.times), json.Value.num(b.per) }) };
+        o.* = .{ .array = items };
+    }
+    return .{ .array = planes };
 }
 
 fn pair(arena: std.mem.Allocator, a: anytype, b: anytype) !json.Value {
@@ -268,6 +285,7 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
             .{ .key = "kept_x", .value = try pair(arena, c.kept_x[0], c.kept_x[1]) },
             .{ .key = "kept_depth", .value = try pair(arena, c.kept_depth[0], c.kept_depth[1]) },
             .{ .key = "shake", .value = try pair(arena, c.shake[0], c.shake[1]) },
+            .{ .key = "bands", .value = try bandsValue(arena, c.bands) },
         }) },
         .{ .key = "players", .value = try withProvenance(arena, p.provenance, &.{
             .{ .key = "x", .value = json.Value.num(p.x) },
@@ -294,6 +312,23 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
 
 fn provenanceOf(n: json.Node) Error![]const u8 {
     return if (try n.opt("provenance")) |p| try p.string() else "";
+}
+
+fn readBands(arena: std.mem.Allocator, n: json.Node) Error![2][]const Band {
+    if (try n.len() != 2) return n.fail("not the two planes' bands");
+    var out: [2][]const Band = undefined;
+    for (&out, 0..) |*o, k| {
+        const list = try n.at(k);
+        const bands = try arena.alloc(Band, try list.len());
+        for (bands, 0..) |*b, i| {
+            const e = try list.at(i);
+            if (try e.len() != 3) return e.fail("not [rows, times, per]");
+            b.* = .{ .rows = try (try e.at(0)).int(u8), .times = try (try e.at(1)).int(u8), .per = try (try e.at(2)).int(u8) };
+            if (b.per == 0 or b.rows == 0) return e.fail("a band of no rows or a ratio per 0");
+        }
+        o.* = bands;
+    }
+    return out;
 }
 
 fn readPair(n: json.Node, comptime T: type) Error![2]T {
@@ -374,7 +409,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     } else return (try root.get("art")).fail("no art set of this name");
 
     const c = try root.get("camera");
-    try c.only(&.{ "provenance", "at", "x_min", "y", "plane_b", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake" });
+    try c.only(&.{ "provenance", "at", "x_min", "y", "plane_b", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "bands" });
     const at = try readPair(try c.get("at"), i32);
     const y = try readPair(try c.get("y"), i32);
     r.camera = .{
@@ -393,6 +428,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         .kept_x = try readPair(try c.get("kept_x"), i16),
         .kept_depth = try readPair(try c.get("kept_depth"), i16),
         .shake = try readPair(try c.get("shake"), i16),
+        .bands = try readBands(arena, try c.get("bands")),
     };
     if (r.camera.shake[0] <= 0 or r.camera.shake[0] > 255) return (try c.get("shake")).fail("not 1 to 255 ticks");
     if (r.camera.follow[0] > r.camera.follow[1]) return (try c.get("follow")).fail("its first after its second");
@@ -461,7 +497,7 @@ pub const example: Round = .{
     .art = "round1",
     .music = "round 1 music",
     .ground = 160,
-    .camera = .{ .x = 768, .y = 0, .x_min = 768, .y_min = 0, .y_max = 0, .follow = .{ 144, 176 }, .follow_most = 3, .kept_x = .{ 32, 288 }, .kept_depth = .{ 2, 112 }, .shake = .{ 8, 3 } },
+    .camera = .{ .x = 768, .y = 0, .x_min = 768, .y_min = 0, .y_max = 0, .follow = .{ 144, 176 }, .follow_most = 3, .kept_x = .{ 32, 288 }, .kept_depth = .{ 2, 112 }, .shake = .{ 8, 3 }, .bands = .{ &.{.{ .rows = 15, .times = 1, .per = 1 }}, &.{.{ .rows = 15, .times = 1, .per = 1 }} } },
     .players = .{ .x = 0, .depth = .{ 64, 32 }, .height = 0 },
     .timer = .{ .pace = 90 },
     .sections = &.{

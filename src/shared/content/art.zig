@@ -179,6 +179,9 @@ pub const Frame = struct {
     palette: u2 = 0,
     priority: bool = false,
     pieces: []const Piece = &.{},
+    /// The tiles the game copies to show it, a copy each (a player's frames: the parts of the
+    /// players' art it has); none for a frame whose art stays.
+    copied: []const u16 = &.{},
     view: [palette_size]Colour = grey,
 };
 
