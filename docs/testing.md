@@ -162,6 +162,28 @@ catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (it
   not modelled, and its drums' samples differ from sor-remaster's. It writes
   the runs and the report into `<prefix>/round` (`-Dround-out=DIR`); `-Dround-only=NAME,...`.
 
+## The variants
+
+The game is played in three variants (DESIGN.md 10.7, src/shared/variant.zig): the original
+(`--original`, the cartridge exactly), the extended game (the default) and the network variant
+(network play and the browser). The checks against sor-remaster compare the original: its
+scenarios (`--scenario`, game_run.zig) and `screens-check` run it, and sor-remaster's agent runs its
+own default, which is the cartridge's too (its options without the port's VOLUME line).
+
+- `zig build variants-check -Drom=ROM` (src/tools/variants_check.zig), the gate of PLAN item 19:
+  each variant's flow played from power-on on the ROM's content, as the hosts run it, its steps
+  checked on the game's state and its overlays: the original's menu and options and the settings
+  key; the extended menu's SETTINGS (the game held, EXIT WITHOUT SAVING) and OPTIONS' VOLUME, to the
+  round; the network variant as a browser's page plays it alone, to the round; and a session of two
+  games, player 2 in their settings from the menu (both games held, player 1 told), then the
+  select and the round, the two states the same.
+- `browser-check` with `-Drom=ROM` adds the part `flow`: on a relay serving the whole content
+  tree, the page's menu (its sounds made before it shows, SETTINGS before the game and back), and
+  1 PLAYER's game in the network variant (its own menu START, SETTINGS, OPTIONS; the settings key
+  holding the game).
+- `sorz-agent --page` runs the game as a browser's page does alone (the network variant, one
+  player, the page's own volume), `--original` the original.
+
 ## Comparing behaviours with statistics
 
 When the outcome is random (a computer player, a shuffled deck, a random start), compare rates,

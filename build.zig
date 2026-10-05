@@ -19,7 +19,8 @@
 //! `sound-check` compares the sound with sor-remaster's, from the user's ROM (`-Drom=ROM
 //! -Dremaster=DIR`), `screens-check` the screens' pictures and sound, tick by tick from
 //! power-on (the same options), `similar-check` Axel's moves in the catalogue's scenarios and
-//! `round-check` round 1's scenes from power-on (`-Drom=ROM -Dremaster=DIR|AGENT`).
+//! `round-check` round 1's scenes from power-on (`-Drom=ROM -Dremaster=DIR|AGENT`);
+//! `variants-check` plays each variant's flow from power-on on the ROM's content (`-Drom=ROM`).
 const std = @import("std");
 
 /// The SDL2 release that the Linux host is built and tested against.
@@ -326,6 +327,31 @@ pub fn build(b: *std.Build) void {
         const missing = b.addFail("the extract steps need the user's ROM: -Drom=PATH");
         extract_step.dependOn(&missing.step);
         extract_check_step.dependOn(&missing.step);
+    }
+
+    // `variants-check`, the gate of the variants (PLAN item 19, src/tools/variants_check.zig): each
+    // variant's flow from power-on on the ROM's content, as the hosts run it, its steps checked.
+    const variants_check_step = b.step("variants-check", "Play each variant's flow from power-on on the content of -Drom=ROM, its steps checked");
+    if (rom_path) |rom| {
+        const variants_exe = b.addExecutable(.{
+            .name = "sorz-variants-check",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/tools/variants_check.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "sorz", .module = shared },
+                    .{ .name = "agent", .module = agent },
+                    .{ .name = "extract", .module = extract },
+                },
+            }),
+        });
+        const check = b.addRunArtifact(variants_exe);
+        check.addArg(rom);
+        check.has_side_effects = true;
+        variants_check_step.dependOn(&check.step);
+    } else {
+        variants_check_step.dependOn(&b.addFail("variants-check needs the user's ROM: -Drom=PATH").step);
     }
 
     // `sound-check`: the sound against sor-remaster's driver (PLAN 09), from the user's ROM and a
