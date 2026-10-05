@@ -502,10 +502,10 @@ pub fn Of(comptime M: type) type {
                 return false;
             };
             // A target no longer a fighter (its lives gone, it waits) sends it back to the fight's
-            // start, as the original's does.
+            // start, as the original's does; its point as it was, it walks on this tick.
             if (t.mind != .player) {
                 enter(a, M.fights);
-                return false;
+                return true;
             }
             const n = a.numbers();
             const off: i32 = a.entity.spawn.offset_depth;
