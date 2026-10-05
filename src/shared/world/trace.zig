@@ -154,6 +154,8 @@ pub const Writer = struct {
     /// ids from `next` on.
     pub fn assignId(self: *Writer, index: usize, generation: u16, id: u32) void {
         self.preset[index] = .{ .generation = generation, .id = id };
+        // The ids given are taken: the next new entity's comes after them.
+        self.next_id = @max(self.next_id, id + 1);
     }
 
     /// Play's phase (`intro`, `play`, `paused`...): written with the next observation when it
