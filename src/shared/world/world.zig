@@ -35,9 +35,6 @@ pub const Command = struct {
     last: input.Pad = .{},
 };
 
-/// The most a player's score holds (six digits, the last two always 0).
-pub const score_most = 999_900;
-
 pub const Player = struct {
     /// The entity the player plays, if any: its fighter, or, out of lives, its wait to continue.
     entity: ?Handle = null,
@@ -48,7 +45,7 @@ pub const Player = struct {
     /// The continues left; out of the game (it answered no, or had none left).
     continues: u8 = 0,
     out: bool = false,
-    /// Points, as the original counts them: they hold at `score_most`.
+    /// Points, as the original counts them: they hold at the world's `score_most`.
     score: u32 = 0,
     /// The command of this tick.
     command: Command = .{},
@@ -99,6 +96,8 @@ pub const World = struct {
     timer: Timer = .{},
     /// The ground's height, until the round's floor gives it place by place (PLAN item 13).
     ground: Fixed = .zero,
+    /// The most a player's score holds (play's record's, which the round sets; none before).
+    score_most: u32 = std.math.maxInt(u32),
     /// A special attack is under way (play's phase `special`): the players stand still, the
     /// enemies it caught wait for its blast.
     special: bool = false,

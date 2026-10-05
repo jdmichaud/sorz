@@ -354,7 +354,7 @@ pub const Tick = struct {
         for (&t.world.players) |*p| {
             const e = p.entity orelse continue;
             if (!e.eql(h)) continue;
-            p.score = @min(p.score + points, world_mod.score_most);
+            p.score = @min(p.score +| points, t.world.score_most);
             return;
         }
     }

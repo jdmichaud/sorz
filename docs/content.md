@@ -267,7 +267,8 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   cells high) and the `lives_mark` and `specials_mark` before them, and the special attack's
   `icon`) and the timer's (`time`), and `join`, player 2's invitation to join while it does not
   play: its `text` (`fonts/main`, its words only: a space leaves the bar's cell) `at` its cell,
-  shown and hidden in turn every `blink` logic ticks of play. The status bar shows each tick
+  shown and hidden in turn every `blink` logic ticks of play; `score_most`, the most a score
+  holds (points past it are lost), its digits the bar's score's. The status bar shows each tick
   what the tick before left (the original copies its image as a frame starts, as the sprites).
   `continue`, the continue's question that a player out of lives answers on the bar: the
   `question` with the continues left a digit `count` cells after its first, the second answer
@@ -279,16 +280,17 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   counts the game over down. `clear`, the round's clear: the `header` ("ROUND n CLEAR", a map of
   the `round_end` set) on plane A from `header_at`, the round's number a big digit at its cell
   `number`; the bonuses' `lines` (the clear's, the time's, the level's: each a `text` from its
-  cell `at` of plane A), a bonus's six digits from the line's `digits`th letter, in the `normal`
+  cell `at` of plane A), a bonus's digits over the line's zeros from its `digits`th letter, in the `normal`
   palette or the `counted` one while it is counted; the `wait` between the steps; the bonuses
   (`clear_bonus` for the round and each special attack left, `time_bonus` a second left,
   `level_bonus` a LEVEL), counted `count` points a tick; the `colours` faded in over the status
   bar's.
   The parts' pictures are the `play` set's: `play/status_bar`
   under them, `play/time_digits` (the big digits, a column of two cells each), `play/health_1`
-  and `_2` and `play/enemy_bar_1` and `_2` (a bar's ten full cells, its partial cell, ten empty:
-  a bar of n full cells shows the ten from the (10 - n)th, and its partial cell is the tile of
-  `play/fills` of its eighths, the players' from 0, the enemies' from 8), `play/police_icon`.
+  and `_2` and `play/enemy_bar_1` and `_2` (a bar's full cells, its partial cell, its empty
+  ones, as many: a bar of n full cells shows its cells from the (cells - n)th, a health point a
+  pixel, and its partial cell is the tile of `play/fills` of its pixels, the players' from 0, the
+  enemies' from 8; a player's health shows up to its kind's `health`), `play/police_icon`.
 
 ```json
 {"first": {"provenance": "…", "entries": [{"score": 100000, "round": 1, "name": "AAA", "level": 1}]}}

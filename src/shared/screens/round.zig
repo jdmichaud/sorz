@@ -106,18 +106,16 @@ pub const Bar = struct {
 pub const OutBlink = struct {
     /// It counts from the tick after the player went out.
     counting: bool = false,
-    ticks: u8 = first_out_blink,
+    ticks: u8 = 0,
     phase: bool = false,
     shown: bool = false,
 
-    /// The ticks to the first blink (the original's count, left as the round starts).
-    const first_out_blink = 8;
-
     /// A logic tick of a player out of the game (`out`), the text shown first (`shown_first`:
-    /// none after a NO); every `every` ticks the text, then its blanks, in turn.
+    /// none after a NO); every `every` ticks the text, then its blanks, in turn. The first blink
+    /// comes `every` ticks after it went out (the original's count, as the round starts it).
     pub fn blink(self: *OutBlink, out: bool, shown_first: bool, every: u8) void {
         if (!out) {
-            self.* = .{};
+            self.* = .{ .ticks = every };
             return;
         }
         if (!self.counting) {
@@ -249,8 +247,11 @@ pub const Round = struct {
         return a.rounds.of(self.number).?;
     }
 
-    /// The status bar's lines (the fixed layer's), above the sprites'.
-    const bar_lines = 32;
+    /// The status bar's lines (the fixed layer's, its map's), above the sprites'.
+    fn barLines(a: *const Assets) u16 {
+        const top: u16 = if (a.status_bar.place) |p| @intCast(@max(p.y, 0)) else 0;
+        return (top + a.status_bar.height) * art.tile_side;
+    }
 
     pub fn start(_: *const Setup) Round {
         return .{};
@@ -269,7 +270,7 @@ pub const Round = struct {
         self.shown_pause = self.phase == .paused or self.resumed;
         self.resumed = false;
         self.shown_banner = self.banner;
-        self.shown_bar = self.bar();
+        self.shown_bar = self.bar(a);
         self.shown_game_over = self.gameOver() != null;
         if (turn.world_out) |o| o.latch();
         self.logic_ran = false;
@@ -429,9 +430,9 @@ pub const Round = struct {
             self.phase = .time_over;
             self.left = a.screen.time_over.ticks;
         } else if (w.script.stage == .won) {
-            self.leave(turn, .cleared);
+            self.leave(turn, a, .cleared);
         } else if (self.over) {
-            self.leave(turn, .game_over);
+            self.leave(turn, a, .game_over);
         } else if (self.gameOver() == .game_over) {
             // The game ends at the next tick (the original's leaving starts then).
             self.over = true;
@@ -460,7 +461,7 @@ pub const Round = struct {
 
     /// The round ends with `outcome` once the screen has faded out; the game under way keeps
     /// the players' parts for the next round, or ends.
-    fn leave(self: *Round, turn: *scene.Turn, outcome: flow.Exit) void {
+    fn leave(self: *Round, turn: *scene.Turn, a: *const Assets, outcome: flow.Exit) void {
         self.outcome = outcome;
         self.phase = .leaving;
         self.colours.startFade(.black);
@@ -477,7 +478,7 @@ pub const Round = struct {
             .lives = wp.lives,
             .specials = wp.specials,
             .continues = wp.continues,
-            .health = if (wp.entity) |h| if (w.getConst(h)) |e| @intCast(std.math.clamp(e.health, 0, 80)) else 0 else 0,
+            .health = if (wp.entity) |h| if (w.getConst(h)) |e| healthOf(a, e) else 0 else 0,
         };
     }
 
@@ -497,6 +498,7 @@ pub const Round = struct {
         const w = &self.play.world;
         w.* = .{};
         w.ground = .pixels(s.script.ground);
+        w.score_most = a.screen.status_bar.score_most;
         const p = self.plan(setup, a);
         world.script.start(w, &p);
         var scratch: world.Output = .{};
@@ -546,7 +548,7 @@ pub const Round = struct {
     }
 
     /// What the status bar shows.
-    fn bar(self: *const Round) Bar {
+    fn bar(self: *const Round, a: *const Assets) Bar {
         const w = &self.play.world;
         var out: Bar = .{ .time = w.timer.shown, .join = self.join.shown };
         for (w.players, &out.players, self.out_blinks, 0..) |p, *o, ob, k| {
@@ -559,7 +561,7 @@ pub const Round = struct {
             const e = w.getConst(h) orelse continue;
             const new_game = k == 0 and w.players[1].entity == null and !w.players[1].out;
             o.* = switch (e.mind) {
-                .player => .{ .playing = .{ .score = p.score, .lives = p.lives, .specials = p.specials, .health = @intCast(std.math.clamp(e.health, 0, 80)) } },
+                .player => .{ .playing = .{ .score = p.score, .lives = p.lives, .specials = p.specials, .health = healthOf(a, e) } },
                 .player_waiting => |m| switch (m.state) {
                     // Its first tick: the bar as it was (the question still, after a NO).
                     .begin => if (m.answered_no) .{ .asking = .{ .continues = m.count, .new_game = new_game, .cursor = if (m.shown) m.cursor else null } } else playing,
@@ -588,8 +590,8 @@ pub const Round = struct {
         v.screen.plane_a.y = c.y.whole();
         v.screen.plane_b.x = @divFloor(c.x.whole() * r.camera.plane_b[0], r.camera.plane_b[1]);
         v.screen.plane_b.y = c.y.whole();
-        v.screen.window.lines = .{ .top = 0, .bottom = bar_lines };
-        v.screen.sprite_lines = .{ .top = bar_lines, .bottom = render.height };
+        v.screen.window.lines = .{ .top = 0, .bottom = barLines(a) };
+        v.screen.sprite_lines = .{ .top = barLines(a), .bottom = render.height };
         v.screen.colours = self.colours.shown;
         try v.sprites.appendSlice(v.gpa, v.world_out.shown_sprites.slice());
         switch (self.shown_phase) {
@@ -605,6 +607,12 @@ pub const Round = struct {
         if (self.shown_game_over) try v.sprites.append(v.gpa, .of(a.game_over_text, 0, 0));
     }
 };
+
+/// A fighter's health as its bar shows it: none to its kind's most.
+fn healthOf(a: *const Round.Assets, e: *const world.Entity) u8 {
+    const most = a.kinds.get(e.kind.?).definition.health;
+    return @intCast(std.math.clamp(e.health, 0, @min(most, std.math.maxInt(u8))));
+}
 
 /// The status bar's parts that changed since `was` (all of them when null). A player's part
 /// that changes its kind (playing, asking, out) is cleared, then drawn whole.
@@ -684,11 +692,31 @@ pub fn drawPlayer(v: *view.View, a: anytype, k: usize, now: PlayerBar, was: ?Pla
     }
 }
 
-/// A score's six digits at `at`.
+/// A score at `at`: as many digits as the most a score holds has (play's record's).
 pub fn drawScore(v: *view.View, a: anytype, at: records.Cell, score: u32) !void {
-    var buf: [8]u8 = undefined;
-    const text = std.fmt.bufPrint(&buf, "{d:0>6}", .{@min(score, 999_999)}) catch unreachable;
-    try v.write(.window, a.text, at.x, at.y, text, .{});
+    const most = a.screen.status_bar.score_most;
+    var buf: [10]u8 = undefined;
+    try v.write(.window, a.text, at.x, at.y, digits(&buf, @min(score, most), digitsOf(most)), .{});
+}
+
+/// The decimal digits of `most`.
+pub fn digitsOf(most: u32) u8 {
+    var n: u8 = 1;
+    var x = most / 10;
+    while (x != 0) : (x /= 10) n += 1;
+    return n;
+}
+
+/// `value`'s last `width` decimal digits, zeros first, in `buf` (10 bytes at least).
+pub fn digits(buf: *[10]u8, value: u32, width: u8) []const u8 {
+    var x = value;
+    var k: usize = buf.len;
+    while (k > buf.len - width) {
+        k -= 1;
+        buf[k] = '0' + @as(u8, @intCast(x % 10));
+        x /= 10;
+    }
+    return buf[k..];
 }
 
 /// Player `k`'s cells of the bar, back to the bar's own: on each row, the original's count
@@ -732,14 +760,16 @@ pub fn bigDigit(board: *render.Board, a: anytype, at: records.Cell, n: u8) !void
     try putCell(board, a.time_digits, d, 1, at.x, at.y + 1);
 }
 
-/// A health bar of `health` points: its full cells, its partial cell of the eighths left
-/// (`play/fills`), its empty cells, from the bar map's cells (`(10 - full)` on).
+/// A health bar of `health` points, a point a pixel: its full cells, its partial cell of the
+/// pixels left (`play/fills`, a tile by the pixels), its empty cells. The bar's map is its full
+/// cells, the partial one, its empty cells: the bar shows the cells from `(cells - full)` on.
 pub fn healthBar(board: *render.Board, a: anytype, map: *const art.TileMap, at: records.Cell, health: u8) !void {
-    const full = health / 8;
-    const rest = health % 8;
-    for (0..10) |i| {
-        const m = 10 - full + i;
-        if (m == 10) {
+    const cells = (map.width - 1) / 2;
+    const full = @min(health / art.tile_side, cells);
+    const rest = if (full == cells) 0 else health % art.tile_side;
+    for (0..cells) |i| {
+        const m = cells - full + i;
+        if (m == cells) {
             const c = map.cell(m, 0);
             try board.put(at.x + @as(i32, @intCast(i)), at.y, &a.fills.tiles[rest], .{ .palette = c.palette, .priority = c.priority });
         } else try putCell(board, map, m, 0, at.x + @as(u8, @intCast(i)), at.y);
@@ -751,6 +781,13 @@ pub fn putCell(board: *render.Board, map: *const art.TileMap, mx: usize, my: usi
     const c = map.cell(mx, my);
     if (c.isEmpty()) return;
     try board.put(x, y, &map.tiles[c.tile], .{ .palette = c.palette, .flip_x = c.flip_x, .flip_y = c.flip_y, .priority = c.priority });
+}
+
+test "a number's digits: its last ones, zeros first" {
+    var buf: [10]u8 = undefined;
+    try std.testing.expectEqual(@as(u8, 6), digitsOf(999_900));
+    try std.testing.expectEqualStrings("003100", digits(&buf, 3100, 6));
+    try std.testing.expectEqualStrings("45", digits(&buf, 12345, 2));
 }
 
 test "player 2's invitation blinks every `blink` logic ticks while it does not play" {

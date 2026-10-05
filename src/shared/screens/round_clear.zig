@@ -133,7 +133,7 @@ pub const RoundClear = struct {
         }
         const c = &a.screen.clear;
         const g = &turn.setup.progress;
-        if (self.act >= skip_from and self.act < skip_to and startHeld(turn, g)) self.skip(g);
+        if (self.act >= skip_from and self.act < skip_to and startHeld(turn, g)) self.skip(g, a);
         switch (program[self.act]) {
             .fade_in, .fade_out => if (self.colours.stepFade()) self.next(),
             .header => {
@@ -174,7 +174,7 @@ pub const RoundClear = struct {
                     const n = @min(c.count, self.bonuses[k]);
                     self.bonuses[k] -= n;
                     self.counting = k;
-                    for (&g.players) |*p| if (p.in_play) addScore(p, n);
+                    for (&g.players) |*p| if (p.in_play) addScore(p, n, a);
                     turn.play(a.tick);
                     self.now.lines[k].digits = self.bonuses[k];
                 }
@@ -202,10 +202,10 @@ pub const RoundClear = struct {
 
     /// START held: what is left of the bonuses goes to the scores at once, the lines show them
     /// all, and the counting ends.
-    fn skip(self: *RoundClear, g: *setup_mod.Progress) void {
+    fn skip(self: *RoundClear, g: *setup_mod.Progress, a: *const Assets) void {
         var left: u32 = 0;
         for (self.bonuses) |b| left += b;
-        for (&g.players) |*p| if (p.in_play) addScore(p, left);
+        for (&g.players) |*p| if (p.in_play) addScore(p, left, a);
         for (&self.now.lines, self.bonuses) |*l, b| l.* = .{ .shown = true, .digits = if (b != 0) b else null };
         self.counting = null;
         self.act = skip_to;
@@ -275,15 +275,17 @@ fn drawLine(v: *view.View, a: *const RoundClear.Assets, k: usize, l: Line) !void
     const look: render.Look = .{ .palette = if (l.counted) c.counted else c.normal };
     try v.write(.a, a.text, line.at.x, line.at.y, line.text, look);
     if (l.digits) |d| {
-        var buf: [8]u8 = undefined;
-        const text = std.fmt.bufPrint(&buf, "{d:0>6}", .{@min(d, 999_999)}) catch unreachable;
-        try v.write(.a, a.text, line.at.x + c.digits, line.at.y, text, look);
+        // As many digits as the line's zeros there.
+        var width: u8 = 0;
+        while (c.digits + width < line.text.len and line.text[c.digits + width] == '0') width += 1;
+        var buf: [10]u8 = undefined;
+        try v.write(.a, a.text, line.at.x + c.digits, line.at.y, round_screen.digits(&buf, d, width), look);
     }
 }
 
-/// `points` to a player's score, which holds at the most the original counts.
-fn addScore(p: *setup_mod.Gamer, points: u32) void {
-    p.score = @min(p.score + points, 999_900);
+/// `points` to a player's score, which holds at the most a score holds (play's record's).
+fn addScore(p: *setup_mod.Gamer, points: u32, a: *const RoundClear.Assets) void {
+    p.score = @min(p.score + points, a.screen.status_bar.score_most);
 }
 
 /// The status bar of the game under way: the players in play's parts, the timer.

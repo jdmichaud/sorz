@@ -474,6 +474,19 @@ fn decimal(b: u32) !u8 {
     return @intCast((b >> 4) * 10 + (b & 0xF));
 }
 
+/// The most a score holds: what 0x10DA6 writes over a score its sum overflows (move.l
+/// #$00999900,(-1,a6) at 0x10DC0), its packed decimal digits.
+fn scoreMost(rom: []const u8) !u32 {
+    const at = 0x10DC0;
+    if (u16be(rom, at) != 0x2D7C or u16be(rom, at + 6) != 0xFFFF) return error.BadData;
+    var v: u32 = 0;
+    for (rom[at + 2 ..][0..4]) |b| {
+        if (b >> 4 > 9 or b & 0xF > 9) return error.BadData;
+        v = v * 100 + (b >> 4) * 10 + (b & 0xF);
+    }
+    return v;
+}
+
 /// Play's screen: its frames and maps into the builder, and its record.
 pub fn extract(b: *Builder) !records.Round {
     const rom = b.rom;
@@ -578,7 +591,7 @@ pub fn extract(b: *Builder) !records.Round {
             .seconds = try decimal(try immediate(rom, 0x1099A, &.{ 0x31, 0xFC }, 2)),
         },
         .status_bar = .{
-            .provenance = "the status bar's image (0x110AC: window rows 1 to 3, 40 cells a row): the players' names (0x4CD0, the rows at 0x4D30 and 0x4D38) and their special attack's mark, their scores (0x4D60), their lives and special attacks (0x4E14) and the marks before them (0x4CD0), their health bars (0x4E6C), player 2's 26 cells on but its lives and special attacks swapped; the timer (0x10C88); player 2's invitation to join (0x11682: its rows at ROM 0x1168A's, its place ROM 0x1169C's, its blinks ROM 0x1163C's)",
+            .provenance = "the status bar's image (0x110AC: window rows 1 to 3, 40 cells a row): the players' names (0x4CD0, the rows at 0x4D30 and 0x4D38) and their special attack's mark, their scores (0x4D60), their lives and special attacks (0x4E14) and the marks before them (0x4CD0), their health bars (0x4E6C), player 2's 26 cells on but its lives and special attacks swapped; the timer (0x10C88); player 2's invitation to join (0x11682: its rows at ROM 0x1168A's, its place ROM 0x1169C's, its blinks ROM 0x1163C's); the most a score holds, where a score's overflow holds it (0x10DA6: move.l #N,(-1,a6) at ROM 0x10DC0, packed decimal)",
             .players = players,
             .time = cellAt(0x2E),
             .join = .{
@@ -590,6 +603,7 @@ pub fn extract(b: *Builder) !records.Round {
                 },
                 .blink = @intCast(try immediate(rom, join_blink, &.{ 0x11, 0xFC }, 2)),
             },
+            .score_most = try scoreMost(rom),
         },
         .continue_question = try continueQuestion(arena, rom),
         .clear = clear,
