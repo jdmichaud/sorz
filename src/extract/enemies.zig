@@ -11,6 +11,7 @@ const entity = sorz.content.entity;
 const rom_mod = @import("rom.zig");
 const sprites = @import("sprites.zig");
 const entities = @import("entities.zig");
+const weapons = @import("weapons.zig");
 
 const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
@@ -303,7 +304,51 @@ pub fn galsia(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition
         for (&after, 0..) |*a, j| a.* = try stateName(&galsia_states, u16be(rom, 0x10352 + 2 * @as(u32, @intCast(j))));
         try d.choice("after_circle", &after, "ROM 0x10352: the state after a circle, by the tick's low three bits");
     }
+    try shutterNumbers(&d);
     return finish(&d, "galsia", 0x22, "galsia", "Galsia (handler 0xDD78)");
+}
+
+/// The numbers of the way in through a rolling shutter (0xDDE6), which the Galsia and the
+/// brawler share.
+fn shutterNumbers(d: *Def) Error!void {
+    const rom = d.rom;
+    try d.number("shutter_beside", try immediate(rom, 0xDE1E, &.{ 0x06, 0x68 }, 2), "ROM 0x0DE1E: addi.w #N,(16,a0)");
+    try d.number("shutter_above", try immediate(rom, 0xDE24, &.{ 0x04, 0x68 }, 2), "ROM 0x0DE24: subi.w #N,(24,a0)");
+    try d.number("shutter_drop", try immediate(rom, 0xDE40, &.{ 0x31, 0x7C }, 2), "ROM 0x0DE40: move.w #N,(36,a0) (whole pixels)");
+    try d.number("shutter_depth", try immediate(rom, 0xDE52, &.{ 0x31, 0x7C }, 2), "ROM 0x0DE52: move.w #N,(20,a0)");
+}
+
+// --- The rolling shutter ---------------------------------------------------------------------------
+
+/// Round 1's rolling shutter (type $54, its handler 0x101C8, sor-remaster's obj/shutter.zig): its
+/// slats (the animation set at 0x26F7A), how they stack and roll, how near its player opens it.
+pub fn shutter(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set: u32 = @bitCast(try immediate(rom, 0x10246, &.{ 0x43, 0xF9 }, 4));
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "round1", .prefix = "shutter", .set = set, .box_table = entities.object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
+    const slat = try readAnimation(arena, rom, set, 0);
+    const frames = try arena.alloc(entity.Frame, slat.frames.len);
+    for (frames, slat.frames) |*f, r| f.* = .{ .frame = try d.frameName(r.address), .ticks = @max(slat.timing, 1), .flip = r.mirrored };
+    try d.animations.append(arena, .{ .name = "slat", .loop = true, .frames = frames });
+    try d.number("slats", try moveq(rom, 0x101F2, 7) + 1, "ROM 0x101F2: moveq #N-1,d7 (dbf)");
+    try d.number("above", try immediate(rom, 0x101F8, &.{ 0x04, 0x42 }, 2), "ROM 0x101F8: subi.w #N,d2");
+    try d.number("spacing", try immediate(rom, 0x10216, &.{ 0x04, 0x42 }, 2), "ROM 0x10216: subi.w #N,d2");
+    try d.number("roll", try moveq(rom, 0x101FC, 4), "ROM 0x101FC: moveq #N,d4");
+    try d.number("less", try immediate(rom, 0x10230, &.{ 0x04, 0x04, 0x00 }, 1), "ROM 0x10230: subi.b #N,d4");
+    try d.number("top", try immediate(rom, 0x10238, &.{ 0x13, 0x7C, 0x00 }, 1), "ROM 0x10238: move.b #N,(80,a1)");
+    try d.number("roll_speed", (try immediate(rom, 0x102B0, &.{ 0x31, 0x7C }, 2)) << 16, "ROM 0x102B0: move.w #N,(36,a0)");
+    try d.number("near", try immediate(rom, 0x10260, &.{ 0x04, 0x40 }, 2), "ROM 0x10260: subi.w #N,d0");
+    try d.number("beside", try immediate(rom, 0xDE1E, &.{ 0x06, 0x68 }, 2), "ROM 0x0DE1E: addi.w #N,(16,a0) (its enemy's move)");
+    try d.sound("roll", @bitCast(@as(i8, @intCast(try moveq(rom, 0x102B6, 7)))));
+    return .{
+        .name = "shutter",
+        .provenance = try std.fmt.allocPrint(arena, "the rolling shutter, type $54 (handler 0x101C8): the animation set at ROM 0x{X:0>5}{s}", .{ set, d.number_notes.items }),
+        .family = .scenery,
+        .team = .neutral,
+        .behaviour = "shutter",
+        .numbers = d.numbers.items,
+        .sounds = d.sounds.items,
+        .animations = d.animations.items,
+    };
 }
 
 /// The punch and the close in Galsia and the stalker share (0xE124, 0xE190): the punch's frames
@@ -409,9 +454,136 @@ fn frameTicksCompared(rom: []const u8, at: u32) Error!i32 {
     return rom[at + 3];
 }
 
+// --- The pipe Galsia ---------------------------------------------------------------------------
+
+/// The pipe Galsia (type $23, its handler 0xE326, sor-remaster's obj/galsia_armed.zig): it takes
+/// up its pipe (0xD64C), heads for its place, stands, closes in and swings; its walk and its swing
+/// hold the pipe (the hands at 0x60A0), its second pipe's for variants other than 0.
+pub fn galsiaPipe(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    var d = try begin(arena, rom, 0x23, "galsia", &.{
+        .{ .name = "walk_pipe", .entry = try animEntry(rom, 0xE3BA) },
+        .{ .name = "walk_pipe_b", .entry = try animEntry(rom, 0xE3C2) },
+        .{ .name = "swing", .entry = try animEntry(rom, 0xE486) },
+        .{ .name = "swing_b", .entry = try animEntry(rom, 0xE48E) },
+    });
+    try weapons.enemyHands(&d, "walk_pipe", @intCast(try moveq(rom, 0xE3BA, 0)));
+    try weapons.enemyHands(&d, "walk_pipe_b", @intCast(try moveq(rom, 0xE3C2, 0)));
+    try weapons.enemyHands(&d, "swing", @intCast(try moveq(rom, 0xE486, 0)));
+    try weapons.enemyHands(&d, "swing_b", @intCast(try moveq(rom, 0xE48E, 0)));
+    // The swing: its frames with a box are blows, its damage the type's power (0xE47E).
+    blows(&d, "swing");
+    blows(&d, "swing_b");
+    const power = powerOf(&d);
+    try d.moves.append(arena, .{ .name = "swing", .provenance = "the swing (0xE47E), its damage the type's power (0x93CE)", .animation = d.animationIndex("swing").?, .damage = power });
+    try d.moves.append(arena, .{ .name = "swing_b", .provenance = "the swing with the second pipe (0xE47E)", .animation = d.animationIndex("swing_b").?, .damage = power });
+    try d.number("approach_speed", try immediate(rom, 0xE3A8, &.{ 0x31, 0x7C }, 2) << 8, "ROM 0x0E3A8: move.w #N,(100,a0) (8.8)");
+    try d.number("wait_ticks", try moveByte(rom, 0xE420, 80), "ROM 0x0E420: move.b #N,(80,a0)");
+    try d.number("wait_level", try immediate(rom, 0xE44A, &.{ 0x06, 0x40 }, 2), "ROM 0x0E44A: addi.w #N,d0");
+    try d.number("close_in_pace", (try immediate(rom, 0xE356, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0E356: move.w #N*$101,(12,a0)");
+    try d.number("close_in_ticks", try moveByte(rom, 0xE35C, 80), "ROM 0x0E35C: move.b #N,(80,a0)");
+    try d.number("close_in_speed", try immediate(rom, 0xE362, &.{ 0x31, 0x7C }, 2) << 8, "ROM 0x0E362: move.w #N,(100,a0) (8.8)");
+    try d.number("close_in_beside", try moveq(rom, 0xE378, 1), "ROM 0x0E378: moveq #N,d1");
+    try d.number("swing_pace", (try immediate(rom, 0xE49A, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0E49A: move.w #N*$101,(12,a0)");
+    try d.number("swing_sound_frame", try frameCompared(rom, 0xE4AE), "ROM 0x0E4AE: cmpi.b #N,(10,a0)");
+    try d.number("swing_ends", try frameCompared(rom, 0xE4C2), "ROM 0x0E4C2: cmpi.b #N,(10,a0)");
+    try d.sound("swing", @bitCast(@as(i8, @intCast(try moveq(rom, 0xE4BC, 7)))));
+    return finish(&d, "galsia_pipe", 0x23, "galsia_pipe", "the pipe Galsia (handler 0xE326)");
+}
+
+// --- The acrobat --------------------------------------------------------------------------------
+
+/// The acrobat (type $25, its handler 0xE8F0, sor-remaster's obj/acrobat.zig): it circles its
+/// place, lines up, dashes, closes in and punches, somersaults, jump kicks and flips.
+pub fn acrobat(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    var d = try begin(arena, rom, 0x25, "acrobat", &.{
+        .{ .name = "punch", .entry = try animEntryWord(rom, 0xEB7C) },
+        .{ .name = "jump_kick", .entry = try animEntryWord(rom, 0xEDEC) },
+        .{ .name = "flip", .entry = try animEntry(rom, 0xEE9E) },
+    });
+    if (try animEntryWord(rom, 0xEBDC) != try animEntryWord(rom, 0xEB7C)) return error.BadData;
+    blows(&d, "punch");
+    blows(&d, "jump_kick");
+    const power = powerOf(&d);
+    try d.moves.append(arena, .{ .name = "punch", .provenance = "the punch (0xEB6E), its damage the type's power (0x93CE)", .animation = d.animationIndex("punch").?, .damage = power });
+    try d.moves.append(arena, .{ .name = "somersault", .provenance = "the somersault (0xEBAC), the punch's frames held", .animation = d.animationIndex("punch").?, .damage = power });
+    try d.moves.append(arena, .{ .name = "jump_kick", .provenance = "the jump kick (0xEDD8): a blow that lands knocks down (reaction 1)", .animation = d.animationIndex("jump_kick").?, .damage = power, .reaction = .knock_down });
+    // The box its close in reaches with (0xEF0A: 0xAD04 with box 6, or 7 facing left).
+    const reach: u8 = @intCast(try moveq(rom, 0xEF64, 1));
+    try namedBox(&d, reach, reach + 1, "close_in", "reach");
+    try d.number_notes.print(arena, "; the close in's reach: ROM 0x0EF64: moveq #N,d1", .{});
+    try d.number("approach_speed", try immediate(rom, 0xEB4A, &.{ 0x31, 0x7C }, 2) << 8, "ROM 0x0EB4A: move.w #N,(100,a0) (8.8)");
+    try d.number("circle_pause", try moveByte(rom, 0xEC90, 80), "ROM 0x0EC90: move.b #N,(80,a0)");
+    try d.number("circle_turns", try moveByte(rom, 0xECA6, 81), "ROM 0x0ECA6: move.b #N,(81,a0)");
+    try d.number("circle_stops", try moveByte(rom, 0xECAC, 82), "ROM 0x0ECAC: move.b #N,(82,a0)");
+    try d.number("circle_near", try immediate(rom, 0xECD0, &.{ 0x0C, 0x40 }, 2), "ROM 0x0ECD0: cmpi.w #N,d0");
+    try d.number("level_speed", try immediate(rom, 0xED5E, &.{ 0x20, 0x3C }, 4), "ROM 0x0ED5E: move.l #N,d0");
+    try d.number("level_dash_bits", try immediate(rom, 0xEDA8, &.{ 0x02, 0x00, 0x00 }, 1), "ROM 0x0EDA8: andi.b #N,d0 (a draw)");
+    try d.number("level_near", try immediate(rom, 0xEDBA, &.{ 0x0C, 0x41 }, 2), "ROM 0x0EDBA: cmpi.w #N,d1");
+    try d.number("close_in_pace", (try immediate(rom, 0xEF1E, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0EF1E: move.w #N*$100+1,(12,a0)");
+    try d.number("close_in_ticks", try moveByte(rom, 0xEF2A, 80), "ROM 0x0EF2A: move.b #N,(80,a0)");
+    try d.number("close_in_speed", try immediate(rom, 0xEF40, &.{ 0x3C, 0x3C }, 2) << 8, "ROM 0x0EF40: move.w #N,d6 (8.8)");
+    try d.number("close_in_fast", try immediate(rom, 0xEF4C, &.{ 0x3C, 0x3C }, 2) << 8, "ROM 0x0EF4C: move.w #N,d6 (8.8)");
+    try d.number("close_in_slow", try immediate(rom, 0xEF58, &.{ 0x3C, 0x3C }, 2) << 8, "ROM 0x0EF58: move.w #N,d6 (8.8)");
+    try d.number("close_in_beside", try moveq(rom, 0xEF3E, 3), "ROM 0x0EF3E: moveq #N,d3");
+    try d.number("close_in_level", try immediate(rom, 0xEF86, &.{ 0x0C, 0x40 }, 2), "ROM 0x0EF86: cmpi.w #N,d0");
+    try d.number("close_in_near", try immediate(rom, 0xEF98, &.{ 0x0C, 0x40 }, 2), "ROM 0x0EF98: cmpi.w #N,d0");
+    try d.number("punch_ends", try frameCompared(rom, 0xEB96), "ROM 0x0EB96: cmpi.b #N,(10,a0)");
+    try d.number("somersault_x", try immediate(rom, 0xEBC6, &.{ 0x21, 0x7C }, 4), "ROM 0x0EBC6: move.l #N,(28,a0)");
+    try d.number("somersault_up", try immediate(rom, 0xEBCE, &.{ 0x21, 0x7C }, 4), "ROM 0x0EBCE: move.l #N,(36,a0)");
+    try d.number("somersault_near", try immediate(rom, 0xEC00, &.{ 0x0C, 0x40 }, 2), "ROM 0x0EC00: cmpi.w #N,d0");
+    try d.number("somersault_ends", try frameCompared(rom, 0xEC42), "ROM 0x0EC42: cmpi.b #N,(10,a0)");
+    try d.number("dash_pace", (try immediate(rom, 0xEFCA, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0EFCA: move.w #N*$100+1,(12,a0)");
+    try d.number("dash_speed", try immediate(rom, 0xEFE6, &.{ 0x3C, 0x3C }, 2) << 8, "ROM 0x0EFE6: move.w #N,d6 (8.8)");
+    try d.number("dash_near", try immediate(rom, 0xF002, &.{ 0x0C, 0x40 }, 2), "ROM 0x0F002: cmpi.w #N,d0");
+    try d.number("dash_back_ticks", try moveByte(rom, 0xF012, 80), "ROM 0x0F012: move.b #N,(80,a0)");
+    try d.number("dash_back_depth", try immediate(rom, 0xF018, &.{ 0x21, 0x7C }, 4), "ROM 0x0F018: move.l #N,(32,a0)");
+    try d.number("jump_kick_up", try immediate(rom, 0xEDF4, &.{ 0x21, 0x7C }, 4), "ROM 0x0EDF4: move.l #N,(36,a0)");
+    try d.number("jump_kick_x", try immediate(rom, 0xEDFC, &.{ 0x20, 0x3C }, 4), "ROM 0x0EDFC: move.l #N,d0");
+    try d.number("jump_kick_holds", try frameCompared(rom, 0xEE2A), "ROM 0x0EE2A: cmpi.b #N,(10,a0)");
+    try d.number("flip_up", try immediate(rom, 0xEEA4, &.{ 0x21, 0x7C }, 4), "ROM 0x0EEA4: move.l #N,(36,a0)");
+    try d.number("flip_x", try immediate(rom, 0xEEAC, &.{ 0x20, 0x3C }, 4), "ROM 0x0EEAC: move.l #N,d0");
+    try d.number("back_flip_up", try immediate(rom, 0xEEBA, &.{ 0x21, 0x7C }, 4), "ROM 0x0EEBA: move.l #N,(36,a0)");
+    try d.number("back_flip_x", try immediate(rom, 0xEEC2, &.{ 0x20, 0x3C }, 4), "ROM 0x0EEC2: move.l #N,d0");
+    try d.number("flip_holds", try frameCompared(rom, 0xEEDE), "ROM 0x0EEDE: cmpi.b #N,(10,a0)");
+    try d.sound("leap", @bitCast(@as(i8, @intCast(try moveq(rom, 0xEDE0, 7)))));
+    try d.sound("land", @bitCast(@as(i8, @intCast(try moveq(rom, 0xEEF6, 7)))));
+    return finish(&d, "acrobat", 0x25, "acrobat", "the acrobat (handler 0xE8F0)");
+}
+
+/// The box of the pair (`right`, `left`) of the objects' table named `animation`_`role`, which a
+/// behaviour tests by name, also when frames use it under another.
+fn namedBox(d: *Def, right: u8, left: u8, animation: []const u8, role: []const u8) Error!void {
+    const name = try std.fmt.allocPrint(d.arena, "{s}_{s}", .{ animation, role });
+    const i = (try d.box(1, right, left, animation, role)) orelse return error.BadData;
+    if (std.mem.eql(u8, d.boxes.items[i].name, name)) return;
+    var b = d.boxes.items[i];
+    b.name = name;
+    try d.boxes.append(d.arena, b);
+    // A key no frame's pair takes.
+    try d.box_keys.append(d.arena, .{ 0xFF, right, left });
+}
+
+/// The animation set's entry of the animation number the `move.w #N,d0` at `at` names.
+fn animEntryWord(rom: []const u8, at: u32) Error!u32 {
+    const anim = try immediate(rom, at, &.{ 0x30, 0x3C }, 2);
+    if (anim < 0 or @mod(anim, 4) != 0) return error.BadData;
+    return @intCast(@divExact(anim, 2));
+}
+
+/// The animation set's entry of the animation number the `moveq #N,d0` at `at` names (facing
+/// right).
+fn animEntry(rom: []const u8, at: u32) Error!u32 {
+    const anim = try moveq(rom, at, 0);
+    if (anim < 0 or @mod(anim, 4) != 0) return error.BadData;
+    return @intCast(@divExact(anim, 2));
+}
+
 /// The definitions this module writes, appended to `out`.
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
     try out.append(arena, try galsia(arena, rom));
     try out.append(arena, try stalker(arena, rom));
     try out.append(arena, try signal(arena, rom));
+    try out.append(arena, try galsiaPipe(arena, rom));
+    try out.append(arena, try acrobat(arena, rom));
+    try out.append(arena, try shutter(arena, rom));
 }

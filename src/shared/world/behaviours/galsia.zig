@@ -60,7 +60,7 @@ pub const Animation = enum { walk, down, reel, stand, thrown, slammed, punch };
 pub const Move = enum { punch, punch_last };
 pub const Sound = enum { hurt, thud, cry, cry_odd };
 
-pub const Numbers = enemy.Numbers(enemy.merged(PunkNumbers, OwnNumbers));
+pub const Numbers = enemy.Numbers(enemy.merged(enemy.merged(PunkNumbers, OwnNumbers), enemy.ShutterNumbers));
 
 /// The numbers of the Galsias' close in and punch (a stalker's too).
 pub const PunkNumbers = struct {
@@ -159,7 +159,7 @@ pub fn begin(a: Actor) void {
         .flank => flankSetUp(a),
         .taunt => tauntSetUp(a),
         .wait => waitSetUp(a),
-        .shutter_entry => shutter(a),
+        .shutter_entry => enemy.ShutterEntry(@This()).setUp(a),
         else => Common.setUp(a),
     }
     _ = Common.leftAt(a, was);
@@ -184,7 +184,7 @@ pub fn think(a: Actor) void {
         .flank => flank(a),
         .taunt => taunt(a),
         .wait => wait(a),
-        .shutter_entry => shutter(a),
+        .shutter_entry => enemy.ShutterEntry(@This()).wait(a),
         else => {},
     }
 }
@@ -513,14 +513,24 @@ fn wait(a: Actor) void {
     Common.enter(a, fights);
 }
 
-// The shutter -----------------------------------------------------------------------------------
+// An armed Galsia disarmed --------------------------------------------------------------------
 
-/// TODO: the rolling shutter it waits behind (its own entity); until then it comes out as a
-/// plain Galsia.
-fn shutter(a: Actor) void {
-    a.entity.flags.hidden = false;
-    a.entity.spawn.entrance = .close_in;
-    Common.enter(a, fights);
+/// The kind an armed Galsia becomes without its weapon.
+pub const kind_name = "galsia";
+
+/// An armed Galsia that lost its weapon fights on as a plain one (the original changes its
+/// kind): `h` becomes a Galsia in `state`, its enemy's body kept (its set-up due), its blows
+/// doing its old kind's damage (`power`), placed as a plain one (closing in, no traits).
+pub fn takeOver(t: *tick.Tick, h: Handle, body: enemy.Body, power: u8, state: State) void {
+    const kind = t.kinds.find(kind_name) orelse return;
+    t.world.retype(t.kinds, h, kind);
+    const e = t.world.get(h) orelse return;
+    var b = body;
+    b.weapon = null;
+    e.mind = .{ .galsia = .{ .state = state, .body = b } };
+    e.power = power;
+    e.spawn.entrance = .close_in;
+    e.spawn.traits = .{};
 }
 
 // The hooks ---------------------------------------------------------------------------------------
@@ -567,4 +577,8 @@ pub fn takeUp(a: Actor, elapsed: u32) void {
 
 pub fn takeUpStruck(a: Actor, ago: u32, striking: bool) void {
     Common.takeUpStruck(a, ago, striking);
+}
+
+pub fn letOut(a: Actor) void {
+    enemy.ShutterEntry(@This()).letOut(a);
 }

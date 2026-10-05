@@ -218,6 +218,21 @@ pub const Tick = struct {
         dispatch(t, h, "takeUpStruck", void, {}, .{ ago, striking });
     }
 
+    /// Taken up from a situation, the entity holds the weapon `weapon` (its holder set already).
+    pub fn takeUpWeapon(t: *Tick, h: Handle, weapon: Handle) void {
+        dispatch(t, h, "takeUpWeapon", void, {}, .{weapon});
+    }
+
+    /// Taken up from a situation, the weapon or item was picked up `times` times.
+    pub fn takeUpTaken(t: *Tick, h: Handle, times: u8) void {
+        dispatch(t, h, "takeUpTaken", void, {}, .{times});
+    }
+
+    /// Taken up from a situation, the shutter opened `ago` ticks before.
+    pub fn takeUpOpened(t: *Tick, h: Handle, ago: u32) void {
+        dispatch(t, h, "takeUpOpened", void, {}, .{ago});
+    }
+
     /// The entity landed on the ground (the movement system).
     pub fn landed(t: *Tick, h: Handle) void {
         dispatch(t, h, "landed", void, {}, .{});
@@ -260,6 +275,49 @@ pub const Tick = struct {
         h.holding = held;
         o.holder = holder;
         dispatch(t, held, "caughtBy", void, {}, .{ holder, behind });
+    }
+
+    /// The kind of the rolling shutter an enemy lies in wait behind.
+    pub const shutter_kind = "shutter";
+
+    /// The enemy `by` puts up its shutter at its place, a pixel deeper, in the first of the
+    /// enemies' free places (the last of them when none is free): the shutter lets it out
+    /// (`letOut`).
+    pub fn putUpShutter(t: *Tick, by: Handle) void {
+        const kind = t.kinds.find(shutter_kind) orelse return;
+        const e = t.world.get(by) orelse return;
+        const p = world_mod.World.enemy_places;
+        const at: fixed.Vec3 = .{ .x = .pixels(e.position.x.whole()), .depth = .pixels(e.position.depth.whole() + 1), .height = .pixels(e.position.height.whole()) };
+        const s = t.world.spawnWithin(t.kinds, kind, p.from, p.to, at, .right) catch t.world.spawnWithin(t.kinds, kind, p.to, p.to + 1, at, .right) catch return;
+        t.world.get(s).?.mind.shutter.owner = by;
+    }
+
+    /// The shutter the enemy `h` lay in wait behind lets it out.
+    pub fn letOut(t: *Tick, h: Handle) void {
+        dispatch(t, h, "letOut", void, {}, .{});
+    }
+
+    /// `by` takes up a new weapon of the kind named `name`, in one of the weapons' places
+    /// (`World.weapon_places`), unseen until it is in the hand: the pick-up is noted. Null when
+    /// no place is free.
+    pub fn arm(t: *Tick, by: Handle, name: []const u8) ?Handle {
+        const kind = t.kinds.find(name) orelse return null;
+        const p = world_mod.World.weapon_places;
+        const w = t.world.spawnWithin(t.kinds, kind, p.from, p.to, .zero, .right) catch return null;
+        t.world.get(w).?.holder = by;
+        t.out.pickups.append(.{ .item = w, .kind = kind, .by = by });
+        return w;
+    }
+
+    /// The weapon `w` falls from its holder's hand (`dropped`).
+    pub fn dropWeapon(t: *Tick, w: Handle) void {
+        dispatch(t, w, "dropped", void, {}, .{});
+    }
+
+    /// The entity is held: it follows its holder now that its holder has moved (`follow`; by
+    /// default its holder places it).
+    pub fn follow(t: *Tick, h: Handle) void {
+        dispatch(t, h, "follow", void, {}, .{});
     }
 
     /// `holder` throws the one it holds, a throw of `damage` (`thrownBy`: the one thrown lets go

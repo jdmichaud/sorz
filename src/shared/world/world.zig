@@ -175,8 +175,34 @@ pub const World = struct {
         if (k.definition.animations.len != 0) kinds.startAnimation(e, 0);
     }
 
-    /// The places the enemies take (the original's enemies' objects, its 3rd to its 34th).
+    /// The entity `h` becomes one of `kind` in its place, its record kept, as the original's
+    /// objects whose type alone changes (an armed Galsia that lost its weapon fights on as a plain
+    /// one): its handle still finds it; its behaviour at its first state, its team and palette its
+    /// new definition's, the animation of the same name played on (else its first); its place,
+    /// speeds, health, holds and the rest kept.
+    pub fn retype(self: *World, kinds: *const Kinds, h: Handle, kind: KindId) void {
+        const e = self.get(h) orelse return;
+        const old = if (e.animation.index) |i| kinds.get(e.kind.?).definition.animations[i].name else null;
+        const k = kinds.get(kind);
+        e.kind = kind;
+        e.team = k.definition.team;
+        e.palette = k.definition.palette;
+        e.mind = behaviours.initial(k.behaviour);
+        e.boxes = .{};
+        const same = if (old) |n| k.definition.animation(n) else null;
+        if (same) |i| {
+            e.animation.index = i;
+            if (e.animation.frame >= k.definition.animations[i].frames.len) e.animation.frame = 0;
+        } else if (k.definition.animations.len != 0) kinds.startAnimation(e, 0);
+    }
+
+    /// The places the enemies take (the original's enemies' objects, its 3rd to its 34th): a
+    /// shutter and its slats too.
     pub const enemy_places: struct { from: usize, to: usize } = .{ .from = 2, .to = 34 };
+
+    /// The places the weapons take, which the order of updates puts after the enemies' (the
+    /// original's weapons' objects, its 35th to its 42nd).
+    pub const weapon_places: struct { from: usize, to: usize } = .{ .from = 34, .to = 42 };
 
     /// `spawn` in the first free place from `from` to `to` (excluded).
     pub fn spawnWithin(self: *World, kinds: *const Kinds, kind: KindId, from: usize, to: usize, position: Vec3, facing: entity.Facing) Full!Handle {

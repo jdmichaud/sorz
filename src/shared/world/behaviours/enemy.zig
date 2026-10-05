@@ -98,7 +98,69 @@ pub const Body = struct {
     alone: bool = false,
     /// Its blow landed at this tick.
     landed: bool = false,
+    /// The weapon in its hand (an armed Galsia's).
+    weapon: ?Handle = null,
+    /// Its shutter let it out; it drops from there.
+    let_out: bool = false,
+    dropping: bool = false,
 };
+
+/// The numbers of the way in through a rolling shutter (`ShutterEntry`).
+pub const ShutterNumbers = struct {
+    /// Behind its shutter it waits this far across from it and up.
+    shutter_beside: i16,
+    shutter_above: i16,
+    /// Let out, it drops at this speed (whole pixels, its fraction kept) in depth `shutter_depth`.
+    shutter_drop: i16,
+    shutter_depth: i16,
+};
+
+/// The way in through a rolling shutter (shutter.zig), for module `M` (its numbers merged with
+/// `ShutterNumbers`): it puts up its shutter where it stands, facing left, and waits beside it,
+/// up behind it, unseen until the shutter shows it; let out, it drops to the ground and takes up
+/// the fight, placed as one that closes in.
+pub fn ShutterEntry(comptime M: type) type {
+    return struct {
+        const A = tick.Actor(M);
+
+        pub fn setUp(a: A) void {
+            const n = a.numbers();
+            const e = a.entity;
+            Of(M).faceTarget(a);
+            a.animate(.walk);
+            e.facing = .left;
+            e.position.depth = .parts(0, e.position.depth.frac());
+            a.tick.putUpShutter(a.handle);
+            e.position.x = e.position.x.add(.pixels(n.shutter_beside));
+            e.position.height = e.position.height.sub(.pixels(n.shutter_above));
+        }
+
+        pub fn wait(a: A) void {
+            const n = a.numbers();
+            const b = &a.mind.body;
+            const e = a.entity;
+            if (!b.let_out) return;
+            if (!b.dropping) {
+                b.dropping = true;
+                e.velocity.height = .parts(n.shutter_drop, e.velocity.height.frac());
+                a.pause(false);
+                e.position.depth = .parts(n.shutter_depth, e.position.depth.frac());
+            }
+            e.position.height = e.position.height.add(e.velocity.height);
+            const ground = a.tick.world.ground.whole();
+            if (e.position.height.whole() < ground) return;
+            e.position.height = .parts(@intCast(ground), e.position.height.frac());
+            b.let_out = false;
+            b.dropping = false;
+            e.spawn = .{ .offset_x = e.spawn.offset_x, .offset_depth = e.spawn.offset_depth, .strength = e.spawn.strength, .entrance = .close_in };
+            Of(M).enter(a, M.fights);
+        }
+
+        pub fn letOut(a: A) void {
+            a.mind.body.let_out = true;
+        }
+    };
+}
 
 /// The numbers of the common states (the original's shared code, the same for every enemy),
 /// with those of a kind's own, `Own`: the struct a module declares as its `Numbers`.
@@ -485,6 +547,55 @@ pub fn Of(comptime M: type) type {
             return true;
         }
 
+        /// It walks by its speed in depth alone (a circle's, a line up's), refused at the
+        /// street's depths; a solid thing in its way stops it, and it walks off. Returns false
+        /// when it changed state.
+        pub fn walkDepth(a: A) bool {
+            const n = a.numbers();
+            const e = a.entity;
+            const d = e.position.depth.add(e.velocity.depth);
+            if (!d.lessThan(.pixels(n.walk_depth_least)) and d.lessThan(.pixels(n.walk_depth_most))) e.position.depth = d;
+            return unblocked(a, .{ .depth = e.velocity.depth });
+        }
+
+        /// It walks by its speed across alone, refused at the street's ends; a solid thing in its
+        /// way stops it, and it walks off. Returns false when it changed state.
+        pub fn walkAcross(a: A) bool {
+            const n = a.numbers();
+            const e = a.entity;
+            const x = e.position.x.add(e.velocity.x);
+            if (!x.lessThan(.zero) and x.lessThan(.pixels(n.walk_x_most))) e.position.x = x;
+            return unblocked(a, .{ .x = e.velocity.x });
+        }
+
+        fn unblocked(a: A, moved: fixed.Vec3) bool {
+            if (!a.tick.solidAt(a.handle, a.entity.position)) return true;
+            a.entity.position = a.entity.position.sub(moved);
+            a.stop();
+            walkOffOrFight(a);
+            return false;
+        }
+
+        /// In the air (a leap): across by its speed, refused at the street's ends.
+        pub fn flyAcross(a: A) void {
+            const n = a.numbers();
+            const e = a.entity;
+            const x = e.position.x.add(e.velocity.x);
+            if (!x.lessThan(.zero) and x.lessThan(.pixels(n.walk_x_most))) e.position.x = x;
+        }
+
+        /// In the air: its gravity, then its fall in height; true when it is down, on the
+        /// ground's whole pixels (the fraction of its height kept).
+        pub fn falls(a: A) bool {
+            gravity(a);
+            const e = a.entity;
+            e.position.height = e.position.height.add(e.velocity.height);
+            const ground = a.tick.world.ground.whole();
+            if (e.position.height.whole() < ground) return false;
+            e.position.height = .parts(@intCast(ground), e.position.height.frac());
+            return true;
+        }
+
         /// Stopped in its walk: one walking off takes up the fight; any other walks off.
         fn walkOffOrFight(a: A) void {
             enter(a, if (a.mind.state == .walk_off) M.fights else .walk_off);
@@ -494,6 +605,20 @@ pub fn Of(comptime M: type) type {
         pub fn power(a: A) i16 {
             if (a.entity.power != 0) return a.entity.power;
             return a.numbers().power;
+        }
+
+        /// It takes up a new weapon of the kind named `name` (`Tick.arm`): false when no place
+        /// is free for it.
+        pub fn arm(a: A, name: []const u8) bool {
+            body(a).weapon = a.tick.arm(a.handle, name) orelse return false;
+            return true;
+        }
+
+        /// Its weapon falls from its hand.
+        pub fn drop(a: A) void {
+            const w = body(a).weapon orelse return;
+            body(a).weapon = null;
+            a.tick.dropWeapon(w);
         }
 
         /// It flies by its speed at this tick, across and in height (a knock-down, a throw): its
@@ -1237,6 +1362,18 @@ pub fn Of(comptime M: type) type {
                 };
             }
             takeUpTarget(a);
+            // Behind its shutter (which shows it and finds it, shutter.zig): set up already; let
+            // out, it drops.
+            if (@hasField(M.State, "shutter_entry") and a.mind.state == .shutter_entry and elapsed >= 1) {
+                const b = body(a);
+                b.fresh = false;
+                a.animate(.walk);
+                if (a.entity.velocity.height.raw > 0) {
+                    b.let_out = true;
+                    b.dropping = true;
+                }
+                return;
+            }
             switch (a.mind.state) {
                 .appear => {
                     a.entity.flags.hidden = true;
@@ -1276,6 +1413,11 @@ pub fn Of(comptime M: type) type {
                     if (a.entity.animation.index == null) a.animate(.walk);
                 },
             }
+        }
+
+        /// Taken up holding the weapon `w`.
+        pub fn takeUpWeapon(a: A, w: Handle) void {
+            body(a).weapon = w;
         }
 
         /// Taken up reeling, a blow taken `ago` ticks before: its reel started again then, and the

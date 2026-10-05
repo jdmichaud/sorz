@@ -197,7 +197,8 @@ const punk =
     \\   "edge_left": 16, "edge_near": 88, "edge_right": 304, "edge_speed": 262144, "edge_ticks": 96,
     \\   "flank_beside": 32, "flank_speed": 327680, "square_level": 16, "square_ticks": 16,
     \\   "taunt_ends": 6, "taunt_pace": 3, "taunts": 3, "wait_frame": 3, "wait_near": 80,
-    \\   "wait_ticks": 128},
+    \\   "wait_ticks": 128, "shutter_beside": 32, "shutter_above": 18, "shutter_drop": 1,
+    \\   "shutter_depth": 3},
     \\ "tables": {"circle_depth": [16, 16, 0, 16, -16, 0, -16, -16, 16, 8, 0, 8, -8, 0, -8, -16],
     \\   "circle_pace": [7, 6, 5, 3], "circle_speed": [65536, 98304, 131072, 196608],
     \\   "circle_x": [16, 0, 16, -16, 16, -16, 0, -16, 8, 0, 8, -16, 16, -8, 0, -8],
@@ -263,6 +264,52 @@ const signal =
     \\ "moves": {"slide": {"animation": "slide", "damage": 8, "reaction": "knock_down"}}}
 ;
 
+/// A pipe Galsia: its walk and its swing hold its pipe (their frames' hands), its swing strikes.
+const galsia_pipe =
+    \\{"family": "enemy", "team": "enemy", "behaviour": "galsia_pipe", "health": 6, "gravity": 73728,
+    \\ "shadow": true,
+    \\ "numbers": {
+++ enemy_numbers ++ ", " ++
+    \\ "power": 12, "approach_speed": 163840, "wait_ticks": 16, "wait_level": 16,
+    \\   "close_in_pace": 3, "close_in_ticks": 48, "close_in_speed": 229376, "close_in_beside": 64,
+    \\   "swing_pace": 3, "swing_sound_frame": 1, "swing_ends": 5},
+    \\ "tables": {
+++ pacing_tables ++ "}," ++
+    \\ "sounds": {
+++ enemy_sounds ++ ", \"swing\": \"pipe swing\"}," ++
+    \\ "boxes": {"body": {"x": [-9, 9], "depth": [-8, 8], "height": [-60, 0]},
+    \\   "swing": {"x": [24, 72], "depth": [-8, 8], "height": [-56, -40]}},
+    \\ "animations": {
+++ enemyAnimations(pf("5", "")) ++ "," ++
+    anim("walk_pipe", pf("5", ", \"hand\": {\"x\": -9, \"height\": -60, \"pose\": \"upright\"}") ++ "," ++ pf("5", ", \"hand\": {\"x\": -9, \"height\": -61, \"pose\": \"upright\"}")) ++ "," ++
+    anim("walk_pipe_b", pf("5", ", \"hand\": {\"x\": -9, \"height\": -60, \"pose\": \"upright\"}")) ++ "," ++
+    anim("swing", pf("3", ", \"hand\": {\"x\": -9, \"height\": -60, \"pose\": \"upright\"}") ++ "," ++ pf("3", ", \"hand\": {\"x\": 5, \"height\": -50, \"pose\": \"upright\", \"front\": true}") ++ "," ++ pf("3", "") ++ "," ++
+        pf("3", ", \"attack\": \"swing\", \"blow\": true, \"hand\": {\"x\": 53, \"height\": -51, \"pose\": \"level\"}") ++ "," ++ pf("3", ", \"attack\": \"swing\", \"blow\": true") ++ "," ++ pf("3", ", \"attack\": \"swing\", \"blow\": true")) ++ "," ++
+    anim("swing_b", pf("3", "") ++ "," ++ pf("3", "") ++ "," ++ pf("3", "") ++ "," ++ pf("3", "") ++ "," ++ pf("3", "") ++ "," ++ pf("3", "")) ++
+    \\ },
+    \\ "moves": {"swing": {"animation": "swing", "damage": 12}, "swing_b": {"animation": "swing_b", "damage": 12}}}
+;
+
+/// A pipe: its poses, how long it lasts and falls.
+const pipe =
+    \\{"family": "weapon", "team": "neutral", "behaviour": "weapon", "gravity": 34816,
+    \\ "numbers": {"power": 4, "uses": 3, "blink": 16, "drop": 131072},
+    \\ "animations": {
+++ anim("lying", bare("1", "")) ++ "," ++ anim("level", bare("1", "")) ++ "," ++ anim("upright", bare("1", "")) ++ "," ++ anim("blinking", bare("1", "") ++ "," ++ bare("1", "")) ++
+    \\ }}
+;
+
+/// A rolling shutter: five slats that roll up when its player comes near.
+const shutter =
+    \\{"family": "scenery", "team": "neutral", "behaviour": "shutter",
+    \\ "numbers": {"slats": 5, "above": 18, "spacing": 16, "roll": 64, "less": 16, "top": 64,
+    \\   "roll_speed": -65536, "near": 32, "beside": 32},
+    \\ "sounds": {"roll": "shutter"},
+    \\ "animations": {
+++ anim("slat", bare("1", "")) ++
+    \\ }}
+;
+
 const car =
     \\{"family": "effect", "team": "neutral", "behaviour": "police_car",
     \\ "numbers": {"run": 1048576, "run_most": 50331648, "comes": 33554432, "siren": 29,
@@ -292,6 +339,10 @@ const Fixture = struct {
             .{ .name = "punk", .text = punk },
             .{ .name = "stalker", .text = stalker },
             .{ .name = "signal", .text = signal },
+            .{ .name = "galsia", .text = punk },
+            .{ .name = "galsia_pipe", .text = galsia_pipe },
+            .{ .name = "pipe", .text = pipe },
+            .{ .name = "shutter", .text = shutter },
             .{ .name = "police_car", .text = car },
             .{ .name = "player_waiting", .text = waiting },
         };
@@ -872,4 +923,70 @@ test "Signal placed to slide, level with the player, slides in with a kick that 
     try testing.expectEqualStrings("knocked_down", r.state());
     for (0..60) |_| r.step(.{});
     try testing.expectEqual(@as(i16, 72), r.player().health);
+}
+
+test "a pipe Galsia takes up its pipe, holds it frame by frame, and knocked down lets it fall" {
+    var r = try Round.init();
+    defer r.deinit();
+    const g = try enemyAt(&r, "galsia_pipe", 900, .left, .approach);
+    r.w.get(g).?.spawn.offset_x = 64;
+    r.step(.{});
+    // Its pipe, in the weapons' places, taken up (noted as a pick-up), unseen until in the hand.
+    const pipe_h = r.w.handleAt(world_mod.World.weapon_places.from).?;
+    try testing.expect(r.w.get(pipe_h).?.holder.?.eql(g));
+    try testing.expectEqual(@as(usize, 1), r.out.pickups.len);
+    r.step(.{});
+    try testing.expectEqualStrings("held", behaviours.stateName(&r.w.get(pipe_h).?.mind).?);
+    // In its walk's hand: 9 behind it (it faces left: to its right), 60 or 61 up, behind it.
+    for (0..3) |_| {
+        const e = r.w.get(g).?;
+        const w = r.w.get(pipe_h).?;
+        try testing.expectEqual(e.position.x.whole() + 9, w.position.x.whole());
+        try testing.expect(e.position.height.whole() - w.position.height.whole() >= 60);
+        try testing.expectEqual(e.position.depth.whole() - 1, w.position.depth.whole());
+        r.step(.{});
+    }
+    // A new life knocks it back: its pipe falls, and it fights on as a Galsia, its blows its own.
+    var t = r.tick();
+    t.knockBack();
+    r.step(.{});
+    try testing.expectEqualStrings("galsia", r.f.kinds.get(r.w.get(g).?.kind.?).name());
+    try testing.expectEqual(@as(u8, 12), r.w.get(g).?.power);
+    try testing.expectEqualStrings("falling", behaviours.stateName(&r.w.get(pipe_h).?.mind).?);
+    for (0..40) |_| r.step(.{});
+    try testing.expectEqualStrings("lying", behaviours.stateName(&r.w.get(pipe_h).?.mind).?);
+    try testing.expectEqual(@as(i32, 160), r.w.get(pipe_h).?.position.height.whole());
+}
+
+test "a Galsia behind a shutter: unseen until its player comes near, then the slats roll, it drops" {
+    var r = try Round.init();
+    defer r.deinit();
+    const g = try enemyAt(&r, "galsia", 1000, .left, .shutter_entry);
+    r.w.get(g).?.flags.hidden = true;
+    r.step(.{});
+    // Its shutter where it stood, and five slats over it; it waits beside and up behind it.
+    var slats: usize = 0;
+    for (&r.w.entities) |*e| if (e.alive() and std.mem.eql(u8, r.f.kinds.get(e.kind.?).name(), "shutter")) {
+        slats += 1;
+    };
+    try testing.expectEqual(@as(usize, 6), slats);
+    try testing.expectEqual(@as(i32, 1032), r.w.get(g).?.position.x.whole());
+    try testing.expectEqual(@as(i32, 160 - 18), r.w.get(g).?.position.height.whole());
+    for (0..10) |_| r.step(.{});
+    try testing.expect(r.w.get(g).?.flags.hidden);
+    // The player near: it shows; the slats roll a while, then it drops in and fights.
+    r.player().position.x = .pixels(970);
+    r.step(.{});
+    try testing.expect(!r.w.get(g).?.flags.hidden);
+    var down_at: ?usize = null;
+    for (0..120) |i| {
+        r.step(.{});
+        if (r.w.get(g).?.mind.galsia.state != .shutter_entry) {
+            down_at = i;
+            break;
+        }
+    }
+    try testing.expect(down_at != null and down_at.? > 64);
+    try testing.expectEqual(@as(i32, 160), r.w.get(g).?.position.height.whole());
+    try testing.expectEqual(world_mod.Entrance.close_in, r.w.get(g).?.spawn.entrance);
 }

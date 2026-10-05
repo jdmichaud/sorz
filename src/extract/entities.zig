@@ -16,6 +16,7 @@ const rom_mod = @import("rom.zig");
 const sprites = @import("sprites.zig");
 const sound_names = @import("sound_names.zig");
 const enemies = @import("enemies.zig");
+const weapons = @import("weapons.zig");
 
 const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
@@ -177,6 +178,8 @@ pub const Def = struct {
     /// The art set's directory, its animation set, and the set's frames in address order, which
     /// name the frames.
     dir: []const u8,
+    /// The frames' names' prefix in a shared art set (`weapons/pipe_00`); none: the set's own.
+    prefix: []const u8 = "",
     set: u32,
     frame_addresses: []const u32,
     /// The box table of its frames: the players' or the other objects'.
@@ -193,6 +196,7 @@ pub const Def = struct {
 
     pub fn frameName(d: *Def, address: u32) Error![]const u8 {
         const i = std.mem.indexOfScalar(u32, d.frame_addresses, address) orelse return error.BadData;
+        if (d.prefix.len != 0) return std.fmt.allocPrint(d.arena, "{s}/{s}_{d:0>2}", .{ d.dir, d.prefix, i });
         return std.fmt.allocPrint(d.arena, "{s}/{d:0>3}", .{ d.dir, i });
     }
 
@@ -729,6 +733,7 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8) Error![]const entity.Defin
     var out: std.ArrayList(entity.Definition) = .empty;
     try out.append(arena, try player(arena, rom, "axel", 0));
     try enemies.all(arena, rom, &out);
+    try weapons.all(arena, rom, &out);
     try out.append(arena, try policeCar(arena, rom));
     try out.append(arena, try goArrow(arena, rom));
     try out.append(arena, try playerWaiting(arena, rom));

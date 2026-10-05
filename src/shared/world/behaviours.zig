@@ -50,6 +50,10 @@ pub const player = @import("behaviours/player.zig");
 pub const galsia = @import("behaviours/galsia.zig");
 pub const stalker = @import("behaviours/stalker.zig");
 pub const signal = @import("behaviours/signal.zig");
+pub const galsia_pipe = @import("behaviours/galsia_pipe.zig");
+pub const acrobat = @import("behaviours/acrobat.zig");
+pub const shutter = @import("behaviours/shutter.zig");
+pub const weapon = @import("behaviours/weapon.zig");
 pub const police_car = @import("behaviours/police_car.zig");
 pub const go_arrow = @import("behaviours/go_arrow.zig");
 pub const player_waiting = @import("behaviours/player_waiting.zig");
@@ -63,6 +67,10 @@ pub const Mind = union(enum) {
     galsia: galsia.Mind,
     stalker: stalker.Mind,
     signal: signal.Mind,
+    galsia_pipe: galsia_pipe.Mind,
+    acrobat: acrobat.Mind,
+    shutter: shutter.Mind,
+    weapon: weapon.Mind,
     police_car: police_car.Mind,
     go_arrow: go_arrow.Mind,
     player_waiting: player_waiting.Mind,
@@ -103,11 +111,19 @@ pub fn drivesAnimation(m: *const Mind) bool {
 }
 
 /// Puts the behaviour of `m` in its state named `name` (a situation another program recorded,
-/// converted): false when it has no state of that name.
+/// converted; a module's `trace_states` names its states as the other program's traces do, when
+/// they have no names there): false when it has no state of that name.
 pub fn setState(m: *Mind, name: []const u8) bool {
     switch (m.*) {
         .none => return false,
-        inline else => |*x| {
+        inline else => |*x, tag| {
+            const M = module(tag);
+            if (@hasDecl(M, "trace_states")) {
+                for (M.trace_states) |p| if (std.mem.eql(u8, p.name, name)) {
+                    x.state = p.state;
+                    return true;
+                };
+            }
             const S = @TypeOf(x.state);
             x.state = std.meta.stringToEnum(S, name) orelse return false;
             return true;
