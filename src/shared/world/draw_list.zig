@@ -35,7 +35,8 @@ const capacity = entity.capacity;
 
 /// How far off the screen an entity goes before it leaves the world, in pixels from the
 /// screen's top-left corner: left of `left` or from `right` on, above `top` or from `bottom` on.
-/// An entity marked `stays` stays.
+/// An entity marked `stays` stays, and while the special attack is under way none goes (its
+/// camera runs back and ahead past the round's things; the police car sees to its own going).
 pub const far_off_screen: struct { left: i32, right: i32, top: i32, bottom: i32 } = .{
     .left = -1024,
     .right = 1152,
@@ -88,7 +89,7 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
     for (w.updateOrder(&buf)) |i| {
         const e = &w.entities[i];
         if (e.flags.hidden or e.flags.blinked or out.shown[i] == null) continue;
-        if (!e.flags.stays and farOff(screenPlace(w, e))) {
+        if (!e.flags.stays and !w.special and farOff(screenPlace(w, e))) {
             if (remove_far_off) w.remove(w.handleAt(i).?);
             out.shown[i] = null;
             continue;
