@@ -855,7 +855,7 @@ fn feelBlow(a: Actor) void {
     const t = a.mind.taken orelse return;
     a.mind.taken = null;
     const n = a.numbers();
-    if (a.other(t.by)) |by| a.faceToward(by);
+    if (a.other(t.by)) |by| faceStriker(a, by);
     const knocked = t.reaction == .knock_down or a.entity.flags.airborne;
     if (knocked) a.tick.sound(fallSound(a, t.by), a.handle);
     dropWeapon(a);
@@ -872,6 +872,12 @@ fn feelBlow(a: Actor) void {
     }
     change(a, .hurt);
     a.mind.timer = n.hurt;
+}
+
+/// Struck by `by`, it faces it: left unless it is left of it (whole pixels), as the original's
+/// struck player turns.
+fn faceStriker(a: Actor, by: *const entity.Entity) void {
+    a.entity.facing = if (a.entity.position.x.whole() >= by.position.x.whole()) .left else .right;
 }
 
 /// The sound of its knock-down by `by`: the hurt's, or the one its striker's kind gives those
@@ -894,7 +900,10 @@ fn die(a: Actor, by: ?Handle) void {
     const n = a.numbers();
     a.sound(.death);
     if (a.entity.holding != null or a.entity.holder != null) a.letGo();
-    if (by) |h| if (a.other(h)) |o| a.faceToward(o);
+    // Facing the one who struck: left when it is left of it (whole pixels).
+    if (by) |h| if (a.other(h)) |o| {
+        a.entity.facing = if (o.position.x.whole() < a.entity.position.x.whole()) .left else .right;
+    };
     change(a, .dying);
     a.mind.bounces = 0;
     a.entity.velocity.height = n.dying_up;
