@@ -825,6 +825,9 @@ pub fn Of(comptime M: type) type {
             // Lifted, or lifted at this tick (the original's reel takes the lift's step at once,
             // and its blow lands at each tick it touches).
             if (b.lifted or b.lift_due) return struckLifted(a, blow);
+            // Settling into its pose after a combo's third blow (the tick after the blow's), it
+            // looks at no blow: the original's reel clears no striker's landing then.
+            if (b.settling) return false;
             // A touch that goes on is not taken, and its striker forgets what it landed at this
             // tick (the original's reel clears its striker's landing then, the blows of this tick
             // on others before it too).
