@@ -322,7 +322,7 @@ pub fn control(a: Actor, c: Command) void {
 }
 
 /// The boxes of its frame, its body withheld while it blinks; a walk's reach grabs what it meets
-/// (the grabs system answers at this tick).
+/// (the turns answer at this tick, systems.zig).
 fn showBoxes(a: Actor) void {
     a.showBoxes();
     if (a.mind.blink != 0) a.entity.boxes.body = null;

@@ -42,7 +42,7 @@ pub const Input = struct {
     }
 };
 
-/// A blow that meets an entity's body (the hits system).
+/// A blow that meets an entity's body (at the struck one's turn, systems.zig).
 pub const Blow = struct {
     attacker: Handle,
     damage: i16,
@@ -147,7 +147,7 @@ pub const Tick = struct {
         dispatch(t, h, "think", void, {}, .{});
     }
 
-    /// The entity's tick begins, before the blows of the tick (the begin system).
+    /// The entity's tick begins, at its turn, before the blows of the tick (systems.zig).
     pub fn begin(t: *Tick, h: Handle) void {
         dispatch(t, h, "begin", void, {}, .{});
     }

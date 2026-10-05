@@ -34,9 +34,10 @@ pub const System = struct {
 };
 
 /// The logic tick, in order. As in the original, the round's timer counts first; the players act
-/// and move, a section due opens (its wall), and the camera follows them; then the others begin
-/// their tick, take the blows and the grabs of the tick where they stand, decide, and move; the
-/// round's script brings who comes.
+/// and move, a section due opens (its wall), and the camera follows them; the players' blows and
+/// grabs on each other land; then the others take their turns one after the other (each begins
+/// its tick, takes the blows and the grabs of the tick where it stands and decides), and move;
+/// the round's script brings who comes.
 pub const pipeline = [_]System{
     .{ .name = "timer", .run = script.timer },
     .{ .name = "commands", .run = commands },
@@ -44,10 +45,8 @@ pub const pipeline = [_]System{
     .{ .name = "players_move", .run = playersMove },
     .{ .name = "section", .run = script.opening },
     .{ .name = "camera", .run = camera },
-    .{ .name = "begin", .run = begin },
-    .{ .name = "hits", .run = hits },
-    .{ .name = "grabs", .run = grabs },
-    .{ .name = "ai", .run = ai },
+    .{ .name = "between_players", .run = betweenPlayers },
+    .{ .name = "turns", .run = turns },
     .{ .name = "movement", .run = movement },
     .{ .name = "pickups", .run = pickups },
     .{ .name = "script", .run = script.run },
@@ -130,24 +129,53 @@ fn control(t: *Tick) void {
     }
 }
 
-// The AI ------------------------------------------------------------------------------------------
+// The others' turns -------------------------------------------------------------------------------
 
-/// The others' ticks begin (a state entered at the last tick sets itself up), before the blows.
-fn begin(t: *Tick) void {
-    var buf: [capacity]u8 = undefined;
-    for (t.world.updateOrder(&buf)) |i| {
-        const h = t.world.handleAt(i) orelse continue;
-        if (t.world.playerOf(h) != null) continue;
-        t.begin(h);
+/// The players' blows on each other land (the original's two players strike each other), then
+/// their grabs of each other.
+fn betweenPlayers(t: *Tick) void {
+    for (t.world.players) |p| {
+        const ah = p.entity orelse continue;
+        for (t.world.players) |q| {
+            const th = q.entity orelse continue;
+            if (!th.eql(ah)) blow(t, ah, th);
+        }
+    }
+    for (t.world.players) |p| {
+        const gh = p.entity orelse continue;
+        for (t.world.players) |q| {
+            const th = q.entity orelse continue;
+            if (!th.eql(gh) and grab(t, gh, th)) break;
+        }
     }
 }
 
-fn ai(t: *Tick) void {
-    var buf: [capacity]u8 = undefined;
-    for (t.world.updateOrder(&buf)) |i| {
+/// The others' turns, in the world's order, as the original runs its objects one after the
+/// other, each through its whole tick: the entity's tick begins (a state entered at the last tick
+/// sets itself up); the blows that meet it land (`blowsOn`), then its own on the players; a
+/// player asking to grab it holds it; and it decides. What each draws from the random generator
+/// is thus drawn in the original's order. An entity that appears during the turns in a later
+/// place has its turn in the same tick, as in the original. Through the turns, the players' boxes
+/// stay where the players stood when they began (`Boxes.at`); their asks to grab end with them.
+fn turns(t: *Tick) void {
+    for (t.world.players) |p| {
+        const h = p.entity orelse continue;
+        if (t.world.get(h)) |e| e.boxes.at = e.position;
+    }
+    for (0..capacity) |i| {
         const h = t.world.handleAt(i) orelse continue;
         if (t.world.playerOf(h) != null) continue;
-        t.think(h);
+        t.begin(h);
+        blowsOn(t, h);
+        blowsOnPlayers(t, h);
+        grabbedByPlayers(t, h);
+        if (t.world.get(h) != null) t.think(h);
+    }
+    for (t.world.players) |p| {
+        const h = p.entity orelse continue;
+        const e = t.world.get(h) orelse continue;
+        e.flags.wants_grab = false;
+        e.boxes.at = null;
     }
 }
 
@@ -207,85 +235,98 @@ pub fn blowsLand(attacker: entity.Team, target: entity.Team) bool {
     };
 }
 
-/// Each entity whose blow is under way (`Tick.power`) and whose frame has an attack box strikes
-/// each entity whose body box it meets, of a team its blows land on: the struck entity's
-/// behaviour takes the blow or not (`Tick.struck`: by default, its damage at once); a blow
-/// taken is told to the striker (`blowLanded`) and asks for the move's hit sound. An attack box
-/// without a blow under way is a reach, which the grabs answer.
-fn hits(t: *Tick) void {
+/// The blows that meet `x` at its turn land: the missiles' first (the original's enemies look at
+/// the things thrown before the players), then the blows under way of the others, each in the
+/// world's order.
+fn blowsOn(t: *Tick, xh: Handle) void {
     var buf: [capacity]u8 = undefined;
     const order = t.world.updateOrder(&buf);
-    for (order) |ai_| {
-        const ah = t.world.handleAt(ai_) orelse continue;
-        if (t.world.get(ah).?.missile != null) {
-            missileHits(t, ah, order);
-            continue;
-        }
-        for (order) |ti| {
-            if (ti == ai_) continue;
-            const a = t.world.get(ah) orelse break;
-            const attack = a.boxes.attack orelse break;
-            const move_index = a.move orelse break;
-            const damage = t.power(a);
-            if (damage == 0) break;
-            const th = t.world.handleAt(ti) orelse continue;
-            const target = t.world.get(th).?;
-            const body = target.boxes.body orelse continue;
-            if (!blowsLand(a.team, target.team)) continue;
-            const ak = t.kindOf(a);
-            if (!meet(a, &ak.definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) continue;
-            const m = ak.definition.moves[move_index];
-            const away: i32 = switch (target.position.x.order(a.position.x)) {
-                .lt => -1,
-                .gt => 1,
-                .eq => a.facing.sign(),
-            };
-            const blow: tick_mod.Blow = .{
-                .attacker = ah,
-                .damage = damage,
-                .reaction = m.reaction,
-                .push = .{ .x = Fixed.of(m.push_x).times(away), .height = .of(m.push_height) },
-            };
-            if (!t.struck(th, blow)) continue;
-            t.blowLanded(ah, th);
-            if (m.hit_sound) |s| t.sound(s, ah);
-        }
+    for (order) |i| {
+        const ah = t.world.handleAt(i) orelse continue;
+        if (ah.eql(xh)) continue;
+        if (t.world.get(ah).?.missile != null) missileOn(t, ah, xh);
+    }
+    for (order) |i| {
+        const ah = t.world.handleAt(i) orelse continue;
+        if (ah.eql(xh)) continue;
+        if (t.world.get(ah).?.missile == null) blow(t, ah, xh);
     }
 }
 
-/// A missile (`Missile`: a body thrown, a weapon swung or thrown) strikes with its attack box each
-/// entity whose body it meets, of a team the blows of the one who threw or swings it land on (a
-/// player's on the enemies and the breakables; with `on_players`, the players but its thrower
-/// too): the struck one's behaviour takes the blow, its damage the missile's, knocking down.
-fn missileHits(t: *Tick, ah: Handle, order: []const u8) void {
-    for (order) |ti| {
-        if (ti == ah.index) continue;
-        const a = t.world.get(ah) orelse return;
-        const m = a.missile orelse return;
-        const attack = a.boxes.attack orelse return;
-        const th = t.world.handleAt(ti) orelse continue;
-        if (th.eql(m.by)) continue;
-        const target = t.world.get(th).?;
-        const body = target.boxes.body orelse continue;
-        const by_team = if (t.world.getConst(m.by)) |b| b.team else a.team;
-        const lands = switch (target.team) {
-            .player => m.on_players or by_team == .enemy,
-            .enemy, .neutral => by_team == .player,
-        };
-        if (!lands) continue;
-        if (!meet(a, &t.kindOf(a).definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) continue;
-        const blow: tick_mod.Blow = .{ .attacker = ah, .damage = m.damage, .reaction = .knock_down, .push = .zero, .missile = true };
-        if (!t.struck(th, blow)) continue;
-        t.blowLanded(ah, th);
+/// `x`'s blow under way, or `x` thrown or flying as a missile, meets the players.
+fn blowsOnPlayers(t: *Tick, xh: Handle) void {
+    for (t.world.players) |p| {
+        const th = p.entity orelse continue;
+        const x = t.world.get(xh) orelse return;
+        if (x.missile != null) missileOn(t, xh, th) else blow(t, xh, th);
     }
 }
 
-/// Whether box `ab` of `a` meets box `bb` of `b`: on each axis, their spans from the entities'
-/// places (whole pixels) overlap or touch.
+/// `a`'s blow under way (`Tick.power`), when its frame has an attack box, strikes `target` when
+/// the box meets its body and `a`'s team's blows land on its team: the target's behaviour takes
+/// the blow or not (`Tick.struck`: by default, its damage at once); a blow taken is told to the
+/// striker (`blowLanded`) and asks for the move's hit sound. An attack box without a blow under
+/// way is a reach, which the grabs answer.
+fn blow(t: *Tick, ah: Handle, th: Handle) void {
+    const a = t.world.get(ah) orelse return;
+    const attack = a.boxes.attack orelse return;
+    const move_index = a.move orelse return;
+    const damage = t.power(a);
+    if (damage == 0) return;
+    const target = t.world.get(th) orelse return;
+    const body = target.boxes.body orelse return;
+    if (!blowsLand(a.team, target.team)) return;
+    const ak = t.kindOf(a);
+    if (!meet(a, &ak.definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return;
+    const m = ak.definition.moves[move_index];
+    const away: i32 = switch (target.position.x.order(a.position.x)) {
+        .lt => -1,
+        .gt => 1,
+        .eq => a.facing.sign(),
+    };
+    const b: tick_mod.Blow = .{
+        .attacker = ah,
+        .damage = damage,
+        .reaction = m.reaction,
+        .push = .{ .x = Fixed.of(m.push_x).times(away), .height = .of(m.push_height) },
+    };
+    if (!t.struck(th, b)) return;
+    t.blowLanded(ah, th);
+    if (m.hit_sound) |snd| t.sound(snd, ah);
+}
+
+/// A missile (`Missile`: a body thrown, a weapon swung or thrown) strikes with its attack box
+/// `target` when it meets its body and is of a team the blows of the one who threw or swings it
+/// land on (a player's on the enemies and the breakables; with `on_players`, the players but its
+/// thrower too): the struck one's behaviour takes the blow, its damage the missile's, knocking
+/// down.
+fn missileOn(t: *Tick, ah: Handle, th: Handle) void {
+    const a = t.world.get(ah) orelse return;
+    const m = a.missile orelse return;
+    const attack = a.boxes.attack orelse return;
+    if (th.eql(m.by)) return;
+    const target = t.world.get(th) orelse return;
+    const body = target.boxes.body orelse return;
+    const by_team = if (t.world.getConst(m.by)) |b| b.team else a.team;
+    const lands = switch (target.team) {
+        .player => m.on_players or by_team == .enemy,
+        .enemy, .neutral => by_team == .player,
+    };
+    if (!lands) return;
+    if (!meet(a, &t.kindOf(a).definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return;
+    const b: tick_mod.Blow = .{ .attacker = ah, .damage = m.damage, .reaction = .knock_down, .push = .zero, .missile = true };
+    if (!t.struck(th, b)) return;
+    t.blowLanded(ah, th);
+}
+
+/// Whether box `ab` of `a` meets box `bb` of `b`: on each axis, their spans from where the
+/// entities' boxes stand (their places, but `Boxes.at`; whole pixels) overlap or touch.
 pub fn meet(a: *const Entity, ab: *const content_entity.Box, b: *const Entity, bb: *const content_entity.Box) bool {
-    return spansMeet(a.position.x.whole(), ab.across(a.boxes.mirrored), b.position.x.whole(), bb.across(b.boxes.mirrored)) and
-        spansMeet(a.position.depth.whole(), ab.depth, b.position.depth.whole(), bb.depth) and
-        spansMeet(a.position.height.whole(), ab.height, b.position.height.whole(), bb.height);
+    const pa = a.boxes.at orelse a.position;
+    const pb = b.boxes.at orelse b.position;
+    return spansMeet(pa.x.whole(), ab.across(a.boxes.mirrored), pb.x.whole(), bb.across(b.boxes.mirrored)) and
+        spansMeet(pa.depth.whole(), ab.depth, pb.depth.whole(), bb.depth) and
+        spansMeet(pa.height.whole(), ab.height, pb.height.whole(), bb.height);
 }
 
 fn spansMeet(pa: i32, sa: content_entity.Span, pb: i32, sb: content_entity.Span) bool {
@@ -294,36 +335,34 @@ fn spansMeet(pa: i32, sa: content_entity.Span, pb: i32, sb: content_entity.Span)
 
 // Grabs -------------------------------------------------------------------------------------------
 
-/// An entity whose behaviour asks to grab, holding nothing and held by nothing, with a reach (an
-/// attack box while no blow is under way), holds the first entity (in the world's order) whose
-/// body its reach meets, of a team its blows land on, free too, and whose behaviour lets it
-/// (`grabbable`). The holder's behaviour places the one it holds; a grab ends when either goes
-/// (`World.remove`) or a behaviour lets go.
-fn grabs(t: *Tick) void {
-    var buf: [capacity]u8 = undefined;
-    const order = t.world.updateOrder(&buf);
-    for (order) |i| {
-        const h = t.world.handleAt(i) orelse continue;
-        const e = t.world.get(h).?;
-        if (!e.flags.wants_grab) continue;
-        e.flags.wants_grab = false;
-        if (e.holding != null or e.holder != null) continue;
-        const reach = e.boxes.attack orelse continue;
-        if (t.power(e) != 0) continue;
-        for (order) |j| {
-            if (j == i) continue;
-            const oh = t.world.handleAt(j) orelse continue;
-            const o = t.world.get(oh).?;
-            if (o.holder != null or o.holding != null or !blowsLand(e.team, o.team)) continue;
-            const ob = o.boxes.body orelse continue;
-            if (!meet(e, &t.kindOf(e).definition.boxes[reach], o, &t.kindOf(o).definition.boxes[ob])) continue;
-            if (!t.grabbable(oh, h)) continue;
-            e.holding = oh;
-            o.holder = h;
-            t.grabbed(h, oh);
-            break;
-        }
+/// The first player (in the world's order) asking to grab `x` whose reach meets it holds it.
+fn grabbedByPlayers(t: *Tick, xh: Handle) void {
+    for (t.world.players) |p| {
+        const gh = p.entity orelse continue;
+        if (grab(t, gh, xh)) return;
     }
+}
+
+/// An entity whose behaviour asks to grab, holding nothing and held by nothing, with a reach (an
+/// attack box while no blow is under way), holds `target` when its reach meets its body, it is
+/// of a team its blows land on, free too, and its behaviour lets it (`grabbable`). The holder's
+/// behaviour places the one it holds; a grab ends when either goes (`World.remove`) or a
+/// behaviour lets go.
+fn grab(t: *Tick, gh: Handle, th: Handle) bool {
+    const g = t.world.get(gh) orelse return false;
+    if (!g.flags.wants_grab) return false;
+    if (g.holding != null or g.holder != null) return false;
+    const reach = g.boxes.attack orelse return false;
+    if (t.power(g) != 0) return false;
+    const o = t.world.get(th) orelse return false;
+    if (o.holder != null or o.holding != null or !blowsLand(g.team, o.team)) return false;
+    const ob = o.boxes.body orelse return false;
+    if (!meet(g, &t.kindOf(g).definition.boxes[reach], o, &t.kindOf(o).definition.boxes[ob])) return false;
+    if (!t.grabbable(th, gh)) return false;
+    g.holding = th;
+    o.holder = gh;
+    t.grabbed(gh, th);
+    return true;
 }
 
 // Pick-ups ----------------------------------------------------------------------------------------
