@@ -629,8 +629,11 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
     }
     if (at == null or !in_round or !playing) return error.NoPlay;
     const l = last orelse return error.NoPlay;
-    s.v = l.v;
-    s.t = l.t;
+    // The ticks after the last event to the one that holds display tick `at` (a tick in which
+    // nothing changed has no event): two display ticks a tick, when they keep the last's place.
+    const gap = if (at.? > l.v and (at.? - l.v) % 2 == 0) (at.? - l.v) / 2 else 0;
+    s.v = l.v + 2 * gap;
+    s.t = l.t + gap;
     const entities = try arena.dupe(Situation.Seen, seen.values());
     s.entities = entities;
     s.players_x = players_x.items;
