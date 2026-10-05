@@ -517,6 +517,10 @@ pub fn signal(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition
     try d.number("slide_end_ticks", try moveByte(rom, 0xE896, 80), "ROM 0x0E896: move.b #N,(80,a0)");
     try d.number("slide_end_frame", try moveByte(rom, 0xE89C, 10), "ROM 0x0E89C: move.b #N,(10,a0)");
     try d.number("hold_middle", try immediate(rom, 0xE71E, &.{ 0x06, 0x40 }, 2), "ROM 0x0E71E: addi.w #N,d0");
+    // In one round the hold faces right wherever it is: `cmpi.w #N,($FF02)` at 0xE712, `beq`
+    // past the test of its place.
+    if (u16be(rom, 0xE712) != 0x0C78 or u16be(rom, 0xE716) != 0xFF02 or rom[0xE718] != 0x67) return error.BadData;
+    try d.number("hold_right_round", @as(i32, u16be(rom, 0xE714)) + 1, "ROM 0x0E714: cmpi.w #N,($FF02), the round from 0");
     try d.number("hold_place", -(try moveq(rom, 0xE744, 0)), "ROM 0x0E744: moveq #-N,d0");
     try d.number("hold_ends", try frameCompared(rom, 0xE7A0), "ROM 0x0E7A0: cmpi.b #N,(10,a0)");
     if (try frameTicksCompared(rom, 0xE77C) != 1) return error.BadData;

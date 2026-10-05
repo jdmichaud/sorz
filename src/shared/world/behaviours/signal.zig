@@ -79,9 +79,11 @@ pub const Numbers = enemy.Numbers(struct {
     slide_slowing: Fixed,
     slide_end_ticks: u8,
     slide_end_frame: u8,
-    /// The hold: past this place from the view's left it faces left; the one held is put this
-    /// far behind it; at the end of its first frame it throws; it ends at this frame.
+    /// The hold: past this place from the view's left it faces left (but in the round
+    /// `hold_right_round`, where it faces right); the one held is put this far behind it; at the
+    /// end of its first frame it throws; it ends at this frame.
     hold_middle: i16,
+    hold_right_round: ?u8 = null,
     hold_place: i16,
     hold_ends: u8,
 });
@@ -315,15 +317,17 @@ fn slide(a: Actor) void {
     if (b.timer == 0) Common.enter(a, fights);
 }
 
-/// The hold: it faces toward the screen's middle, the one held put behind it facing its way; at
-/// the end of its first frame it throws it over its head; it ends at its last frame, or when the
-/// one held is freed.
+/// The hold: it faces toward the screen's middle (right in the round `hold_right_round`), the one
+/// held put behind it facing its way; at the end of its first frame it throws it over its head;
+/// it ends at its last frame, or when the one held is freed.
 fn holdSetUp(a: Actor) void {
     const n = a.numbers();
     a.pause(false);
     a.animate(.hold);
     a.entity.facing = .right;
-    if (a.tick.world.camera.x.whole() + n.hold_middle <= a.entity.position.x.whole()) a.entity.facing = .left;
+    const round = if (a.tick.plan) |p| p.round.number else 0;
+    const turns = n.hold_right_round == null or n.hold_right_round.? != round;
+    if (turns and a.tick.world.camera.x.whole() + n.hold_middle <= a.entity.position.x.whole()) a.entity.facing = .left;
     a.mind.threw = false;
     const h = a.entity.holding orelse return;
     const p = a.other(h) orelse return;
