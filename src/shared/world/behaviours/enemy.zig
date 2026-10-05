@@ -1603,11 +1603,11 @@ pub fn Of(comptime M: type) type {
             switch (how) {
                 .line => |line| if (falling or a.entity.position.depth.whole() <= line) return false,
                 .rest => |frame| if (falling and a.frame() != frame) return false,
-                .any => {},
+                .any, .beaten => {},
             }
             a.endMove();
             body(a).other = by;
-            enterAtBlow(a, .knocked_down);
+            if (how == .beaten) enter(a, .knocked_down) else enterAtBlow(a, .knocked_down);
             return true;
         }
 

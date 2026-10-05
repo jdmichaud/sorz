@@ -339,10 +339,14 @@ pub fn Of(comptime M: type) type {
                 return faceAndShow(a, .down);
             }
             m.count = n.dead_ticks;
-            if (m.twin == 0) return;
+            // Beaten in his section, alone (or the last of twins): the fight is over, the other
+            // enemies knocked down with him.
+            if (!inFight(a)) return;
+            if (m.twin == 0) return a.tick.bossBeaten();
             const other = twinOf(a) orelse return;
             if (other.entity.health > 0 or m.twin_beaten) return;
             other.mind.twin_beaten = true;
+            a.tick.bossBeaten();
             a.tick.roundWon();
         }
 

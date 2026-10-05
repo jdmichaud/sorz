@@ -542,6 +542,29 @@ pub const Tick = struct {
         }
     }
 
+    /// The boss of the boss's section beaten (the last of twins): the players held are freed,
+    /// and every enemy shown, but those knocked out, is knocked down, its health gone (the
+    /// original's end of the fight; the traces see a blow by no one).
+    pub fn bossBeaten(t: *Tick) void {
+        for (t.world.players) |p| {
+            const ph = p.entity orelse continue;
+            const pe = t.world.get(ph) orelse continue;
+            if (pe.holder) |h| if (!t.isPlayer(h)) t.letGo(h);
+        }
+        for (World.enemy_places.from..World.enemy_places.to) |i| {
+            const e = &t.world.entities[i];
+            if (!e.alive() or e.flags.hidden) continue;
+            if (t.kindOf(e).family() != .enemy) continue;
+            const name = behaviours.stateName(&e.mind) orelse "";
+            if (std.mem.eql(u8, name, "knocked_out")) continue;
+            const h = t.world.handleAt(i).?;
+            const lost = e.health + 1;
+            if (!t.specialKnockDown(h, null, .beaten)) continue;
+            e.health = -1;
+            t.out.hits.append(.{ .attacker = null, .target = h, .damage = lost });
+        }
+    }
+
     /// A beaten boss ends the round: the round is won (script.zig).
     pub fn roundWon(t: *Tick) void {
         script.won(t.world);
@@ -581,8 +604,9 @@ pub const Tick = struct {
 
     /// How the special attack knocks an enemy down: below its line in depth (player 1's, but
     /// one in its knock-down's pose), the rest (but one in that pose short of its frame `rest`),
-    /// any (player 2's).
-    pub const SpecialFall = union(enum) { line: i16, rest: u8, any };
+    /// any (player 2's); beaten (the boss of the section beaten: at once, its set-up at its own
+    /// turn when that is still to come).
+    pub const SpecialFall = union(enum) { line: i16, rest: u8, any, beaten };
 
     /// The special attack knocks `h` down, as `how` says, its blow `by`'s (its caller's): whether
     /// it fell (its behaviour's `specialKnockedDown`; by default, not).
