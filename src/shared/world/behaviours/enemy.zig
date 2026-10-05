@@ -1170,8 +1170,8 @@ pub fn Of(comptime M: type) type {
         pub fn heldBy(a: A, holder: Handle) void {
             const b = body(a);
             // Reeling, it shook at this tick before the grab met it (the original's reel shakes,
-            // then looks at its grabs).
-            if (a.mind.state == .reel and b.reel_taken and !b.settling) a.setFrame(a.frame() ^ 1);
+            // then looks at its grabs; reeling still after a lift, it does not shake).
+            if (a.mind.state == .reel and b.reel_taken and !b.settling) shake(a);
             a.endMove();
             b.timer = 0;
             b.other = holder;

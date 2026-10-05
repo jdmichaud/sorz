@@ -1091,6 +1091,39 @@ test "two players: a blinking player neither strikes nor holds the other" {
     try testing.expect(r.player().holding == null);
 }
 
+test "a punk reeling still after a lift, in the pose of one thrown, grabbed: its frame stays its animation's" {
+    var r = try Round.init();
+    defer r.deinit();
+    const p = try r.punk(880);
+    const e = r.w.get(p).?;
+    const k = r.f.kinds.get(e.kind.?);
+    // As a lift leaves it: reeling still a while, in the last frame of one thrown.
+    e.mind.galsia.state = .reel;
+    e.mind.galsia.body.fresh = false;
+    e.mind.galsia.body.reel_taken = true;
+    e.mind.galsia.body.reel_still = true;
+    e.mind.galsia.body.timer = 30;
+    r.f.kinds.startAnimation(e, k.definition.animation("thrown").?);
+    e.animation.frame = 2;
+    e.animation.paused = true;
+    var held = false;
+    for (0..40) |_| {
+        r.step(.{ .pad1 = .{ .right = true } });
+        const x = r.w.get(p).?;
+        try testing.expect(x.animation.frame < k.definition.animations[x.animation.index.?].frames.len);
+        if (r.player().holding != null) {
+            held = true;
+            break;
+        }
+    }
+    try testing.expect(held);
+    for (0..10) |_| {
+        r.step(.{});
+        const x = r.w.get(p).?;
+        try testing.expect(x.animation.frame < k.definition.animations[x.animation.index.?].frames.len);
+    }
+}
+
 test "the special attack: the camera runs back, the car comes, the punk stands without health, the blast's line, the end" {
     var r = try Round.init();
     defer r.deinit();

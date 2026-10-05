@@ -60,6 +60,16 @@ pub const Blow = struct {
     missile: bool = false,
 };
 
+/// A frame asked past the last of its animation (a rule gone wrong): a test fails on it, naming
+/// the kind, the animation and the state; the game tells it once and shows the last frame.
+fn frameOutside(kind: []const u8, animation: []const u8, state: []const u8, index: u8, frames: usize) void {
+    if (@import("builtin").is_test) std.debug.panic("{s}: frame {d} of its animation {s} ({d} frames), in its state {s}", .{ kind, index, animation, frames, state });
+    if (frame_outside_told) return;
+    frame_outside_told = true;
+    std.log.warn("{s}: frame {d} of its animation {s} ({d} frames), in its state {s}: its last shown", .{ kind, index, animation, frames, state });
+}
+var frame_outside_told = false;
+
 pub const Tick = struct {
     world: *World,
     kinds: *const Kinds,
@@ -727,7 +737,16 @@ pub fn Actor(comptime M: type) type {
         /// The frame `index` of the animation it plays, from now (the animation system shows it
         /// and puts its boxes in use at the tick's end).
         pub fn setFrame(a: Self, index: u8) void {
-            a.entity.animation.frame = index;
+            a.entity.animation.frame = a.frameWithin(index);
+        }
+
+        /// `index` as a frame of the animation it plays: past its last (a rule gone wrong), its
+        /// last, and the fault told (`frameOutside`).
+        fn frameWithin(a: Self, index: u8) u8 {
+            const an = a.currentAnimation() orelse return index;
+            if (index < an.frames.len) return index;
+            frameOutside(a.kind.definition.name, an.name, behaviours.stateName(&a.entity.mind) orelse "", index, an.frames.len);
+            return @intCast(an.frames.len - 1);
         }
 
         /// One tick of its animation: the frame's ticks count down; when they run out the
@@ -761,8 +780,9 @@ pub fn Actor(comptime M: type) type {
         /// own by default), with its boxes; its sound is asked for.
         pub fn showFrame(a: Self, index: u8, ticks: ?u8) void {
             const an = a.currentAnimation() orelse return;
-            a.entity.animation.frame = index;
-            a.entity.animation.left = ticks orelse an.frames[index].ticks;
+            const i = a.frameWithin(index);
+            a.entity.animation.frame = i;
+            a.entity.animation.left = ticks orelse an.frames[i].ticks;
             a.showBoxes();
             a.tick.frameStarts(a.handle, a.entity);
         }
@@ -771,6 +791,7 @@ pub fn Actor(comptime M: type) type {
         /// timing of the same frames.
         pub fn retime(a: Self, which: M.Animation, ticks: u8) void {
             a.entity.animation.index = a.kind.animation_of[@backingInt(which)];
+            a.entity.animation.frame = a.frameWithin(a.entity.animation.frame);
             a.entity.animation.left = ticks;
         }
 
