@@ -1,0 +1,5 @@
+# Power-on, no input: the Sega logo, the intro and its title, the attract demo (round 1 played
+# on the ROM's pads), the high scores after it.
+start power-on
+until scene high_scores within 10000
+wait 30

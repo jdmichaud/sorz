@@ -200,6 +200,12 @@ events and conditions by logic tick. The catalogue's scenarios of each character
   --situation TRACE --take-up`); the trace and the frames are compared from there, the pictures
   from the next tick to the clear's end, and the sound's line says where it differs (the chips
   sound on with sorz's own play until each plays anew) and from where it is equal.
+  `-Dround-every-tick=FILE,...` compares any run at every display tick (the attract demo's,
+  `tests/scenarios/round1/demo.scn`; a round's script): the events of its round scenes by display
+  tick (the entities numbered by their order of appearance), its sound sample by sample, its
+  pictures pixel by pixel from four ticks before its first round on; its line gives the reach,
+  the first display tick where any differs, and the first picture that differs beside the
+  reference's; `-Dround-every-tick-min=TICK` fails a reach below it.
 
 ## The variants
 

@@ -9,7 +9,13 @@
 //! sor-remaster's trace and every `picture_every` display ticks from the round's start.
 //!
 //!   sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...] [--reach FILE...]
-//!       [--reach-min TRACE,FRAMES,SOUND] [--reach-take-up FILE...]
+//!       [--reach-min TRACE,FRAMES,SOUND] [--reach-take-up FILE...] [--every-tick FILE...]
+//!       [--every-tick-min TICK]
+//!
+//! A scenario given with `--every-tick` (any run: the attract demo's from power-on, a round's
+//! script) is compared at every display tick: the events of its round scenes by display tick,
+//! its sound, its pictures from a few ticks before its first round on. Its reach is the first
+//! display tick where any differs; with `--every-tick-min`, a reach below that floor fails.
 //!
 //! A scenario given with `--reach` (a recorded play, `start pads FILE V`, kept out of the
 //! repository) is not a gate: its line says how far each comparison stays equal (the trace's
@@ -58,6 +64,11 @@ pub const Scenario = struct {
     /// A reach whose round's world sorz takes up from sor-remaster's at its script's start
     /// (`--reach-take-up`): its comparisons start there.
     take_up: bool = false,
+    /// A run compared at every display tick (`--every-tick`): its rounds' events by display
+    /// tick, its sound, its pictures from its first round on; its reach the first display tick
+    /// where one differs, and its floor (`--every-tick-min`).
+    every_tick: bool = false,
+    tick_min: ?u64 = null,
 };
 
 /// Where a run took the round's world up: the display tick of the script's start, and the
@@ -129,8 +140,9 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     // The game's clock as the script begins, which the enemies' choices read: the same.
     const ref_clock = numberAfter(ran.stdout, "\"script_game_tick\":");
     const z_clock = numberAfter(said.written(), "\"script_game_tick\":");
-    // (A recorded play's script begins past its pads, where the reach's runs need not agree.)
-    if (!sc.reach and (ref_clock == null or z_clock == null or ref_clock.? != z_clock.?)) {
+    // (A recorded play's script begins past its pads, where the reach's runs need not agree; a run
+    // compared at every tick says where they part.)
+    if (!sc.reach and !sc.every_tick and (ref_clock == null or z_clock == null or ref_clock.? != z_clock.?)) {
         try w.print("{s}: the game's clock as the script begins differs: {?d} against {?d}\n", .{ sc.name, ref_clock, z_clock });
         return false;
     }
@@ -138,6 +150,7 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     var diag: compare.Diagnostic = .{};
     var a_full = try compare.parse(arena, try cwd.readFileAlloc(c.io, ref_trace, arena, .limited(1 << 30)), &diag);
     var b_full = try compare.parse(arena, try cwd.readFileAlloc(c.io, z_trace, arena, .limited(1 << 30)), &diag);
+    if (sc.every_tick) return everyTick(c, sc, scn, &a_full, &b_full, ref_wav, z_wav, w);
     const taken: ?TakenUp = if (sc.take_up) try takenUp(ran.stdout, &a_full) else null;
     // A run taken up is compared to its round's clear's end (the next round's is a stand-in in
     // sorz until PLAN item 15).
@@ -226,6 +239,153 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     return false;
 }
 
+/// The events a run compared at every tick leaves out: the scenes' changes (the runners see
+/// them a tick apart), sorz's own section events, the traces' ends.
+const tick_ignored = [_][]const u8{ "scene", "section", "end" };
+
+/// A run compared at every display tick: the events of its round scenes (the world's, play's)
+/// by display tick, the entities numbered by their order of appearance; its sound, sample by
+/// sample from power-on; its pictures, pixel by pixel from a few ticks before its first round's
+/// start. Its lines say where each first differs, and its reach, the first display tick where
+/// any does, which must not be below its floor.
+fn everyTick(c: *const Context, sc: *const Scenario, scn: []const u8, a_full: *const compare.Trace, b_full: *const compare.Trace, ref_wav: []const u8, z_wav: []const u8, w: *std.Io.Writer) !bool {
+    const arena = c.arena;
+    const options: compare.Options = .{
+        .by_vblank = true,
+        .renumber = true,
+        .ignore_kinds = &ignored_kinds,
+        .ignore = &tick_ignored,
+        .sound_names = c.sound_names,
+    };
+    const a_rounds = roundsOf(a_full);
+    const b_rounds = roundsOf(b_full);
+    const a_only = try a_rounds.of(arena);
+    const b_only = try b_rounds.of(arena);
+    const a = try compare.restrict(arena, &a_only, options, true);
+    const b = try compare.restrict(arena, &b_only, options, false);
+    var written: std.Io.Writer.Allocating = .init(arena);
+    const result = try compare.compare(arena, &a, &b, options, &written.writer);
+    var events: usize = 0;
+    for (result.counts) |n| events += n.a;
+    const sound = try soundOf(c, ref_wav, z_wav, 0, null);
+    const common = ticksOf(@min(sound.frames, sound.reference_frames));
+    const pictures = try everyPicture(c, sc, scn, a_full);
+    const end: u64 = @intCast((a_full.end orelse return error.BadTrace).v);
+
+    try w.print("{s}: ({s}; compared at every display tick)\n  the trace: ", .{ sc.name, sc.what });
+    const trace_at: ?u64 = if (result.first) |d| @intCast(@max(firstV(d), 0)) else null;
+    if (trace_at) |v| try w.print("equal before display tick {d}, {d} differences in {d} events of its rounds\n", .{ v, result.differences, events }) else try w.print("equal, {d} events of its rounds\n", .{events});
+    const sound_at: ?u64 = if (sound.first) |f| ticksOf(f) else null;
+    try w.writeAll("  the sound: ");
+    if (sound_at) |v| try w.print("equal before display tick {d} of {d}, {d} frames differ, by {d} at most\n", .{ v, common, sound.differing, sound.largest }) else try w.print("equal, {d} display ticks\n", .{common});
+    try w.print("  the pictures: {d} compared ({d} lines past the sprites' limits left out), ", .{ pictures.compared, pictures.lines_left_out });
+    if (pictures.first) |f| {
+        try w.print("equal before display tick {d} ({d} pixels: {s}/{s}-z-{d}.png, its -ref- and -diff-); {d} differ, after display ticks", .{ f.tick, f.pixels, c.out_path, sc.name, f.tick, pictures.differing });
+        for (pictures.spans[0..pictures.span_count]) |span| {
+            if (span[0] == span[1]) try w.print(" {d}", .{span[0]}) else try w.print(" {d}-{d}", .{ span[0], span[1] });
+        }
+        try w.writeAll(if (pictures.span_count == pictures.spans.len) " ...\n" else "\n");
+    } else try w.writeAll("all equal\n");
+    var reach: u64 = end;
+    for ([_]?u64{ trace_at, sound_at, if (pictures.first) |f| f.tick else null }) |at| {
+        if (at) |v| reach = @min(reach, v);
+    }
+    try w.print("  the reach: display tick {d} of {d}\n", .{ reach, end });
+    if (result.first != null) try w.print("{s}\n", .{written.written()});
+    if (sc.tick_min) |floor| if (reach < floor) {
+        try w.print("  the reach is below its floor, display tick {d}\n", .{floor});
+        return false;
+    };
+    return true;
+}
+
+/// The display tick of a trace's difference: its earlier event's.
+fn firstV(d: compare.Difference) i64 {
+    const a = if (d.a) |e| e.v else std.math.maxInt(i64);
+    const b = if (d.b) |e| e.v else std.math.maxInt(i64);
+    return @min(a, b);
+}
+
+/// A trace's events in its round scenes.
+const Rounds = struct {
+    trace: *const compare.Trace,
+
+    fn of(self: Rounds, arena: std.mem.Allocator) !compare.Trace {
+        var events: std.ArrayList(compare.Event) = .empty;
+        for (self.trace.events) |e| {
+            if (std.mem.eql(u8, self.trace.scenes[e.scene - 1], "round")) try events.append(arena, e);
+        }
+        var t = self.trace.*;
+        t.events = events.items;
+        return t;
+    }
+};
+
+fn roundsOf(trace: *const compare.Trace) Rounds {
+    return .{ .trace = trace };
+}
+
+/// The pictures of a run compared at every display tick: from a few ticks before its first
+/// round's start (its load's scene, or the round's) to the reference's end, `picture_batch` at a
+/// time: sor-remaster's run writes them, sorz's compares its own as they come, and they go.
+fn everyPicture(c: *const Context, sc: *const Scenario, scn: []const u8, ref: *const compare.Trace) !Pictures {
+    const arena = c.arena;
+    const end: u64 = @intCast((ref.end orelse return error.BadTrace).v);
+    var from: ?u64 = null;
+    for (ref.events) |e| {
+        if (!std.mem.eql(u8, e.ev, "scene")) continue;
+        const name = ref.scenes[e.scene - 1];
+        if (std.mem.eql(u8, name, "round_intro") or std.mem.eql(u8, name, "round")) {
+            from = @intCast(@max(e.v - picture_before, 0));
+            break;
+        }
+    }
+    var total: Pictures = .{};
+    var at = from orelse return total;
+    const dir = try std.fmt.allocPrint(arena, "{s}/pictures-{s}", .{ c.out_path, sc.name });
+    while (at < end) {
+        const to = @min(at + picture_batch, end);
+        try std.Io.Dir.cwd().createDirPath(c.io, dir);
+        var wanted: std.AutoArrayHashMapUnmanaged(u64, void) = .empty;
+        var argv: std.ArrayList([]const u8) = .empty;
+        try argv.appendSlice(arena, &.{ c.remaster, c.rom_path, "--scenario", scn, "--frames", "200000" });
+        var v = at;
+        while (v < to) : (v += 1) {
+            try wanted.put(arena, v, {});
+            try argv.append(arena, "--shot");
+            try argv.append(arena, try std.fmt.allocPrint(arena, "{d}:{s}/ref-{d}.png", .{ v, dir, v }));
+        }
+        const ran = try std.process.run(c.gpa, c.io, .{ .argv = argv.items });
+        c.gpa.free(ran.stdout);
+        c.gpa.free(ran.stderr);
+        if (ran.term != .exited or ran.term.exited != 0) return error.ReferencePictures;
+        // The first that differs is written once, its tick then known.
+        var taker: PictureTaker = .{ .c = c, .sc = sc, .dir = dir, .wanted = &wanted, .result = .{ .first = total.first } };
+        var said: std.Io.Writer.Allocating = .init(arena);
+        const sink: agent.scenario_cmd.Pictures = .{ .ctx = &taker, .wanted = PictureTaker.isWanted, .take = PictureTaker.take };
+        const done = try agent.scenario_cmd.run(c.gpa, c.io, c.assets, .{ .scenario = scn, .pictures = sink }, &said.writer);
+        std.Io.Dir.cwd().deleteTree(c.io, dir) catch {};
+        if (!done) return error.ScenarioStopped;
+        const r = taker.result;
+        total.first = r.first;
+        total.compared += r.compared;
+        total.lines_left_out += r.lines_left_out;
+        for (r.spans[0..r.span_count]) |span| {
+            var t = span[0];
+            while (t <= span[1]) : (t += 1) total.note(t);
+        }
+        // (Past the batch's spans, only their count.)
+        var noted: usize = 0;
+        for (r.spans[0..r.span_count]) |span| noted += span[1] - span[0] + 1;
+        total.differing += r.differing -| noted;
+        at = to;
+    }
+    return total;
+}
+
+/// The pictures a run compared at every tick takes in each of sor-remaster's runs.
+const picture_batch = 500;
+
 const Pictures = struct {
     compared: usize = 0,
     differing: usize = 0,
@@ -234,6 +394,20 @@ const Pictures = struct {
     ticks: [12]u64 = undefined,
     /// The pictures' lines left out (past the sprites' limits).
     lines_left_out: usize = 0,
+    /// The runs of display ticks whose pictures differ (the first `spans.len`), as they come.
+    spans: [24][2]u64 = undefined,
+    span_count: usize = 0,
+
+    fn note(self: *Pictures, tick: u64) void {
+        if (self.differing < self.ticks.len) self.ticks[self.differing] = tick;
+        self.differing += 1;
+        if (self.span_count != 0 and self.spans[self.span_count - 1][1] + 1 == tick) {
+            self.spans[self.span_count - 1][1] = tick;
+        } else if (self.span_count < self.spans.len) {
+            self.spans[self.span_count] = .{ tick, tick };
+            self.span_count += 1;
+        }
+    }
 };
 
 /// The pictures compared (`picture_before`, `picture_after`, `picture_every`): sor-remaster's run
@@ -338,8 +512,7 @@ const PictureTaker = struct {
             }
         };
         if (n == 0) return;
-        if (self.result.differing < self.result.ticks.len) self.result.ticks[self.result.differing] = frame;
-        self.result.differing += 1;
+        self.result.note(frame);
         if (self.result.first != null) return;
         self.result.first = .{ .tick = frame, .pixels = n };
         try cwd.writeFile(c.io, .{ .sub_path = try std.fmt.allocPrint(c.arena, "{s}/{s}-ref-{d}.png", .{ c.out_path, self.sc.name, frame }), .data = bytes });
@@ -491,6 +664,7 @@ pub fn main(init: std.process.Init) !void {
     var only: std.ArrayList([]const u8) = .empty;
     var reach: std.ArrayList(Scenario) = .empty;
     var reach_min: [3]?u64 = .{ null, null, null };
+    var tick_min: ?u64 = null;
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "--reach-min")) {
             var floors = std.mem.splitScalar(u8, args.next() orelse return usage(io), ',');
@@ -498,6 +672,13 @@ pub fn main(init: std.process.Init) !void {
                 const text = floors.next() orelse break;
                 f.* = if (text.len == 0) null else std.fmt.parseInt(u64, text, 10) catch return usage(io);
             }
+        } else if (std.mem.eql(u8, arg, "--every-tick-min")) {
+            tick_min = std.fmt.parseInt(u64, args.next() orelse return usage(io), 10) catch return usage(io);
+        } else if (std.mem.eql(u8, arg, "--every-tick")) {
+            const path = args.next() orelse return usage(io);
+            const base = std.fs.path.basename(path);
+            const name = if (std.mem.endsWith(u8, base, ".scn")) base[0 .. base.len - 4] else base;
+            try reach.append(arena, .{ .name = name, .what = "a run from power-on", .path = path, .reach = true, .every_tick = true });
         } else if (std.mem.eql(u8, arg, "--reach") or std.mem.eql(u8, arg, "--reach-take-up")) {
             const take_up = std.mem.eql(u8, arg, "--reach-take-up");
             const path = args.next() orelse return usage(io);
@@ -527,9 +708,9 @@ pub fn main(init: std.process.Init) !void {
     try text.writer.writeAll("round-check: round 1's scenes in sorz against sor-remaster's, from power-on (PLAN item 13).\n\n");
     var failed = false;
     var printed: usize = 0;
-    for (reach.items) |*sc| if (!sc.take_up) {
-        sc.reach_min = reach_min;
-    };
+    for (reach.items) |*sc| {
+        if (sc.every_tick) sc.tick_min = tick_min else if (!sc.take_up) sc.reach_min = reach_min;
+    }
     const all = try std.mem.concat(arena, Scenario, &.{ &scenarios, reach.items });
     for (all) |*sc| {
         if (only.items.len != 0 and !sc.reach) {
@@ -564,7 +745,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn usage(io: std.Io) !void {
-    return fail(io, "usage: sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...] [--reach FILE...] [--reach-min TRACE,FRAMES,SOUND] [--reach-take-up FILE...]\n");
+    return fail(io, "usage: sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...] [--reach FILE...] [--reach-min TRACE,FRAMES,SOUND] [--reach-take-up FILE...] [--every-tick FILE...] [--every-tick-min TICK]\n");
 }
 
 fn fail(io: std.Io, message: []const u8) !void {

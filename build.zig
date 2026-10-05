@@ -525,6 +525,8 @@ pub fn build(b: *std.Build) void {
     const round_reach = b.option([]const u8, "round-reach", "Scenario files round-check also runs to report how far they stay equal (a recorded play's), separated by commas");
     const round_reach_min = b.option([]const u8, "round-reach-min", "The floors of -Dround-reach's runs, TRACE,FRAMES,SOUND (round ticks, round ticks, display ticks; one left empty is none): a run below one fails");
     const round_take_up = b.option([]const u8, "round-take-up", "Scenario files of recorded plays round-check also runs, the round's world taken up from sor-remaster's at the script's start (the round's end, its clear), separated by commas");
+    const round_every_tick = b.option([]const u8, "round-every-tick", "Scenario files round-check also compares at every display tick (the attract demo, tests/scenarios/round1/demo.scn; a round's script): their rounds' events, sound and pictures, and their reach; separated by commas");
+    const round_every_tick_min = b.option([]const u8, "round-every-tick-min", "The floor of -Dround-every-tick's reach, a display tick: a run below it fails");
     const round_check_step = b.step("round-check", "Compare round 1's scenes with sor-remaster's from power-on (needs -Drom=ROM -Dremaster=DIR|AGENT)");
     const round_module = b.createModule(.{
         .root_source_file = b.path("src/tools/round_check.zig"),
@@ -568,6 +570,11 @@ pub fn build(b: *std.Build) void {
         if (round_take_up) |files| {
             var it = std.mem.tokenizeScalar(u8, files, ',');
             while (it.next()) |path| check.addArgs(&.{ "--reach-take-up", path });
+        }
+        if (round_every_tick) |files| {
+            var it = std.mem.tokenizeScalar(u8, files, ',');
+            while (it.next()) |path| check.addArgs(&.{ "--every-tick", path });
+            if (round_every_tick_min) |floor| check.addArgs(&.{ "--every-tick-min", floor });
         }
         check.has_side_effects = true;
         round_check_step.dependOn(&check.step);
