@@ -332,10 +332,19 @@ pub const Run = struct {
                 // leaves them when it is set.
                 const first_round = players.round - 1;
                 switch (s.*) {
-                    .options => |*o| {
-                        if (o.phase != .lines) return .{};
-                        if (o.values.first_round == first_round or !o.hidden_lines) return self.tapping(0, .start);
-                        return self.tapping(0, if (o.line != .first_round) .down else .right);
+                    .options => |*o| switch (o.phase) {
+                        // As sor-remaster's runner: while the options come in, it goes on
+                        // tapping as at the menu's OPTIONS (to no effect), its taps' rhythm kept.
+                        .setup, .aim, .fade_in => {
+                            var in = self.tapping(0, .start);
+                            in.pad2 = .{ .a = true, .b = true, .c = true, .right = true };
+                            return in;
+                        },
+                        .first_line, .lines => {
+                            if (o.values.first_round == first_round or !o.hidden_lines) return self.tapping(0, .start);
+                            return self.tapping(0, if (o.line != .first_round) .down else .right);
+                        },
+                        else => return .{},
                     },
                     else => {},
                 }
