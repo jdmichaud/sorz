@@ -5,7 +5,8 @@
 //! phases (the intro, play, the time overs, the end), the players' places, states, health, lives
 //! and deaths, the continue's question and the game over, the entities the script places and
 //! their first moves, the sounds; the fighters' frames (the probes: where each frame starts,
-//! agent/probe_compare.zig).
+//! agent/probe_compare.zig); and the pictures, pixel by pixel, around each scene's start in
+//! sor-remaster's trace and every `picture_every` display ticks from the round's start.
 //!
 //!   sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...] [--reach FILE...]
 //!
@@ -41,19 +42,32 @@ pub const Scenario = struct {
     reach: bool = false,
     /// The events' fields left out of its comparison.
     ignore_fields: []const []const u8 = &.{},
+    /// Whether its pictures are compared, and before which display tick.
+    pictures: bool = true,
+    pictures_before: ?u64 = null,
 };
+
+/// The display ticks of the pictures compared: from a few before each scene's start to some
+/// after, and every this many in the round (with the next, the other half of a logic tick).
+const picture_before = 4;
+const picture_after = 20;
+const picture_every = 64;
 
 /// Round 1's scenarios (tests/scenarios/round1).
 pub const scenarios = [_]Scenario{
-    .{ .name = "walk", .what = "a walk to the first wall: the camera's follow, the placed Galsias coming out" },
+    // TODO(PLAN item 13): the enemies' colours as the original loads them (a section's, an
+    // arriving enemy's palettes into its palette slots): the Galsias come out in other colours,
+    // the pictures from their coming out are not compared yet (walk's, join_enemies', blaze's, two's).
+    .{ .name = "walk", .what = "a walk to the first wall: the camera's follow, the placed Galsias coming out", .pictures_before = 1085 },
     .{ .name = "idle", .what = "standing still: the timer, three time overs and deaths, new lives, the continue's question" },
     .{ .name = "continue", .what = "the continue's YES: a new game's lives, the next life" },
     .{ .name = "gameover", .what = "the continue's NO: the game over's count, the fade out, the high scores" },
     .{ .name = "pause", .what = "two pauses: the pause's sounds, its ticks on the game's clock, play after it" },
     .{ .name = "join", .what = "player 2's PRESS 2UP START mid-round, the timer down: its drop-in as Adam, the timer again" },
-    .{ .name = "join_enemies", .what = "player 2's PRESS 2UP START with the first Galsias on the screen: its drop-in as Adam knocks them back" },
-    .{ .name = "blaze", .what = "Blaze chosen at the select: her walk to the first Galsia, her blows, her jump kick" },
-    .{ .name = "two", .what = "two players, Axel and Blaze, chosen at the select: their walk and a jump, the Galsias coming" },
+    // Its first Galsia comes out no sooner than walk's (the same presses until then).
+    .{ .name = "join_enemies", .what = "player 2's PRESS 2UP START with the first Galsias on the screen: its drop-in as Adam knocks them back", .pictures_before = 1085 },
+    .{ .name = "blaze", .what = "Blaze chosen at the select: her walk to the first Galsia, her blows, her jump kick", .pictures_before = 1139 },
+    .{ .name = "two", .what = "two players, Axel and Blaze, chosen at the select: their walk and a jump, the Galsias coming", .pictures_before = 1129 },
 };
 
 /// The front end's objects (sor-remaster's) and the hit sparks (PLAN item 12): their events
@@ -127,6 +141,7 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     for (result.counts) |n| events += n.a;
     const frames = try framesOf(c, &a_full, &b_full, ref_probe, z_probe);
     const sound = try soundOf(c, ref_wav, z_wav);
+    const pictures: Pictures = if (sc.reach or !sc.pictures) .{} else try picturesOf(c, sc, scn, &a_full);
     // The runs end a few ticks apart past the round (the runners count the start-up's ticks
     // differently: the original's is a scene of its own): the sound is compared where both are.
     const sound_same = sound.first == null;
@@ -140,10 +155,11 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
         if (sound.first) |f| try w.print("equal before display tick {d} of {d}\n", .{ ticksOf(f), ticksOf(common) }) else try w.print("equal, {d} display ticks\n", .{ticksOf(common)});
         return true;
     }
-    if (result.differences == 0 and frames.first == null and sound_same) {
-        try w.print("{s}: equal, {d} events, {d} entities' frames, the sound's {d} display ticks ({s})\n", .{ sc.name, events, frames.entities, ticksOf(common), sc.what });
+    if (result.differences == 0 and frames.first == null and sound_same and pictures.first == null) {
+        try w.print("{s}: equal, {d} events, {d} entities' frames, the sound's {d} display ticks, {d} pictures ({s})\n", .{ sc.name, events, frames.entities, ticksOf(common), pictures.compared, sc.what });
         return true;
     }
+    if (pictures.first) |f| try w.print("{s}: {d} of {d} pictures differ, the first after display tick {d} ({d} pixels: {s}/{s}-z-{d}.png, its -ref- and -diff-); after display ticks {any}\n", .{ sc.name, pictures.differing, pictures.compared, f.tick, f.pixels, c.out_path, sc.name, f.tick, pictures.ticks[0..@min(pictures.differing, pictures.ticks.len)] });
     if (result.differences != 0) try w.print("{s}: {d} differences in {d} events ({s})\n{s}\n", .{ sc.name, result.differences, events, sc.what, written.written() });
     if (frames.first) |d| try w.print("{s}: the frames differ: entity {d} at the round's tick {d}, {f} against {f}; {d} of {d} entities differ\n", .{ sc.name, d.e, d.t, startOf(d.a), startOf(d.b), frames.differing, frames.entities });
     if (!sound_same) {
@@ -153,6 +169,120 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     }
     return false;
 }
+
+const Pictures = struct {
+    compared: usize = 0,
+    differing: usize = 0,
+    first: ?struct { tick: u64, pixels: usize } = null,
+    /// The first display ticks whose pictures differ.
+    ticks: [12]u64 = undefined,
+};
+
+/// The pictures compared (`picture_before`, `picture_after`, `picture_every`): sor-remaster's run
+/// again writing its pictures at those display ticks, sorz's run again comparing its own with
+/// them as they come; the first that differs written beside the reference's, with the
+/// difference.
+fn picturesOf(c: *const Context, sc: *const Scenario, scn: []const u8, ref: *const compare.Trace) !Pictures {
+    const arena = c.arena;
+    const end: i64 = if (ref.end) |e| e.v else return error.BadTrace;
+    var wanted: std.AutoArrayHashMapUnmanaged(u64, void) = .empty;
+    var round_from: ?i64 = null;
+    for (ref.events) |e| {
+        if (!std.mem.eql(u8, e.ev, "scene")) continue;
+        const name = ref.scenes[e.scene - 1];
+        if (round_from == null and std.mem.eql(u8, name, "round_intro")) round_from = e.v;
+        var v = @max(e.v - picture_before, 0);
+        while (v <= @min(e.v + picture_after, end - 1)) : (v += 1) try wanted.put(arena, @intCast(v), {});
+    }
+    if (round_from) |from| {
+        var v = from;
+        while (v + 1 < end) : (v += picture_every) {
+            try wanted.put(arena, @intCast(v), {});
+            try wanted.put(arena, @intCast(v + 1), {});
+        }
+    }
+    if (sc.pictures_before) |before| {
+        var k: usize = 0;
+        while (k < wanted.count()) {
+            if (wanted.keys()[k] >= before) wanted.swapRemoveAt(k) else k += 1;
+        }
+    }
+    const dir = try std.fmt.allocPrint(arena, "{s}/pictures-{s}", .{ c.out_path, sc.name });
+    try std.Io.Dir.cwd().createDirPath(c.io, dir);
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.appendSlice(arena, &.{ c.remaster, c.rom_path, "--scenario", scn, "--frames", "200000" });
+    for (wanted.keys()) |v| {
+        try argv.append(arena, "--shot");
+        try argv.append(arena, try std.fmt.allocPrint(arena, "{d}:{s}/ref-{d}.png", .{ v, dir, v }));
+    }
+    const ran = try std.process.run(c.gpa, c.io, .{ .argv = argv.items });
+    c.gpa.free(ran.stdout);
+    c.gpa.free(ran.stderr);
+    if (ran.term != .exited or ran.term.exited != 0) return error.ReferencePictures;
+    var taker: PictureTaker = .{ .c = c, .sc = sc, .dir = dir, .wanted = &wanted };
+    var said: std.Io.Writer.Allocating = .init(arena);
+    const sink: agent.scenario_cmd.Pictures = .{ .ctx = &taker, .wanted = PictureTaker.isWanted, .take = PictureTaker.take };
+    const done = try agent.scenario_cmd.run(c.gpa, c.io, c.assets, .{ .scenario = scn, .pictures = sink }, &said.writer);
+    // The reference's pictures go but the first that differs (beside sorz's).
+    std.Io.Dir.cwd().deleteTree(c.io, dir) catch {};
+    if (!done) return error.ScenarioStopped;
+    return taker.result;
+}
+
+/// sorz's pictures against sor-remaster's, as sorz's run presents them.
+const PictureTaker = struct {
+    c: *const Context,
+    sc: *const Scenario,
+    dir: []const u8,
+    wanted: *const std.AutoArrayHashMapUnmanaged(u64, void),
+    result: Pictures = .{},
+
+    fn isWanted(ctx: *anyopaque, frame: u64) bool {
+        const self: *PictureTaker = @ptrCast(@alignCast(ctx));
+        return self.wanted.contains(frame);
+    }
+
+    fn take(ctx: *anyopaque, frame: u64, picture: sorz.platform.RgbaFrame) anyerror!void {
+        const self: *PictureTaker = @ptrCast(@alignCast(ctx));
+        const c = self.c;
+        const gpa = c.gpa;
+        const cwd = std.Io.Dir.cwd();
+        const path = try std.fmt.allocPrint(c.arena, "{s}/ref-{d}.png", .{ self.dir, frame });
+        const bytes = try cwd.readFileAlloc(c.io, path, gpa, .limited(1 << 22));
+        defer gpa.free(bytes);
+        var ref = try sorz.formats.png.decode(gpa, bytes);
+        defer ref.deinit(gpa);
+        self.result.compared += 1;
+        var n: usize = 0;
+        const diff = try gpa.alloc(u8, picture.width * picture.height * 4);
+        defer gpa.free(diff);
+        if (ref.width != picture.width or ref.height != picture.height) {
+            n = picture.width * picture.height;
+        } else for (0..picture.height) |y| for (0..picture.width) |x| {
+            const want = ref.palette[ref.pixels[y * picture.width + x]];
+            const got = picture.pixels[y * picture.stride + x * 4 ..][0..3];
+            const d = diff[(y * picture.width + x) * 4 ..][0..4];
+            if (std.mem.eql(u8, &want, got)) {
+                d.* = .{ want[0] / 3, want[1] / 3, want[2] / 3, 255 };
+            } else {
+                d.* = .{ 255, 0, 0, 255 };
+                n += 1;
+            }
+        };
+        if (n == 0) return;
+        if (self.result.differing < self.result.ticks.len) self.result.ticks[self.result.differing] = frame;
+        self.result.differing += 1;
+        if (self.result.first != null) return;
+        self.result.first = .{ .tick = frame, .pixels = n };
+        try cwd.writeFile(c.io, .{ .sub_path = try std.fmt.allocPrint(c.arena, "{s}/{s}-ref-{d}.png", .{ c.out_path, self.sc.name, frame }), .data = bytes });
+        const shot = try agent.png.encode(gpa, picture.width, picture.height, picture.pixels[0 .. picture.stride * picture.height]);
+        defer gpa.free(shot);
+        try cwd.writeFile(c.io, .{ .sub_path = try std.fmt.allocPrint(c.arena, "{s}/{s}-z-{d}.png", .{ c.out_path, self.sc.name, frame }), .data = shot });
+        const diff_png = try agent.png.encode(gpa, picture.width, picture.height, diff);
+        defer gpa.free(diff_png);
+        try cwd.writeFile(c.io, .{ .sub_path = try std.fmt.allocPrint(c.arena, "{s}/{s}-diff-{d}.png", .{ c.out_path, self.sc.name, frame }), .data = diff_png });
+    }
+};
 
 /// The tick of a trace's difference: its earlier event's.
 fn firstTick(d: compare.Difference) i64 {

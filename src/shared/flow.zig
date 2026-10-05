@@ -95,8 +95,9 @@ pub const original: Graph = .{
         .{ .from = .intro, .exit = .menu, .to = .menu, .load = 3 },
         .{ .from = .title, .exit = .done, .to = .demo, .load = 47 },
         .{ .from = .title, .exit = .start, .to = .menu, .load = 3 },
-        // The high scores' set-up holds 5 ticks (the game over's); the demo's stand-in, timed to
-        // their first picture, ends a tick late (TODO(PLAN item 13): the attract demo).
+        // The high scores' set-up holds 5 ticks (the game over's), its last showing the table
+        // (high_scores.zig); the demo's stand-in, timed to their first picture, ends a tick late
+        // (TODO(PLAN item 13): the attract demo).
         .{ .from = .demo, .exit = .done, .to = .high_scores, .load = 4, .driver_once = true },
         .{ .from = .demo, .exit = .start, .to = .sega_logo, .load = 14 },
         .{ .from = .high_scores, .exit = .done, .to = .sega_logo, .load = 14 },
@@ -107,7 +108,7 @@ pub const original: Graph = .{
         .{ .from = .options, .exit = .done, .to = .menu, .load = 3 },
         .{ .from = .select, .exit = .chosen, .to = .round, .load = 53 },
         .{ .from = .round, .exit = .cleared, .to = .round_clear },
-        .{ .from = .round, .exit = .game_over, .to = .high_scores, .load = 5, .driver_once = true },
+        .{ .from = .round, .exit = .game_over, .to = .high_scores, .load = 4, .driver_once = true },
         .{ .from = .round_clear, .exit = .done, .to = .next_round },
     },
 };

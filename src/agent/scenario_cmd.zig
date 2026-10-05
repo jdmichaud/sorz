@@ -19,6 +19,14 @@ const input = sorz.input;
 /// host's `--shot` counts them.
 pub const Shot = struct { frame: u64, path: []const u8 };
 
+/// Who takes a run's pictures as they come (a check that compares them): whether it wants the
+/// one after display tick `frame` (counted as `Shot`'s), and the picture.
+pub const Pictures = struct {
+    ctx: *anyopaque,
+    wanted: *const fn (ctx: *anyopaque, frame: u64) bool,
+    take: *const fn (ctx: *anyopaque, frame: u64, picture: sorz.platform.RgbaFrame) anyerror!void,
+};
+
 pub const Options = struct {
     scenario: []const u8,
     situation: ?[]const u8 = null,
@@ -37,8 +45,10 @@ pub const Options = struct {
     reload: bool = false,
     /// A run from power-on: where the form's size at each display tick is written.
     form_sizes: ?[]const u8 = null,
-    /// A run from power-on: the pictures to write (the scenes drawn at every display tick).
+    /// A run from power-on: the pictures to write (the scenes drawn at every display tick), and
+    /// who takes them as they come.
     shots: []const Shot = &.{},
+    pictures: ?Pictures = null,
 };
 
 /// Runs the scenario on the content of `assets`; returns whether it ran to its end.
@@ -222,7 +232,7 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
     defer if (forms) |*f| f.deinit();
     if (forms) |*f| r.forms = f;
     // The pictures, as the game draws them: at every display tick, from the world's output.
-    var view: ?sorz.view.View = if (options.shots.len != 0) try .init(gpa) else null;
+    var view: ?sorz.view.View = if (options.shots.len != 0 or options.pictures != null) try .init(gpa) else null;
     defer if (view) |*v| v.deinit();
     var drawn: sorz.scene.Scene = .{ .load = .{} };
     var shots_written: usize = 0;
@@ -241,6 +251,7 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
                 try cwd.writeFile(io, .{ .sub_path = s.path, .data = bytes });
                 shots_written += 1;
             };
+            if (options.pictures) |p| if (p.wanted(p.ctx, ticks)) try p.take(p.ctx, ticks, v.frame());
         }
     } else r.failure = "the run reached its most ticks";
     if (shots_written != options.shots.len) r.failure = r.failure orelse "a picture asked for was past the run's end";

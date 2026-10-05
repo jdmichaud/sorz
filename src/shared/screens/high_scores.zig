@@ -63,7 +63,9 @@ pub const HighScores = struct {
     pub fn tick(self: *HighScores, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
         self.ticks +|= 1;
         self.colours.latch();
-        defer turn.frame = .{ .colours = self.colours.copy, .play = true };
+        defer if (self.ticks != 2) {
+            turn.frame = .{ .colours = self.colours.copy, .play = true };
+        };
         if (self.ticks == 1) {
             turn.releasePads();
             self.colours.show(a.colours);
@@ -76,6 +78,12 @@ pub const HighScores = struct {
             turn.play(a.music);
             self.left = shown_ticks;
             return null;
+        }
+        // The set-up's last frame shows the table, but the original still holds its sound's
+        // driver and the frame's work.
+        if (self.ticks == 2) {
+            turn.sound_driver = false;
+            turn.frame = null;
         }
         self.left -= 1;
         if (self.left == 0) return .done;
