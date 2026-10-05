@@ -1,0 +1,18 @@
+# Two players, Adam (player 1) and Axel (player 2). Adam turns away; Axel (player 2) walks into
+# his back and holds him until he is free.
+start adam axel
+until state 1 ready
+until state 2 ready
+pad 2
+right 12
++down
+until near adam 200 1 within 100
+-down
+pad 1
+left
+wait 4
+pad 2
++left
+until state 2 grab_behind within 60
+-left
+wait 60

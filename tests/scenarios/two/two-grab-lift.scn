@@ -1,0 +1,19 @@
+# Two players, Axel (player 1) and Blaze (player 2). Axel walks into Blaze and presses C: he
+# lifts himself over her, spins and falls.
+start axel blaze
+until state 1 ready
+until state 2 ready
+pad 2
++down
+until near axel 200 1 within 100
+-down
+right 12
+left
+wait 4
+pad 1
++right
+until state 1 grab within 60
+-right
+wait 5
+jump
+wait 120

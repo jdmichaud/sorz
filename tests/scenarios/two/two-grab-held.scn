@@ -1,0 +1,21 @@
+# Two players, Axel (player 1) and Blaze (player 2). Blaze (player 2) walks into Axel and holds
+# him; his C and B do nothing; he is free after a while.
+start axel blaze
+until state 1 ready
+until state 2 ready
+pad 2
+right 12
++down
+until near axel 200 1 within 100
+-down
+wait 4
+pad 2
++left
+until state 2 grab within 60
+-left
+pad 1
+wait 5
+jump
+wait 5
+attack
+wait 60

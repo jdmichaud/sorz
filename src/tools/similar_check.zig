@@ -42,7 +42,7 @@ const compare = agent.trace_compare;
 const Event = compare.Event;
 const json = std.json;
 
-const Kind = enum { walk, jumps, jump_kick, jab, special, special_enemies, combo_chain, combo_window, grab, hit_stand, two_blows, two_choice };
+const Kind = enum { walk, jumps, jump_kick, jab, special, special_enemies, combo_chain, combo_window, grab, hit_stand, two_blows, two_choice, two_grab };
 
 const Scenario = struct {
     /// Its directory in tests/scenarios: the character's, or `two`.
@@ -112,6 +112,18 @@ pub const scenarios = [_]Scenario{
     // Two players (tests/scenarios/two): their blows on each other (the catalogue's), the enemies'
     // choice between them, and the special attack of each with the other in play.
     .{ .dir = "two", .name = "two-players-blows", .kind = .two_blows, .move = "two players: their blows on each other" },
+    .{ .dir = "two", .name = "two-grab-knees", .kind = .two_grab, .move = "two players: a hold's knees (Axel on Blaze)" },
+    .{ .dir = "two", .name = "two-grab-knees-blaze", .kind = .two_grab, .move = "two players: a hold's knees (Blaze on Adam), and a hold from the front let go" },
+    .{ .dir = "two", .name = "two-grab-throw", .kind = .two_grab, .move = "two players: the throw over the shoulder (Axel throws Blaze)" },
+    .{ .dir = "two", .name = "two-grab-throw-blaze", .kind = .two_grab, .move = "two players: the throw over the shoulder (Blaze, player 2, throws Axel)" },
+    .{ .dir = "two", .name = "two-grab-lift", .kind = .two_grab, .move = "two players: C in a hold from the front (Axel lifts himself over Blaze)" },
+    .{ .dir = "two", .name = "two-grab-away", .kind = .two_grab, .move = "two players: a hold let go, pushing away (Axel, player 2, holds Adam)" },
+    .{ .dir = "two", .name = "two-grab-held", .kind = .two_grab, .move = "two players: held from the front, a while (Blaze, player 2, holds Axel)" },
+    .{ .dir = "two", .name = "two-grab-drop", .kind = .two_grab, .move = "two players: the back drop (Axel, player 2, slams Adam down)" },
+    .{ .dir = "two", .name = "two-grab-jump-back", .kind = .two_grab, .move = "two players: the jump back over the one held from behind (Blaze holds Adam)" },
+    .{ .dir = "two", .name = "two-grab-wait", .kind = .two_grab, .move = "two players: held from behind, a while (Axel, player 2, holds Adam)" },
+    .{ .dir = "two", .name = "two-grab-escape", .kind = .two_grab, .move = "two players: held from behind, the jump out (Axel holds Blaze)" },
+    .{ .dir = "two", .name = "two-grab-counter", .kind = .two_grab, .move = "two players: held from behind, the jump out and the throw of the holder (Adam throws Blaze)" },
     .{ .dir = "two", .name = "two-choice-first", .kind = .two_choice, .move = "two players: the enemies' choice, player 1 ahead" },
     .{ .dir = "two", .name = "two-choice-second", .kind = .two_choice, .move = "two players: the enemies' choice, player 2 ahead" },
     .{ .dir = "two", .name = "two-special-first", .kind = .special_enemies, .move = "two players: player 1's special attack on enemies" },
@@ -474,6 +486,7 @@ fn measure(kind: Kind, r: *const Run, m: *Measures) !void {
         .hit_stand => try hitStand(r, m),
         .two_blows => try twoBlows(r, m),
         .two_choice => try twoChoice(r, m),
+        .two_grab => try twoGrab(r, m),
     }
 }
 
@@ -501,6 +514,33 @@ fn twoBlows(r: *const Run, m: *Measures) !void {
     for ([_]i64{ 1, 2 }) |p| {
         const tl = try r.timeline(p);
         try m.add(try std.fmt.allocPrint(r.arena, "player {d}'s states (state, tick, ticks)", .{p}), try segmentValues(r, try segments(r, &tl, t0, tl.lastTick()), false), .exact);
+    }
+}
+
+/// Two players holding each other: from the first tick one holds the other, the hits on each,
+/// and each one's states (state, tick, ticks) and places as each state begins (tick, x, depth,
+/// height).
+fn twoGrab(r: *const Run, m: *Measures) !void {
+    const holds = [_][]const u8{ "grab", "grab_behind" };
+    const tls = [2]Timeline{ try r.timeline(1), try r.timeline(2) };
+    var t0: ?i64 = null;
+    for (&tls) |*tl| if (tl.first(0, r.last, &holds, true)) |t| {
+        t0 = if (t0) |u| @min(u, t) else t;
+    };
+    const from = t0 orelse return error.Unmeasured;
+    try m.add("hits on the players (tick, player, by, damage, health, reaction)", try playerHits(r, from), .exact);
+    for (&tls, 1..) |*tl, p| {
+        const segs = try segments(r, tl, from, tl.lastTick());
+        try m.add(try std.fmt.allocPrint(r.arena, "player {d}'s states (state, tick, ticks)", .{p}), try segmentValues(r, segs, false), .exact);
+        var places: Values = .{ .arena = r.arena };
+        for (segs) |s| {
+            const a = tl.at(from + s.from) orelse continue;
+            try places.num(s.from);
+            try places.num(round4(a.x));
+            try places.num(round4(a.d));
+            try places.num(round4(a.h));
+        }
+        try m.add(try std.fmt.allocPrint(r.arena, "player {d}'s places as its states begin (tick, x, depth, height)", .{p}), places.list.items, .exact);
     }
 }
 

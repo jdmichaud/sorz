@@ -155,10 +155,13 @@ events and conditions by logic tick. The catalogue's scenarios of each character
   gate of PLAN items 05, 11 and 14: each scenario runs in sor-remaster (its checkout, whose agent
   the build builds, or that agent) and in sorz; then the traces, the probes and the catalogue's
   measurements of each move (frame data, states and their ticks, damage, pushes, arcs, speeds,
-  boxes, power, the special attack's times; with two players, their blows on each other, the
-  enemies' choice between them, each one's special attack) are compared, all equal. It prints a
-  verdict per move, equal, within tolerance or different, with the numbers, writes it with the
-  runs into `<prefix>/similar` (`-Dsimilar-out=DIR`), and fails when a move differs.
+  boxes, power, the special attack's times; with two players, their blows on each other, their
+  holds of each other (the knees, the throws, the lift, the back drop, the jump out and the
+  counter, from the front and from behind, held by player 1 or 2, by three pairs of characters:
+  the states, places and hits of both), the enemies' choice between them, each one's special
+  attack) are compared, all equal. It prints a verdict per move, equal, within tolerance or
+  different, with the numbers, writes it with the runs into `<prefix>/similar`
+  (`-Dsimilar-out=DIR`), and fails when a move differs.
   `-Dsimilar-only=NAME,...` runs some scenarios (or families, below).
 - With `-Dpads=FILE`, round 1's recorded play (the catalogue's game.pads, which the repository
   does not hold), similar-check compares the enemies and the items too (PLAN item 12,

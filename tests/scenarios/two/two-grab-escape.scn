@@ -1,0 +1,21 @@
+# Two players, Axel (player 1) and Blaze (player 2). Axel walks into Blaze's back and holds her;
+# she jumps out, lands held again, and waits.
+start axel blaze
+until state 1 ready
+until state 2 ready
+pad 2
++down
+until near axel 200 1 within 100
+-down
+right 12
+wait 4
+pad 1
++right
+until state 1 grab_behind within 60
+-right
+pad 2
+wait 5
+jump
+wait 8
+attack
+wait 100
