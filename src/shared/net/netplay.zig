@@ -1,12 +1,14 @@
 //! Network play as the game drives it (DESIGN.md 9): the session (session.zig) over the
-//! platform's transport. The host listens and keeps one guest; the guest connects, and after a
-//! lost connection connects again every second, so that the same session resumes. The game asks
-//! for each display tick's pads (`pads`), tells when the tick ran (`ran`) and gives the state's
-//! hash and canonical form when a check is due (`checkDue`, `check`); `epoch` counts the sessions
-//! that started from power-on, so that the game resets when it changes.
+//! platform's transport. The host listens from the start and keeps one guest at a time; the
+//! guest connects when its player wants to join (`want`), and while it does, connects again every
+//! second after a lost connection, so that a session in play resumes. The game gives the host's
+//! status (`setStatus`), the guest's wish to join (`askJoin`), the host's game when it takes the
+//! guest (`begin`), and, in a session, asks for each display tick's pads (`pads`), tells when the
+//! tick ran (`ran`) and gives the state's hash and canonical form when a check is due (`checkDue`,
+//! `check`); what happened comes to the game as notes (`notes`, which the game clears).
 //!
-//! What happens is logged (`std.log`, scope `netplay`): the connection, the session's start and
-//! delay, the holds, a refusal, a mismatch and its first differing field.
+//! What happens is logged (`std.log`, scope `netplay`): the connection, the welcome and its delay,
+//! the sessions, the holds, a refusal, a mismatch and its first differing field.
 const std = @import("std");
 const platform = @import("../platform.zig");
 const protocol = @import("protocol.zig");
@@ -18,6 +20,7 @@ const log = std.log.scoped(.netplay);
 const Session = session_mod.Session;
 
 pub const Role = session_mod.Role;
+pub const Note = session_mod.Note;
 
 pub const Options = struct {
     role: Role,
@@ -49,10 +52,10 @@ pub const Netplay = struct {
     /// The peer's connection (the guest's, while it connects too).
     peer: ?platform.ConnectionId = null,
     started: bool = false,
+    /// The guest's player wants to join: the guest connects, and connects again after a loss.
+    wanted: bool = false,
     /// The guest's next attempt to connect.
     reconnect_at: ?u64 = null,
-    /// Sessions started from power-on so far: the game resets when it changes.
-    epoch: u32 = 0,
     /// The time the current hold began, and whether it was logged.
     held_since: ?u64 = null,
     hold_logged: bool = false,
@@ -61,6 +64,10 @@ pub const Netplay = struct {
     now_ns: u64 = 0,
     /// The first differing field of a mismatch, once the peers compared their states.
     difference: ?canonical.Difference = null,
+    /// What happened since the game last looked, in order.
+    notes: std.ArrayList(Note) = .empty,
+    /// Sessions started so far (a count for the checks).
+    sessions: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator, options: Options, diff: canonical.DiffFn) error{OutOfMemory}!Netplay {
         const address = try allocator.dupe(u8, options.address);
@@ -75,13 +82,14 @@ pub const Netplay = struct {
     }
 
     pub fn deinit(self: *Netplay) void {
+        self.notes.deinit(self.allocator);
         self.session.deinit();
         self.allocator.free(self.address);
         self.* = undefined;
     }
 
-    /// Listens (the host) or connects (the guest). The host's failure to listen is the caller's
-    /// to report; the guest retries.
+    /// The host listens (its failure to is the caller's to report); the guest waits for its
+    /// player to want to join.
     pub fn start(self: *Netplay, p: *platform.Platform) platform.NetError!void {
         if (self.started) return;
         self.now_ns = p.nowNs();
@@ -91,14 +99,19 @@ pub const Netplay = struct {
         switch (self.role) {
             .host => {
                 try p.netListen(self.address);
-                if (self.log_enabled) log.info("hosting at {s}; waiting for the guest", .{self.address});
+                if (self.log_enabled) log.info("hosting at {s}; waiting for a guest", .{self.address});
             },
-            .guest => {
-                // The URL is checked now; a refused connection is retried.
-                _ = try platform.WsUrl.parse(self.address);
-                self.connect(p);
-            },
+            // The URL is checked now; the connection comes when the player wants to join.
+            .guest => _ = try platform.WsUrl.parse(self.address),
         }
+    }
+
+    /// The guest's player wants to join (or no longer does): it connects at once, and again after
+    /// a lost connection while it does.
+    pub fn want(self: *Netplay, p: *platform.Platform, yes: bool) void {
+        if (self.role != .guest or yes == self.wanted) return;
+        self.wanted = yes;
+        if (yes and self.peer == null and self.address.len != 0 and self.session.phase != .ended) self.connect(p);
     }
 
     fn connect(self: *Netplay, p: *platform.Platform) void {
@@ -148,6 +161,7 @@ pub const Netplay = struct {
                     else => {},
                 }
                 self.flush(p);
+                self.takeNotes();
             },
             else => return false,
         }
@@ -157,7 +171,7 @@ pub const Netplay = struct {
     fn lost(self: *Netplay, reason: platform.DisconnectReason) void {
         const was_playing = self.session.phase == .playing and !self.session.peer_left;
         self.peer = null;
-        self.session.disconnected();
+        self.session.disconnected(self.now_ns);
         if (self.log_enabled) {
             if (was_playing) {
                 log.warn("the connection is lost ({s}); the game holds until {s}", .{
@@ -168,7 +182,14 @@ pub const Netplay = struct {
                 self.refused_logged = true;
             } else log.info("the connection ended ({s})", .{@tagName(reason)});
         }
-        if (self.role == .guest and self.session.phase != .ended and self.address.len != 0) self.reconnect_at = self.now_ns + reconnect_ns;
+        if (self.role == .guest and self.reconnects()) self.reconnect_at = self.now_ns + reconnect_ns;
+        self.takeNotes();
+    }
+
+    /// Whether the guest connects again after a loss: its player wants to join, or a session
+    /// waits for it.
+    fn reconnects(self: *const Netplay) bool {
+        return self.address.len != 0 and self.session.phase != .ended and (self.wanted or self.session.phase == .playing);
     }
 
     /// Once per update, after the events: the session's timers, the guest's reconnection, the
@@ -178,7 +199,7 @@ pub const Netplay = struct {
         if (!self.started) return;
         self.session.tick(self.now_ns);
         if (self.role == .guest and self.peer == null) {
-            if (self.reconnect_at) |t| if (self.now_ns >= t) self.connect(p);
+            if (self.reconnect_at) |t| if (self.now_ns >= t and self.reconnects()) self.connect(p);
         }
         self.flush(p);
         self.takeNotes();
@@ -216,39 +237,57 @@ pub const Netplay = struct {
         }
     }
 
+    /// The session's notes, logged, for the game.
     fn takeNotes(self: *Netplay) void {
-        for (self.session.notes.items) |n| switch (n) {
-            .started => |s| {
-                if (s.fresh) self.epoch += 1;
-                if (self.log_enabled) {
-                    if (s.fresh) {
-                        log.info("the session starts from power-on, input delay {d} ticks", .{s.delay});
-                    } else log.info("the session resumes at tick {d}", .{s.tick});
-                }
-            },
-            .refused => |r| if (self.log_enabled) {
-                if (self.session.phase == .playing) {
-                    log.info("the host still has the old connection; trying again", .{});
-                } else log.err("the session is refused: {s}", .{refusal(r)});
-            },
-            .desync => |t| if (self.log_enabled) log.err("the games differ at tick {d}: both stop; comparing their states", .{t}),
-            .diagnosed => |d| {
-                self.difference = d;
-                if (self.log_enabled) {
-                    if (d) |x| log.err("first difference: {f}", .{x}) else log.err("the states could not be compared", .{});
-                }
-            },
-            .left => |r| if (self.log_enabled) log.info("the other player left ({s})", .{@tagName(r)}),
-            .settings => |open| if (self.log_enabled) {
-                if (open) {
-                    log.info("the other player is on the settings screen: the game holds", .{});
-                } else log.info("the other player left the settings screen", .{});
-            },
-        };
+        for (self.session.notes.items) |n| {
+            self.logNote(n);
+            switch (n) {
+                .started => |s| {
+                    if (!s.resumed) self.sessions += 1;
+                },
+                .diagnosed => |d| self.difference = d,
+                else => {},
+            }
+            self.notes.append(self.allocator, n) catch {};
+        }
         self.session.notes.clearRetainingCapacity();
     }
 
-    fn refusal(r: protocol.RejectReason) []const u8 {
+    fn logNote(self: *const Netplay, n: Note) void {
+        if (!self.log_enabled) return;
+        switch (n) {
+            .welcomed => log.info("welcomed: input delay {d} ticks", .{self.session.delay}),
+            .started => |s| if (s.resumed) {
+                log.info("the session resumes at tick {d}", .{s.tick});
+            } else log.info("a session starts: the {s} game, input delay {d} ticks", .{ if (self.role == .host) "host's" else "host's, loaded", s.delay }),
+            .joined => log.info("the host's game is in ({d} bytes)", .{self.session.gameForm().len}),
+            .join_asked => |c| log.info("the guest asks to join{s}{s}", .{ if (c == protocol.no_character) "" else " as ", if (c == protocol.no_character) "" else characterName(c) }),
+            .status => |s| log.debug("the host's game: {s}", .{@tagName(s.game)}),
+            .refused => |r| {
+                if (self.session.phase == .playing) {
+                    log.info("the host still has the old connection; trying again", .{});
+                } else log.err("refused: {s}", .{refusal(r)});
+            },
+            .desync => |t| log.err("the games differ at tick {d}: both stop; comparing their states", .{t}),
+            .diagnosed => |d| if (d) |x| log.err("first difference: {f}", .{x}) else log.err("the states could not be compared", .{}),
+            .left => |r| log.info("the other player left ({s})", .{@tagName(r)}),
+            .ended => |e| log.info("the session ended ({s})", .{@tagName(e)}),
+            .settings => |open| if (open) {
+                log.info("the other player is on the settings screen: the game holds", .{});
+            } else log.info("the other player left the settings screen", .{}),
+        }
+    }
+
+    fn characterName(c: u8) []const u8 {
+        return switch (c) {
+            0 => "Adam",
+            1 => "Axel",
+            2 => "Blaze",
+            else => "?",
+        };
+    }
+
+    pub fn refusal(r: protocol.RejectReason) []const u8 {
         return switch (r) {
             .protocol => "another protocol version",
             .build => "another build of the game",
@@ -259,11 +298,55 @@ pub const Netplay = struct {
         };
     }
 
-    /// The pads of the next tick, or null while the game must hold. `local` is the local
-    /// player's pad.
+    /// The notes since the game last looked; the game clears them (`clearNotes`).
+    pub fn pending(self: *const Netplay) []const Note {
+        return self.notes.items;
+    }
+
+    pub fn clearNotes(self: *Netplay) void {
+        self.notes.clearRetainingCapacity();
+    }
+
+    // --- the lobby and the join ------------------------------------------------------------
+
+    /// The host's game, as the guest hears it (when welcomed).
+    pub fn setStatus(self: *Netplay, p: *platform.Platform, s: protocol.Status) void {
+        self.session.setStatus(s);
+        self.flush(p);
+    }
+
+    pub fn askJoin(self: *Netplay, p: *platform.Platform, character: u8) void {
+        self.session.askJoin(character);
+        self.flush(p);
+    }
+
+    pub fn needCharacter(self: *Netplay, p: *platform.Platform) void {
+        self.session.needCharacter();
+        self.flush(p);
+    }
+
+    /// The host's game takes the guest: a session from the host's game's form now.
+    pub fn begin(self: *Netplay, p: *platform.Platform, form: []const u8) void {
+        self.session.begin(form, self.now_ns);
+        self.flush(p);
+        self.takeNotes();
+    }
+
+    /// The session ends on this machine (its game ended, or a guest that did not come back).
+    pub fn end(self: *Netplay, p: *platform.Platform, why: session_mod.End) void {
+        self.session.end(why);
+        self.flush(p);
+        self.takeNotes();
+    }
+
+    // --- the session's ticks ---------------------------------------------------------------
+
+    /// The pads of the next tick of the session, or null while the game must hold. `local` is the
+    /// local player's pad.
     pub fn pads(self: *Netplay, p: *platform.Platform, local: input.Pad) ?input.Pads {
         const merged = self.session.pads(local);
         self.flush(p);
+        self.takeNotes();
         if (merged == null) {
             if (self.held_since == null) {
                 self.held_since = self.now_ns;
@@ -304,6 +387,16 @@ pub const Netplay = struct {
 
     pub fn phase(self: *const Netplay) session_mod.Phase {
         return self.session.phase;
+    }
+
+    /// Whether a session runs (held or not, stopped at a mismatch).
+    pub fn inSession(self: *const Netplay) bool {
+        return self.session.inSession();
+    }
+
+    /// How long the session's connection has been down (null: it is up, or no session).
+    pub fn lostFor(self: *const Netplay) ?u64 {
+        return self.session.lostFor(self.now_ns);
     }
 
     /// Our player opened the settings screen (`open`) or closed it: the other player is told.

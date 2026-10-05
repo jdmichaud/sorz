@@ -8,7 +8,7 @@
 //! With a game directory or the ROM (its content extracted in memory), the game reads it; with
 //! `--saves`, it saves there (its settings record among them). Without them, it runs on in-memory
 //! providers, so the run touches no file and never the user's saves (DESIGN.md 5.1). `--netplay`,
-//! `--join` and `--pair` play a session of network play (netplay_cmd.zig).
+//! `--join` play with another game over the network (netplay_cmd.zig).
 const std = @import("std");
 const sorz = @import("sorz");
 const agent = @import("agent");
@@ -19,9 +19,7 @@ const usage =
     \\usage: sorz-agent [--frames N] [--key FRAME:NAME[:HOLD]]... [--shot FRAME:PATH]... [--wav PATH]
     \\                  [DIR|ROM] [--saves DIR] [--original | --page]
     \\       sorz-agent [DIR|ROM] (--netplay [ADDRESS:]PORT [--delay N] | --join ws://ADDRESS:PORT)
-    \\                  [--frames N] [--key FRAME:NAME[:HOLD]]...
-    \\       sorz-agent [DIR|ROM] --pair [--delay N] [--frames N] [--key ...]... [--guest-key ...]...
-    \\                  [--corrupt TICK]
+    \\                  [--frames N] [--until-session N] [--key FRAME:NAME[:HOLD]]...
     \\       sorz-agent DIR|ROM --server [ADDRESS:]PORT
     \\       sorz-agent DIR|ROM --scenario FILE [--situation TRACE [--situation-probe PROBE]
     \\                  [--game-tick N]] [--trace-events OUT] [--probe OUT] [--reload]
@@ -40,22 +38,15 @@ const usage =
     \\  --saves DIR      where saves are kept, the settings record (settings.json) among them
     \\  --original       the cartridge's variant (DESIGN.md 10.7): its game menu, options and
     \\                   pause, the settings by the settings key; the default is the extended
-    \\                   game, network play's the network variant (with --pair, the host's: the
-    \\                   network variant without --original)
+    \\                   game, network play's the network variant
     \\  --page           the game as a browser's page runs it alone: the network variant, one
     \\                   player (pad 1's keys and every gamepad), the page's own volume
     \\  --netplay, --join  network play over WebSockets, as the host (player 1) or the guest
-    \\                   (player 2); --frames counts the session's ticks, and --key presses a
-    \\                   pad 1 key by tick (it reaches the game --delay ticks later); prints the
-    \\                   game's hashes and the session's end
-    \\  --delay N        the host's input delay, 2 to 6 (default: from the round trip; 2 with
-    \\                   --pair)
-    \\  --pair           two games in one process over the in-memory network, the host's keys
-    \\                   from --key and the guest's from --guest-key, and a third game alone
-    \\                   with their merged pads; prints the three and whether they are the same;
-    \\                   --corrupt flips a bit of the guest's state before that tick (in a
-    \\                   round its random generator's, else the tick count's: a negative
-    \\                   control, both games stop and name the first field that differs)
+    \\                   (player 2): each game plays its own front end with its keys (--key by
+    \\                   update), and the guest's 2 PLAYERS and character join the host's game;
+    \\                   --frames counts the updates, --until-session N ends the run once the
+    \\                   session ran N ticks; prints the game's hashes and its network play
+    \\  --delay N        the host's input delay, 2 to 6 (default: from the round trip)
     \\  --server         server mode, as sorz-server: serve the page and the game's files of
     \\                   DIR|ROM, and relay network play between two browsers, with no game
     \\  --scenario FILE  run a scenario (sor-remaster's format): from power-on, the whole game
@@ -110,11 +101,8 @@ pub fn main(init: std.process.Init) !void {
     var shots: std.ArrayList(Shot) = .empty;
     defer shots.deinit(gpa);
     var wav_path: ?[]const u8 = null;
-    var guest_presses: std.ArrayList(Press) = .empty;
-    defer guest_presses.deinit(gpa);
-    var pair = false;
+    var until_session: ?u32 = null;
     var as_page = false;
-    var corrupt: ?u64 = null;
     var scenario: ?agent.scenario_cmd.Options = null;
     var situation: ?[]const u8 = null;
     var situation_probe: ?[]const u8 = null;
@@ -148,14 +136,10 @@ pub fn main(init: std.process.Init) !void {
             try shots.append(gpa, parseShot(args.next() orelse return fail(io)) orelse return fail(io));
         } else if (std.mem.eql(u8, arg, "--wav")) {
             wav_path = args.next() orelse return fail(io);
-        } else if (std.mem.eql(u8, arg, "--guest-key")) {
-            try guest_presses.append(gpa, parsePress(args.next() orelse return fail(io)) orelse return fail(io));
-        } else if (std.mem.eql(u8, arg, "--pair")) {
-            pair = true;
+        } else if (std.mem.eql(u8, arg, "--until-session")) {
+            until_session = std.fmt.parseInt(u32, args.next() orelse return fail(io), 10) catch return fail(io);
         } else if (std.mem.eql(u8, arg, "--page")) {
             as_page = true;
-        } else if (std.mem.eql(u8, arg, "--corrupt")) {
-            corrupt = std.fmt.parseInt(u64, args.next() orelse return fail(io), 10) catch return fail(io);
         } else if (std.mem.eql(u8, arg, "--scenario")) {
             scenario = .{ .scenario = args.next() orelse return fail(io) };
         } else if (std.mem.eql(u8, arg, "--situation")) {
@@ -180,7 +164,7 @@ pub fn main(init: std.process.Init) !void {
     // Server mode: the relay and the game's files, as sorz-server runs it.
     if (options.server) |address| {
         _ = options.network() catch return fail(io);
-        if (pair or presses.items.len != 0 or guest_presses.items.len != 0 or corrupt != null or shots.items.len != 0 or wav_path != null) return fail(io);
+        if (presses.items.len != 0 or until_session != null or shots.items.len != 0 or wav_path != null) return fail(io);
         const status = try native.relay.serve(gpa, io, options.assets.?, address, page);
         if (status != 0) std.process.exit(status);
         return;
@@ -214,7 +198,7 @@ pub fn main(init: std.process.Init) !void {
 
     // A scenario's run, on the game's data.
     if (scenario) |*sc| {
-        if (options.assets == null or pair or presses.items.len != 0 or (situation != null and (wav_path != null or shots.items.len != 0))) return fail(io);
+        if (options.assets == null or until_session != null or presses.items.len != 0 or (situation != null and (wav_path != null or shots.items.len != 0))) return fail(io);
         sc.situation = situation;
         sc.situation_probe = situation_probe;
         sc.game_tick = game_tick;
@@ -239,27 +223,22 @@ pub fn main(init: std.process.Init) !void {
     }
     if (situation != null or situation_probe != null or game_tick != null or trace_events != null or probe != null or reload or form_sizes != null) return fail(io);
 
-    // Network play: a session over WebSockets, or two games in one process. (`--delay` goes with
-    // `--netplay`, or with `--pair`.)
-    const network = if (pair) .none else options.network() catch return fail(io);
-    const netplay = network == .netplay or (pair and (options.netplay != null or options.join != null));
-    if (netplay or pair) {
-        if (shots.items.len != 0 or wav_path != null or (pair and netplay) or (!pair and (guest_presses.items.len != 0 or corrupt != null))) return fail(io);
+    // Network play over WebSockets (`--delay` goes with `--netplay`).
+    const network = options.network() catch return fail(io);
+    if (network == .netplay) {
+        if (shots.items.len != 0 or wav_path != null or options.original) return fail(io);
         const identity = providers.dataIdentity() catch |err| {
             std.log.err("cannot read the game data for its identity: {s}", .{@errorName(err)});
             std.process.exit(2);
         };
         var obuf: [2048]u8 = undefined;
         var ow = std.Io.File.stdout().writerStreaming(io, &obuf);
-        const ok = if (pair)
-            try agent.netplay_cmd.pair(gpa, assets, identity, options.delay orelse 2, frames, presses.items, guest_presses.items, corrupt, if (options.original) .original else .network, &ow.interface)
-        else
-            try agent.netplay_cmd.process(gpa, io, assets, storage, options.netplayOptions(identity), page, providers.assetSource(), frames, presses.items, options.variant(), &ow.interface);
+        const ok = try agent.netplay_cmd.process(gpa, io, assets, storage, options.netplayOptions(identity), page, providers.assetSource(), frames, until_session, presses.items, &ow.interface);
         try ow.interface.flush();
         if (!ok) std.process.exit(1);
         return;
     }
-    if (guest_presses.items.len != 0 or corrupt != null) return fail(io);
+    if (until_session != null) return fail(io);
 
     var backend = agent.AgentBackend.init(gpa, .{});
     defer backend.deinit();

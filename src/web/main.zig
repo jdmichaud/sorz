@@ -6,11 +6,17 @@
 //! waits and the module needs no suspension of its stack (no Asyncify). The module links no libc,
 //! and the script gives it its memory.
 //!
-//! The page's own screens (the loading screen, the menu that starts the game, the messages of
-//! network play and of errors) are the module's to draw in the game's style (`screens.zig`), from
-//! the first files the page fetches, the content's font and menu (`gp_screen_*`); without them
-//! (a tree without that art), `gp_screen_open` refuses and the page's own text stands in, in the
-//! menu's colours.
+//! The page has no menu of its own: once its files are in, the game runs its own front end, the
+//! network variant's (DESIGN.md 5.3, 9), and draws network play's messages itself. The page's own
+//! screens (the loading screen, the messages of errors) are the module's to draw in the game's
+//! style (`screens.zig`), from the first files the page fetches, the content's font and menu
+//! (`gp_screen_*`); without them (a tree without that art), `gp_screen_open` refuses and the page's
+//! own text stands in, in the menu's colours.
+//!
+//! Network play: a native host's page is its guest (`gp_start_netplay`, at once: the game connects
+//! when its player wants to join). On a relay, the page joins the relay when the game's player
+//! wants to play with another (`gp_net_wanted`: 2 PLAYERS chose the select), and gives the game the
+//! role the relay gives it (`gp_start_netplay`), or tells it that two play there (`gp_net_busy`).
 //!
 //! The game's settings record is the page's only settings (`settings.zig`): the module tells the
 //! page the record's sound and window when the game starts and whenever they change
@@ -163,8 +169,6 @@ var game: ?*sorz.Game = null;
 var told: ?page_settings.View = null;
 /// The page's screens, once the module has their files (`gp_screen_open`).
 var screens: ?*screens_mod.Screens = null;
-/// The last menu's sound made (`gp_menu_sound`).
-var menu_sound: []i16 = &.{};
 /// Why the last call failed, for `gp_error`.
 var error_text: [512]u8 = undefined;
 var error_len: usize = 0;
@@ -262,13 +266,11 @@ fn startGame() !void {
     errdefer gpa.destroy(g);
     g.* = try sorz.Game.init(gpa, assets.assetSource(), storage.storage());
     // The page's gain is the volume: the game's sound stays at its own level. A page has one
-    // player, alone or in network play: the network variant (DESIGN.md 10.7), whose game has no
-    // second menu of players (the page's menu chose them). The page says network play's messages
-    // itself, over the game's picture.
+    // player: the network variant (DESIGN.md 10.7), whose game menu's 2 PLAYERS plays with
+    // another machine's player.
     g.host_volume = true;
     g.setOnePlayer();
     g.variant = .network;
-    g.host_messages = true;
     game = g;
     tellSettings(g);
 }
@@ -281,45 +283,6 @@ fn tellSettings(g: *const sorz.Game) void {
     page.js_settings(view.gain, view.scale, @intFromBool(view.fullscreen));
 }
 
-/// Whether a key (its `KeyboardEvent.code`, `code_len` bytes in the scratch buffer) is the game's
-/// settings key, from the record once the game has read it. The browser never gets it (F1 opens
-/// no help).
-export fn gp_settings_key(code_len: u32) u32 {
-    const key = keys.fromCode(scratch[0..@min(code_len, scratch.len)]);
-    const settings_key = if (game) |g| g.settings.settings_key else (sorz.settings.Settings{}).settings_key;
-    return @intFromBool(key != .unknown and key == settings_key);
-}
-
-/// Whether the game has its settings screen, which the menu's SETTINGS opens before the game
-/// starts: the page dims the line without it (a game without the content's font and menu).
-export fn gp_settings_available() u32 {
-    const g = game orelse return 0;
-    return @intFromBool(g.panel != null);
-}
-
-/// The menu's SETTINGS: the game's settings screen, before the game starts. The page then calls
-/// `gp_settings_frame` at each animation frame until it closes. Returns 0, or -1 without a game,
-/// once the game has started, or without the screen (`gp_settings_available`).
-export fn gp_settings_open() i32 {
-    const g = game orelse return -1;
-    if (g.started or g.panel == null) return -1;
-    return if (g.openSettings()) 0 else -1;
-}
-
-/// One update of the settings screen that the menu opened: 1 while it is open, 0 once the player
-/// has left it (the page shows its menu again), -2 when the update failed.
-export fn gp_settings_frame() i32 {
-    const g = game orelse return 0;
-    if (g.started) return 0;
-    var p = backend.asPlatform();
-    const open = g.updateSettings(&p) catch |err| {
-        setError("{s}", .{@errorName(err)});
-        return -2;
-    };
-    tellSettings(g);
-    return @intFromBool(open);
-}
-
 /// The page left its full screen without the game asking (the player pressed Escape, which is the
 /// browser's): the setting goes off, as the player chose, and the record keeps it
 /// (`Game.fullscreenLeft`).
@@ -329,21 +292,18 @@ export fn gp_fullscreen_left() void {
     tellSettings(g);
 }
 
-/// Network play (DESIGN.md 9): the game joins a session instead of playing alone. The page calls
-/// it after `gp_start` and before the first `gp_frame`, with the role (0 the guest, player 2; 1
-/// the host, player 1) and the address (`url_len` bytes in the scratch buffer): a native host's
-/// `ws://ADDRESS:PORT/`, or nothing when the page brings the connection itself (a relay's: the
-/// first connection the page reports is the peer). The session's identity is this build's and the
-/// data's: the digest of the game's files. Returns 0, or -1 with the reason in `gp_error`.
+/// Network play (DESIGN.md 9): the game plays with another machine's player. The page calls it
+/// after `gp_start`, with the role (0 the guest, player 2; 1 the host, player 1) and the address
+/// (`url_len` bytes in the scratch buffer): a native host's `ws://ADDRESS:PORT/` (the game connects
+/// when its player wants to join), or nothing when the page brings the connection itself (a
+/// relay's, once the relay gave the page its role: the first connection the page reports is the
+/// peer). A network play the game had goes. The session's identity is this build's and the data's:
+/// the digest of the game's files. Returns 0, or -1 with the reason in `gp_error`.
 export fn gp_start_netplay(role: u32, url_len: u32) i32 {
     const g = game orelse {
         setError("the game has not started", .{});
         return -1;
     };
-    if (g.started or g.netplay != null) {
-        setError("network play starts before the first update", .{});
-        return -1;
-    }
     const identity = sorz.net.identity.ofTree(assets.assetSource(), sorz.net.identity.max_file_bytes) catch |err| {
         setError("the game files' identity: {s}", .{@errorName(err)});
         return -1;
@@ -358,6 +318,21 @@ export fn gp_start_netplay(role: u32, url_len: u32) i32 {
         return -1;
     };
     return 0;
+}
+
+/// Whether the game's player wants to play with another machine's and the game has no network play
+/// to (its 2 PLAYERS chose the character select): a relay's page then joins the relay (1).
+export fn gp_net_wanted() u32 {
+    const g = game orelse return 0;
+    return @intFromBool(g.wantsNetwork());
+}
+
+/// The relay turned the page away (two players play there), or cannot be reached: the game plays
+/// alone, and says so.
+export fn gp_net_busy() void {
+    const g = game orelse return;
+    g.playAlone();
+    g.tellNetwork(.busy);
 }
 
 /// A connection of network play opened: one the game asked for (`incoming` 0), or a relay's guest
@@ -382,8 +357,7 @@ export fn gp_net_disconnected(id: u32, reason: u32) void {
 
 // The module draws the page's screens (DESIGN.md 5.3) from the files it needs first, the content's
 // font and menu (`screens.zig`), which `gp_screen_files` names for the page to fetch before the
-// others: the loading screen and its count, the menu (1 PLAYER, 2 PLAYERS, SETTINGS, a line it
-// cannot offer dimmed, the arrow on the chosen one), and messages over the game's picture.
+// others: the loading screen and its count, and the messages of errors.
 
 /// The files the screens are drawn from, which the page fetches before the others: the
 /// directories of the tree that hold them, each with its `/`, one a line, in the scratch buffer.
@@ -425,20 +399,6 @@ export fn gp_screen_loading(done: u32, total: u32) void {
     presentScreen(s.loading(done, total) catch return);
 }
 
-/// The menu that starts the game, the arrow on `choice`, a line whose bit of `available` is clear
-/// dimmed, and a note (`note_len` bytes in the scratch buffer) below.
-export fn gp_screen_menu(choice: u32, available: u32, note_len: u32) void {
-    const s = screens orelse return;
-    presentScreen(s.menu(choice, available, scratch[0..@min(note_len, scratch.len)]) catch return);
-}
-
-/// The menu's line at (x, y) of the canvas, or -1.
-export fn gp_screen_pick(x: i32, y: i32) i32 {
-    const s = screens orelse return -1;
-    const line = s.pick(x, y) orelse return -1;
-    return @intCast(line);
-}
-
 /// A message (`len` bytes in the scratch buffer, lines split at '\n'): on black, or, with `over`,
 /// over the game's last picture once it has one. Returns 0, or -1 when the module cannot draw it.
 export fn gp_screen_message(len: u32, over: u32) i32 {
@@ -449,44 +409,6 @@ export fn gp_screen_message(len: u32, over: u32) i32 {
     };
     presentScreen(s.show(scratch[0..@min(len, scratch.len)], under) catch return -1);
     return 0;
-}
-
-/// A sound of the game's menu for the page's menu (`which`: 0 the arrow's move, 1 a choice), at
-/// 48 kHz, made as the game plays it from the game's sound content (or the sound content alone,
-/// before the game or without its whole content): its frame count, the stereo frames then at
-/// `gp_menu_sound_ptr`; 0 when there is none (the reason in `gp_error`). The page makes them
-/// before it shows its menu, so that the first one plays at once.
-export fn gp_menu_sound(which: u32) u32 {
-    if (!ready or which >= screens_mod.menu_sounds.len) return 0;
-    gpa.free(menu_sound);
-    menu_sound = &.{};
-    const name = screens_mod.menu_sounds[which];
-    // The game's sound content, or, for a game without its whole content, the sound content alone.
-    if (game) |g| if (g.content) |c| {
-        const made = sorz.sound_out.alone(gpa, &c.sounds, name, 48000) catch |err| {
-            setError("the menu's sound: {s}", .{@errorName(err)});
-            return 0;
-        };
-        menu_sound = made orelse {
-            setError("the menu's sound: sound/sounds.json has no sound \"{s}\"", .{name});
-            return 0;
-        };
-        return @intCast(menu_sound.len / 2);
-    };
-    var reason: std.Io.Writer = .fixed(&error_text);
-    reason.writeAll("the menu's sound: ") catch {};
-    const before = reason.end;
-    menu_sound = screens_mod.menuSound(gpa, assets.assetSource(), name, 48000, &reason) catch |err| {
-        error_len = reason.end;
-        if (reason.end == before) setError("the menu's sound: {s}", .{@errorName(err)});
-        return 0;
-    };
-    return @intCast(menu_sound.len / 2);
-}
-
-/// Where the frames of the last `gp_menu_sound` are.
-export fn gp_menu_sound_ptr() u32 {
-    return @intFromPtr(menu_sound.ptr);
 }
 
 // --- the game ------------------------------------------------------------------------------------
@@ -520,10 +442,10 @@ export fn gp_error() u32 {
 }
 
 /// A key: its `KeyboardEvent.code` (`code_len` bytes in the scratch buffer), down or up. Returns 1
-/// when the game takes the key (the player's controls, pad 1's, or the settings key), so that the
-/// page keeps the browser from acting on it (the arrows do not scroll, F1 opens no help); the
-/// browser keeps its other keys. Escape is the browser's (it leaves the full screen, and the game
-/// quits on it natively), but the game's settings screen's while it is open: it saves and leaves.
+/// when the game takes the key (the player's controls, pad 1's), so that the page keeps the browser
+/// from acting on it (the arrows do not scroll); the browser keeps its other keys. Escape is the
+/// browser's (it leaves the full screen, and the game quits on it natively), but the game's
+/// settings screen's while it is open: it saves and leaves.
 export fn gp_key(code_len: u32, down: u32, repeat: u32) u32 {
     const key = keys.fromCode(scratch[0..@min(code_len, scratch.len)]);
     if (key == .unknown) return 0;
@@ -534,7 +456,6 @@ export fn gp_key(code_len: u32, down: u32, repeat: u32) u32 {
     if (key == .escape) return 0;
     backend.keyEvent(key, down != 0, repeat != 0);
     if (game) |g| return @intFromBool(g.usesKey(key));
-    if (key == (sorz.settings.Settings{}).settings_key) return 1;
     for (sorz.input.default_keys) |binding| {
         if (binding.key == key and binding.pad == 0) return 1;
     }
@@ -622,7 +543,8 @@ const NetState = struct {
     phase: []const u8,
     tick: u32,
     delay: u8,
-    epoch: u32,
+    /// The sessions started so far.
+    sessions: u32,
     /// The connection to the peer is up (a session in play without it holds).
     connected: bool,
     /// The states differed, and the peers named the first differing field (in the console).
@@ -661,6 +583,9 @@ export fn gp_inspect() u32 {
         .scene = @tagName(std.meta.activeTag(g.state.scenes.base)),
         .menu = lines.buffered(),
         .settings_open = g.settingsOpen(),
+        // Network play's message over the picture, if any.
+        .message = if (g.overlays.find(.network)) |o| o.network.what.text() else "",
+        .players = @tagName(g.state.setup.players),
         .frames_presented = g.frames_presented,
         .frame_hash = &frame_hash,
         .state_hash = &state_hash,
@@ -688,7 +613,7 @@ export fn gp_inspect() u32 {
             .phase = @tagName(np.phase()),
             .tick = np.tick(),
             .delay = np.session.delay,
-            .epoch = np.epoch,
+            .sessions = np.sessions,
             .connected = np.session.connected,
             .difference = np.difference != null,
             .peer_in_settings = np.peerInSettings(),

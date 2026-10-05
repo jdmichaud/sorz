@@ -697,6 +697,47 @@ pub const Round = struct {
         return true;
     }
 
+    /// Player `k` leaves the game under way (network play's second player who quits): as the
+    /// original treats a player out of lives who does not continue, out of the game, its
+    /// fighter gone. Another may join later (`dropIn`).
+    pub fn dropOut(self: *Round, k: u1) void {
+        const w = &self.play.world;
+        const p = &w.players[k];
+        if (p.entity) |h| w.remove(h);
+        p.entity = null;
+        p.lives = 0;
+        p.continues = 0;
+        p.out = true;
+        if (self.join_as != null and k == 1) self.join_as = null;
+    }
+
+    /// The world's draw list made again into `out`, the world as it stands (a game loaded from
+    /// another's form, network play's join: its picture right from its first frame).
+    pub fn redrawWorld(self: *const Round, out: *world.Output, a: *const Assets) void {
+        if (self.phase == .setup) return;
+        // A copy: making the list changes nothing of the game.
+        var w = self.play.world;
+        var random: world.Random = .{};
+        var t: world.tick.Tick = .{ .world = &w, .kinds = a.kinds, .random = &random, .out = out };
+        world.systems.redraw(&t);
+    }
+
+    /// The music the round plays now: its own, the boss's once it came, none before the banner's
+    /// or while it fades for the boss.
+    pub fn music(self: *const Round, a: *const Assets) ?library.Sound {
+        switch (self.phase) {
+            .setup, .loaded, .banner_fade, .banner_in, .leaving => return null,
+            else => {},
+        }
+        const s = &self.play.world.script;
+        const r = self.stage(a).script;
+        if (r.boss) |b| if (s.part >= r.sections.len) return switch (s.stage) {
+            .boss_opening, .boss_music => null,
+            else => a.sounds.find(b.music),
+        };
+        return self.stage(a).music;
+    }
+
     /// START opens the settings in place of the pause (the extended and network variants): the
     /// game holds them as it holds the pause (game.zig: the pause's jingle with them), and the
     /// logic tick that START was seen at waits, as the pause's first tick does; play goes on with

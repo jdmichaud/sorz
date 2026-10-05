@@ -79,7 +79,7 @@ The placeholder name of the project is `sorz`.
   and driver.
 - `src/agent`: `sorz-agent`, the headless host: the agent backend under a virtual clock of display
   ticks, keys at chosen ticks, frames as PNG files and the sound as a WAV file, one JSON line of
-  counters and digests, and network play (`--netplay`, `--join`, `--pair`). It never links SDL.
+  counters and digests, and network play (`--netplay`, `--join`). It never links SDL.
 - `src/native`: host I/O for the native targets: the directory asset source, the directory
   storage, their shared contract tests, the command line (a content tree, or a ROM whose content
   is extracted in memory), the WebSocket transport, the game's files a server gives its pages, the relay of

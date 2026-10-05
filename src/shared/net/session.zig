@@ -1,15 +1,20 @@
-//! The netplay session of one peer (DESIGN.md 9): delay-based input lockstep between a host
-//! (player 1) and a guest (player 2), outside the simulation and without I/O. The driver
-//! (netplay.zig) gives it the connection's events and messages and the game's pads and state
-//! checks; it answers with the merged pads of each display tick, the messages to send (`outbox`)
-//! and what happened (`notes`).
+//! The netplay session of one peer (DESIGN.md 9): two machines, each running its own game, whose
+//! players meet in one: a host (player 1) and a guest (player 2), outside the simulation and
+//! without I/O. The driver (netplay.zig) gives it the connection's events and messages, the game's
+//! status, pads and state checks; it answers with the merged pads of each display tick of a
+//! session, the messages to send (`outbox`) and what happened (`notes`).
 //!
-//! - **Handshake.** The guest sends `hello` (versions, data identity, the session it had). A new
-//!   session: the host pings to measure the round trip, picks the input delay D from it (2 to 6
-//!   ticks) and answers `welcome` (fresh), with what its game starts with (`start`, its variant:
-//!   the guest's game takes it); both games then start from power-on. The same session
-//!   after a dropped connection: `welcome` (not fresh), and each peer resends the pads the other
-//!   lacks. Different versions or data: `reject`.
+//! - **Handshake.** The guest connects when its player wants to join, and sends `hello`
+//!   (versions, data identity, the session it had). The host pings to measure the round trip,
+//!   picks the input delay D from it (2 to 6 ticks) and answers `welcome`; or, for the session it
+//!   still plays after a dropped connection, `welcome` with that session, and each peer resends
+//!   the pads the other lacks. Different versions or data: `reject`.
+//! - **The lobby.** Welcomed, each machine plays its own game. The host says what its game is
+//!   (`status`, `setStatus`); the guest asks to join (`askJoin`, with its player's character or
+//!   none), and the host's game decides when (a note `join_asked`, then `begin` or `needCharacter`).
+//! - **The join.** `begin` starts a session with the host's game's canonical form: a new id, its
+//!   form in `game` chunks, then the session's pads; the guest gathers the chunks (a note `joined`:
+//!   its game loads `gameForm`). From that tick, both run the same game.
 //! - **Pads.** Before tick N runs, the peer samples its pad for tick N + D and sends it; the pads
 //!   of ticks 0 to D - 1 are empty on both sides. Tick N runs once both pads for N are in; until
 //!   then the game holds (`pads` returns null).
@@ -23,6 +28,10 @@
 //!   holds too once the pads it has run out (D ticks at most). Each side says when its player
 //!   opens or closes the screen (`inSettings`), so that the other can tell its player why it holds
 //!   (`peer_settings`); a connection that comes back or a new session says it again.
+//! - **The end.** Both games end the session at the same tick, when their game ends (`end`); a
+//!   peer that leaves says goodbye (`bye`), and the ticks whose pads are in run, then the session
+//!   ends (a note `ended`). A dropped connection holds the session while it is down; the guest
+//!   that comes back resumes it, and the host gives up after `rejoin_ns` (`lostFor`, then `end`).
 //!
 //! Every incoming message gets a verdict (`Verdict`), so that the tests can check duplicate,
 //! stale, malformed and out-of-order messages.
@@ -39,9 +48,6 @@ pub const Config = struct {
     data: protocol.DataId,
     /// The host's input delay (2 to 6), instead of the one that the round trip gives.
     delay: ?u8 = null,
-    /// What the host's game starts with, which its welcome gives the guest (the game sets it
-    /// before the session starts).
-    start: protocol.Start = .{},
 };
 
 /// The pads that the session keeps on each side, ticks in a ring.
@@ -50,12 +56,15 @@ pub const window = 256;
 pub const keep = 128;
 /// Ticks between two state checks (twice a second: a corrupted byte is found within one).
 pub const check_interval = 30;
-/// The pings of a new session's handshake.
+/// The pings of the handshake.
 pub const handshake_pings = 4;
-/// Pings in play, which keep the round trip known and the connection alive.
+/// Pings while welcomed, which keep the round trip known and the connection alive.
 pub const ping_interval_ns: u64 = std.time.ns_per_s;
 /// A connection silent this long is dead: the driver closes it (and the guest reconnects).
 pub const silence_ns: u64 = 10 * std.time.ns_per_s;
+/// How long a session whose connection dropped waits for the guest to come back (DESIGN.md 9:
+/// the host's game holds a few seconds).
+pub const rejoin_ns: u64 = 5 * std.time.ns_per_s;
 /// The largest stretch of the sound, in parts per million (0.5 %).
 pub const max_stretch_ppm: u32 = 5000;
 
@@ -63,15 +72,19 @@ pub const max_stretch_ppm: u32 = 5000;
 const tick_ns: u64 = @import("../sound_out.zig").tick_ps / 1000;
 
 pub const Phase = enum {
-    /// No session yet: the host waits for a guest, the guest for its connection.
+    /// No connection: the host waits for a guest, the guest has none (yet, or any more).
     idle,
     /// A connection is up and the handshake runs.
     handshake,
-    /// The session runs (held while the connection is down).
+    /// Welcomed: each machine plays its own game; the host's status and the guest's join cross.
+    lobby,
+    /// The guest asked to join, and waits for the host's game.
+    joining,
+    /// A session: both games run the same game in lockstep (held while the connection is down).
     playing,
     /// The states differed at a check: the session stopped.
     desynced,
-    /// Refused, or the peer left.
+    /// Refused: no session can come of this connection.
     ended,
 };
 
@@ -90,15 +103,34 @@ pub const Verdict = enum {
     conflict,
     /// Not a message of the protocol.
     malformed,
-    /// A message of the protocol out of place (pads before the welcome, a second hello...).
+    /// A message of the protocol out of place (pads outside a session, a second hello...).
     unexpected,
     /// A hello that the host refused (another version, build or data), or the host's refusal.
     refused,
 };
 
+/// Why a session ended.
+pub const End = enum {
+    /// The game ended on both machines (`end`).
+    game_over,
+    /// The peer said goodbye, and its last pads ran out.
+    left,
+    /// The connection dropped and did not come back in time (the guest: the host had given the
+    /// session up when it came back).
+    lost,
+};
+
 pub const Note = union(enum) {
-    /// The session starts (`fresh`: from power-on, so the game resets) or resumes.
-    started: struct { fresh: bool, delay: u8, tick: u32 },
+    /// The handshake is done: each machine plays its own game.
+    welcomed,
+    /// A session starts (the host's `begin`, the guest's game joined) or resumes.
+    started: struct { resumed: bool, delay: u8, tick: u32 },
+    /// The guest has the host's game: its form is `gameForm`, which the guest's game loads.
+    joined,
+    /// The guest asks to join, as this character (`protocol.no_character`: none yet).
+    join_asked: u8,
+    /// The host's game changed (`status`).
+    status: protocol.Status,
     /// The host refused the guest, or was refused.
     refused: protocol.RejectReason,
     /// The states differed at the check before tick `tick`.
@@ -106,13 +138,16 @@ pub const Note = union(enum) {
     /// The first differing field (null: the forms were the same after all, or ours was not
     /// kept).
     diagnosed: ?canonical.Difference,
-    /// The peer left.
+    /// The peer said goodbye.
     left: protocol.ByeReason,
+    /// The session ended.
+    ended: End,
     /// The peer's player opened the settings screen (true) or closed it.
     settings: bool,
 };
 
-/// A state's canonical form, kept for a check (owned room for the longest).
+/// A state's canonical form, kept for a check or gathered from chunks (owned room for the
+/// longest).
 const Form = struct {
     bytes: []u8,
     len: u32 = 0,
@@ -129,17 +164,29 @@ pub const Session = struct {
     phase: Phase = .idle,
     /// A connection is up.
     connected: bool = false,
-    /// The handshake of this connection is done: pads and hashes may be sent.
+    /// The handshake of this connection is done: statuses, joins, pads and hashes may cross.
     welcomed: bool = false,
     /// The driver should close the connection (after a refusal, a farewell or a silence).
     close_requested: bool = false,
     /// The peer said farewell: the ticks whose pads are in still run, then the session ends.
     peer_left: bool = false,
+    /// The session (0: none), and the input delay of this connection.
     id: u64 = 0,
     delay: u8 = 0,
-    /// What both games start with, once the session has started: the host's.
-    start: ?protocol.Start = null,
     random: std.Random.SplitMix64 = .init(0),
+    /// When the connection of a session in play dropped (the host gives up `rejoin_ns` later).
+    lost_at: ?u64 = null,
+
+    /// The host's game as the guest last heard it, and as the host last said it.
+    peer_status: protocol.Status = .{},
+    status_sent: ?protocol.Status = null,
+    /// The host: the guest's join that its game has not answered yet.
+    join_asked: ?u8 = null,
+    /// The guest: the host's game gathered from its chunks (`game_chunks` the chunks in, a bit
+    /// each), for the session `game_id`.
+    game_form: Form,
+    game_chunks: u8 = 0,
+    game_id: u64 = 0,
 
     /// The next tick to run.
     next: u32 = 0,
@@ -201,13 +248,15 @@ pub const Session = struct {
     }
 
     pub fn init(allocator: std.mem.Allocator, config: Config, diff: canonical.DiffFn) error{OutOfMemory}!Session {
-        const room = try allocator.alloc(u8, 3 * protocol.max_state_len);
+        const room = try allocator.alloc(u8, 4 * protocol.max_state_len);
+        const n = protocol.max_state_len;
         return .{
             .allocator = allocator,
             .config = config,
             .diff = diff,
-            .snapshot_forms = .{ .{ .bytes = room[0..protocol.max_state_len] }, .{ .bytes = room[protocol.max_state_len .. 2 * protocol.max_state_len] } },
-            .peer_form = .{ .bytes = room[2 * protocol.max_state_len ..] },
+            .snapshot_forms = .{ .{ .bytes = room[0..n] }, .{ .bytes = room[n .. 2 * n] } },
+            .peer_form = .{ .bytes = room[2 * n .. 3 * n] },
+            .game_form = .{ .bytes = room[3 * n ..] },
         };
     }
 
@@ -215,7 +264,7 @@ pub const Session = struct {
         self.clearOutbox();
         self.outbox.deinit(self.allocator);
         self.notes.deinit(self.allocator);
-        self.allocator.free(self.snapshot_forms[0].bytes.ptr[0 .. 3 * protocol.max_state_len]);
+        self.allocator.free(self.snapshot_forms[0].bytes.ptr[0 .. 4 * protocol.max_state_len]);
         self.* = undefined;
     }
 
@@ -240,6 +289,11 @@ pub const Session = struct {
         return .{ .hello = .{ .build = self.config.build, .data = self.config.data, .session = self.id, .resume_from = self.remote_count } };
     }
 
+    /// Whether a session runs (held or not).
+    pub fn inSession(self: *const Session) bool {
+        return self.phase == .playing or self.phase == .desynced;
+    }
+
     // --- the connection --------------------------------------------------------------------
 
     /// The connection to the peer is up. The guest opens the handshake.
@@ -251,22 +305,33 @@ pub const Session = struct {
         self.last_ping_ns = now_ns;
         self.handshake_pongs = 0;
         self.handshake_rtt_ns = 0;
-        if (self.phase == .idle) self.phase = .handshake;
+        self.status_sent = null;
+        if (self.phase == .idle or self.phase == .lobby or self.phase == .joining) self.phase = .handshake;
         if (self.config.role == .guest and self.phase != .ended) self.send(self.hello());
     }
 
-    /// The connection is down: a session in play holds until the guest is back.
-    pub fn disconnected(self: *Session) void {
+    /// The connection is down: a session in play holds until the guest is back (or the host gives
+    /// it up); without one, the machines are apart again.
+    pub fn disconnected(self: *Session, now_ns: u64) void {
         self.connected = false;
         self.welcomed = false;
         self.peer_settings = false;
         self.close_requested = false;
+        self.join_asked = null;
+        self.game_chunks = 0;
         self.clearOutbox();
-        if (self.phase == .handshake) self.phase = .idle;
+        switch (self.phase) {
+            .handshake, .lobby, .joining => self.phase = .idle,
+            // A peer that said goodbye: its last pads run, then the session ends (`pads`).
+            .playing => if (!self.peer_left) {
+                self.lost_at = now_ns;
+            },
+            else => {},
+        }
     }
 
-    /// Timers: the pings in play, the silence of a dead connection. (The handshake's pings go one
-    /// after the other, each on the pong of the one before.)
+    /// Timers: the pings while welcomed, the silence of a dead connection. (The handshake's pings
+    /// go one after the other, each on the pong of the one before.)
     pub fn tick(self: *Session, now_ns: u64) void {
         if (!self.connected) return;
         if (now_ns -| self.last_heard_ns > silence_ns) {
@@ -274,6 +339,13 @@ pub const Session = struct {
             return;
         }
         if (self.welcomed and now_ns -| self.last_ping_ns >= ping_interval_ns) self.ping(now_ns);
+    }
+
+    /// How long the session's connection has been down (null: it is up, or there is none).
+    pub fn lostFor(self: *const Session, now_ns: u64) ?u64 {
+        if (self.phase != .playing) return null;
+        const at = self.lost_at orelse return null;
+        return now_ns -| at;
     }
 
     fn ping(self: *Session, now_ns: u64) void {
@@ -309,25 +381,31 @@ pub const Session = struct {
             .hash => |h| self.onHash(h),
             .state => |s| self.onState(s),
             .settings => |open| self.onSettings(open),
+            .status => |s| self.onStatus(s),
+            .join => |c| self.onJoin(c),
+            .game => |g| self.onGame(g),
             .bye => |r| blk: {
                 self.note(.{ .left = r });
                 self.close_requested = true;
                 // The ticks whose pads are in still run; then the session is over.
                 if (self.phase == .playing) {
                     self.peer_left = true;
-                } else self.over();
+                } else self.phase = if (self.phase == .ended) .ended else .idle;
                 break :blk .accepted;
             },
         };
     }
 
-    /// The peer left: the host waits for a new guest (a new session), the guest is done.
-    fn over(self: *Session) void {
+    /// The session ends: both machines play their own games again (the host waits for a guest,
+    /// the guest is apart until it asks to join again).
+    fn over(self: *Session, why: End) void {
         self.peer_left = false;
-        if (self.config.role == .host and self.phase != .desynced) {
-            self.phase = .idle;
-            self.id = 0;
-        } else self.phase = .ended;
+        self.lost_at = null;
+        self.id = 0;
+        self.next = 0;
+        self.phase = if (self.connected) .lobby else .idle;
+        self.status_sent = null;
+        self.note(.{ .ended = why });
     }
 
     fn refuse(self: *Session, reason: protocol.RejectReason) void {
@@ -353,14 +431,15 @@ pub const Session = struct {
         const resumable = h.session != 0 and h.session == self.id and self.phase == .playing and
             h.resume_from <= self.local_count and self.local_count - h.resume_from < window;
         if (resumable) {
-            self.send(.{ .welcome = .{ .session = self.id, .delay = self.delay, .fresh = false, .resume_from = self.remote_count, .start = self.start orelse self.config.start } });
+            self.send(.{ .welcome = .{ .session = self.id, .delay = self.delay, .resume_from = self.remote_count } });
             self.resumeFrom(h.resume_from);
             return .accepted;
         }
-        // A new session. With a fixed delay it starts at once; else after the pings.
+        // A session the guest had and the host has not: given up.
+        if (self.phase == .playing) self.over(.lost);
         self.phase = .handshake;
         if (self.config.delay) |d| {
-            self.startFresh(self.newId(now_ns), d);
+            self.welcome(d);
         } else self.ping(now_ns);
         return .accepted;
     }
@@ -373,10 +452,19 @@ pub const Session = struct {
             self.handshake_pongs += 1;
             self.handshake_rtt_ns = @max(self.handshake_rtt_ns, self.rtt_ns);
             if (self.handshake_pongs >= handshake_pings) {
-                self.startFresh(self.newId(now_ns), delayFor(self.handshake_rtt_ns));
+                self.welcome(delayFor(self.handshake_rtt_ns));
             } else self.ping(now_ns);
         }
         return .accepted;
+    }
+
+    /// The host welcomes the guest to its games, with the input delay of this connection.
+    fn welcome(self: *Session, delay: u8) void {
+        self.delay = delay;
+        self.send(.{ .welcome = .{ .session = 0, .delay = delay, .resume_from = 0 } });
+        self.welcomed = true;
+        self.phase = .lobby;
+        self.note(.welcomed);
     }
 
     /// A session's id, from the clock through SplitMix64, never 0 and never the last one's: a
@@ -389,9 +477,13 @@ pub const Session = struct {
 
     fn onWelcome(self: *Session, w: protocol.Welcome) Verdict {
         if (self.config.role != .guest or self.welcomed or !self.connected) return .unexpected;
-        if (w.fresh) {
-            self.start = w.start;
-            self.startFresh(w.session, w.delay);
+        if (w.session == 0) {
+            // The session this guest had is gone.
+            if (self.phase == .playing) self.over(.lost);
+            self.delay = w.delay;
+            self.welcomed = true;
+            self.phase = .lobby;
+            self.note(.welcomed);
             return .accepted;
         }
         if (w.session != self.id or self.phase != .playing or w.delay != self.delay or
@@ -403,26 +495,106 @@ pub const Session = struct {
         return .accepted;
     }
 
-    /// Both sides start from power-on with empty pads for the first `delay` ticks.
-    fn startFresh(self: *Session, id: u64, delay: u8) void {
-        if (self.config.role == .host) {
-            self.start = self.config.start;
-            self.send(.{ .welcome = .{ .session = id, .delay = delay, .fresh = true, .resume_from = 0, .start = self.config.start } });
+    // --- the lobby and the join --------------------------------------------------------------
+
+    /// The host says what its game is, when it changed (or the guest has not heard it yet).
+    pub fn setStatus(self: *Session, s: protocol.Status) void {
+        if (self.config.role != .host or !self.welcomed or self.phase != .lobby) return;
+        if (self.status_sent) |was| if (std.meta.eql(was, s)) return;
+        self.status_sent = s;
+        self.send(.{ .status = s });
+    }
+
+    fn onStatus(self: *Session, s: protocol.Status) Verdict {
+        if (self.config.role != .guest or !self.welcomed) return .unexpected;
+        if (self.inSession()) return .stale;
+        self.peer_status = s;
+        // A join at the select that came too late: the guest's player chooses a character first.
+        if (self.phase == .joining and s.game == .play) self.phase = .lobby;
+        self.note(.{ .status = s });
+        return .accepted;
+    }
+
+    /// The guest asks to join the host's game, as `character` (`protocol.no_character`: none, at
+    /// the select).
+    pub fn askJoin(self: *Session, character: u8) void {
+        if (self.config.role != .guest or !self.welcomed or self.phase != .lobby) return;
+        self.phase = .joining;
+        self.game_chunks = 0;
+        self.send(.{ .join = character });
+    }
+
+    fn onJoin(self: *Session, character: u8) Verdict {
+        if (self.config.role != .host or !self.welcomed) return .unexpected;
+        if (self.phase != .lobby) return .stale;
+        self.join_asked = character;
+        self.note(.{ .join_asked = character });
+        return .accepted;
+    }
+
+    /// The host's game cannot take the guest without a character (it plays): the guest is told
+    /// what it plays again, and chooses.
+    pub fn needCharacter(self: *Session) void {
+        self.join_asked = null;
+        if (self.status_sent) |s| self.send(.{ .status = s });
+    }
+
+    /// The host's game takes the guest: a session starts at the next tick, the guest's game
+    /// loading `form`, the host's game's canonical form now.
+    pub fn begin(self: *Session, form: []const u8, now_ns: u64) void {
+        std.debug.assert(self.config.role == .host and self.phase == .lobby and form.len <= protocol.max_state_len);
+        self.join_asked = null;
+        const id = self.newId(now_ns);
+        var offset: u32 = 0;
+        const length: u32 = @intCast(form.len);
+        while (offset < length) : (offset += protocol.chunk_size) {
+            self.send(.{ .game = .{ .session = id, .delay = self.delay, .length = length, .offset = offset, .bytes = form[offset..][0..protocol.chunkLen(length, offset)] } });
         }
+        self.startSession(id);
+    }
+
+    fn onGame(self: *Session, g: protocol.GameChunk) Verdict {
+        if (self.config.role != .guest or !self.welcomed) return .unexpected;
+        if (self.inSession()) return .stale;
+        if (self.game_chunks == 0 or g.session != self.game_id or g.length != self.game_form.len) {
+            self.game_chunks = 0;
+            self.game_id = g.session;
+            self.game_form.len = g.length;
+        }
+        const bit: u8 = @as(u8, 1) << @intCast(g.offset / protocol.chunk_size);
+        if (self.game_chunks & bit != 0) return .duplicate;
+        @memcpy(self.game_form.bytes[g.offset..][0..g.bytes.len], g.bytes);
+        self.game_chunks |= bit;
+        const all: u8 = @intCast((@as(u16, 1) << @intCast(protocol.chunks(g.length))) - 1);
+        if (self.game_chunks != all) return .accepted;
+        self.game_chunks = 0;
+        self.delay = g.delay;
+        self.startSession(g.session);
+        self.note(.joined);
+        return .accepted;
+    }
+
+    /// The host's game, which the guest's game loads (after the note `joined`).
+    pub fn gameForm(self: *const Session) []const u8 {
+        return self.game_form.slice();
+    }
+
+    /// Both sides start the session from the same game, with empty pads for the first `delay`
+    /// ticks.
+    fn startSession(self: *Session, id: u64) void {
         self.id = id;
-        self.delay = delay;
         self.phase = .playing;
-        self.welcomed = true;
         self.peer_left = false;
+        self.lost_at = null;
         self.next = 0;
-        self.local_count = delay;
-        self.remote_count = delay;
-        self.peer_ack = delay;
-        self.sent_upto = delay;
+        self.local_count = self.delay;
+        self.remote_count = self.delay;
+        self.peer_ack = self.delay;
+        self.sent_upto = self.delay;
         self.local = @splat(0);
         self.remote = @splat(0);
         self.have = .empty;
-        for (0..delay) |i| self.have.set(i);
+        for (0..self.delay) |i| self.have.set(i);
         self.slack = 0;
         self.peer_slack = null;
         self.own = @splat(null);
@@ -431,20 +603,31 @@ pub const Session = struct {
         self.desync_at = null;
         self.peer_chunks = 0;
         self.early_tick = null;
-        self.peer_settings = false;
         if (self.local_settings) self.send(.{ .settings = true });
-        self.note(.{ .started = .{ .fresh = true, .delay = delay, .tick = 0 } });
+        self.note(.{ .started = .{ .resumed = false, .delay = self.delay, .tick = 0 } });
     }
 
     /// The same session goes on: the pads the peer lacks, and our recent hashes, again.
     fn resumeFrom(self: *Session, peer_has: u32) void {
         self.welcomed = true;
+        self.lost_at = null;
         self.peer_ack = @max(self.peer_ack, peer_has);
         self.sent_upto = peer_has;
         self.flushPads();
         for (self.own) |h| if (h) |x| self.send(.{ .hash = x.hash });
         if (self.local_settings) self.send(.{ .settings = true });
-        self.note(.{ .started = .{ .fresh = false, .delay = self.delay, .tick = self.next } });
+        self.note(.{ .started = .{ .resumed = true, .delay = self.delay, .tick = self.next } });
+    }
+
+    /// The session ends here, on this machine: its game ended (both machines end at the same
+    /// tick, since they run the same game), or the host gave up a guest that did not come back
+    /// (`lost`).
+    pub fn end(self: *Session, why: End) void {
+        if (!self.inSession()) return;
+        if (why == .lost and self.connected) {
+            self.close_requested = true;
+        }
+        self.over(why);
     }
 
     /// The input delay for a round trip: the one-way time in ticks, rounded up, plus one.
@@ -460,7 +643,7 @@ pub const Session = struct {
     pub fn inSettings(self: *Session, open: bool) void {
         if (open == self.local_settings) return;
         self.local_settings = open;
-        if (self.welcomed) self.send(.{ .settings = open });
+        if (self.welcomed and self.phase == .playing) self.send(.{ .settings = open });
     }
 
     fn onSettings(self: *Session, open: bool) Verdict {
@@ -535,8 +718,8 @@ pub const Session = struct {
         }
     }
 
-    /// The pads of the next tick, or null while it must hold. `local` is the local player's pad
-    /// now: it becomes the pad of tick `next + delay`, sampled once per tick.
+    /// The pads of the next tick of the session, or null while it must hold. `local` is the local
+    /// player's pad now: it becomes the pad of tick `next + delay`, sampled once per tick.
     pub fn pads(self: *Session, local: input.Pad) ?input.Pads {
         if (self.phase != .playing) return null;
         const target = self.next + self.delay;
@@ -547,7 +730,7 @@ pub const Session = struct {
         }
         if (self.remote_count <= self.next or self.local_count <= self.next) {
             // The peer left, and its last pads ran out.
-            if (self.peer_left) self.over();
+            if (self.peer_left) self.over(.left);
             return null;
         }
         const slot = self.next % window;
@@ -579,6 +762,7 @@ pub const Session = struct {
     /// The stretch of the sound that brings the peers level: 0 unless this peer is ahead by more
     /// than a quarter of a tick, the whole 0.5 % from a tick and a quarter.
     pub fn stretchPpm(self: *const Session) u32 {
+        if (self.phase != .playing) return 0;
         const a = self.advantage() - 64;
         if (a <= 0) return 0;
         return @intCast(@min(@as(i64, max_stretch_ppm), @divFloor(@as(i64, a) * max_stretch_ppm, 256)));
@@ -727,14 +911,32 @@ fn encodeMsg(m: protocol.Message, buf: *[protocol.max_len]u8) []const u8 {
     return protocol.encode(m, buf);
 }
 
-fn startPair(host: *Session, guest: *Session) !void {
+/// The connection and its handshake, both in the lobby.
+fn welcomePair(host: *Session, guest: *Session) !void {
     host.connectedAt(0);
     guest.connectedAt(0);
-    while (host.phase != .playing or guest.phase != .playing) {
+    while (host.phase != .lobby or guest.phase != .lobby) {
         _ = pump(guest, host, 1000);
         _ = pump(host, guest, 1000);
         if (host.phase == .ended or guest.phase == .ended) return error.Refused;
     }
+}
+
+/// The guest joins the host's game, whose form is `form`: both in a session.
+fn joinPair(host: *Session, guest: *Session, form: []const u8) !void {
+    guest.askJoin(protocol.no_character);
+    try testing.expectEqual(Verdict.accepted, pump(guest, host, 1000));
+    try testing.expectEqual(@as(?u8, protocol.no_character), host.join_asked);
+    host.begin(form, 1000);
+    _ = pump(host, guest, 1000);
+    try testing.expectEqual(Phase.playing, guest.phase);
+    try testing.expectEqualSlices(u8, form, guest.gameForm());
+}
+
+fn startPair(host: *Session, guest: *Session) !void {
+    try welcomePair(host, guest);
+    var buf: [canonical.maxSize(TestState)]u8 = undefined;
+    try joinPair(host, guest, canonical.write(TestState, &.{}, &buf));
 }
 
 /// Both peers run `n` ticks in turn, each with its pad from a script.
@@ -755,7 +957,12 @@ fn formOf(s: TestState, buf: *[canonical.maxSize(TestState)]u8) []const u8 {
     return canonical.write(TestState, &s, buf);
 }
 
-test "a new session: the round trip picks the delay, both start at power-on" {
+fn hasNote(s: *const Session, comptime tag: std.meta.Tag(Note)) bool {
+    for (s.notes.items) |n| if (n == tag) return true;
+    return false;
+}
+
+test "the handshake: the round trip picks the delay; welcomed, each plays its own game" {
     var host = try testSession(.host, null);
     defer host.deinit();
     var guest = try testSession(.guest, null);
@@ -773,26 +980,81 @@ test "a new session: the round trip picks the delay, both start at power-on" {
         now += 40 * std.time.ns_per_ms;
         try testing.expectEqual(Verdict.accepted, pump(&guest, &host, now));
     }
-    try testing.expectEqual(Phase.playing, host.phase);
+    try testing.expectEqual(Phase.lobby, host.phase);
     try testing.expectEqual(@as(u8, 3), host.delay);
     _ = pump(&host, &guest, now);
-    try testing.expectEqual(Phase.playing, guest.phase);
-    try testing.expectEqual(host.id, guest.id);
+    try testing.expectEqual(Phase.lobby, guest.phase);
     try testing.expectEqual(host.delay, guest.delay);
-    try testing.expect(guest.notes.items[0].started.fresh);
+    try testing.expect(hasNote(&guest, .welcomed) and hasNote(&host, .welcomed));
     try testing.expectEqual(@as(u8, 2), Session.delayFor(0));
     try testing.expectEqual(@as(u8, 4), Session.delayFor(100 * std.time.ns_per_ms));
     try testing.expectEqual(@as(u8, 6), Session.delayFor(std.time.ns_per_s));
-    // The first `delay` ticks need no message.
+    // In the lobby no pads run, and pads sent are out of place.
+    try testing.expectEqual(@as(?input.Pads, null), host.pads(.{}));
+    var buf: [protocol.max_len]u8 = undefined;
+    try testing.expectEqual(Verdict.unexpected, guest.receive(encodeMsg(.{ .pads = .{ .first = 0, .ack = 0, .slack = 0, .pads = &.{1} } }, &buf), 0));
+    // The host's status crosses when it changes, once.
+    host.setStatus(.{ .game = .select });
+    host.setStatus(.{ .game = .select });
+    try testing.expectEqual(@as(usize, 1), host.outbox.items.len);
+    _ = pump(&host, &guest, now);
+    try testing.expectEqual(protocol.Status.Game.select, guest.peer_status.game);
+}
+
+test "the join: the host's game crosses, and both run the same game from its next tick" {
+    var host = try testSession(.host, 3);
+    defer host.deinit();
+    var guest = try testSession(.guest, null);
+    defer guest.deinit();
+    try welcomePair(&host, &guest);
+    host.setStatus(.{ .game = .play, .character = 1 });
+    _ = pump(&host, &guest, 0);
+    // The guest's player chose Blaze; the host's game takes it: its form (three chunks) crosses.
+    guest.askJoin(2);
+    try testing.expectEqual(Phase.joining, guest.phase);
+    _ = pump(&guest, &host, 0);
+    try testing.expect(hasNote(&host, .join_asked) and host.join_asked.? == 2);
+    const form = try testing.allocator.alloc(u8, 2 * protocol.chunk_size + 7);
+    defer testing.allocator.free(form);
+    for (form, 0..) |*b, i| b.* = @truncate(i *% 7);
+    host.begin(form, 5);
+    try testing.expectEqual(Phase.playing, host.phase);
+    try testing.expectEqual(@as(usize, 3), host.outbox.items.len);
+    _ = pump(&host, &guest, 5);
+    try testing.expect(hasNote(&guest, .joined));
+    try testing.expectEqual(host.id, guest.id);
+    try testing.expectEqualSlices(u8, form, guest.gameForm());
+    // The first `delay` ticks need no message; tick 3 needs the guest's pad for it, which the
+    // guest sends before its tick 0.
     for (0..3) |_| {
         try testing.expect(host.pads(.{}) != null);
         host.ran();
     }
-    // Tick 3 needs the guest's pad for it, which the guest sends before its tick 0.
     try testing.expectEqual(@as(?input.Pads, null), host.pads(.{}));
     _ = guest.pads(.{ .b = true });
-    _ = pump(&guest, &host, now);
+    _ = pump(&guest, &host, 5);
     try testing.expect(host.pads(.{}).?.pad2.b);
+}
+
+test "a join at the select that came too late: the guest chooses, then joins the game in play" {
+    var host = try testSession(.host, 2);
+    defer host.deinit();
+    var guest = try testSession(.guest, null);
+    defer guest.deinit();
+    try welcomePair(&host, &guest);
+    host.setStatus(.{ .game = .select });
+    _ = pump(&host, &guest, 0);
+    guest.askJoin(protocol.no_character);
+    _ = pump(&guest, &host, 0);
+    // The host's select ended meanwhile: its game plays, and it needs the guest's character.
+    host.setStatus(.{ .game = .play, .character = 1 });
+    host.needCharacter();
+    _ = pump(&host, &guest, 0);
+    try testing.expectEqual(Phase.lobby, guest.phase);
+    try testing.expectEqual(@as(u8, 1), guest.peer_status.character);
+    guest.askJoin(0);
+    _ = pump(&guest, &host, 0);
+    try testing.expectEqual(@as(?u8, 0), host.join_asked);
 }
 
 test "different versions, builds or data are refused" {
@@ -828,13 +1090,7 @@ test "pads messages: duplicate, stale, out of order, ahead, conflicting, malform
     var guest = try testSession(.guest, null);
     defer guest.deinit();
     var buf: [protocol.max_len]u8 = undefined;
-    // Pads before the session: out of place.
-    host.connectedAt(0);
-    guest.connectedAt(0);
-    _ = pump(&guest, &host, 0);
-    try testing.expectEqual(Phase.playing, host.phase);
-    try testing.expectEqual(Verdict.unexpected, guest.receive(encodeMsg(.{ .pads = .{ .first = 2, .ack = 0, .slack = 0, .pads = &.{1} } }, &buf), 0));
-    _ = pump(&host, &guest, 0);
+    try startPair(&host, &guest);
     try runBoth(&host, &guest, 200);
 
     const at = host.remote_count;
@@ -849,9 +1105,14 @@ test "pads messages: duplicate, stale, out of order, ahead, conflicting, malform
     try testing.expectEqual(at + 2, host.remote_count);
     try testing.expectEqual(Verdict.malformed, host.receive(&.{ 6, 0, 0 }, 0));
     try testing.expectEqual(Verdict.malformed, host.receive("", 0));
-    // A hello once welcomed, and a welcome to the host, are out of place.
+    // A hello once welcomed, a welcome to the host, a join to the guest, a status to the host,
+    // are out of place.
     try testing.expectEqual(Verdict.unexpected, host.receive(encodeMsg(guest.hello(), &buf), 0));
-    try testing.expectEqual(Verdict.unexpected, host.receive(encodeMsg(.{ .welcome = .{ .session = 1, .delay = 2, .fresh = true, .resume_from = 0 } }, &buf), 0));
+    try testing.expectEqual(Verdict.unexpected, host.receive(encodeMsg(.{ .welcome = .{ .session = 1, .delay = 2, .resume_from = 0 } }, &buf), 0));
+    try testing.expectEqual(Verdict.unexpected, guest.receive(encodeMsg(.{ .join = 1 }, &buf), 0));
+    try testing.expectEqual(Verdict.unexpected, host.receive(encodeMsg(.{ .status = .{} }, &buf), 0));
+    // A status or a game during the session: stale.
+    try testing.expectEqual(Verdict.stale, guest.receive(encodeMsg(.{ .status = .{} }, &buf), 0));
     // The session goes on after all of them.
     try testing.expectEqual(Phase.playing, host.phase);
 }
@@ -869,9 +1130,10 @@ test "a dropped connection holds both; the same session resumes with the pads th
         host.clearOutbox();
         if (host.remote_count > host.next) host.ran() else break;
     }
-    host.disconnected();
-    guest.disconnected();
+    host.disconnected(10);
+    guest.disconnected(10);
     try testing.expectEqual(Phase.playing, host.phase);
+    try testing.expectEqual(@as(?u64, 5), host.lostFor(15));
     // Both hold: the guest lacks the host's pads.
     var held = false;
     for (0..8) |_| {
@@ -887,7 +1149,8 @@ test "a dropped connection holds both; the same session resumes with the pads th
     host.connectedAt(5);
     guest.connectedAt(5);
     try testing.expectEqual(Verdict.accepted, pump(&guest, &host, 5));
-    try testing.expect(!host.notes.getLast().started.fresh);
+    try testing.expect(host.notes.getLast().started.resumed);
+    try testing.expectEqual(@as(?u64, null), host.lostFor(20));
     try testing.expectEqual(Verdict.accepted, pump(&host, &guest, 5));
     // The guest resends its own, which it sampled while the connection was down.
     try testing.expectEqual(Verdict.accepted, pump(&guest, &host, 5));
@@ -905,19 +1168,70 @@ test "a dropped connection holds both; the same session resumes with the pads th
         _ = pump(&host, &guest, 5);
     }
     try runBoth(&host, &guest, 50);
+}
 
-    // A guest that restarted (no session) starts a new session: both from power-on.
-    host.disconnected();
-    var fresh = try testSession(.guest, null);
-    defer fresh.deinit();
-    host.connectedAt(9);
-    fresh.connectedAt(9);
-    _ = pump(&fresh, &host, 9);
-    _ = pump(&host, &fresh, 9);
-    try testing.expect(host.notes.getLast().started.fresh);
-    try testing.expectEqual(@as(u32, 0), host.next);
-    try testing.expectEqual(host.id, fresh.id);
-    try testing.expect(host.id != guest.id);
+test "a guest that does not come back in time: the host ends the session, the guest is told when back" {
+    var host = try testSession(.host, 2);
+    defer host.deinit();
+    var guest = try testSession(.guest, null);
+    defer guest.deinit();
+    try startPair(&host, &guest);
+    try runBoth(&host, &guest, 20);
+    const old = host.id;
+    host.disconnected(0);
+    guest.disconnected(0);
+    try testing.expect(host.lostFor(rejoin_ns + 1).? > rejoin_ns);
+    host.end(.lost);
+    try testing.expectEqual(Phase.idle, host.phase);
+    try testing.expectEqual(End.lost, host.notes.getLast().ended);
+    // Back too late: the hello names the old session, which the host no longer has.
+    guest.clearOutbox();
+    host.connectedAt(1);
+    guest.connectedAt(1);
+    try testing.expectEqual(old, guest.id);
+    try welcomePair(&host, &guest);
+    try testing.expectEqual(End.lost, guest.notes.items[guest.notes.items.len - 2].ended);
+    try testing.expectEqual(Phase.lobby, guest.phase);
+}
+
+test "the game ends on both at the same tick: back in the lobby, and a new join starts a new session" {
+    var host = try testSession(.host, 2);
+    defer host.deinit();
+    var guest = try testSession(.guest, null);
+    defer guest.deinit();
+    try startPair(&host, &guest);
+    try runBoth(&host, &guest, 40);
+    const first = host.id;
+    host.end(.game_over);
+    guest.end(.game_over);
+    try testing.expect(host.phase == .lobby and guest.phase == .lobby and host.id == 0);
+    // The pads still on their way are out of place now.
+    _ = pump(&host, &guest, 0);
+    _ = pump(&guest, &host, 0);
+    var buf: [canonical.maxSize(TestState)]u8 = undefined;
+    try joinPair(&host, &guest, formOf(.{ .x = 9 }, &buf));
+    try testing.expect(host.id != first and host.next == 0);
+    try runBoth(&host, &guest, 40);
+}
+
+test "a guest that says goodbye: its last pads run, then the session ends; the host waits for another" {
+    var host = try testSession(.host, 2);
+    defer host.deinit();
+    var guest = try testSession(.guest, null);
+    defer guest.deinit();
+    try startPair(&host, &guest);
+    try runBoth(&host, &guest, 10);
+    _ = guest.pads(.{});
+    guest.leave(.quit);
+    _ = pump(&guest, &host, 0);
+    try testing.expect(host.peer_left);
+    var ran: u32 = 0;
+    while (host.pads(.{})) |_| : (ran += 1) host.ran();
+    try testing.expectEqual(@as(u32, 3), ran);
+    try testing.expectEqual(End.left, host.notes.getLast().ended);
+    try testing.expect(host.phase == .lobby and host.close_requested);
+    host.disconnected(0);
+    try testing.expectEqual(Phase.idle, host.phase);
 }
 
 test "a state mismatch stops both and names the first differing field" {
@@ -1025,7 +1339,7 @@ test "a host busy with another guest: a new guest gives up, a returning one trie
     var guest = try testSession(.guest, null);
     defer guest.deinit();
     try startPair(&host, &guest);
-    guest.disconnected();
+    guest.disconnected(0);
     guest.connectedAt(0);
     try testing.expectEqual(Verdict.refused, guest.receive(busy, 0));
     try testing.expectEqual(Phase.playing, guest.phase);
@@ -1033,8 +1347,12 @@ test "a host busy with another guest: a new guest gives up, a returning one trie
 }
 
 test "the peer ahead stretches its sound, up to 0.5 %" {
-    var s = try testSession(.host, 3);
-    defer s.deinit();
+    var host = try testSession(.host, 3);
+    defer host.deinit();
+    var guest = try testSession(.guest, null);
+    defer guest.deinit();
+    try startPair(&host, &guest);
+    var s = &host;
     s.peer_slack = 3 * 256;
     s.slack = 3 * 256;
     try testing.expectEqual(@as(u32, 0), s.stretchPpm());
@@ -1073,8 +1391,8 @@ test "the settings screen: the peer is told, holds once its pads run out, and bo
     var buf: [protocol.max_len]u8 = undefined;
     try testing.expectEqual(Verdict.duplicate, guest.receive(encodeMsg(.{ .settings = true }, &buf), 0));
     // A connection lost and back: the guest forgets, and the host says it again.
-    host.disconnected();
-    guest.disconnected();
+    host.disconnected(0);
+    guest.disconnected(0);
     try testing.expect(!guest.peer_settings);
     host.connectedAt(0);
     guest.connectedAt(0);

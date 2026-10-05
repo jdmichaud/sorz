@@ -189,26 +189,43 @@ own default, which is the cartridge's too.
   with this machine's player, the round's START); a network guest's OPTIONS (SOUND TEST,
   ADVANCED SETTINGS, EXIT).
 - `browser-check` with `-Drom=ROM` adds the part `flow`: on a relay serving the whole content
-  tree, the page's menu (its sounds made before it shows, SETTINGS before the game and back), and
-  1 PLAYER's game in the network variant (its own menu START, SETTINGS, OPTIONS; the settings key
-  holding the game).
+  tree, the page's game runs its own front end (the page has no menu of its own): the network
+  variant's game menu, 2 PLAYERS and OPTIONS; OPTIONS' ADVANCED SETTINGS opens one player's
+  settings, the game held; Escape saves and leaves.
 - `sorz-agent --page` runs the game as a browser's page does alone (the network variant, one
   player, the page's own volume), `--original` the original.
 
 ## Network play
 
-The session's protocol and its lockstep have their unit tests (src/shared/net, the agent's
-netplay_test.zig, a stand-in state); on the real game, from the user's ROM:
+Each machine runs its own front end; the players meet in one game, which the host's canonical
+form carries to the guest (DESIGN.md 9, src/shared/network_play.zig). The session's protocol and
+its lockstep have their unit tests (src/shared/net, the agent's netplay_test.zig, a stand-in state
+that the guest joins); on the real game, from the user's ROM:
 
-- `zig build netplay-check -Drom=ROM` (tools/check_netplay.sh), the gate of PLAN item 18: two
-  agent hosts, two processes over WebSockets (`--netplay`, `--join`), from power-on through the
-  network variant's front end into round 1, end in the same state; the two games in one process
-  (`--pair`) equal one game with their merged pads; a bit of the guest's state flipped in the round
-  (`--corrupt`) is found at the next state check and its field named on both sides.
-- `browser-check` with `-Drom=ROM` adds the part `netplay_round`: the agent host serves the whole
-  content tree and its page, a Chromium page joins as player 2, and the two play from power-on
-  into round 1, the same state at the last tick. Its parts `netplay` and `relay` (a native host's
-  page, two pages through the relay) run on the small tree.
+- `zig build netplay-check -Drom=ROM`, the gate of PLAN item 18:
+  - src/tools/netplay_check.zig, several games in one process over the in-memory network, each with
+    its own clock and keys: `own_menus` (a move of the host's arrow leaves the guest's; the guest's
+    OPTIONS its own lines alone), `select` (the guest's 2 PLAYERS joins the host's select: each
+    player's cursor its own; round 1 with two players; the two games' states and pictures the same
+    at the same ticks, the guest's sound the round's music, the session's checks without a
+    difference; player 1's START opening its settings, both games held, the guest told),
+    `round` (the host plays alone; the guest chooses on its own select, the host's
+    character taken, and drops in mid-round; the same games; a third game turned away plays alone;
+    the guest quits, player 2 out of the game, the host plays on; a new guest joins later), `away`
+    (a dropped connection: both hold and say so; back in time, the same session; not back in time,
+    the host plays on without player 2 and the guest goes back to its own menu), `difference` (a
+    bit of the guest's state flipped: both stop at the next check and name the field). With
+    `-Dnetplay-only=FLOW,...` some flows alone; the tool's `--pictures DIR` writes two pictures that
+    differ.
+  - tools/check_netplay.sh: two agent hosts, two processes over WebSockets (`--netplay`, `--join`):
+    the host plays round 1 alone, the guest's player chooses 2 PLAYERS and a character, and joins
+    mid-round; at the session's tick 600 both are in the round with two players, in the same
+    state.
+- `browser-check` with `-Drom=ROM` adds the parts `netplay` (a Chromium page, the guest of the
+  agent host on the whole content tree, joins its round mid-way; the same state at the session's
+  tick 600), `relay` (two pages through the relay: the first plays round 1 alone, the second joins
+  it mid-round; the same state) and `relay_rules` (a third page turned away plays alone, told why;
+  the guest leaves and the host plays on without player 2, told so).
 - Not checked here: two machines with `netem`'s latency and loss, and the user's play (PLAN A1).
 
 ## Comparing behaviours with statistics

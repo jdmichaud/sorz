@@ -1,8 +1,9 @@
 //! The machine's own scenes over the game (DESIGN.md 10.4, S3): the settings screen, the notice that
-//! the other player of network play is in their settings, a notice about the settings record. Each
-//! is pushed over the game's scenes and holds them or not by its own rule (`holds`): the settings
-//! hold the game, and so does the other player's (both games of network play wait while either
-//! player is in the settings); a notice does not.
+//! the other player of network play is in their settings, network play's messages, a notice about
+//! the settings record. Each is pushed over the game's scenes and holds them or not by its own rule
+//! (`holds`): the settings hold the game, and so does the other player's (both games of network
+//! play wait while either player is in the settings); network play's waits hold it; a notice does
+//! not.
 //!
 //! They are this machine's, not the game's: the game's canonical state (game.zig), which both
 //! machines of network play keep the same, has the scenes of the flow and their loads
@@ -40,18 +41,67 @@ pub const Notice = enum {
 /// How long a notice shows.
 pub const notice_ns: u64 = 5 * std.time.ns_per_s;
 
-pub const Kind = enum { settings, peer_settings, notice };
+/// What network play tells this machine's player (DESIGN.md 9), in the game's words.
+pub const Message = enum {
+    /// The guest's player chose and waits for the host's game.
+    waiting_for_player_1,
+    /// The guest asked to join; the host's game is on its way.
+    joining,
+    /// The session's connection is down: the game holds a few seconds.
+    player_1_away,
+    player_2_away,
+    /// The other player left: this one plays on, or goes back to its menu (notices).
+    player_1_left,
+    player_2_left,
+    /// Two players play there already: this one plays alone (a notice).
+    busy,
+    /// The other machine plays another build or other game data: this one plays alone (a
+    /// notice).
+    other_game,
+    /// The two games differ: the session stopped, and the game with it.
+    desynced,
+
+    pub fn text(m: Message) []const u8 {
+        return switch (m) {
+            .waiting_for_player_1 => "WAITING FOR PLAYER 1",
+            .joining => "JOINING",
+            .player_1_away => "PLAYER 1 CANNOT BE REACHED\nWAITING",
+            .player_2_away => "PLAYER 2 CANNOT BE REACHED\nWAITING",
+            .player_1_left => "PLAYER 1 LEFT",
+            .player_2_left => "PLAYER 2 LEFT",
+            .busy => "TWO PLAYERS ARE PLAYING THERE\nYOU PLAY ALONE",
+            .other_game => "THE OTHER GAME IS NOT THIS ONE\nYOU PLAY ALONE",
+            .desynced => "THE TWO GAMES DIFFER\nTHE GAME STOPPED",
+        };
+    }
+
+    /// Whether the game waits under it; else it is a notice, which goes after `notice_ns`.
+    pub fn holds(m: Message) bool {
+        return switch (m) {
+            .waiting_for_player_1, .joining, .player_1_away, .player_2_away, .desynced => true,
+            .player_1_left, .player_2_left, .busy, .other_game => false,
+        };
+    }
+};
+
+pub const Kind = enum { settings, peer_settings, network, notice };
 
 pub const Overlay = union(Kind) {
     settings: settings_mod.screen.Screen,
     /// The other player (of network play) is in their settings: this player, `player` (0 or 1).
     peer_settings: u1,
+    /// Network play's message, and for a notice the time it goes (set when first shown).
+    network: struct { what: Message, until_ns: ?u64 = null },
     /// A notice, until the time it goes (set when first shown).
     notice: struct { what: Notice, until_ns: ?u64 = null },
 
     /// Whether it holds the game under it: no tick runs, the picture stays, the sound fades out.
     pub fn holds(o: *const Overlay) bool {
-        return o.* != .notice;
+        return switch (o.*) {
+            .notice => false,
+            .network => |n| n.what.holds(),
+            else => true,
+        };
     }
 
     /// Whether the game's picture shows dimmed under it.
@@ -64,6 +114,7 @@ pub const Overlay = union(Kind) {
         switch (o.*) {
             .settings => |*s| try s.draw(settings, p, arrow),
             .peer_settings => |player| _ = try p.message(peerText(player), 11, true),
+            .network => |n| _ = try p.message(n.what.text(), 11, true),
             .notice => |n| {
                 try p.box(1, panel_mod.rows - 5, panel_mod.columns - 2, 3);
                 try p.text(3, panel_mod.rows - 4, n.what.text(), .bright);

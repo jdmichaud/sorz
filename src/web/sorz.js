@@ -1,13 +1,14 @@
 // The host of the browser build. It loads the WebAssembly module and the game's files from the
 // server that sent this page (the native game, from the user's own copy: DESIGN.md 5.3), then
-// runs the game: one update for each animation frame, the frames to the canvas, the keys, the
-// gamepads and the sound to the module and back. The player never picks or uploads a file. The
-// module keeps the tables of keys and buttons and all game logic, and draws the page's screens in
-// the game's style once its first files are in (`gp_screen_*`, src/web/main.zig); this script only
+// runs the game, its own front end first (the page has no menu of its own): one update for each
+// animation frame, the frames to the canvas, the keys, the gamepads and the sound to the module and
+// back. The player never picks or uploads a file. The module keeps the tables of keys and buttons
+// and all game logic, network play's messages included, and draws the page's loading screen in the
+// game's style once its first files are in (`gp_screen_*`, src/web/main.zig); this script only
 // moves data, and its own text stands in, in the game's colours, until then and for an error the
-// module cannot draw (a tree without the game's font and menu). The game's settings record is the page's only settings:
-// the game's screen is to change it, and the script applies it as a browser does (the gain, the
-// scale, the full screen).
+// module cannot draw (a tree without the game's font and menu). The game's settings record is the
+// page's only settings: the game's screen is to change it, and the script applies it as a browser
+// does (the gain, the scale, the full screen).
 'use strict';
 
 // --- the helpers that the module imports in place of compiler-rt ------------------------------
@@ -93,10 +94,11 @@ function sorzFirst(name, first) {
 // The module's side is `js_net_connect`, `js_net_send` and `js_net_close` over `connect`, `send`
 // and `close`, and `gp_net_connected`, `gp_net_received` and `gp_net_disconnected` from the events.
 // The page learns the mode from `netplay.json`, which the native host and the relay serve
-// (`{"mode": "native" | "relay", "websocket": "/"}`), and starts the session through the module
-// (`gp_start_netplay`): a native host's guest connects to `ws://<the page's host>/`; on a relay, a
-// page whose player chose 2 PLAYERS joins it and the module takes the first connection as its
-// peer, and one whose player chose 1 PLAYER never joins it.
+// (`{"mode": "native" | "relay", "websocket": "/"}`), and gives the module its network play
+// (`gp_start_netplay`): a native host's page is its guest, whose game connects to `ws://<the
+// page's host>/` when its player wants to join; on a relay, the page joins it when the game's
+// player chooses 2 PLAYERS (`gp_net_wanted`), and the module takes the first connection as its
+// peer.
 function sorzTransport(Socket, events, limits = {}) {
   const maxMessage = limits.maxMessage || 64 * 1024;
   const maxQueued = limits.maxQueued || 1024 * 1024;
@@ -261,9 +263,8 @@ function sorzTransport(Socket, events, limits = {}) {
   let wasm = null;
   let code = null;
   let image = null;
-  // The page's phases: `loading` (the module and the game's files), `ready` (the choice that
-  // starts the game), `settings` (the game's settings screen, opened from that choice before the
-  // game starts), `playing`, `stopped`.
+  // The page's phases: `loading` (the module and the game's files), `playing` (the game, its own
+  // front end first: the page has no menu of its own), `stopped`.
   let phase = 'loading';
   let started = false;
   // Whether the module draws the page's screens (its first files are in).
@@ -347,19 +348,18 @@ function sorzTransport(Socket, events, limits = {}) {
   // --- the game's settings, as a browser does them ----------------------------------------------
 
   // The game's settings record (`settings.json`, kept with the game's other records below) is the
-  // page's only settings: the player changes them on the game's settings screen, which the menu's
-  // SETTINGS line and its key (F1 at first) open. The module tells the page the record's sound and
-  // window when the game starts and whenever they change (`js_settings`), and the page applies
-  // them:
+  // page's only settings: the player changes them on the game's settings screen (OPTIONS' ADVANCED
+  // SETTINGS, START during play). The module tells the page the record's sound and window when the
+  // game starts and whenever they change (`js_settings`), and the page applies them:
   //
   // - the sound: the gain of the output (the game's volume curve, 0 with the sound off). The game
   //   queues its sound at its own level, so this gain is the only one.
   // - the scale: the picture's whole multiple, in the page's pixels made whole device pixels; the
   //   largest that fits when the window is smaller (`fit`).
-  // - full screen: the page's. A browser gives it only at a click or a key: the click or key that
-  //   starts the game, the key that turns it on (on the settings screen, from the menu too), or a
-  //   later click. Until then the picture fills the window. Leaving it (Escape is the browser's)
-  //   turns the setting off, as the player chose.
+  // - full screen: the page's. A browser gives it only at a click or a key: the player's first one,
+  //   the key that turns it on on the settings screen, or a later click. Until then the picture
+  //   fills the window. Leaving it (Escape is the browser's) turns the setting off, as the player
+  //   chose.
   const view = { gain: 1, scale: 3, fullscreen: false };
 
   function applySettings(gain, scale, fullscreen) {
@@ -368,7 +368,7 @@ function sorzTransport(Socket, events, limits = {}) {
     view.fullscreen = fullscreen !== 0;
     if (audio.gain) audio.gain.gain.value = gain;
     if (!view.fullscreen && document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    if (view.fullscreen && (started || phase === 'settings')) enterFullscreen();
+    if (view.fullscreen && started) enterFullscreen();
     fit();
   }
 
@@ -430,8 +430,9 @@ function sorzTransport(Socket, events, limits = {}) {
 
   // The module queues interleaved 16-bit frames. Each block becomes an AudioBuffer that starts
   // where the previous block ends, on the output's own clock, through the volume's gain. The queue
-  // is at most one second. The context is made by the click that starts the game (a browser starts
-  // sound only after a gesture), at the rate that the game asks for (48 kHz).
+  // is at most one second. The context is made when the game opens its sound, at the rate that the
+  // game asks for (48 kHz), and runs from the player's first click or key (a browser starts sound
+  // only after a gesture); until then the game runs on the clock.
   //
   // Suspension is state (DESIGN.md 3.4): while the output does not run, the game runs on the
   // clock and the blocks it queues are dropped, so no backlog plays late when the sound comes
@@ -674,8 +675,8 @@ function sorzTransport(Socket, events, limits = {}) {
   const netResults = { sent: 0, queue_full: 1, not_connected: 2, too_large: 3 };
   const net = {
     // The mode that the server of this page announces in `netplay.json`: 'native' (a native game
-    // hosts here: this page joins as player 2), 'relay' (server mode: this page plays alone or
-    // joins the relay) or null (this page plays alone).
+    // hosts here: this page is its guest, player 2), 'relay' (server mode: this page joins the
+    // relay when its player wants to play with another) or null (this page plays alone).
     mode: null,
     manifest: null,
     transport: sorzTransport(window.WebSocket, {
@@ -694,28 +695,12 @@ function sorzTransport(Socket, events, limits = {}) {
     onRelay: null,
     // The relay's last word to this page (`sorzTransport`'s `relay` states), for the checks.
     relayState: null,
+    // The page is on the relay (from its joining until the relay's connection ends).
+    onTheRelay: false,
   };
 
-  // The page's words, in the game's: its capitals and its menu's plain lines.
-  const again = 'RELOAD THE PAGE TO PLAY AGAIN';
-  const words = {
-    loading: 'LOADING',
-    joining: 'JOINING',
-    waiting: 'WAITING FOR PLAYER 2',
-    guestLeft: 'PLAYER 2 LEFT\nWAITING FOR PLAYER 2',
-    hostAway: 'PLAYER 1 CANNOT BE REACHED\nTRYING AGAIN',
-    // The other player opened the settings screen, which holds both games.
-    inSettings: ['PLAYER 2 IS IN THE SETTINGS MENU', 'PLAYER 1 IS IN THE SETTINGS MENU'],
-    desynced: 'THE TWO GAMES DIFFER\nTHE GAME STOPPED',
-    ended: 'THE NETWORK GAME ENDED\n' + again,
-    finished: 'THE GAME HAS ENDED\n' + again,
-    // The relay's answers before a role: the menu again, with this note and 2 PLAYERS dimmed.
-    busy: 'TWO PLAYERS ARE PLAYING HERE',
-    unreachable: 'NETWORK PLAY CANNOT START HERE',
-    // After a role: the game ends.
-    host_left: 'PLAYER 1 LEFT\n' + again,
-    lost: 'THE CONNECTION WAS LOST\n' + again,
-  };
+  // The page's own words, in the game's capitals: the loading screen's, until the module draws it.
+  const words = { loading: 'LOADING' };
 
   function netConnect(ptr, len) {
     if (!window.WebSocket) return 0;
@@ -750,26 +735,6 @@ function sorzTransport(Socket, events, limits = {}) {
     } catch (e) { /* No network play here. */ }
   }
 
-  // What the session's state says to the player over the picture, or '' while it plays (and
-  // while the player's own settings screen is open).
-  function netMessage() {
-    const state = window.sorz.inspect();
-    if (!state || !state.net) return '';
-    const host = state.net.role === 'host';
-    switch (state.net.phase) {
-      case 'idle': return host ? words.waiting : words.joining;
-      case 'handshake': return words.joining;
-      case 'desynced': return words.desynced;
-      case 'ended': return words.ended;
-      default:
-        // A session in play without its connection holds: the host waits for its guest, which
-        // comes back (a native game's) or is replaced (a relay's), and a guest of a native host
-        // reconnects.
-        if (state.net.connected) return state.net.peer_in_settings ? words.inSettings[host ? 0 : 1] : '';
-        return host ? words.guestLeft : words.hostAway;
-    }
-  }
-
   function log(level, ptr, len) {
     const text = '[sorz] ' + readString(ptr, len);
     if (level === 0) console.error(text);
@@ -800,29 +765,8 @@ function sorzTransport(Socket, events, limits = {}) {
   // --- input --------------------------------------------------------------------------------
 
   function onKey(event, down) {
-    if (!started && phase !== 'settings') {
-      if (phase === 'stopped') return;
-      // The game's settings key (F1 at first) is the game's from the start: the browser never
-      // gets it (its F1 opens no help). On the choice that starts the game, it opens the game's
-      // settings screen, as the menu's SETTINGS line does.
-      if (wasm.gp_settings_key(writeScratch(event.code)) === 1) {
-        event.preventDefault();
-        if (down && !event.repeat && phase === 'ready') openSettings();
-        return;
-      }
-      // On the choice that starts the game, the arrows move the arrow, as on the game's menu, and
-      // Enter or Space, a gesture as a click is, chooses; not their repeats, so that a key held
-      // since the settings screen closed chooses nothing.
-      if (!down || phase !== 'ready') return;
-      if (event.code === 'ArrowUp' || event.code === 'ArrowDown') {
-        event.preventDefault();
-        moveChoice(event.code === 'ArrowUp' ? -1 : 1);
-      } else if (event.code === 'Enter' || event.code === 'Space') {
-        event.preventDefault();
-        if (!event.repeat) choose(menu.choice);
-      }
-      return;
-    }
+    if (!started) return;
+    if (down) firstGesture();
     const used = wasm.gp_key(writeScratch(event.code), down ? 1 : 0, event.repeat ? 1 : 0);
     // A key that types a character also gives the text, after the key, as the native host does.
     // AltGr types the characters of the keyboard's third level.
@@ -830,14 +774,27 @@ function sorzTransport(Socket, events, limits = {}) {
     if (down && event.key.length === 1 && !event.ctrlKey && !event.metaKey && (!event.altKey || altGraph)) {
       wasm.gp_text(writeScratch(event.key));
     }
-    // The game's keys do not reach the browser: the arrows do not scroll, F1 opens no help. The
-    // browser keeps its own keys (F5, F11, F12, Escape) and those the page's player does not use.
+    // The game's keys do not reach the browser: the arrows do not scroll. The browser keeps its
+    // own keys (F1, F5, F11, F12, Escape) and those the page's player does not use.
     if (used) event.preventDefault();
+  }
+
+  // The player's first click or key, the gesture after which a browser gives sound and the full
+  // screen that the settings want.
+  let gestured = false;
+
+  function firstGesture() {
+    if (gestured) return;
+    gestured = true;
+    if (audio.context) audio.context.resume().catch(() => {});
+    if (view.fullscreen) enterFullscreen();
   }
 
   // A click asks again for the full screen that the settings want and the browser did not give.
   function onPageDown() {
-    if ((started || phase === 'settings') && view.fullscreen) enterFullscreen();
+    if (!started) return;
+    firstGesture();
+    if (view.fullscreen) enterFullscreen();
   }
 
   function onMouseDown(event) {
@@ -892,11 +849,8 @@ function sorzTransport(Socket, events, limits = {}) {
   // The gamepads, polled at each animation frame (the Gamepad API has no events for buttons). Each
   // change goes to the module by the gamepad's index and the standard mapping's numbers; the
   // module maps them (src/web/gamepad.zig). A browser shows a gamepad only after one of its
-  // buttons is pressed. The menu reads them itself (`readMenuPads`); a button that chose a line
-  // there (`held`, `index:button`) is not given to the module until it is released, so that the
-  // A that chose SETTINGS does not choose on the settings screen too.
+  // buttons is pressed.
   const pads = [];
-  const held = new Set();
 
   function gamepads() {
     return navigator.getGamepads ? Array.from(navigator.getGamepads()) : [];
@@ -923,12 +877,8 @@ function sorzTransport(Socket, events, limits = {}) {
         const button = pad.buttons[b];
         // The triggers (6, 7) are axes: their pressure. The others are pressed or not.
         const value = (b === 6 || b === 7) ? Math.round(button.value * 32767) : (button.pressed ? 1 : 0);
-        if (held.has(i + ':' + b)) {
-          if (!button.pressed) held.delete(i + ':' + b);
-          seen.buttons[b] = value;
-          continue;
-        }
         if (seen.buttons[b] === value) continue;
+        if (button.pressed) firstGesture();
         seen.buttons[b] = value;
         wasm.gp_pad_button(i, b, button.pressed ? 1 : 0, value);
       }
@@ -986,8 +936,6 @@ function sorzTransport(Socket, events, limits = {}) {
   function stop(text, more = '') {
     started = false;
     phase = 'stopped';
-    // Network play's messages are over: the stop's own stays.
-    session.on = false;
     net.onRelay = null;
     // A page that no longer plays makes room on the relay for the next one.
     net.transport.leaveRelay();
@@ -1011,11 +959,6 @@ function sorzTransport(Socket, events, limits = {}) {
     update();
   }
 
-  // Network play's message over the picture, looked up a few times a second and drawn over each
-  // picture the game presents while there is one; without the module's screens, the page's own
-  // text says it (`shownText`: what it says now).
-  const session = { on: false, text: '', at: 0, shownText: '' };
-
   function update() {
     pollGamepads();
     const before = performance.now();
@@ -1038,256 +981,45 @@ function sorzTransport(Socket, events, limits = {}) {
         stats.slowLog.push([Math.round(took * 10) / 10, state.ticks]);
       }
     }
-    if (result === 1) stop(words.finished);
+    if (result === 1) stop('THE GAME HAS ENDED', 'Reload the page to play again.');
     else if (result !== 0) stop('THE GAME STOPPED', errorText());
-    else if (session.on) {
-      if (before - session.at > 250) {
-        session.at = before;
-        session.text = netMessage();
-      }
-      shown = session.text;
-      if (screens) {
-        if (session.text !== '') wasm.gp_screen_message(writeScratch(session.text), 1);
-      } else if (session.text !== session.shownText) {
-        session.shownText = session.text;
-        if (session.text === '') overlay.classList.add('hidden');
-        else {
-          say(session.text);
-          overlay.classList.add('over');
-        }
-      }
-    }
+    else relay();
     return result;
   }
 
-  // The choice that starts the game, as the game's menu has it: 1 PLAYER plays alone on this page,
-  // 2 PLAYERS with another player over the network, and SETTINGS opens the game's settings screen
-  // without starting the game. The game then plays the network variant (DESIGN.md 10.7): its own
-  // menu, after the title, has no 1 PLAYER or 2 PLAYERS (this choice made them), but START,
-  // SETTINGS and OPTIONS. A relay offers all three; a native game that hosts here, 2 PLAYERS
-  // only (its player is player 1); a server without network play, 1 PLAYER only; SETTINGS whenever
-  // the game has its settings screen (`gp_settings_available`). `available` has a bit for each
-  // line; `note` is a line below. The arrows and Enter choose, or a gamepad's d-pad and A or Start,
-  // or a click.
-  const menuLines = ['1 PLAYER', '2 PLAYERS', 'SETTINGS'];
-  const settingsLine = 2;
-  const menu = { choice: 0, available: 1, note: '' };
-
-  function ready(choice, available, note = '') {
-    phase = 'ready';
-    const settings = wasm.gp_settings_available() !== 0 ? 1 << settingsLine : 0;
-    Object.assign(menu, { choice, available: (available & ~(1 << settingsLine)) | settings, note });
-    drawMenu();
-    overlay.dataset.state = 'ready';
-    overlay.onclick = (event) => {
-      const line = screens ? wasm.gp_screen_pick(...pagePoint(event)) : -1;
-      choose(line < 0 ? menu.choice : line);
-    };
-    // Only a press from now on chooses: not the button that left the settings screen.
-    readMenuPads(false);
-    startMenuFrames();
-    // The menu's sounds, if they could not be made before it showed.
-    setTimeout(prepareMenuSounds, 0);
-  }
-
-  function drawMenu() {
-    const lines = menuLines.map((word, i) => (i === menu.choice ? '\u25B6 ' : '') + word +
-      ((menu.available >> i) & 1 ? '' : ' (not here)'));
-    shown = [...lines, menu.note].filter((line) => line !== '').join('\n');
-    if (!screens) {
-      say(lines.join('\n'), menu.note);
-      return;
-    }
-    wasm.gp_screen_menu(menu.choice, menu.available, writeScratch(menu.note));
-    overlay.classList.remove('hidden');
-    overlay.classList.add('screen');
-  }
-
-  // The arrow to the next line that the menu offers, up or down, round the end, with the game's
-  // menu's sound.
-  function moveChoice(step) {
-    const n = menuLines.length;
-    for (let i = 1; i <= n; i++) {
-      const line = (menu.choice + step * i + 2 * n) % n;
-      if ((menu.available >> line) & 1) {
-        if (line !== menu.choice) playMenuSound(0);
-        menu.choice = line;
-        break;
-      }
-    }
-    drawMenu();
-  }
-
-  function choose(line) {
-    playMenuSound(1);
-    if (line === settingsLine) openSettings();
-    else begin(line);
-  }
-
-  // The game's menu sounds on the page's menu: the arrow's move and a choice, which the module
-  // makes as the game plays them (48 kHz stereo frames), played at the settings' volume. They are
-  // made before the menu shows, not when a key wants them: making one takes a while in a debug
-  // build, and the first move would wait for it.
-  const menuSounds = [];
-
-  function prepareMenuSounds() {
-    for (const which of [0, 1]) {
-      if (menuSounds[which]) continue;
-      const frames = wasm.gp_menu_sound(which);
-      if (frames === 0) continue;
-      const pcm = new Int16Array(memory.buffer, wasm.gp_menu_sound_ptr(), frames * 2);
-      const left = new Float32Array(frames);
-      const right = new Float32Array(frames);
-      for (let i = 0; i < frames; i++) {
-        left[i] = pcm[2 * i] / 32768;
-        right[i] = pcm[2 * i + 1] / 32768;
-      }
-      menuSounds[which] = [left, right];
-    }
-  }
-
-  function playMenuSound(which) {
-    const context = ensureAudioContext(48000);
-    if (!context) return;
-    context.resume().catch(() => {});
-    if (!menuSounds[which]) prepareMenuSounds();
-    const sound = menuSounds[which];
-    if (!sound) return;
-    const buffer = context.createBuffer(2, sound[0].length, 48000);
-    buffer.copyToChannel(sound[0], 0);
-    buffer.copyToChannel(sound[1], 1);
-    const source = context.createBufferSource();
-    source.buffer = buffer;
-    source.connect(audio.gain);
-    source.start();
-  }
-
-  // The menu reads the gamepads itself, by the standard mapping: the d-pad's up and down move the
-  // arrow, A (the bottom face button) or Start chooses, each when pressed, not while held. With
-  // `act` false, it only takes note of the buttons held now.
-  const menuPads = [];
-  const menuButtons = { up: 12, down: 13, a: 0, start: 9 };
-
-  function readMenuPads(act) {
-    const list = gamepads();
-    for (let i = 0; i < list.length; i++) {
-      const pad = list[i];
-      const before = menuPads[i] || [];
-      const now = pad && pad.connected ? pad.buttons.map((button) => button.pressed) : [];
-      menuPads[i] = now;
-      const pressed = (b) => act && phase === 'ready' && now[b] && !before[b];
-      if (pressed(menuButtons.up)) moveChoice(-1);
-      if (pressed(menuButtons.down)) moveChoice(1);
-      for (const b of [menuButtons.a, menuButtons.start]) {
-        if (!pressed(b)) continue;
-        choose(menu.choice);
-        // The button that chose is the menu's until it is released.
-        if (phase !== 'ready') held.add(i + ':' + b);
-      }
-    }
-  }
-
-  // The menu's animation frames, and those of the settings screen opened from it; `sorz.step`
-  // runs them when the checks drive the page.
-  let menuFrames = false;
-
-  function startMenuFrames() {
-    if (menuFrames || checks.manual) return;
-    menuFrames = true;
-    requestAnimationFrame(menuFrame);
-  }
-
-  function menuFrame() {
-    if (checks.manual || (phase !== 'ready' && phase !== 'settings')) {
-      menuFrames = false;
-      return;
-    }
-    menuTick();
-    requestAnimationFrame(menuFrame);
-  }
-
-  function menuTick() {
-    if (phase === 'ready') readMenuPads(true);
-    else if (phase === 'settings') settingsUpdate();
-  }
-
-  // SETTINGS, or the settings key, on the menu: the game's settings screen, before the game
-  // starts (the module's `gp_settings_open`). It takes the keys and the gamepads as during play;
-  // leaving it comes back to the menu, the arrow on SETTINGS.
-  function openSettings() {
-    if (phase !== 'ready' || wasm.gp_settings_open() !== 0) return;
-    phase = 'settings';
-    shown = '';
-    overlay.onclick = null;
-    overlay.classList.add('hidden');
-    canvas.focus();
-    startMenuFrames();
-  }
-
-  function settingsUpdate() {
-    pollGamepads();
-    let open;
-    try {
-      open = wasm.gp_settings_frame();
-    } catch (e) {
-      stop('THE GAME STOPPED', e.message);
-      return;
-    }
-    if (open === 0) ready(settingsLine, menu.available, menu.note);
-    else if (open !== 1) stop('THE GAME STOPPED', errorText());
-  }
-
-  // The click or the key that chooses is the gesture after which a browser gives sound, the
-  // pointer lock and the full screen that the settings want. A dimmed line does nothing.
-  function begin(choice) {
-    if (phase !== 'ready' || !((menu.available >> choice) & 1)) return;
-    phase = 'playing';
-    overlay.onclick = null;
-    overlay.classList.add('hidden');
-    ensureAudioContext(48000);
-    if (audio.context) audio.context.resume().catch(() => {});
-    if (view.fullscreen) enterFullscreen();
-    canvas.focus();
-    if (choice === 0) {
-      // Alone, with the files of this page's server: a relay's page never joins it.
-      run();
-      return;
-    }
-    if (net.mode === 'native') {
-      // A native game hosts at this page's address: this page joins it as player 2.
-      if (startNetplay(0, netUrl())) run();
-      return;
-    }
-    // The relay says whether this page hosts (player 1) or joins (player 2); the session starts
-    // once it has, before the first update. Without a role (two play there, or the relay cannot
-    // be reached), the menu comes back without 2 PLAYERS; later, the relay can end the game here.
-    showMessage(words.joining);
+  // On a relay: the page joins it when the game's player wants to play with another's
+  // (`gp_net_wanted`: its 2 PLAYERS chose the character select) and it is not on it. The relay
+  // gives it its role, which the game takes (`gp_start_netplay`): the first page hosts (player 1,
+  // playing alone until a guest comes), the next joins it; or says why it has none ('busy': two
+  // play there; 'unreachable'), and the game plays alone and says so (`gp_net_busy`). Once its
+  // connection ends (its host left, the connection was lost), the page is off the relay again.
+  function relay() {
+    if (net.mode !== 'relay' || net.onTheRelay || wasm.gp_net_wanted() === 0) return;
+    net.onTheRelay = true;
     net.onRelay = (state) => {
       if (state === 'host' || state === 'guest') {
-        if (startNetplay(state === 'host' ? 1 : 0, '')) run();
+        startNetplay(state === 'host' ? 1 : 0, '');
         return;
       }
-      net.onRelay = null;
-      if (phase === 'stopped') return;
-      if (!started && (state === 'busy' || state === 'unreachable')) ready(0, 1, words[state]);
-      else stop(words[state] || words.lost);
+      net.onTheRelay = false;
+      if (state === 'busy' || state === 'unreachable') wasm.gp_net_busy();
     };
     net.transport.joinRelay(netUrl());
   }
 
   function startNetplay(role, url) {
-    if (wasm.gp_start_netplay(role, writeScratch(url)) === 0) {
-      session.on = true;
-      return true;
-    }
+    if (wasm.gp_start_netplay(role, writeScratch(url)) === 0) return true;
     stop('NETWORK PLAY CANNOT START', errorText());
     return false;
   }
 
+  // The game runs: its own front end, one update for each animation frame (or `sorz.step`'s).
   function run() {
+    phase = 'playing';
     started = true;
     shown = '';
     overlay.classList.add('hidden');
+    canvas.focus();
     stats.since = performance.now();
     if (!checks.manual) requestAnimationFrame(frame);
   }
@@ -1391,9 +1123,10 @@ function sorzTransport(Socket, events, limits = {}) {
   // --- the page's checks ----------------------------------------------------------------------
 
   // For the page's automated checks (`zig build browser-check`) and for debugging from the
-  // console. `manual` leaves the updates to `step`; `audioTap` sees every block that the game
-  // queues, before the output takes it.
-  const checks = { manual: false, audioTap: null };
+  // console. `manual` leaves the updates to `step` (from the start with the address's `#manual`,
+  // which the server never sees); `audioTap` sees every block that the game queues, before the
+  // output takes it.
+  const checks = { manual: location.hash === '#manual', audioTap: null };
 
   window.sorz = {
     get phase() { return phase; },
@@ -1433,10 +1166,8 @@ function sorzTransport(Socket, events, limits = {}) {
         audio_dropped: audio.dropped,
         audio_underruns: audio.underruns,
         audio_base_latency: audio.context ? audio.context.baseLatency : 0,
-        // The gain the output has now (null before the click that starts the game makes it).
+        // The gain the output has now (null before the game opens its sound).
         audio_gain: audio.gain ? audio.gain.gain.value : null,
-        // The frames of the menu's sounds the page made (the arrow's move, a choice), 0 before.
-        menu_sounds: [0, 1].map((i) => (menuSounds[i] ? menuSounds[i][0].length : 0)),
       };
     },
     // The settings as the page applies them (`js_settings`), the full screen the browser gives,
@@ -1449,22 +1180,25 @@ function sorzTransport(Socket, events, limits = {}) {
         device_pixel_ratio: window.devicePixelRatio || 1,
       };
     },
-    // The checks drive the updates themselves: set before the click that starts the game. On the
-    // menu, a step reads the gamepads; with the settings screen open from it, a step updates it.
+    // The checks drive the updates themselves (`step`): set as soon as the page is ready; the
+    // animation frames that were going on stop at the next.
     set manual(value) {
+      const was = checks.manual;
       checks.manual = !!value;
-      if (!checks.manual) startMenuFrames();
+      if (was && !checks.manual && started) {
+        // The page's own updates from now: its timing counts from here.
+        Object.assign(stats, { updates: 0, since: performance.now(), slow: 0, slowLog: [], longest: 0, total: 0 });
+        requestAnimationFrame(frame);
+      }
     },
     get manual() { return checks.manual; },
     setPacing(perUpdate) { wasm.gp_set_pacing(perUpdate ? 1 : 0); },
     step(count) {
       // A page that stopped runs nothing more.
       if (phase === 'stopped') return 1;
+      if (!started) return -1;
       let result = 0;
-      for (let i = 0; i < count && result === 0; i++) {
-        if (phase === 'ready' || phase === 'settings') menuTick();
-        else result = update();
-      }
+      for (let i = 0; i < count && result === 0; i++) result = update();
       return result;
     },
     set audioTap(fn) { checks.audioTap = fn; },
@@ -1507,11 +1241,13 @@ function sorzTransport(Socket, events, limits = {}) {
       return;
     }
     stats.startMs = performance.now() - loaded;
-    // The menu's sounds, made while the loading screen still shows: the first move sounds at once.
-    prepareMenuSounds();
     stats.readyMs = performance.now();
-    if (net.mode === 'native') ready(1, 2);
-    else ready(0, net.mode === 'relay' ? 3 : 1);
+    // A native game hosts here: this page is its guest (player 2), its game connecting when its
+    // player wants to join.
+    if (net.mode === 'native' && !startNetplay(0, netUrl())) return;
+    // The checks may take the updates over before the first frame.
+    await Promise.resolve();
+    run();
   }
 
   load().catch((e) => stop('THE PAGE CANNOT START', e.message));

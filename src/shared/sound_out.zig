@@ -112,6 +112,14 @@ pub const SoundOut = struct {
         return frames;
     }
 
+    /// Asks for sound `id` at the next update, as a tick's requests are (a game loaded from
+    /// another's: its scenes' music from its start).
+    pub fn ask(self: *SoundOut, id: audio.sound.Id) void {
+        if (self.asked_len == self.asked.len) return;
+        self.asked[self.asked_len] = id;
+        self.asked_len += 1;
+    }
+
     /// The most frames that a tick has, at the largest stretch.
     pub fn maxFrames(self: *const SoundOut) u32 {
         return @intCast(@as(u64, self.rate) * (1_000_000 + max_stretch_ppm) * tick_rate_denominator / unit + 1);

@@ -105,6 +105,10 @@ pub const Turn = struct {
     /// This machine's game takes the game's rules from another machine's (network play's guest):
     /// OPTIONS shows only what is this machine's own.
     guest: bool = false,
+    /// A character another machine's player plays (network play: the host's player 1, while this
+    /// machine's player chooses theirs to join its game): the character select's cursor passes
+    /// it and cannot choose it.
+    taken: ?@import("setup.zig").Character = null,
     setup: *Setup,
     /// The variant's rules (variant.zig), which the scenes ask rather than the variant.
     policies: *const variant.Policies = &variant.original.policies,
@@ -335,6 +339,36 @@ pub fn powerOn(graph: *const flow.Graph, setup: *const Setup) Stack {
     s.load_after_setup = .{ .left = graph.power_on };
     s.setup_left = setupTicks(graph.first);
     return s;
+}
+
+/// The scenes from scene `k`'s set-up, the load `load` (display ticks) after it: a game that goes
+/// back to one of its scenes (network play's guest back to its own menu).
+pub fn startAt(k: Kind, load: u16, setup: *const Setup) Stack {
+    var s: Stack = .{};
+    s.replace(.start(k, setup));
+    s.load_after_setup = .{ .left = load };
+    s.setup_left = setupTicks(k);
+    return s;
+}
+
+/// What the presentation keeps of the scenes' last tick, made again from their state (a game loaded
+/// from another's form: network play's join): a round's world's draw list.
+pub fn redrawOutput(stack: *const Stack, out: *world.Output, assets: *const Assets) void {
+    out.* = .{};
+    switch (stack.base) {
+        .round => |*r| r.redrawWorld(out, &assets.round),
+        else => {},
+    }
+}
+
+/// The music the scenes play now, which a game loaded from another's form starts (network play's
+/// join): the character select's, a round's.
+pub fn music(stack: *const Stack, assets: *const Assets) ?library.Sound {
+    return switch (stack.base) {
+        .select => |*s| s.music(&assets.select),
+        .round => |*r| r.music(&assets.round),
+        else => null,
+    };
 }
 
 /// The ticks a scene's set-up takes before the load after it: one, unless it says otherwise.

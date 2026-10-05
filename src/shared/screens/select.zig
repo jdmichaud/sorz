@@ -12,6 +12,10 @@
 //! C or START chooses the character, once. The presses before the first such tick are lost.
 //! When every player has chosen, the picture holds for 18 ticks, fades out, and the select ends
 //! with "stop": round 1 follows.
+//!
+//! Network play (DESIGN.md 9): a second player may come to a select of one (`join`), its cursor
+//! on the first portrait free from Blaze's, and go (`leave`); a character another machine's
+//! player plays (`Turn.taken`) is passed and cannot be chosen.
 const std = @import("std");
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
@@ -318,6 +322,12 @@ pub const Select = struct {
                 turn.setup.characters = .{ null, null };
                 self.colours.aim(a.colours);
                 self.colours.aim(if (self.players == .two) a.two_players else a.one_player);
+                // Alone, the cursor starts on the first character no other machine's player has.
+                if (turn.taken) |t| if (self.players == .one and self.cursors[0].place == t) {
+                    self.cursors[0].place = next(t, true);
+                    self.colours.aim(a.dim(t));
+                    self.colours.aim(a.lit(self.cursors[0].place));
+                };
                 turn.play(a.music);
                 self.phase = .placing;
                 // The next display tick is the tick's second half.
@@ -396,6 +406,7 @@ pub const Select = struct {
         const c = &self.cursors[i];
         if (c.chosen or @as(u8, @bitCast(pressed)) == 0) return;
         if (pressed.a or pressed.b or pressed.c or pressed.start) {
+            if (turn.taken == c.place) return;
             c.chosen = true;
             turn.setup.characters[i] = c.place;
             turn.play(a.choose);
@@ -404,14 +415,75 @@ pub const Select = struct {
         // Any direction but right is left.
         const from = c.place;
         var to = next(from, pressed.right);
-        // A character the variant's rule says is taken (the other player's, in the cartridge).
+        // A character the variant's rule says is taken (the other player's, in the cartridge), or
+        // another machine's player's.
         if (self.players == .two and turn.policies.characterTaken(self.cursors[1 - i].place, to)) to = next(to, pressed.right);
+        if (turn.taken == to) to = next(to, pressed.right);
         c.place = to;
         self.portraits[@backingInt(from)].cursor = false;
         self.portraits[@backingInt(to)].cursor = true;
         self.colours.show(a.dim(from));
         self.colours.show(a.lit(to));
         turn.play(a.move);
+    }
+
+    /// Whether a second player may come to this select: one plays it, and it has not ended.
+    pub fn joinable(self: *const Select) bool {
+        return self.players == .one and switch (self.phase) {
+            .setup, .placing, .fade_in, .first_half, .second_half => true,
+            .wait, .fade_out, .leaving => false,
+        };
+    }
+
+    /// A second player comes to the select (`joinable`): its cursor on the first portrait from
+    /// Blaze's that player 1's is not on, its frame lit; two players choose from now on.
+    pub fn join(self: *Select, setup: *Setup, a: *const Assets) void {
+        setup.players = .two;
+        // Before its set-up, the set-up does it all.
+        if (self.phase == .setup) return;
+        self.players = .two;
+        var place: Character = .blaze;
+        if (place == self.cursors[0].place) place = next(place, true);
+        self.cursors[1] = .{ .place = place };
+        switch (self.phase) {
+            // The fade in takes the frame lit, and lights its portrait at its end.
+            .placing, .fade_in => self.colours.aim(a.lit(place)),
+            else => {
+                self.portraits[@backingInt(place)].cursor = true;
+                self.colours.show(a.lit(place));
+            },
+        }
+        self.list();
+    }
+
+    /// The second player goes: its cursor, its frame lit and its choice with it; one player
+    /// chooses from now on.
+    pub fn leave(self: *Select, setup: *Setup, a: *const Assets) void {
+        setup.players = .one;
+        setup.characters[1] = null;
+        if (self.players == .one) return;
+        self.players = .one;
+        const place = self.cursors[1].place;
+        if (self.cursors[0].place != place) {
+            self.portraits[@backingInt(place)].cursor = false;
+            switch (self.phase) {
+                .setup, .placing, .fade_in => self.colours.aim(a.dim(place)),
+                else => self.colours.show(a.dim(place)),
+            }
+        }
+        self.cursors[1] = .{ .place = .blaze };
+        self.list();
+    }
+
+    /// The character the only player chose (a guest's own select, before it joins).
+    pub fn chosenAlone(self: *const Select) ?Character {
+        if (self.players != .one or !self.cursors[0].chosen) return null;
+        return self.cursors[0].place;
+    }
+
+    /// The select's music, which plays from its set-up.
+    pub fn music(self: *const Select, a: *const Assets) ?library.Sound {
+        return if (self.phase == .setup) null else a.music;
     }
 
     fn next(c: Character, right: bool) Character {

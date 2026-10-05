@@ -14,22 +14,21 @@
 //! Without a content tree (the repository's checks give the game none, DESIGN.md 1), the game shows
 //! a test pattern and plays silence, on which the hosts, network play and the checks run.
 //!
-//! Network play (DESIGN.md 9, `startNetplay`): each tick's pads come from the session with the
-//! other player instead of the local controls, which give this player's pad only (pad 1's keys and
-//! every controller, on both machines). A tick runs once both pads for it are in; until then the
-//! game holds: no tick, the same picture. The peer that gets ahead stretches its sound (or its
-//! clock) by up to 0.5 %. A new session starts the game from power-on; a state mismatch stops it.
-//! Without a session, nothing of this runs.
+//! Network play (DESIGN.md 9, `startNetplay`, network_play.zig): each machine plays its own game
+//! with its player's pad (pad 1's keys and every controller); the players meet in one game, which
+//! the host's canonical form carries to the guest (`load`). In a session, each tick's pads come
+//! from it instead of the local controls; a tick runs once both pads for it are in; until then
+//! the game holds: no tick, the same picture. The peer that gets ahead stretches its sound (or its
+//! clock) by up to 0.5 %. A state mismatch stops it. Without network play, nothing of this runs.
 //!
 //! Settings (DESIGN.md 7): the record, read from the storage at the start, gives the controls'
 //! layout, the sound's volume and the SDL host's window: this machine's, never the game's state.
 //! The settings screen changes it: an overlay of this machine over the game's scenes
 //! (overlay.zig), opened on the machine of the player who asks: OPTIONS' ADVANCED SETTINGS, START
-//! during play (the extended and network variants), the settings key in the original, or the
-//! browser page's menu before the game starts (`openSettings`). While it is open the game holds:
+//! during play (the extended and network variants), the settings key in the original. While it is
+//! open the game holds:
 //! no tick, the picture dimmed under it, the game's sound faded out and the pause's jingle played.
-//! In network play the other machine holds too, says why (unless its host says it: the browser's
-//! page) and plays the jingle. A damaged record is repaired and kept aside (settings/record.zig),
+//! In network play the other machine holds too, says why and plays the jingle. A damaged record is repaired and kept aside (settings/record.zig),
 //! and a notice tells the player for a few seconds.
 const std = @import("std");
 const platform = @import("platform.zig");
@@ -45,11 +44,13 @@ const sound_out = @import("sound_out.zig");
 const net = @import("net/root.zig");
 const View = @import("view.zig").View;
 const transfers = @import("screens/transfers.zig");
-const Setup = @import("setup.zig").Setup;
+const setup_mod = @import("setup.zig");
+const Setup = setup_mod.Setup;
 const world = @import("world/root.zig");
 const variant = @import("variant.zig");
 const overlay = @import("overlay.zig");
 const panel_mod = @import("panel.zig");
+const network_play = @import("network_play.zig");
 
 pub const page_width = picture.width;
 pub const page_height = picture.height;
@@ -123,7 +124,7 @@ pub const State = struct {
 
     /// What this machine tells a tick: whether a second pad is there, whether its game takes the
     /// game's rules from another machine's (scene.Turn).
-    pub const Machine = struct { second_pad: bool = true, guest: bool = false };
+    pub const Machine = struct { second_pad: bool = true, guest: bool = false, taken: ?setup_mod.Character = null };
 
     /// One display tick, with the pads of that tick and whether a second pad is there. Returns
     /// what the tick asks of the sound. Every scene but the test pattern needs `assets`.
@@ -140,6 +141,7 @@ pub const State = struct {
             .pressed = .{ .pad1 = newly(pads.pad1, self.held.pad1), .pad2 = newly(pads.pad2, self.held.pad2) },
             .second_pad = machine.second_pad,
             .guest = machine.guest,
+            .taken = machine.taken,
             .setup = &self.setup,
             .policies = &config.policies,
             .random = &self.random,
@@ -161,6 +163,69 @@ pub const State = struct {
 
     pub fn hash(self: *const State) u64 {
         return canonical.hash(State, self);
+    }
+
+    /// Whether a game is under way: from the character select to its end (the game over).
+    /// Network play's session lasts as long (DESIGN.md 9).
+    pub fn inGame(self: *const State) bool {
+        const k = if (self.scenes.next) |n| n.kind else std.meta.activeTag(self.scenes.base);
+        return switch (k) {
+            .select, .round, .round_clear, .next_round => true,
+            else => false,
+        };
+    }
+
+    /// What a second player joining the game can do now.
+    pub const Joining = enum {
+        /// Join at once: the character select's second cursor, or the round's drop-in at its next
+        /// logic tick.
+        now,
+        /// Not now: between two rounds, or no game yet.
+        later,
+        /// The game plays: the second player must have a character first.
+        character,
+    };
+
+    pub fn joining(self: *const State, character: ?setup_mod.Character) Joining {
+        return switch (self.scenes.base) {
+            .select => |*s| if (self.scenes.next == null and s.joinable()) .now else if (character == null) .character else .later,
+            .round => |*r| if (character == null) .character else if (r.play.world.players[1].entity == null) .now else .later,
+            .round_clear, .next_round => if (character == null) .character else .later,
+            else => .later,
+        };
+    }
+
+    /// The second player joins (`joining` said `now`): at the character select, or in the round
+    /// as `character`.
+    pub fn join(self: *State, character: ?setup_mod.Character, assets: *const scene.Assets) void {
+        switch (self.scenes.base) {
+            .select => |*s| s.join(&self.setup, &assets.select),
+            .round => |*r| _ = r.dropIn(character.?),
+            else => {},
+        }
+    }
+
+    /// The second player leaves the game (network play's guest who quits or did not come back):
+    /// gone from the character select; out of the game in a round, as a player out of lives who
+    /// does not continue; out of the next round between two.
+    pub fn dropOut(self: *State, assets: *const scene.Assets) void {
+        switch (self.scenes.base) {
+            .select => |*s| s.leave(&self.setup, &assets.select),
+            .round => |*r| r.dropOut(1),
+            .round_clear, .next_round => self.setup.progress.players[1].in_play = false,
+            else => {},
+        }
+    }
+
+    /// Back to the game menu, with `setup` (network play's guest whose game ended without it:
+    /// its own front end again), after the options' wait back to it.
+    pub fn backToMenu(self: *State, setup: Setup) void {
+        self.setup = setup;
+        self.setup.progress = .{};
+        self.setup.characters = .{ null, null };
+        const back = flow.original.next(.options, .done).?;
+        self.scenes = scene.startAt(.menu, back.load, &self.setup);
+        self.held = .{};
     }
 };
 
@@ -191,10 +256,13 @@ pub const Game = struct {
     clock_base_ns: u64 = 0,
     clock_ticks: u64 = 0,
     clock_ppm: u32 = 0,
-    /// Network play: the session each tick's pads come from (null: the local controls), and the
-    /// sessions from power-on that the game started for.
+    /// Network play: the session each tick's pads come from (null: the local controls).
     netplay: ?*net.Netplay = null,
-    net_epoch: u32 = 0,
+    /// A guest's own game's set-up from before it joined another's: its own menu's when it goes
+    /// back to it (network_play.zig).
+    own_setup: ?Setup = null,
+    /// Network play turned this game away (two played there, other data): it plays alone, and
+    /// asks no more until its game's character select is over.
     /// The variant the game plays (variant.zig), which the host chooses before the first update:
     /// in network play, the host's is both games'.
     variant: variant.Variant = .extended,
@@ -231,9 +299,7 @@ pub const Game = struct {
     overlay_dirty: bool = true,
     /// The settings' arrow as last drawn (it blinks while they wait for a key).
     arrow_shown: bool = true,
-    /// The host says network play's messages itself (the browser's page): the game does not draw
-    /// the other player's being in the settings.
-    host_messages: bool = false,
+    alone: bool = false,
     /// The pause's jingle that the settings play over a held game (made with the sound, before it
     /// is wanted), and where its playing is.
     jingle: []i16 = &.{},
@@ -318,22 +384,8 @@ pub const Game = struct {
     /// What the game starts with (variant.zig): this machine's variant, or in network play the
     /// session's, which the host gives.
     pub fn start(self: *const Game) variant.Start {
-        if (self.netplay) |np| if (np.session.start) |s| return startOf(s);
         if (self.fixed_start) |s| return s;
         return .{ .variant = self.variant };
-    }
-
-    comptime {
-        std.debug.assert(std.enums.values(variant.Variant).len == net.protocol.Start.max_variant + 1);
-    }
-
-    /// A start as the session's welcome carries it, and back.
-    fn startOf(s: net.protocol.Start) variant.Start {
-        return .{ .variant = @fromBackingInt(s.variant) };
-    }
-
-    fn startBytes(s: variant.Start) net.protocol.Start {
-        return .{ .variant = @backingInt(s.variant) };
     }
 
     /// The rules of the variant the game plays: its state's (without content, the test pattern's
@@ -396,15 +448,77 @@ pub const Game = struct {
     }
 
     /// Plays with another player over the network (DESIGN.md 9): the host (player 1) listens at
-    /// `options.address`, the guest (player 2) connects to it. Call before the first update; the
-    /// game then starts from power-on once the session does.
+    /// `options.address`, the guest (player 2) connects to it when its player wants to join (a
+    /// relay's page: the page brings the connection). A network play the game had goes; the next
+    /// update starts this one.
     pub fn startNetplay(self: *Game, options: net.netplay.Options) error{OutOfMemory}!void {
-        std.debug.assert(self.netplay == null and !self.started);
         const np = try self.allocator.create(net.Netplay);
         errdefer self.allocator.destroy(np);
         np.* = try net.Netplay.init(self.allocator, options, canonical.diffFn(State));
+        self.endNetplay();
         self.netplay = np;
         self.setOnePlayer();
+        self.guest = options.role == .guest;
+        self.alone = false;
+    }
+
+    fn endNetplay(self: *Game) void {
+        const np = self.netplay orelse return;
+        np.deinit();
+        self.allocator.destroy(np);
+        self.netplay = null;
+        self.overlays.remove(.peer_settings);
+        self.showWait(null);
+    }
+
+    /// Network play turned this game away: it plays alone (until its character select is over),
+    /// as one player.
+    pub fn playAlone(self: *Game) void {
+        self.endNetplay();
+        self.guest = false;
+        self.alone = true;
+    }
+
+    /// Whether this machine's player wants to play with another machine's now (its 2 PLAYERS led
+    /// it to the character select) and has no network play to: a relay's page then joins the
+    /// relay (web/main.zig).
+    pub fn wantsNetwork(self: *const Game) bool {
+        if (self.alone or self.content == null) return false;
+        if (self.netplay) |np| if (np.inSession() or np.peer != null) return false;
+        return network_play.wantsToJoin(&self.state);
+    }
+
+    /// A message of network play over the picture (notices go after a while); null: none.
+    pub fn tellNetwork(self: *Game, m: ?overlay.Message) void {
+        if (m) |x| self.overlays.push(.{ .network = .{ .what = x } }) else self.overlays.remove(.network);
+        self.overlay_dirty = true;
+    }
+
+    /// Network play's wait (`m`, which holds the game), or none: a wait shown goes.
+    pub fn showWait(self: *Game, m: ?overlay.Message) void {
+        if (self.overlays.find(.network)) |o| {
+            if (m != null and o.network.what == m.?) return;
+            if (m == null and !o.network.what.holds()) return;
+            self.overlays.remove(.network);
+            self.overlay_dirty = true;
+        }
+        if (m) |x| self.tellNetwork(x);
+    }
+
+    /// The game this machine loads from another's canonical form (network play's guest joining
+    /// the host's): from the next tick on, it goes on as that game. What is this machine's own is
+    /// made again from it: the picture whole, the scenes' music from its start, the sound's queue;
+    /// its own set-up kept for its menu, should it go back to it.
+    pub fn load(self: *Game, p: *platform.Platform, form: []const u8) !void {
+        const s = try self.allocator.create(State);
+        defer self.allocator.destroy(s);
+        try canonical.read(State, form, s);
+        if (self.own_setup == null) self.own_setup = self.state.setup;
+        self.state = s.*;
+        self.rebuild(p);
+        if (self.view) |*v| if (self.scene_assets) |*a| scene.redrawOutput(&self.state.scenes, &v.world_out, a);
+        if (self.sound) |*so| if (self.scene_assets) |*a| if (scene.music(&self.state.scenes, a)) |m| so.ask(m);
+        self.loads_done += 1;
     }
 
     /// Whether the other player of network play is on the settings screen.
@@ -471,45 +585,6 @@ pub const Game = struct {
         }
     }
 
-    /// The browser page's menu opens the settings before the game's first update: `updateSettings`
-    /// then runs them alone, over a black picture, until the player leaves them. Nothing of the
-    /// game runs, so the page can still start network play after. False without the content.
-    pub fn openSettings(self: *Game) bool {
-        std.debug.assert(!self.started);
-        self.showSettings();
-        return self.settingsOpen();
-    }
-
-    /// One update of the settings that `openSettings` opened: their events, then their picture
-    /// while they are open. Returns whether they still are; once they close, the controls let go:
-    /// until the game starts, the page's menu has the keys.
-    pub fn updateSettings(self: *Game, p: *platform.Platform) !bool {
-        std.debug.assert(!self.started);
-        _ = try p.start();
-        try p.setResolution(page_width, page_height);
-        var buf: [32]platform.Event = undefined;
-        while (true) {
-            const n = p.pollEvents(&buf);
-            if (n == 0) break;
-            for (buf[0..n]) |e| {
-                self.events_consumed += 1;
-                if (self.settingsOpen()) self.settingsEvent(e);
-            }
-        }
-        if (self.finished and self.settingsOpen()) {
-            const screen = &self.overlays.find(.settings).?.settings;
-            self.settings = screen.before;
-            self.closeSettings(.exit_without_saving);
-        }
-        if (!self.settingsOpen()) {
-            self.controls.release();
-            return false;
-        }
-        try p.present(try self.overlaid(p.nowNs(), null));
-        self.frames_presented += 1;
-        return true;
-    }
-
     /// The events, the ticks due, the picture.
     pub fn update(self: *Game, p: *platform.Platform) !UpdateResult {
         if (!self.started) {
@@ -521,15 +596,11 @@ pub const Game = struct {
             self.state = self.startState();
             self.openSound(p);
             self.clock_base_ns = p.nowNs();
-            if (self.netplay) |np| {
-                // What a host's game starts with, which its welcome gives the guest.
-                np.session.config.start = startBytes(self.start());
-            }
-            if (self.netplay) |np| np.start(p) catch |err| {
-                std.log.err("network play cannot start at {s}: {s}", .{ np.address, @errorName(err) });
-                return err;
-            };
         }
+        if (self.netplay) |np| if (!np.started) np.start(p) catch |err| {
+            std.log.err("network play cannot start at {s}: {s}", .{ np.address, @errorName(err) });
+            return err;
+        };
         self.update_count += 1;
         var buf: [32]platform.Event = undefined;
         while (true) {
@@ -567,12 +638,11 @@ pub const Game = struct {
         if (self.netplay) |np| {
             np.inSettings(p, self.settingsOpen());
             np.update(p);
-            self.peerOverlay(np);
-            if (np.epoch != self.net_epoch) {
-                self.net_epoch = np.epoch;
-                self.powerOn(p);
-            }
+            network_play.update(self, p);
         }
+        if (self.netplay) |np| self.peerOverlay(np);
+        // A game turned away plays alone until its character select is over.
+        if (self.alone and !network_play.wantsToJoin(&self.state)) self.alone = false;
         if (self.overlays.holds()) {
             self.hold(p);
         } else switch (self.pacing) {
@@ -676,8 +746,10 @@ pub const Game = struct {
     fn runTick(self: *Game, p: *platform.Platform) bool {
         if (self.overlays.holds()) return false;
         var pads = self.controls.pads();
-        if (self.netplay) |np| pads = np.pads(p, pads.pad1) orelse return false;
-        const turn = self.state.stepWith(pads, .{ .second_pad = self.secondPad(), .guest = self.guest }, if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
+        const session = if (self.netplay) |np| (if (np.inSession()) np else null) else null;
+        if (session) |np| pads = np.pads(p, pads.pad1) orelse return false;
+        const machine: State.Machine = .{ .second_pad = self.secondPad(), .guest = self.guest, .taken = network_play.taken(self) };
+        const turn = self.state.stepWith(pads, machine, if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
         self.redraw = true;
         if (turn.settings) |who| if (self.plays(who)) self.showSettings();
         if (self.sound) |*s| {
@@ -688,8 +760,13 @@ pub const Game = struct {
             self.faded = false;
             _ = p.audioQueue(self.atVolume(shaped)) catch {};
         } else _ = transfersOf(&self.transfers_due, &turn);
-        if (self.netplay) |np| {
+        if (session) |np| {
             np.ran();
+            // The game ended: so does the session, on both machines at this tick.
+            if (!self.state.inGame()) {
+                np.end(p, .game_over);
+                return true;
+            }
             if (np.checkDue()) {
                 // The state before the session's next tick: its hash and its form.
                 var buf: [canonical.maxSize(State)]u8 = undefined;
@@ -700,9 +777,9 @@ pub const Game = struct {
         return true;
     }
 
-    /// A session from power-on (network play): the state, the picture and the sound start over.
-    fn powerOn(self: *Game, p: *platform.Platform) void {
-        self.state = self.startState();
+    /// What is this machine's own, made again for a state that did not come from its last tick (a
+    /// game loaded, a game sent back to its menu): the picture whole, the sound from silence.
+    pub fn rebuild(self: *Game, p: *platform.Platform) void {
         self.redraw = true;
         self.pattern_drawn = .{};
         self.transfers_due = .{};
@@ -851,10 +928,8 @@ pub const Game = struct {
         const arrow = !waiting or (now_ns / blink_ns) % 2 == 0;
         if (arrow != self.arrow_shown) self.overlay_dirty = true;
         self.arrow_shown = arrow;
-        // The other player's being in the settings is the page's to say, where it says network
-        // play's messages.
         var drawn: usize = 0;
-        for (self.overlays.slice()) |*o| drawn += @intFromBool(!(o.* == .peer_settings and self.host_messages));
+        for (self.overlays.slice()) |_| drawn += 1;
         if (drawn == 0) {
             self.overlay_shown = false;
             return under orelse self.pic.frame();
@@ -863,7 +938,6 @@ pub const Game = struct {
             self.overlay_dirty = false;
             p.begin();
             for (self.overlays.slice()) |*o| {
-                if (o.* == .peer_settings and self.host_messages) continue;
                 try o.draw(p, &self.settings, arrow);
             }
             _ = try p.finish(under, self.overlays.dims());

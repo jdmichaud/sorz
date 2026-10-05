@@ -85,6 +85,22 @@ pub fn picture(t: *Tick) void {
     draw_list.build(t);
 }
 
+/// The draw list of a world in play as its last tick left it, made again without a tick (a game
+/// loaded from another's form: its picture right from its first frame): each entity on the frame
+/// it is on, its shadow with it; the world itself unchanged. The list shows at once.
+pub fn redraw(t: *Tick) void {
+    t.out.* = .{};
+    for (&t.world.entities, 0..) |*e, i| {
+        if (!e.alive() or e.flags.hidden) continue;
+        const index = e.animation.index orelse continue;
+        const k = t.kindOf(e);
+        const step = k.definition.animations[index].frames[e.animation.frame];
+        t.out.shown[i] = .{ .frame = k.frames[index][e.animation.frame], .mirrored = e.facingLeft() != step.flip };
+    }
+    draw_list.listOf(t, false);
+    t.out.latch();
+}
+
 /// One logic tick of a round's world, which follows the round's script `plan` (null: none).
 pub fn runRound(world: *World, kinds: *const Kinds, rng: *random.Random, in: Input, out: *Output, plan: ?*const script.Plan) void {
     out.begin();

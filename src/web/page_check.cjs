@@ -270,7 +270,7 @@ check('the module refuses to start without data', () => {
 
 // The module draws the page's screens from the content's font and menu, whose directories it names
 // for the page to fetch first. Without them its screens refuse, naming the file they lack, and the
-// page's own text stands in; without the sound content, its menu has no sound.
+// page's own text stands in. The page has no menu of its own: the game runs its own front end.
 check('the module names its screens\' directories; without their files it draws none, and says why', () => {
   const { wasm, memory, error } = instantiateModule();
   const len = wasm.gp_screen_files();
@@ -278,11 +278,9 @@ check('the module names its screens\' directories; without their files it draws 
   assert.equal(wasm.gp_screen_open(), -1);
   assert.match(error(), /the page's screens: fonts\/art\.json/);
   assert.equal(wasm.gp_screen_message(0, 1), -1);
-  assert.equal(wasm.gp_screen_pick(100, 90), -1);
-  assert.equal(wasm.gp_menu_sound(0), 0);
-  assert.match(error(), /the menu's sound: sound\//);
-  assert.equal(wasm.gp_menu_sound(1), 0);
-  assert.equal(wasm.gp_menu_sound(2), 0);
+  for (const gone of ['gp_screen_menu', 'gp_screen_pick', 'gp_menu_sound', 'gp_settings_key', 'gp_settings_open']) {
+    assert.equal(wasm[gone], undefined, gone);
+  }
 });
 
 check('the memory grows under the page, which makes its views again', () => {
@@ -320,9 +318,18 @@ check('a file with an invalid name is refused with the file named; the game star
   assert.match(state.frame_hash, /^[0-9a-f]{16}$/);
   assert.equal(state.settings.players, 1);
   assert.equal(state.net, null);
-  // Network play starts before the first update only.
-  assert.equal(wasm.gp_start_netplay(0, 0), -1);
-  assert.match(error(), /before the first update/);
+  // A game without its content has no game to join: it wants no network play; a relay's page
+  // gives it its role whenever the relay does.
+  assert.equal(wasm.gp_net_wanted(), 0);
+  assert.equal(wasm.gp_start_netplay(1, 0), 0);
+  assert.equal(wasm.gp_frame(), 0);
+  const playing = JSON.parse(new TextDecoder().decode(new Uint8Array(memory.buffer, wasm.gp_scratch(), wasm.gp_inspect())));
+  assert.equal(playing.net.role, 'host');
+  assert.equal(playing.ticks, 4);
+  // Turned away by the relay: it plays alone, and says so (no message drawn without the content).
+  wasm.gp_net_busy();
+  assert.equal(wasm.gp_frame(), 0);
+  void error;
 });
 
 check('the page keeps only its player\'s keys (pad 1\'s) from the browser, and never Escape', () => {
@@ -337,28 +344,11 @@ check('the page keeps only its player\'s keys (pad 1\'s) from the browser, and n
   // Pad 2's keys: a page has one player.
   assert.equal(key('Tab'), 0);
   assert.equal(key('KeyW'), 0);
-  // The settings key: the browser's F1 opens no help.
-  assert.equal(key('F1'), 1);
+  // No settings key outside the original: F1 is the browser's.
+  assert.equal(key('F1'), 0);
   assert.equal(key('F5'), 0);
   assert.equal(key('Escape'), 0);
   assert.equal(key('MetaLeft'), 0);
-});
-
-check('the settings key is F1 before the game reads its record; no settings screen before the game', () => {
-  const { wasm, memory } = instantiateModule();
-  const code = (text) => {
-    const bytes = new TextEncoder().encode(text);
-    new Uint8Array(memory.buffer, wasm.gp_scratch(), bytes.length).set(bytes);
-    return bytes.length;
-  };
-  assert.equal(wasm.gp_settings_key(code('F1')), 1);
-  assert.equal(wasm.gp_settings_key(code('F2')), 0);
-  assert.equal(wasm.gp_settings_key(code('Escape')), 0);
-  // The menu's SETTINGS opens the game's screen, which needs the game and its content (its font
-  // and its menu's colours): before `gp_start`, the page dims the line.
-  assert.equal(wasm.gp_settings_available(), 0);
-  assert.equal(wasm.gp_settings_open(), -1);
-  assert.equal(wasm.gp_settings_frame(), 0);
 });
 
 console.log(`the page's ${checks} checks pass`);

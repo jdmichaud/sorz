@@ -29,12 +29,15 @@ pub const usage =
     \\  --original           the cartridge exactly: its game menu, its options and its pause on
     \\                       START, without the port's additions (ADVANCED SETTINGS in
     \\                       OPTIONS, START opening the settings during play); the settings
-    \\                       key (F1) opens the settings. In network play, the host's choice
-    \\                       is both games'
+    \\                       key (F1) opens the settings. Not with network play, which is
+    \\                       the network variant's
     \\  --netplay [ADDRESS:]PORT  play with a second player over the network, as the host
     \\                       (player 1): listen at PORT (all interfaces without ADDRESS), where
-    \\                       the browser build's page is served too, with the game's files
-    \\  --join ws://ADDRESS:PORT  join the host at that address, as player 2
+    \\                       the browser build's page is served too, with the game's files;
+    \\                       the guest's 2 PLAYERS joins your game, at the character select or
+    \\                       in the round
+    \\  --join ws://ADDRESS:PORT  play with the host at that address, as player 2: your 2 PLAYERS
+    \\                       joins its game
     \\  --delay N            the host's input delay in display ticks, 2 to 6 (default: from the
     \\                       round trip)
     \\  --server [ADDRESS:]PORT  server mode, with no game: serve the page and the game's files
@@ -113,9 +116,12 @@ pub const Options = struct {
 
     /// What the options ask of the network: network play (`--netplay` or `--join`), server mode
     /// (`--server`, which runs no game and serves the game's data to its pages: the game path is
-    /// required, and it keeps no saves), or nothing. `--delay` needs `--netplay`.
+    /// required, and it keeps no saves), or nothing. `--delay` needs `--netplay`. Network play is
+    /// the network variant's (each machine its own menus, one player a machine): `--original`,
+    /// the cartridge's game on one machine, does not go with it.
     pub fn network(self: Options) TakeError!Network {
         if (self.delay != null and self.netplay == null) return error.BadValue;
+        if (self.original and (self.netplay != null or self.join != null)) return error.BadValue;
         if (self.server != null) {
             if (self.saves != null) return error.BadValue;
             if (self.assets == null) return error.MissingValue;
@@ -424,7 +430,9 @@ test "the variant: extended by default, network play's with --netplay or --join,
     try std.testing.expectEqual(sorz.variant.Variant.original, (try TestArgs.all(&.{ "game", "--original" })).variant());
     try std.testing.expectEqual(sorz.variant.Variant.network, (try TestArgs.all(&.{ "game", "--netplay", "7000" })).variant());
     try std.testing.expectEqual(sorz.variant.Variant.network, (try TestArgs.all(&.{ "--join", "ws://h:1" })).variant());
-    try std.testing.expectEqual(sorz.variant.Variant.original, (try TestArgs.all(&.{ "game", "--original", "--netplay", "7000" })).variant());
+    // The cartridge's game is one machine's: not with network play.
+    try std.testing.expectError(error.BadValue, TestArgs.all(&.{ "game", "--original", "--netplay", "7000" }));
+    try std.testing.expectError(error.BadValue, TestArgs.all(&.{ "game", "--original", "--join", "ws://h:1" }));
 }
 
 test "the options of network play" {

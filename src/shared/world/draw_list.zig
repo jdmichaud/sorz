@@ -71,6 +71,13 @@ fn depthOf(e: *const Entity) i32 {
 }
 
 pub fn build(t: *Tick) void {
+    listOf(t, true);
+}
+
+/// The draw list of the frames the entities show (`Output.shown`); an entity far off the screen
+/// goes from the world when `remove_far_off` (the tick's), else it is only not drawn (the draw
+/// list made again from a world loaded as it was, which must not change it).
+pub fn listOf(t: *Tick, remove_far_off: bool) void {
     const w = t.world;
     const out = t.out;
     out.sprites.clear();
@@ -82,7 +89,7 @@ pub fn build(t: *Tick) void {
         const e = &w.entities[i];
         if (e.flags.hidden or e.flags.blinked or out.shown[i] == null) continue;
         if (!e.flags.stays and farOff(screenPlace(w, e))) {
-            w.remove(w.handleAt(i).?);
+            if (remove_far_off) w.remove(w.handleAt(i).?);
             out.shown[i] = null;
             continue;
         }

@@ -21,7 +21,8 @@
 //! power-on (the same options), `similar-check` Axel's moves in the catalogue's scenarios and
 //! `round-check` round 1's scenes from power-on (`-Drom=ROM -Dremaster=DIR|AGENT`);
 //! `variants-check` plays each variant's flow from power-on on the ROM's content (`-Drom=ROM`), and
-//! `netplay-check` network play's session on it (two agent hosts into round 1, a difference named).
+//! `netplay-check` network play's flows on it (the joins, leaving, a dropped connection, a
+//! difference named; two agent hosts over WebSockets).
 const std = @import("std");
 
 /// The SDL2 release that the Linux host is built and tested against.
@@ -591,17 +592,44 @@ pub fn build(b: *std.Build) void {
     settings_check.has_side_effects = true;
     smoke_step.dependOn(&settings_check.step);
 
-    // Network play on the real game (PLAN item 18, tools/check_netplay.sh), from the user's ROM:
-    // two agent hosts over WebSockets from power-on into round 1, the same state; the pair in one
-    // process against one game with their pads; a difference planted in the round, named.
-    const netplay_check_step = b.step("netplay-check", "Play network play's session on the content of -Drom=ROM: two agent hosts into round 1, and a planted difference named");
+    // Network play on the real game (PLAN item 18), from the user's ROM: its flows with several
+    // games in one process (src/tools/netplay_check.zig: each machine's own menus, the joins at the
+    // select and mid-round, a guest leaving and another joining, a third turned away, a dropped
+    // connection, a planted difference named), and two agent hosts over WebSockets
+    // (tools/check_netplay.sh: the host alone into round 1, the guest joining mid-round, the same
+    // state). `-Dnetplay-only=FLOW,...` runs some of the flows.
+    const netplay_check_step = b.step("netplay-check", "Play network play's flows on the content of -Drom=ROM: own menus, joins at the select and mid-round, leaving, a dropped connection, a planted difference; two agent hosts over WebSockets");
+    const netplay_only = b.option([]const u8, "netplay-only", "netplay-check: the flows to run (comma-separated: own_menus, select, round, away, difference)");
     if (rom_path) |rom| {
-        const netplay_check = b.addSystemCommand(&.{ "sh", "tools/check_netplay.sh" });
-        netplay_check.addArtifactArg(agent_exe);
-        netplay_check.addArg(rom);
-        netplay_check.expectExitCode(0);
-        netplay_check.has_side_effects = true;
-        netplay_check_step.dependOn(&netplay_check.step);
+        const netplay_exe = b.addExecutable(.{
+            .name = "sorz-netplay-check",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/tools/netplay_check.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "sorz", .module = shared },
+                    .{ .name = "agent", .module = agent },
+                    .{ .name = "extract", .module = extract },
+                },
+            }),
+        });
+        const flows = b.addRunArtifact(netplay_exe);
+        flows.addArg(rom);
+        if (netplay_only) |list| {
+            var it = std.mem.splitScalar(u8, list, ',');
+            while (it.next()) |name| if (name.len != 0) flows.addArg(name);
+        }
+        flows.has_side_effects = true;
+        netplay_check_step.dependOn(&flows.step);
+        if (netplay_only == null) {
+            const netplay_check = b.addSystemCommand(&.{ "sh", "tools/check_netplay.sh" });
+            netplay_check.addArtifactArg(agent_exe);
+            netplay_check.addArg(rom);
+            netplay_check.expectExitCode(0);
+            netplay_check.has_side_effects = true;
+            netplay_check_step.dependOn(&netplay_check.step);
+        }
     } else {
         netplay_check_step.dependOn(&b.addFail("netplay-check needs the user's ROM: -Drom=PATH").step);
     }

@@ -36,12 +36,16 @@ pub const usage =
     \\  --fps N              the fallback pacer's rate, 1 to 1000 (default 60)
     \\  --saves DIR          where saves are kept (default: the per-user application data
     \\                       directory)
-    \\  --original           the cartridge exactly: its game menu and its options, without the
-    \\                       port's additions (SETTINGS in the game menu, VOLUME in OPTIONS)
+    \\  --original           the cartridge exactly: its game menu, its options and its pause on
+    \\                       START, without the port's additions (ADVANCED SETTINGS in
+    \\                       OPTIONS, START opening the settings during play); the settings
+    \\                       key (F1) opens the settings; not with network play
     \\  --netplay [ADDRESS:]PORT  play with a second player over the network, as the host
     \\                       (player 1): listen at PORT, where the browser build's page is
-    \\                       served too, with the game's files
-    \\  --join ws://ADDRESS:PORT  join the host at that address, as player 2
+    \\                       served too, with the game's files; the guest's 2 PLAYERS joins
+    \\                       your game, at the character select or in the round
+    \\  --join ws://ADDRESS:PORT  play with the host at that address, as player 2: your
+    \\                       2 PLAYERS joins its game
     \\  --delay N            the host's input delay in display ticks, 2 to 6 (default: from
     \\                       the round trip)
     \\  --server [ADDRESS:]PORT  server mode, with no window and no game: serve the page and
@@ -380,6 +384,7 @@ test "the host options are parsed, bounded and defaulted" {
         &.{ "sorz-sdl", "game", "--netplay", "nowhere:x" },
         &.{ "sorz-sdl", "game", "--server", "7000", "--saves", "s" },
         &.{ "sorz-sdl", "game", "--join", "ws://h:1", "--delay", "3" },
+        &.{ "sorz-sdl", "game", "--original", "--netplay", "7000" },
     }) |args| try std.testing.expectError(error.BadArguments, parseArgs(SliceArgs{ .items = args }));
 }
 
