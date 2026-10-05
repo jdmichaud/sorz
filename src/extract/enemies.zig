@@ -1047,7 +1047,132 @@ pub fn boomerang(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definit
 }
 
 /// The definitions this module writes, appended to `out`.
+// --- The juggler, round 2's, and its knives ---------------------------------------------------
+
+/// `move.w #N,(D,a0)` at `at` (the displacement checked): N.
+fn moveWord(rom: []const u8, at: u32, displacement: u16) Error!i32 {
+    if (u16be(rom, at + 4) != displacement) return error.BadData;
+    return immediate(rom, at, &.{ 0x31, 0x7C }, 2);
+}
+
+/// `move.l #N,dR` at `at`: N.
+fn moveLong(rom: []const u8, at: u32, register: u3) Error!i32 {
+    return immediate(rom, at, &.{ 0x20 | (@as(u8, register) << 1), 0x3C }, 4);
+}
+
+/// The juggler (type $27, its handler 0xF27E, sor-remaster's obj/juggler.zig): it heads for its
+/// place a way off its target, juggling two knives (its walk paced), closes in at a depth by its
+/// target's, steps in and backs off (`lunge`), sidesteps to its target's depth, and raises its
+/// knives to throw them (its animation $14). Its own blows are its knives' (`juggler_knife`).
+pub fn juggler(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    var d = try begin(arena, rom, 0x27, "juggler", &.{.{ .name = "throw", .entry = try animEntryWord(rom, 0xF770) }});
+    if (try animEntry(rom, 0xF418) != try animEntryWord(rom, 0xF770)) return error.BadData;
+    try d.number("approach_speed", (try moveWord(rom, 0xF5A4, 100)) << 8, "ROM 0x0F5A4: move.w #N,(100,a0) (8.8)");
+    try d.number("approach_beside", try immediate(rom, 0xF5AA, &.{ 0x30, 0x3C }, 2), "ROM 0x0F5AA: move.w #N,d0 (on its own side of its target)");
+    try d.number("approach_ticks", try moveByte(rom, 0xF5C0, 80), "ROM 0x0F5C0: move.b #N,(80,a0)");
+    try d.number("approach_first", try moveByte(rom, 0xF588, 13), "ROM 0x0F588: move.b #N,(13,a0) (its walk's first frame's ticks)");
+    if (u16be(rom, 0xF604) != 20) return error.BadData;
+    try d.number("close_level", try immediate(rom, 0xF600, &.{ 0x0C, 0x69 }, 2), "ROM 0x0F600: cmpi.w #N,(20,a1) (its target's depth)");
+    try d.number("close_near", try moveq(rom, 0xF5FA, 0), "ROM 0x0F5FA: moveq #N,d0 (its depth, its target nearer than close_level)");
+    try d.number("close_far", try moveq(rom, 0xF608, 0), "ROM 0x0F608: moveq #N,d0 (its depth, else)");
+    try d.number("close_step", try moveq(rom, 0xF624, 1), "ROM 0x0F624: moveq #N,d1 (toward its target, once there)");
+    try d.number("lunge_far", try immediate(rom, 0xF66A, &.{ 0x0C, 0x40 }, 2), "ROM 0x0F66A: cmpi.w #N,d0 (farther across from its target: it sidesteps)");
+    try d.number("lunge_near", try immediate(rom, 0xF670, &.{ 0x0C, 0x40 }, 2), "ROM 0x0F670: cmpi.w #N,d0 (farther: it takes up the fight again)");
+    try d.number("lunge_speed", (try moveWord(rom, 0xF676, 100)) << 8, "ROM 0x0F676: move.w #N,(100,a0) (8.8)");
+    try d.number("lunge_step", try moveq(rom, 0xF67C, 1), "ROM 0x0F67C: moveq #N,d1 (away from its target)");
+    try d.number("sidestep_x", try moveLong(rom, 0xF6C8, 1), "ROM 0x0F6C8: move.l #N,d1 (away from its target)");
+    try d.number("sidestep_depth", try moveLong(rom, 0xF6DE, 1), "ROM 0x0F6DE: move.l #N,d1 (toward its target's depth)");
+    try d.number("sidestep_level", try immediate(rom, 0xF70A, &.{ 0x0C, 0x40 }, 2), "ROM 0x0F70A: cmpi.w #N,d0 (its target's depth within it)");
+    try d.number("raise_pace", (try moveWord(rom, 0xF736, 12)) >> 8, "ROM 0x0F736: move.w #N*$101,(12,a0)");
+    try d.number("raise_throws", try moveByte(rom, 0xF73C, 81), "ROM 0x0F73C: move.b #N,(81,a0)");
+    try d.number("raise_ticks", try moveByte(rom, 0xF742, 80), "ROM 0x0F742: move.b #N,(80,a0) (its throw's wait for a knife in hand)");
+    try d.number("raise_wait", try moveByte(rom, 0xF748, 84), "ROM 0x0F748: move.b #N,(84,a0) (its wait for a knife caught)");
+    try d.number("throw_frame", try frameCompared(rom, 0xF78C), "ROM 0x0F78C: cmpi.b #N,(10,a0)");
+    return finish(&d, "juggler", 0x27, "juggler", "the juggler (handler 0xF27E)");
+}
+
+/// The juggler's knives (type $28, its handler 0xFC14, states by the offsets at 0x103A2, its
+/// set the juggler's): a maker that makes two of them (0xFC1C), and each knife juggled in an arc
+/// from its juggler's hand (0xFCB6), tossed high (0xFE46), falling away (0xFED6), or in the hand
+/// and thrown (0xFEE4); its blow the type's power, knocking a player down.
+pub fn jugglerKnife(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const kind: u8 = 0x28;
+    const k: u32 = kind - 0x20;
+    const set = u32be(rom, enemy_sets + 4 * k);
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "juggler", .set = set, .box_table = entities.object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
+    try d.animations.append(arena, .{ .name = "knife", .loop = true, .frames = try enemyFrames(&d, "knife", try wordEntry(try moveWord(rom, 0xFC82, 8))) });
+    try d.animations.append(arena, .{ .name = "knife_b", .loop = true, .frames = try enemyFrames(&d, "knife_b", try wordEntry(try moveWord(rom, 0xFC94, 8))) });
+    try d.number("power", rom[enemy_numbers + 6 * k + 3], "ROM 0x26FCE (by type and strength, three bytes after the health, 0x938C)");
+    try d.number("maker_knives", try moveByte(rom, 0xFC2A, 80), "ROM 0x0FC2A: move.b #N,(80,a0)");
+    try d.number("maker_first", try moveByte(rom, 0xFC30, 81), "ROM 0x0FC30: move.b #N,(81,a0)");
+    try d.number("maker_gap", try moveByte(rom, 0xFC5E, 81), "ROM 0x0FC5E: move.b #N,(81,a0)");
+    try d.number("pace", (try moveWord(rom, 0xFC7C, 12)) >> 8, "ROM 0x0FC7C: move.w #N*$101,(12,a0)");
+    try d.number("juggle_height", try moveWord(rom, 0xFCC4, 24), "ROM 0x0FCC4: move.w #N,(24,a0)");
+    if (u16be(rom, 0xFCD0) != 36 or u16be(rom, 0xFCD8) != 28) return error.BadData;
+    try d.number("juggle_up", try immediate(rom, 0xFCCA, &.{ 0x21, 0x7C }, 4), "ROM 0x0FCCA: move.l #N,(36,a0)");
+    try d.number("juggle_across", try immediate(rom, 0xFCD2, &.{ 0x21, 0x7C }, 4), "ROM 0x0FCD2: move.l #N,(28,a0)");
+    try d.number("juggle_offset", try moveWord(rom, 0xFCDA, 84), "ROM 0x0FCDA: move.w #N,(84,a0) (from its juggler's place across)");
+    try d.number("juggle_offset_left", try moveWord(rom, 0xFCEC, 84), "ROM 0x0FCEC: move.w #N,(84,a0) (its juggler facing left)");
+    if (u16be(rom, 0xFD3A) != 20) return error.BadData;
+    try d.number("juggle_depth", try quick(rom, 0xFD38, 0x5068), "ROM 0x0FD38: addq.w #N,(20,a0) (from its juggler's depth)");
+    if (u16be(rom, 0xFD86) != 28) return error.BadData;
+    try d.number("juggle_back", try immediate(rom, 0xFD80, &.{ 0x21, 0x7C }, 4), "ROM 0x0FD80: move.l #N,(28,a0) (back to the hand)");
+    try d.number("hand", try moveq(rom, 0xFD8C, 1), "ROM 0x0FD8C: moveq #N,d1 (the hand, across from its juggler)");
+    try d.number("hand_left", try moveq(rom, 0xFD96, 1), "ROM 0x0FD96: moveq #N,d1 (its juggler facing left)");
+    if (try moveq(rom, 0xFDD6, 0) != -(try moveq(rom, 0xFDCC, 0))) return error.BadData;
+    try d.number("caught_x", try moveq(rom, 0xFDCC, 0), "ROM 0x0FDCC: moveq #N,d0 (caught, across from its juggler; its opposite facing left)");
+    if (u16be(rom, 0xFE26) != 36) return error.BadData;
+    try d.number("copy_up", try immediate(rom, 0xFE20, &.{ 0x23, 0x7C }, 4), "ROM 0x0FE20: move.l #N,(36,a1) (a knife struck in its arc: a copy falls away)");
+    try d.number("copy_across", try moveq(rom, 0xFE28, 0), "ROM 0x0FE28: moveq #N,d0 (whole pixels, behind its juggler)");
+    if (u16be(rom, 0xFE54) != 36) return error.BadData;
+    try d.number("toss_up", try immediate(rom, 0xFE4E, &.{ 0x21, 0x7C }, 4), "ROM 0x0FE4E: move.l #N,(36,a0)");
+    if (u16be(rom, 0xFE72) != 24) return error.BadData;
+    try d.number("toss_top", try immediate(rom, 0xFE6E, &.{ 0x0C, 0x68 }, 2), "ROM 0x0FE6E: cmpi.w #N,(24,a0)");
+    if (try moveq(rom, 0xFE8E, 0) != -(try moveq(rom, 0xFE7C, 0))) return error.BadData;
+    try d.number("toss_x", try moveq(rom, 0xFE7C, 0), "ROM 0x0FE7C: moveq #N,d0 (across from its juggler at its top; its opposite facing left)");
+    try d.number("toss_hang", try moveByte(rom, 0xFE9A, 80), "ROM 0x0FE9A: move.b #N,(80,a0)");
+    try d.number("toss_catch", try immediate(rom, 0xFEAE, &.{ 0x06, 0x40 }, 2), "ROM 0x0FEAE: addi.w #N,d0 (from its juggler's height)");
+    if (u16be(rom, 0xFF0A) != 20) return error.BadData;
+    try d.number("hand_depth", -(try quick(rom, 0xFF08, 0x5168)), "ROM 0x0FF08: subq.w #N,(20,a0) (in the hand, from its juggler's depth)");
+    try d.number("hand_height", try immediate(rom, 0xFF10, &.{ 0x06, 0x40 }, 2), "ROM 0x0FF10: addi.w #N,d0 (in the hand, from its juggler's height)");
+    if (try moveq(rom, 0xFF2E, 0) != -(try moveq(rom, 0xFF1E, 0))) return error.BadData;
+    try d.number("hand_x", try moveq(rom, 0xFF1E, 0), "ROM 0x0FF1E: moveq #N,d0 (in the hand, across from its juggler; its opposite facing left)");
+    if (u16be(rom, 0xFF4A) != 10) return error.BadData;
+    try d.number("launch_frame", try immediate(rom, 0xFF46, &.{ 0x0C, 0x29 }, 2), "ROM 0x0FF46: cmpi.b #N,(10,a1) (its juggler's frame)");
+    if (u16be(rom, 0xFF60) != 24) return error.BadData;
+    try d.number("launch_drop", try immediate(rom, 0xFF5C, &.{ 0x06, 0x68 }, 2), "ROM 0x0FF5C: addi.w #N,(24,a0)");
+    try d.number("launch_speed", try moveLong(rom, 0xFF62, 0), "ROM 0x0FF62: move.l #N,d0");
+    try d.number("launch_ahead", try immediate(rom, 0xFF68, &.{ 0x34, 0x3C }, 2), "ROM 0x0FF68: move.w #N,d2");
+    if (u16be(rom, 0x10058) != 36) return error.BadData;
+    try d.number("turn_up", try immediate(rom, 0x10052, &.{ 0x21, 0x7C }, 4), "ROM 0x10052: move.l #N,(36,a0) (a blow turns it back)");
+    try d.number("deflect_speed", (try immediate(rom, 0x10032, &.{ 0x3C, 0x3C }, 2)) << 8, "ROM 0x10032: move.w #N,d6 (8.8; a swung weapon sends it toward the screen's edge)");
+    try d.number("deflect_width", try immediate(rom, 0x10026, &.{ 0x06, 0x40 }, 2), "ROM 0x10026: addi.w #N,d0 (the screen's right edge from its left)");
+    var depths: [4]i32 = undefined;
+    for (&depths, 0..) |*v, j| v.* = rom_mod.s16be(rom, 0x1009C + 2 * @as(u32, @intCast(j)));
+    try d.table("deflect_depth", &depths, "ROM 0x1009C: the depth it is sent to, by a draw's low two bits (0x1000A)");
+    try d.number("redirect_power", try moveByte(rom, 0x10066, 52), "ROM 0x10066: move.b #N,(52,a0) (sent at the other player)");
+    try d.number("redirect_speed", (try immediate(rom, 0x1008A, &.{ 0x3C, 0x3C }, 2)) << 8, "ROM 0x1008A: move.w #N,d6 (8.8)");
+    const drawn = try immediate(rom, 0xAF6E, &.{ 0x06, 0x42 }, 2);
+    try d.number("flight_from", try immediate(rom, 0x97E8, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x097E8: cmpi.w #N,(40,a0), less 0xAF6E's offset (0xFFC4)");
+    try d.number("flight_to", try immediate(rom, 0x97F0, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x097F0: cmpi.w #N,(40,a0), less 0xAF6E's offset (excluded)");
+    try d.number("fall_most", try immediate(rom, 0x974E, &.{ 0x0C, 0xA8 }, 4), "ROM 0x0974E: cmpi.l #N,(36,a0)");
+    return .{
+        .name = "juggler_knife",
+        .provenance = try std.fmt.allocPrint(arena, "the juggler's knives, type $28 (handler 0xFC14): the juggler's animation set at ROM 0x{X:0>5} (0x27032), its knives' animations $18 and $1C (0xFC82, 0xFC94), the boxes (0x1A68E, 0x1AB8E); gravity ROM 0x0973E: addi.l #N,(36,a0){s}", .{ set, d.number_notes.items }),
+        .family = .projectile,
+        .team = .enemy,
+        .behaviour = "juggler_knife",
+        .gravity = try immediate(rom, 0x973E, &.{ 0x06, 0xA8 }, 4),
+        .numbers = d.numbers.items,
+        .tables = d.tables.items,
+        .boxes = d.boxes.items,
+        .animations = d.animations.items,
+    };
+}
+
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
+    try out.append(arena, try juggler(arena, rom));
+    try out.append(arena, try jugglerKnife(arena, rom));
     try out.append(arena, try brawler(arena, rom));
     try out.append(arena, try galsiaKnife(arena, rom));
     try out.append(arena, try galsia(arena, rom));

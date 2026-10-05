@@ -81,6 +81,17 @@ pub fn decode(rom: []const u8, kind: u8, variant: u8, offsets: u8, strength: u8)
             if (v != 0) t.insert(.slides);
             break :blk .approach;
         },
+        // The juggler (0xF2DE: its first state by the low nibble; 0xFC8C: bit 4, its knives'
+        // look). TODO(PLAN item 15): its ways 1 and 2 (keeping away, leaping) with the rounds
+        // that place them.
+        0x27 => blk: {
+            if (v & 0x10 != 0) t.insert(.knives_b);
+            break :blk switch (way) {
+                0 => .approach,
+                3 => .circle,
+                else => return error.BadData,
+            };
+        },
         // The others take up the fight one way.
         else => .approach,
     };

@@ -47,6 +47,8 @@ pub const Trait = enum {
     twin,
     /// A piece of scenery stirs while a flight passes (round 2's posters' corners).
     stirs,
+    /// A juggler juggles the other knives.
+    knives_b,
 };
 
 pub const Traits = std.EnumSet(Trait);

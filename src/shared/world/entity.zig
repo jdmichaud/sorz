@@ -162,7 +162,9 @@ pub const Traits = packed struct(u16) {
     twin: bool = false,
     /// A piece of scenery stirs while a flight passes (`World.flight`).
     stirs: bool = false,
-    _: u4 = 0,
+    /// A juggler juggles the other knives.
+    knives_b: bool = false,
+    _: u3 = 0,
 };
 
 /// A thing flying or swung as a blow: a body thrown, a weapon in the hand or thrown. What its

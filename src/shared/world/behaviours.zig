@@ -51,7 +51,8 @@
 //! and his `boomerang`, and the `hit_spark` a player's blow makes (PLAN item 12); round 2's
 //! scenery (PLAN item 15): the oil drums a blow knocks away (`knockable`), the `drip`s, the
 //! `flight`s across the screen, their `flier`s and the posters' corners they stir
-//! (`flight_scenery`), and the `bottle` a drum holds; round 3's: the `lamp`s, the `crate`s, the `drifter`s.
+//! (`flight_scenery`), the `bottle` a drum holds, and round 2's `juggler` with its knives
+//! (`juggler_knife`); round 3's: the `lamp`s, the `crate`s, the `drifter`s.
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -73,6 +74,8 @@ pub const bat = @import("behaviours/bat.zig");
 pub const bat_splinter = @import("behaviours/bat_splinter.zig");
 pub const hit_spark = @import("behaviours/hit_spark.zig");
 pub const bottle = @import("behaviours/bottle.zig");
+pub const juggler = @import("behaviours/juggler.zig");
+pub const juggler_knife = @import("behaviours/juggler_knife.zig");
 pub const breakable = @import("behaviours/breakable.zig");
 pub const item = @import("behaviours/item.zig");
 pub const antonio = @import("behaviours/antonio.zig");
@@ -112,6 +115,8 @@ pub const Mind = union(enum) {
     bat_splinter: bat_splinter.Mind,
     hit_spark: hit_spark.Mind,
     bottle: bottle.Mind,
+    juggler: juggler.Mind,
+    juggler_knife: juggler_knife.Mind,
     breakable: breakable.Mind,
     item: item.Mind,
     antonio: antonio.Mind,

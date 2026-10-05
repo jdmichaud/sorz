@@ -110,6 +110,7 @@ fn kindName(t: u8) ?[]const u8 {
         0x25 => "acrobat",
         0x26 => "brawler",
         0x27 => "juggler",
+        0x28 => "juggler_knife",
         0x2A => "acrobat_trio",
         0x30 => "boss_r3",
         0x3F => "money",
