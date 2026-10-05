@@ -65,7 +65,10 @@ const hero =
     \\   "knocked_down_up": -327680, "knocked_down_x": -147456, "last_blow_ends": 4, "let_go": 3,
     \\   "pick_depth": 16, "pick_height": 8, "pick_x": 20, "recover_ends": 2, "steer": 24576,
     \\   "steer_most": 229376, "throw_ends": 6, "vault_ends": 4, "walk_depth": 155648,
-    \\   "walk_x": 196608, "dying_x": -262144, "dying_up": -589824, "dead": 38},
+    \\   "walk_x": 196608, "dying_x": -262144, "dying_up": -589824, "dead": 38,
+    \\   "escape_frame": 3, "escape_window": 8, "thrown_first": 5, "thrown_pace": 3,
+    \\   "thrown_falls": 2, "thrown_ahead": 32, "thrown_up": -196608, "thrown_x": 229376,
+    \\   "held_ahead": 16},
     \\ "sounds": {"jump": "jump", "land": "landing", "hurt": "player hit", "thud": "heavy fall",
     \\   "death": "axel death cry"},
     \\ "boxes": {"body": {"x": [0, 13], "depth": [-8, 8], "height": [-51, 0]},
@@ -98,7 +101,12 @@ const hero =
     anim("vault", fr("6", ", \"blow\": true, \"held\": {\"x\": 5, \"pose\": 0}") ++ "," ++ fr("4", ", \"blow\": true, \"held\": {\"x\": -8, \"height\": -16, \"pose\": 1}") ++ "," ++ fr("4", ", \"blow\": true, \"held\": {\"x\": -40, \"height\": -32, \"pose\": 5}") ++ "," ++ fr("18", ", \"blow\": true, \"held\": {\"x\": -48, \"lets_go\": true}") ++ "," ++ fr("8", ", \"blow\": true")) ++ "," ++
     anim("vault_land", fr("2", ", \"blow\": true") ++ "," ++ fr("2", ", \"blow\": true") ++ "," ++ fr("2", ", \"blow\": true")) ++ "," ++
     anim("throw", fr("3", ", \"place\": {\"x\": -28, \"height\": -8}") ++ "," ++ fr("3", place) ++ "," ++ fr("3", place) ++ "," ++ fr("3", place) ++ "," ++ fr("3", place) ++ "," ++ fr("3", ", \"place\": {\"x\": 28}") ++ "," ++ fr("6", ", \"place\": {\"x\": 48}")) ++ "," ++
-    anim("throw_back", fr("3", ", \"place\": {\"x\": -28, \"height\": -8}") ++ "," ++ fr("3", place) ++ "," ++ fr("3", place) ++ "," ++ fr("3", place) ++ "," ++ fr("3", place) ++ "," ++ fr("3", ", \"place\": {\"x\": 32}") ++ "," ++ fr("6", ", \"place\": {\"x\": 48}")) ++
+    anim("throw_back", fr("3", ", \"place\": {\"x\": -28, \"height\": -8}") ++ "," ++ fr("3", place) ++ "," ++ fr("3", place) ++ "," ++ fr("3", place) ++ "," ++ fr("3", place) ++ "," ++ fr("3", ", \"place\": {\"x\": 32}") ++ "," ++ fr("6", ", \"place\": {\"x\": 48}")) ++ "," ++
+    anim("held", fr("30", "")) ++ "," ++
+    anim("held_behind", fr("30", "")) ++ "," ++
+    anim("escape", fr("4", "") ++ "," ++ fr("6", "") ++ "," ++ fr("2", "") ++ "," ++ fr("4", "")) ++ "," ++
+    anim("counter", fr("5", ", \"held\": {\"x\": 16, \"pose\": 0}") ++ "," ++ fr("15", ", \"blow\": true, \"held\": {\"x\": 40, \"height\": -32, \"lets_go\": true}") ++ "," ++ fr("4", "")) ++ "," ++
+    anim("thrown", bare("100", ", \"place\": {\"x\": -24}") ++ "," ++ bare("12", ", \"place\": {\"x\": -4, \"height\": -48}") ++ "," ++ bare("8", ", \"place\": {\"x\": 16, \"height\": -40}") ++ "," ++ bare("1", ", \"place\": {}")) ++
     \\ },
     \\ "moves": {"attack1": {"animation": "attack1", "damage": 1},
     \\   "attack2": {"animation": "attack1", "damage": 1},
@@ -111,7 +119,8 @@ const hero =
     \\   "grab_blow": {"animation": "grab_blow", "damage": 4, "reaction": "thrown", "sound": "shout"},
     \\   "throw": {"animation": "throw"},
     \\   "vault": {"animation": "vault", "damage": 5, "reaction": "slammed", "sound": "shout"},
-    \\   "throw_back": {"animation": "throw_back"}}
+    \\   "throw_back": {"animation": "throw_back"},
+    \\   "counter": {"animation": "counter", "damage": 4, "reaction": "thrown"}}
     \\}
 ;
 
@@ -264,6 +273,19 @@ const Round = struct {
 
     fn state(r: *Round) []const u8 {
         return behaviours.stateName(&r.player().mind).?;
+    }
+
+    /// The tick's view of the round, for what an enemy's behaviour asks of it.
+    fn tick(r: *Round) tick_mod.Tick {
+        return .{ .world = &r.w, .kinds = &r.f.kinds, .random = &r.rng, .out = &r.out };
+    }
+
+    /// A punk standing a while (its stand's 160 ticks) at `x`, a holder for the player.
+    fn holder(r: *Round, x: i32) !Handle {
+        const h = try r.punk(x);
+        r.w.get(h).?.mind.galsia.state = .stand;
+        r.w.get(h).?.mind.galsia.body.fresh = true;
+        return h;
     }
 
     fn punk(r: *Round, x: i32) !Handle {
@@ -562,4 +584,119 @@ test "the continue's NO, or none left: out of the game, the game over's count" {
     var ticks: usize = 0;
     while (!std.mem.eql(u8, r2.state(), "game_over")) : (ticks += 1) r2.stepPlan(.{}, &plan);
     try testing.expectEqual(@as(usize, 250), ticks);
+}
+
+test "held from behind: free after the hold's frame; C jumps out, held again with a moment for B" {
+    var r = try Round.init();
+    defer r.deinit();
+    const p = try r.holder(780);
+    var t = r.tick();
+    t.catchHeld(p, r.hero, true);
+    r.step(.{});
+    try testing.expectEqualStrings("held_behind", r.state());
+    try testing.expect(r.player().holder.?.eql(p));
+    // Its frame's 30 ticks, the first the catch's: then it is free.
+    var free_at: ?usize = null;
+    for (0..40) |i| {
+        r.step(.{});
+        if (std.mem.eql(u8, r.state(), "ready")) {
+            free_at = i;
+            break;
+        }
+    }
+    try testing.expectEqual(@as(?usize, 28), free_at);
+    try testing.expect(r.player().holder == null and r.w.get(p).?.holding == null);
+
+    t.catchHeld(p, r.hero, true);
+    r.step(.{});
+    r.step(c_pad);
+    try testing.expectEqualStrings("escape", r.state());
+    // The jump out's frames of 4, 6 and 2 ticks: at the fourth it is held again.
+    var again_at: ?usize = null;
+    for (0..20) |i| {
+        r.step(.{});
+        if (std.mem.eql(u8, r.state(), "held_behind")) {
+            again_at = i;
+            break;
+        }
+    }
+    try testing.expectEqual(@as(?usize, 11), again_at);
+    // B in that moment throws the holder over: the hold turned.
+    r.step(b_pad);
+    try testing.expectEqualStrings("grab_blow", r.state());
+    try testing.expect(r.player().holding.?.eql(p) and r.player().holder == null);
+    // Thrown over, the punk is knocked down, the throw's damage taken.
+    var thrown = false;
+    for (0..40) |_| {
+        r.step(.{});
+        if (r.w.get(p).?.mind.galsia.state == .knocked_down) thrown = true;
+    }
+    try testing.expect(thrown);
+    try testing.expectEqual(@as(i16, 0), r.w.get(p).?.health);
+}
+
+test "held from the front and thrown: over the holder, ahead, the throw's damage at the landing" {
+    var r = try Round.init();
+    defer r.deinit();
+    const p = try r.holder(820);
+    var t = r.tick();
+    t.catchHeld(p, r.hero, false);
+    r.step(.{});
+    try testing.expectEqualStrings("held", r.state());
+    t.throwHeld(p, 6);
+    r.step(.{});
+    try testing.expectEqualStrings("thrown", r.state());
+    // Placed from the holder by its frames: 24 behind it, facing the holder.
+    try testing.expectEqual(@as(i32, 820 - 24), r.player().position.x.whole());
+    // Its first frame's 5 ticks, then 3 a frame: at the end of the third frame it falls ahead.
+    var fell_at: ?usize = null;
+    for (0..20) |i| {
+        r.step(.{});
+        if (std.mem.eql(u8, r.state(), "knocked_down")) {
+            fell_at = i;
+            break;
+        }
+    }
+    try testing.expectEqual(@as(?usize, 10), fell_at);
+    try testing.expect(r.player().holder == null and r.w.get(p).?.holding == null);
+    try testing.expectEqual(@as(i16, 80), r.player().health);
+    for (0..60) |_| {
+        r.step(.{});
+        if (r.player().health != 80) break;
+    }
+    try testing.expectEqual(@as(i16, 74), r.player().health);
+}
+
+test "thrown, C and up land it on its feet, the throw's damage spared" {
+    var r = try Round.init();
+    defer r.deinit();
+    const p = try r.holder(820);
+    var t = r.tick();
+    t.catchHeld(p, r.hero, false);
+    r.step(.{});
+    t.throwHeld(p, 6);
+    for (0..12) |_| r.step(.{});
+    try testing.expectEqualStrings("knocked_down", r.state());
+    r.step(.{ .pad1 = .{ .c = true, .up = true } });
+    var landed = false;
+    for (0..60) |_| {
+        r.step(.{});
+        if (std.mem.eql(u8, r.state(), "land")) landed = true;
+    }
+    try testing.expect(landed);
+    try testing.expectEqual(@as(i16, 80), r.player().health);
+}
+
+test "a player takes one blow or catch a tick: the first" {
+    var r = try Round.init();
+    defer r.deinit();
+    const p = try r.holder(780);
+    var t = r.tick();
+    try testing.expect(t.catchable(r.hero));
+    t.catchHeld(p, r.hero, true);
+    try testing.expect(!t.catchable(r.hero));
+    try testing.expect(!t.struck(r.hero, .{ .attacker = p, .damage = 4, .reaction = .knock_down, .push = .zero }));
+    r.step(.{});
+    try testing.expectEqualStrings("held_behind", r.state());
+    try testing.expect(t.catchable(r.hero));
 }

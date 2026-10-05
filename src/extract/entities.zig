@@ -61,6 +61,7 @@ const knee_sounds = 0x3610;
 /// X and height from the holder, the held one's pose; a pose of $99 ends the hold.
 pub const throw_poses = 0xA3E8;
 pub const slam_poses = 0xA416;
+const counter_poses = 0xA400;
 /// The places of a player holding an enemy by its animation from $70 (0x4A5A): a word offset per
 /// animation pair (bit 15: present), a byte per character to its list, then 2 bytes a frame: X
 /// toward the player's side and height from the one held.
@@ -98,6 +99,11 @@ const State = struct {
     pub const vault_land = 0x70;
     pub const recover = 0x74;
     pub const throw = 0x76;
+    pub const held = 0x78;
+    pub const held_behind = 0x7A;
+    pub const escape = 0x7C;
+    pub const counter = 0x7E;
+    pub const thrown = 0x82;
 };
 
 // --- Reading an animation ----------------------------------------------------------------------
@@ -321,6 +327,13 @@ const player_animations = [_]PlayerAnimation{
     .{ .name = "knee", .state = State.knee },
     .{ .name = "knee_last", .state = State.knee_last },
     .{ .name = "throw", .state = State.throw },
+    // Held by an enemy from the front, from behind; the jump out of a hold from behind; the
+    // throw that answers it (traced as `grab_blow`); thrown over an enemy's head.
+    .{ .name = "held", .state = State.held },
+    .{ .name = "held_behind", .state = State.held_behind },
+    .{ .name = "escape", .state = State.escape },
+    .{ .name = "counter", .state = State.counter },
+    .{ .name = "thrown", .state = State.thrown },
 };
 
 /// The set's entry of state `state`'s animation facing right (its byte offset / 2).
@@ -412,6 +425,11 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     // front, from behind, struck while held).
     try heldFrames(&d, "grab_blow", throw_poses, character);
     try heldFrames(&d, "vault", slam_poses, character);
+    // The throw that answers a hold from behind places the enemy as the table for its request 8
+    // does (0xA240 with 0xA400); thrown by an enemy, the player is placed from it frame by frame
+    // (0x4A5A).
+    try heldFrames(&d, "counter", counter_poses, character);
+    try placeFrames(&d, @constCast(d.animations.items[d.animationIndex("thrown").?].frames), try stateEntry(rom, State.thrown) * 2 - 0x70, character);
     for ([_]struct { name: []const u8, at: u32 }{
         .{ .name = "grab", .at = 0xA0BC },
         .{ .name = "grab_behind", .at = 0xA116 },
@@ -448,6 +466,7 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
         .{ .name = "vault", .animation = "vault", .state = State.vault, .sound = shout, .hold = true },
         .{ .name = "throw", .animation = "throw", .state = State.throw },
         .{ .name = "throw_back", .animation = "throw_back", .state = State.throw },
+        .{ .name = "counter", .animation = "counter", .state = State.counter, .hold = true },
     };
     for (moves) |m| {
         const index = d.animationIndex(m.animation).?;
@@ -523,6 +542,20 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     try d.number("pick_x", -(try immediate(rom, 0x314A, &.{ 0x06, 0x41 }, 2)), "ROM 0x0314A: addi.w #-N,d1");
     try d.number("pick_depth", -(try immediate(rom, 0x3158, &.{ 0x06, 0x43 }, 2)), "ROM 0x03158: addi.w #-N,d3");
     try d.number("pick_height", -(try immediate(rom, 0x3166, &.{ 0x06, 0x45 }, 2)), "ROM 0x03166: addi.w #-N,d5");
+    // Held by an enemy (0x24C4, 0x25B8): the jump out of a hold from behind opens, at its frame,
+    // a window in which B throws the holder (0x26B0); thrown over its head (0x284A, 0x286E): its
+    // first frame's ticks, each next one's, the frame it falls at, how far ahead, and its speeds.
+    try d.number("escape_frame", try frameCompared(rom, 0x26BC), "ROM 0x026BC: cmpi.b #N,(10,a0)");
+    try d.number("escape_window", try moveByte(rom, 0x26CA, 0x62), "ROM 0x026CA: move.b #N,(98,a0)");
+    try d.number("thrown_first", try moveByte(rom, 0x24F4, 0x4E), "ROM 0x024F4: move.b #N,(78,a0)");
+    try d.number("thrown_pace", try moveByte(rom, 0x285C, 0x4E), "ROM 0x0285C: move.b #N,(78,a0)");
+    try d.number("thrown_falls", try frameCompared(rom, 0x2854), "ROM 0x02854: cmpi.b #N,(10,a0)");
+    try d.number("thrown_ahead", try moveq(rom, 0x286E, 0), "ROM 0x0286E: moveq #N,d0");
+    try d.number("thrown_up", (try immediate(rom, 0x2882, &.{ 0x31, 0x7C }, 2)) << 16, "ROM 0x02882: move.w #N,(36,a0)");
+    try d.number("thrown_x", try immediate(rom, 0x2888, &.{ 0x20, 0x3C }, 4), "ROM 0x02888: move.l #N,d0");
+    // Held from behind by a stalker, it is kept this far ahead of it (0xDB18's table at 0xDBC8,
+    // by character).
+    try d.number("held_ahead", rom[0xDBC8 + @as(u32, character)], "ROM 0x0DBC8, by character");
 
     // The sounds by their role.
     try d.sound("jump", @bitCast(@as(i8, @intCast(try moveq(rom, 0x2FD4, 7)))));

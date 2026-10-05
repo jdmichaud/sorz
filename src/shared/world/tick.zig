@@ -215,6 +215,12 @@ pub const Tick = struct {
         return dispatch(t, h, "grabbable", bool, false, .{by});
     }
 
+    /// Whether an enemy may catch the entity at this tick (`catchHeld`): its behaviour's
+    /// `catchable` says (a player struck or caught at this tick may not); by default, yes.
+    pub fn catchable(t: *Tick, h: Handle) bool {
+        return dispatch(t, h, "catchable", bool, true, .{});
+    }
+
     /// The grab began: the entity `holder` holds `held`.
     pub fn grabbed(t: *Tick, holder: Handle, held: Handle) void {
         dispatch(t, holder, "holds", void, {}, .{held});
@@ -230,6 +236,39 @@ pub const Tick = struct {
         const o = t.world.get(held) orelse return;
         o.holder = null;
         dispatch(t, held, "letGoBy", void, {}, .{holder});
+    }
+
+    /// `holder` catches `held` (an enemy's hold of a player): from behind or the front. The one
+    /// held is told (`caughtBy`), and holds nothing more.
+    pub fn catchHeld(t: *Tick, holder: Handle, held: Handle, behind: bool) void {
+        const h = t.world.get(holder) orelse return;
+        const o = t.world.get(held) orelse return;
+        if (o.holding != null) t.letGo(held);
+        h.holding = held;
+        o.holder = holder;
+        dispatch(t, held, "caughtBy", void, {}, .{ holder, behind });
+    }
+
+    /// `holder` throws the one it holds, a throw of `damage` (`thrownBy`: the one thrown lets go
+    /// when its throw ends).
+    pub fn throwHeld(t: *Tick, holder: Handle, damage: i16) void {
+        const h = t.world.get(holder) orelse return;
+        const held = h.holding orelse return;
+        dispatch(t, held, "thrownBy", void, {}, .{ holder, damage });
+    }
+
+    /// The one `by` turns the hold it is in: it now holds its holder, who is told (`heldBy`).
+    /// Returns whether it did.
+    pub fn turnHold(t: *Tick, by: Handle) bool {
+        const e = t.world.get(by) orelse return false;
+        const holder = e.holder orelse return false;
+        const h = t.world.get(holder) orelse return false;
+        h.holding = null;
+        e.holder = null;
+        e.holding = holder;
+        h.holder = by;
+        dispatch(t, holder, "heldBy", void, {}, .{by});
+        return true;
     }
 
     /// A heavy fall shakes the screen, unless a shake is under way or the special attack is.
