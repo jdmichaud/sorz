@@ -767,7 +767,9 @@ pub fn Of(comptime M: type) type {
             const b = body(a);
             if (!b.reel_taken) return false;
             b.touched = true;
-            if (b.lifted) return struckLifted(a, blow);
+            // Lifted, or lifted at this tick (the original's reel takes the lift's step at once,
+            // and its blow lands at each tick it touches).
+            if (b.lifted or b.lift_due) return struckLifted(a, blow);
             if (b.touch_taken) return false;
             b.touch_taken = true;
             b.other = blow.attacker;
