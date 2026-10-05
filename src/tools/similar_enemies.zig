@@ -59,6 +59,9 @@ pub const families = [_]Family{
     .{ .name = "ai-s4-mash", .what = "the last stop, B pressed" },
     .{ .name = "ai-boss", .what = "Antonio's arrival" },
     .{ .name = "ai-boss-mash", .what = "Antonio, B pressed" },
+    // Not the catalogue's: taken up before Antonio comes, so that the round's script brings him.
+    .{ .name = "ai-boss-script", .what = "Antonio brought by the round's script, the player standing" },
+    .{ .name = "ai-boss-script-mash", .what = "Antonio brought by the round's script, B pressed to his end" },
     .{ .name = "item-apple-reach", .what = "the apple: taken from across", .item = true },
     .{ .name = "item-beef", .what = "the beef: taken after a knock-down", .item = true },
     .{ .name = "item-pipe", .what = "the pipe: dropped by its Galsia, picked up and swung", .item = true },

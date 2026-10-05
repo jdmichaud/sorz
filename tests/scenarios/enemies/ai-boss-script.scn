@@ -1,0 +1,5 @@
+# The recorded play (game.pads) to VBlank 25901, before the boss's section brings Antonio: the
+# round's script places him and he walks in, not taken up in his fight; the player stands.
+# (Written for sorz's similar-check, PLAN item 12.)
+start pads ../../game.pads 25901
+wait 400
