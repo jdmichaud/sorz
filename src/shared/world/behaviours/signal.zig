@@ -49,8 +49,9 @@ pub const Mind = struct {
     across: bool = false,
     /// The slide: past its kick, on its last frame.
     slid: bool = false,
-    /// The hold: its throw asked.
+    /// The hold: its throw asked; the one it held struck in its hold.
     threw: bool = false,
+    broken: bool = false,
 };
 
 pub const Animation = enum { walk, down, reel, stand, thrown, slammed, hold, slide };
@@ -330,6 +331,7 @@ fn holdSetUp(a: Actor) void {
     const turns = n.hold_right_round == null or n.hold_right_round.? != round;
     if (turns and a.tick.world.camera.x.whole() + n.hold_middle <= a.entity.position.x.whole()) a.entity.facing = .left;
     a.mind.threw = false;
+    a.mind.broken = false;
     const h = a.entity.holding orelse return;
     const p = a.other(h) orelse return;
     p.facing = a.entity.facing;
@@ -340,7 +342,9 @@ fn holdSetUp(a: Actor) void {
 
 fn hold(a: Actor) void {
     const n = a.numbers();
-    if (a.entity.holding == null and !a.mind.threw) return Common.enter(a, fights);
+    // Let go before its throw, or the one it held struck in its hold, thrown or not: its hold
+    // ends.
+    if (a.entity.holding == null and (!a.mind.threw or a.mind.broken)) return Common.enter(a, fights);
     if (a.entity.animation.left == 1 and !a.mind.threw) {
         a.mind.threw = true;
         a.tick.throwHeld(a.handle, Common.power(a));
@@ -363,6 +367,11 @@ fn watch(a: Actor) void {
 
 pub fn struck(a: Actor, blow: tick.Blow) bool {
     return Common.struck(a, blow);
+}
+
+/// The one it holds was struck in its hold.
+pub fn holdBroken(a: Actor) void {
+    a.mind.broken = true;
 }
 
 pub fn fall(a: Actor) void {

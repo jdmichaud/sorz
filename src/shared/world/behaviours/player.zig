@@ -1107,6 +1107,9 @@ fn letGoStruck(a: Actor) void {
         a.entity.holder = null;
         return;
     };
+    // An enemy holding it is told (the original's struck player marks its holder, whose hold
+    // ends at its turn).
+    if (a.entity.holder) |h| if (!a.tick.isPlayer(h)) a.tick.holdBroken(h);
     if (a.entity.holding != null or a.entity.holder != null) a.letGo();
 }
 

@@ -406,6 +406,12 @@ pub const Tick = struct {
         return dispatch(t, h, "heldLastBy", ?Handle, null, .{});
     }
 
+    /// The one `holder` holds was struck in its hold and let go: the holder is told (its
+    /// behaviour's `holdBroken`; by default, nothing).
+    pub fn holdBroken(t: *Tick, holder: Handle) void {
+        dispatch(t, holder, "holdBroken", void, {}, .{});
+    }
+
     /// The grab began: the entity `holder` holds `held`.
     pub fn grabbed(t: *Tick, holder: Handle, held: Handle) void {
         dispatch(t, holder, "holds", void, {}, .{held});
