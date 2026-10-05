@@ -112,6 +112,10 @@ pub const Numbers = struct {
     fall_most: Fixed,
     /// A player's reach meets it within this height of the player's.
     grab_height: i16,
+    /// A player's blow lands on it only drawn within these across at its last tick, the
+    /// latter excluded (the screen's middle).
+    struck_from: i16,
+    struck_to: i16,
 };
 
 pub const Tables = struct {
@@ -514,9 +518,11 @@ fn atOtherPlayer(a: Actor, by: ?Handle) void {
 
 /// A blow meets it: in its arc, the first tick of a touch makes a copy fall away and ends its
 /// tick; in flight, the first turns it back (a weapon a player swings sends it off). The blow
-/// lands.
+/// lands; a player's not, drawn off the screen's middle at its last tick.
 pub fn struck(a: Actor, blow: tick.Blow) bool {
     const m = a.mind;
+    const n = a.numbers();
+    if (!blow.missile and (m.drawn < n.struck_from or m.drawn >= n.struck_to)) return false;
     switch (m.state) {
         .juggled => {},
         .flying => if (!m.back) return false,
