@@ -225,9 +225,13 @@ fn closeIn(a: Actor) void {
     m.stops -%= 1;
     if (m.stops == 0) return done(a);
     const t = Common.target(a) orelse return Common.enter(a, fights);
+    // The original's states it waits on run from down to knocked down, the side faced counted
+    // in: its target knocked down facing left is past them.
     for ([_][]const u8{ "down", "dying", "lying_dead", "hurt", "knocked_down" }) |s| {
         const name = behaviours.stateName(&t.mind) orelse break;
-        if (std.mem.eql(u8, name, s)) return;
+        if (!std.mem.eql(u8, name, s)) continue;
+        if (std.mem.eql(u8, s, "knocked_down") and t.facingLeft()) break;
+        return;
     }
     if (!m.punching) {
         if (!Common.boxMeetsTarget(a, a.kind.definition.box("punch_reach").?)) {
