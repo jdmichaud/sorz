@@ -640,6 +640,15 @@ pub const Tick = struct {
         script.won(t.world);
     }
 
+    /// Whether a thing at `x` across is left behind by the camera: at or left of the camera's place
+    /// less `by`, as the original compares their whole pixels' words, unsigned (with the camera
+    /// within `by` of the level's start, any place is).
+    pub fn behindCamera(t: *const Tick, x: Fixed, by: i16) bool {
+        const edge: u16 = @truncate(@as(u32, @bitCast(t.world.camera.x.whole() - by)));
+        const at: u16 = @truncate(@as(u32, @bitCast(x.whole())));
+        return edge >= at;
+    }
+
     /// Whether `h` is a player's entity.
     pub fn isPlayer(t: *const Tick, h: Handle) bool {
         for (t.world.players) |p| if (p.entity) |e| if (e.eql(h)) return true;

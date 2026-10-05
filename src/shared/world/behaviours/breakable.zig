@@ -95,8 +95,8 @@ pub fn think(a: Actor) void {
         },
     }
     const n = a.numbers();
+    if (a.tick.behindCamera(a.entity.position.x, n.left_behind)) return a.remove();
     const from_camera = a.entity.position.x.whole() - a.tick.world.camera.x.whole();
-    if (from_camera <= -n.left_behind) return a.remove();
     a.mind.shown = from_camera >= n.screen_from and from_camera < n.screen_to;
 }
 

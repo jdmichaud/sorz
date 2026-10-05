@@ -117,8 +117,7 @@ pub fn Of(comptime M: type) type {
         /// Out of a hand (none holds it) and left behind the camera, it goes: whether it went.
         pub fn leftBehind(a: A) bool {
             if (a.entity.holder != null or !a.entity.alive()) return false;
-            const from_camera = a.entity.position.x.whole() - a.tick.world.camera.x.whole();
-            if (from_camera > -a.numbers().left_behind) return false;
+            if (!a.tick.behindCamera(a.entity.position.x, a.numbers().left_behind)) return false;
             a.remove();
             return true;
         }

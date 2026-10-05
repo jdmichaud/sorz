@@ -50,7 +50,7 @@ pub fn think(a: Actor) void {
         },
         .lying => {},
     }
-    if (e.position.x.whole() - a.tick.world.camera.x.whole() <= -a.numbers().left_behind) a.remove();
+    if (a.tick.behindCamera(e.position.x, a.numbers().left_behind)) a.remove();
 }
 
 /// Taken up from a situation in its state: its pose.
