@@ -112,7 +112,7 @@ pub fn Tables(comptime Own: type) type {
 }
 
 /// The fields of `First` then those of `Second`, as one struct.
-fn merged(comptime First: type, comptime Second: type) type {
+pub fn merged(comptime First: type, comptime Second: type) type {
     const a = @typeInfo(First).@"struct";
     const b = @typeInfo(Second).@"struct";
     const n = a.field_names.len + b.field_names.len;
@@ -175,6 +175,9 @@ pub const Common = struct {
     /// `thrown_damage`.
     struck_held: u8,
     thrown_damage: u8,
+    /// Thrown off a hold, slammed off one: the health it loses.
+    thrown_hurt: u8,
+    slam_hurt: u8,
     flipped_x: Fixed,
     flipped_up: Fixed,
     thrown_x: Fixed,
@@ -482,6 +485,12 @@ pub fn Of(comptime M: type) type {
             enter(a, if (a.mind.state == .walk_off) M.fights else .walk_off);
         }
 
+        /// The damage its blows do: its own (kept from a weapon it lost), else its kind's.
+        pub fn power(a: A) i16 {
+            if (a.entity.power != 0) return a.entity.power;
+            return a.numbers().power;
+        }
+
         /// It moves by its speed at this tick (a flight, a fall).
         pub fn go(a: A) void {
             a.entity.flags.still = false;
@@ -510,6 +519,14 @@ pub fn Of(comptime M: type) type {
             var me = a.entity.*;
             me.boxes.mirrored = a.entity.facingLeft();
             return systems.meet(&me, &a.kind.definition.boxes[box], t, &a.tick.kindOf(t).definition.boxes[body_box]);
+        }
+
+        /// Whether the attack box of the frame it shows (a reach) meets its target's body.
+        pub fn reachMeetsTarget(a: A) bool {
+            const t = target(a) orelse return false;
+            const box = a.entity.boxes.attack orelse return false;
+            const body_box = t.boxes.body orelse return false;
+            return systems.meet(a.entity, &a.kind.definition.boxes[box], t, &a.tick.kindOf(t).definition.boxes[body_box]);
         }
 
         /// The attack box of frame `frame` of its animation `which`.
@@ -957,7 +974,7 @@ pub fn Of(comptime M: type) type {
                     a.entity.velocity.x = n.thrown_x.times(away);
                     a.entity.velocity.height = n.thrown_up;
                     a.entity.flags.airborne = true;
-                    a.takeDamage(holder, @intCast(m.damage));
+                    a.takeDamage(holder, n.thrown_hurt);
                     b.down = .sliding;
                     b.timer = n.thrown_slide;
                     b.bounces = 0;
@@ -985,11 +1002,7 @@ pub fn Of(comptime M: type) type {
             b.slam -%= 1;
             if (b.slam != 0) return;
             const by = b.other;
-            var damage: i16 = 0;
-            if (by) |x| if (a.other(x)) |h| if (b.hold_move) |m| {
-                damage = @intCast(a.tick.kindOf(h).definition.moves[m].damage);
-            };
-            a.takeDamage(by, damage);
+            a.takeDamage(by, n.slam_hurt);
             b.down = .flying;
             b.bounces = 0;
             b.slowing = false;

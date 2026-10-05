@@ -167,6 +167,10 @@ fn commonNumbers(d: *Def, kind: u8) Error!void {
     try d.number("thrown_x", try immediate(rom, 0xA26C, &.{ 0x20, 0x3C }, 4), "ROM 0x0A26C: move.l #N,d0");
     try d.number("thrown_up", try immediate(rom, 0xA272, &.{ 0x22, 0x3C }, 4), "ROM 0x0A272: move.l #N,d1");
     try d.number("thrown_slide", try moveByte(rom, 0xA2C4, 80), "ROM 0x0A2C4: move.b #N,(80,a0)");
+    if (rom[0xA2C0] & 0xF1 != 0x51 or rom[0xA2C1] != 0x68) return error.BadData;
+    try d.number("thrown_hurt", @as(i32, rom[0xA2C0] >> 1) & 7, "ROM 0x0A2C0: subq.w #N,(50,a0) (thrown off a hold)");
+    if (rom[0xA338] & 0xF1 != 0x51 or rom[0xA339] != 0x68) return error.BadData;
+    try d.number("slam_hurt", @as(i32, rom[0xA338] >> 1) & 7, "ROM 0x0A338: subq.w #N,(50,a0) (slammed off a hold)");
     try d.number("slam_ticks", try moveByte(rom, 0xA300, 80), "ROM 0x0A300: move.b #N,(80,a0)");
     try d.number("slammed_x", try immediate(rom, 0xA358, &.{ 0x21, 0x7C }, 4), "ROM 0x0A358: move.l #N,(28,a0)");
     try d.number("slammed_up", try immediate(rom, 0xA360, &.{ 0x21, 0x7C }, 4), "ROM 0x0A360: move.l #N,(36,a0)");
@@ -266,7 +270,6 @@ pub fn galsia(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition
     try d.number("edge_left", try moveq(rom, 0xDF94, 0), "ROM 0x0DF94: moveq #N,d0");
     try d.number("edge_depth", try immediate(rom, 0xDF9E, &.{ 0x31, 0x7C }, 2), "ROM 0x0DF9E: move.w #N,(98,a0)");
     try d.number("edge_near", try immediate(rom, 0xDFCA, &.{ 0x0C, 0x40 }, 2), "ROM 0x0DFCA: cmpi.w #N,d0");
-    try d.number("edge_punch_pace", (try immediate(rom, 0xE1B4, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0E1B4: move.w #N*$101,(12,a0)");
     // Approaching, squaring up (0xE01E, 0xE07C).
     try d.number("approach_ticks", try moveByte(rom, 0xE02C, 80), "ROM 0x0E02C: move.b #N,(80,a0)");
     try d.number("approach_speed", try immediate(rom, 0xE032, &.{ 0x31, 0x7C }, 2) << 8, "ROM 0x0E032: move.w #N,(100,a0) (8.8)");
@@ -333,9 +336,80 @@ fn punk(d: *Def) Error!void {
     try d.number("close_in_beside", try moveq(rom, 0xE16A, 1), "ROM 0x0E16A: moveq #N,d1");
     try d.number("close_in_pace", (try immediate(rom, 0xE138, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0E138: move.w #N*$100+1,(12,a0)");
     try d.number("too_close", try immediate(rom, 0xE0FC, &.{ 0x0C, 0x40 }, 2), "ROM 0x0E0FC: cmpi.w #N,d0");
+    try d.number("edge_punch_pace", (try immediate(rom, 0xE1B4, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0E1B4: move.w #N*$101,(12,a0)");
+}
+
+// --- The stalker -------------------------------------------------------------------------------
+
+/// The stalker Galsias (type $21, its handler 0xD99A): they head for their place beside their
+/// target, lurk there, sneak up on a target that turns its back and grab it from behind; they
+/// share the Galsia's close in and punch.
+pub fn stalker(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    var d = try begin(arena, rom, 0x21, "galsia", &.{ .{ .name = "punch", .entry = 10 }, .{ .name = "grab", .entry = 12 } });
+    try punk(&d);
+    try d.number("approach_speed", try immediate(rom, 0xD9D6, &.{ 0x31, 0x7C }, 2) << 8, "ROM 0x0D9D6: move.w #N,(100,a0) (8.8)");
+    try d.number("approach_ticks", try moveByte(rom, 0xD9E2, 80), "ROM 0x0D9E2: move.b #N,(80,a0)");
+    try d.number("lurk_ticks", try moveByte(rom, 0xDA1E, 80), "ROM 0x0DA1E: move.b #N,(80,a0)");
+    try d.number("sneak_pace", try moveByte(rom, 0xDAA6, 12), "ROM 0x0DAA6: move.b #N,(12,a0)");
+    try d.number("sneak_speed", try immediate(rom, 0xDAAC, &.{ 0x31, 0x7C }, 2) << 8, "ROM 0x0DAAC: move.w #N,(100,a0) (8.8)");
+    // The box it sneaks up with, which grabs (0xDAB8: its frame's attack box set to it).
+    const grab_box: u8 = @intCast(try moveByte(rom, 0xDAB8, 2));
+    _ = try d.box(1, grab_box, grab_box, "sneak", "grab");
+    try d.number_notes.print(arena, "; the sneak's box: ROM 0x0DAB8: move.b #N,(2,a0)", .{});
+    return finish(&d, "galsia_stalker", 0x21, "stalker", "the stalker Galsia (handler 0xD99A)");
+}
+
+// --- Signal ------------------------------------------------------------------------------------
+
+/// Signal (type $24, its handler 0xE4D2, sor-remaster's obj/signal.zig): it runs slantwise to its
+/// place, sizes its target up, closes in or slides in with a kick; walking into its target it
+/// holds it and throws it.
+pub fn signal(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    var d = try begin(arena, rom, 0x24, "signal", &.{ .{ .name = "hold", .entry = 10 }, .{ .name = "slide", .entry = 12 } });
+    blows(&d, "slide");
+    const power = powerOf(&d);
+    try d.moves.append(arena, .{ .name = "slide", .provenance = "the slide kick (0xE80A): a blow that lands knocks down (reaction 1)", .animation = d.animationIndex("slide").?, .damage = power, .reaction = .knock_down });
+    try d.number("approach_speed", try immediate(rom, 0xE516, &.{ 0x31, 0x7C }, 2) << 8, "ROM 0x0E516: move.w #N,(100,a0) (8.8)");
+    try d.number("approach_ticks", try moveByte(rom, 0xE51C, 80), "ROM 0x0E51C: move.b #N,(80,a0)");
+    try d.number("diagonal_x", try immediate(rom, 0xE55A, &.{ 0x24, 0x3C }, 4), "ROM 0x0E55A: move.l #N,d2");
+    try d.number("diagonal_depth", try immediate(rom, 0xE56C, &.{ 0x24, 0x3C }, 4), "ROM 0x0E56C: move.l #N,d2");
+    try d.number("size_up_ticks", try moveByte(rom, 0xE602, 80), "ROM 0x0E602: move.b #N,(80,a0)");
+    try d.number("far", try immediate(rom, 0xE63C, &.{ 0x0C, 0x80 }, 4), "ROM 0x0E63C: cmpi.l #N,d0 (0x98E8's estimate)");
+    try d.number("slide_level", try quick(rom, 0xE652, 0x5140), "ROM 0x0E652: subq.w #N,d0");
+    try d.number("close_in_pace", (try immediate(rom, 0xE692, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0E692: move.w #N*$101,(12,a0)");
+    try d.number("close_in_ticks", try moveByte(rom, 0xE698, 80), "ROM 0x0E698: move.b #N,(80,a0)");
+    try d.number("close_in_speed", try immediate(rom, 0xE69E, &.{ 0x31, 0x7C }, 2) << 8, "ROM 0x0E69E: move.w #N,(100,a0) (8.8)");
+    try d.number("slide_ticks", try moveByte(rom, 0xE826, 80), "ROM 0x0E826: move.b #N,(80,a0)");
+    try d.number("slide_speed", try immediate(rom, 0xE85C, &.{ 0x20, 0x3C }, 4), "ROM 0x0E85C: move.l #N,d0");
+    try d.number("slide_slowing", -(try immediate(rom, 0xE876, &.{ 0x20, 0x3C }, 4)), "ROM 0x0E876: move.l #-N,d0");
+    try d.number("slide_end_ticks", try moveByte(rom, 0xE896, 80), "ROM 0x0E896: move.b #N,(80,a0)");
+    try d.number("slide_end_frame", try moveByte(rom, 0xE89C, 10), "ROM 0x0E89C: move.b #N,(10,a0)");
+    try d.number("hold_middle", try immediate(rom, 0xE71E, &.{ 0x06, 0x40 }, 2), "ROM 0x0E71E: addi.w #N,d0");
+    try d.number("hold_place", -(try moveq(rom, 0xE744, 0)), "ROM 0x0E744: moveq #-N,d0");
+    try d.number("hold_ends", try frameCompared(rom, 0xE7A0), "ROM 0x0E7A0: cmpi.b #N,(10,a0)");
+    if (try frameTicksCompared(rom, 0xE77C) != 1) return error.BadData;
+    try d.number_notes.print(arena, "; the throw at its first frame's last tick: ROM 0x0E77C: cmpi.b #1,(13,a0)", .{});
+    try d.sound("slide", @bitCast(@as(i8, @intCast(try moveq(rom, 0xE850, 7)))));
+    return finish(&d, "signal", 0x24, "signal", "Signal (handler 0xE4D2)");
+}
+
+/// `addq` or `subq` at `at`, whose opcode less its count is `base`: the count (0 is 8).
+fn quick(rom: []const u8, at: u32, base: u16) Error!i32 {
+    const op = u16be(rom, at);
+    if (op & 0xF1FF != base) return error.BadData;
+    const n: i32 = (op >> 9) & 7;
+    return if (n == 0) 8 else n;
+}
+
+/// `cmpi.b #N,(13,a0)`: a frame's ticks left compared.
+fn frameTicksCompared(rom: []const u8, at: u32) Error!i32 {
+    if (u16be(rom, at) != 0x0C28 or rom[at + 2] != 0 or u16be(rom, at + 4) != 13) return error.BadData;
+    return rom[at + 3];
 }
 
 /// The definitions this module writes, appended to `out`.
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
     try out.append(arena, try galsia(arena, rom));
+    try out.append(arena, try stalker(arena, rom));
+    try out.append(arena, try signal(arena, rom));
 }

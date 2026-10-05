@@ -48,6 +48,8 @@ pub const sparring = @import("behaviours/sparring.zig");
 pub const pawn = @import("behaviours/pawn.zig");
 pub const player = @import("behaviours/player.zig");
 pub const galsia = @import("behaviours/galsia.zig");
+pub const stalker = @import("behaviours/stalker.zig");
+pub const signal = @import("behaviours/signal.zig");
 pub const police_car = @import("behaviours/police_car.zig");
 pub const go_arrow = @import("behaviours/go_arrow.zig");
 pub const player_waiting = @import("behaviours/player_waiting.zig");
@@ -59,6 +61,8 @@ pub const Mind = union(enum) {
     pawn: pawn.Mind,
     player: player.Mind,
     galsia: galsia.Mind,
+    stalker: stalker.Mind,
+    signal: signal.Mind,
     police_car: police_car.Mind,
     go_arrow: go_arrow.Mind,
     player_waiting: player_waiting.Mind,

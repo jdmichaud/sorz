@@ -60,9 +60,9 @@ pub const Animation = enum { walk, down, reel, stand, thrown, slammed, punch };
 pub const Move = enum { punch, punch_last };
 pub const Sound = enum { hurt, thud, cry, cry_odd };
 
-pub const Numbers = enemy.Numbers(PunkNumbers);
+pub const Numbers = enemy.Numbers(enemy.merged(PunkNumbers, OwnNumbers));
 
-/// The numbers of the Galsias' own fight (a stalker's too).
+/// The numbers of the Galsias' close in and punch (a stalker's too).
 pub const PunkNumbers = struct {
     /// The punch: the frame whose box is its reach, the frame of its last punch and the frame
     /// that tests it, the frame it ends at; a punch from the edge paces its frames.
@@ -79,6 +79,10 @@ pub const PunkNumbers = struct {
     close_in_beside: i16,
     close_in_pace: u8,
     too_close: i16,
+};
+
+/// The Galsia's own numbers.
+const OwnNumbers = struct {
     /// Squaring up: its ticks, and the depths within which its target is level with it.
     square_ticks: u8,
     square_level: i16,
