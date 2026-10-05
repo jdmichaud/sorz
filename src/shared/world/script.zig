@@ -486,7 +486,13 @@ fn clearIfDone(t: *Tick, p: *const Plan) void {
     const s = &t.world.script;
     const r = p.round;
     if (s.next < reserveOf(r, s.part).len or s.arriving != 0 or s.enemies != 0) return;
-    if (s.part >= r.sections.len) return;
+    if (s.part >= r.sections.len) {
+        // The boss's section with nothing left and no boss: the content does not have him yet
+        // (his kind skipped as the wave brought him). The round is won rather than left without
+        // an end. TODO(PLAN item 15 and on): each round's boss.
+        std.log.warn("the round's boss is not in the content yet: the round is won without him", .{});
+        return won(t.world);
+    }
     const k = s.part + 1;
     if (k < r.sections.len) return beginSection(t, p, k);
     if (r.boss == null) return;
