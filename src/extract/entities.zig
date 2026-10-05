@@ -958,6 +958,10 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     if (-(try moveq(rom, 0x3B60, 1)) != wall_above) return error.BadData;
     try d.number("wall_above", wall_above, "ROM 0x03C94: moveq #-N,d3 (the walls ahead, 0x3C92), the same at 0x03B60 (in depth)");
     try d.number("wall_ahead", try moveq(rom, 0x3C96, 1), "ROM 0x03C96: moveq #N,d1 (the walls this far ahead, 0x3C92; negated when it goes left)");
+    if (u16be(rom, 0x3E86) != 16 or u32be(rom, 0x3E88) != 0x3C3C00A0) return error.BadData;
+    try d.number("wall_back", -(try immediate(rom, 0x3E82, &.{ 0x06, 0x68 }, 2)), "ROM 0x03E82: addi.w #-N,(16,a0) (landed on a cell with no height, 0x3E78)");
+    if (u16be(rom, 0x520A) != 0x5045) return error.BadData;
+    try d.number("wall_push", try moveq(rom, 0x51E8, 1), "ROM 0x051E8: moveq #N,d1 (and 0x0520A: addq.w #N,d5; out of a cell with no height, 0x51CC)");
     try playerPartners(&d, character);
     try tossedPlaces(&d, character);
 

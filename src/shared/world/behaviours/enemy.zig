@@ -38,6 +38,7 @@ const entity = @import("../entity.zig");
 const content_entity = @import("../../content/entity.zig");
 const systems = @import("../systems.zig");
 const script = @import("../script.zig");
+const player = @import("player.zig");
 
 const Fixed = fixed.Fixed;
 const Handle = entity.Handle;
@@ -252,9 +253,18 @@ pub const Common = struct {
     hole_deep: ?i16 = null,
     fall_out: ?i16 = null,
     /// Walking, it looks this far ahead of its way for a floor (across, in depth): none there,
-    /// it walks off.
+    /// it walks off; a wall there (a cell with no height) stops it.
     floor_ahead_x: ?i16 = null,
     floor_ahead_depth: ?i16 = null,
+    /// Flying off a blow or sliding off a throw, it moves across only while the cell this far
+    /// ahead of it has a height.
+    fly_ahead: ?i16 = null,
+    /// Walking across alone, or in depth alone, it looks this far ahead: a wall there, or a
+    /// cell lower than its lowest, sends it walking off.
+    across_ahead: ?i16 = null,
+    across_lowest: ?i16 = null,
+    depth_ahead: ?i16 = null,
+    depth_lowest: ?i16 = null,
     /// Lying: each frame's ticks, the least of the drawn wait, the frame it is up at.
     lying: u8,
     lying_least: u8,
@@ -615,9 +625,17 @@ pub fn Of(comptime M: type) type {
         pub fn walk(a: A) bool {
             const n = a.numbers();
             const e = a.entity;
-            if (holeAhead(a)) {
-                enter(a, .walk_off);
-                return false;
+            conveyed(a);
+            switch (ahead(a)) {
+                .floor => {},
+                .hole => {
+                    enter(a, .walk_off);
+                    return false;
+                },
+                .wall => {
+                    walkOffOrFight(a);
+                    return false;
+                },
             }
             const x = e.position.x.add(e.velocity.x);
             if (!x.lessThan(.zero) and x.lessThan(.pixels(n.walk_x_most))) e.position.x = x;
@@ -628,40 +646,71 @@ pub fn Of(comptime M: type) type {
             return false;
         }
 
-        /// Whether, on a floor under it, it has none a step ahead of its way: `floor_ahead_x`
-        /// across and `floor_ahead_depth` in depth, each the way its speed goes (none: there).
-        fn holeAhead(a: A) bool {
-            const n = a.numbers();
-            const ax = n.floor_ahead_x orelse return false;
-            const ad = n.floor_ahead_depth orelse return false;
+        /// On a conveyor's cell (round 6's), it is carried across its whole pixels (the
+        /// original's push of the cell under an enemy).
+        pub fn conveyed(a: A) void {
             const e = a.entity;
-            if (a.tick.floorUnder(e.position) == null) return false;
+            const by = a.tick.carryUnder(e.position);
+            if (by != 0) e.position.x = e.position.x.add(.pixels(by));
+        }
+
+        /// What it has a step ahead of its way, on a floor under it: `floor_ahead_x` across and
+        /// `floor_ahead_depth` in depth, each the way its speed goes (none: there). No floor
+        /// there, or one below its feet, is a hole; a cell with no height, a wall.
+        fn ahead(a: A) enum { floor, hole, wall } {
+            const n = a.numbers();
+            const ax = n.floor_ahead_x orelse return .floor;
+            const ad = n.floor_ahead_depth orelse return .floor;
+            const e = a.entity;
+            if (a.tick.floorUnder(e.position) == null) return .floor;
             const sx: i32 = std.math.sign(e.velocity.x.raw);
             const sd: i32 = std.math.sign(e.velocity.depth.raw);
-            const ahead: fixed.Vec3 = .{
+            const at: fixed.Vec3 = .{
                 .x = .pixels(e.position.x.whole() + sx * ax),
                 .depth = .pixels(e.position.depth.whole() + sd * ad),
                 .height = e.position.height,
             };
-            return a.tick.floorUnder(ahead) == null;
+            const floor = a.tick.floorUnder(at) orelse return .hole;
+            if (e.position.height.lessThan(floor)) return .hole;
+            if (floor.raw == 0 and a.tick.cellAt(at) != null) return .wall;
+            return .floor;
+        }
+
+        /// Whether the cell `dx` across and `dd` in depth from it has no height (a wall) or is
+        /// lower than `lowest`.
+        fn sendsBack(a: A, dx: i32, dd: i32, lowest: ?i16) bool {
+            const low = lowest orelse return false;
+            const p = a.entity.position;
+            const c = a.tick.cellAt(.{ .x = .pixels(p.x.whole() + dx), .depth = .pixels(p.depth.whole() + dd), .height = p.height }) orelse return false;
+            return c.height == 0 or c.height > low;
         }
 
         /// It walks by its speed in depth alone (a circle's, a line up's), refused at the
-        /// street's depths; a solid thing in its way stops it, and it walks off. Returns false
-        /// when it changed state.
+        /// street's depths; a solid thing in its way stops it, and it walks off, as it does
+        /// before a wall or a cell too low `depth_ahead` ahead. Returns false when it changed
+        /// state.
         pub fn walkDepth(a: A) bool {
             const n = a.numbers();
             const e = a.entity;
+            if (n.depth_ahead) |dd| if (sendsBack(a, 0, if (e.velocity.depth.raw < 0) -dd else dd, n.depth_lowest)) {
+                enter(a, .walk_off);
+                return false;
+            };
             const d = e.position.depth.add(e.velocity.depth);
             if (!d.lessThan(.pixels(n.walk_depth_least)) and d.lessThan(.pixels(n.walk_depth_most))) e.position.depth = d;
             return unblocked(a);
         }
 
         /// It walks by its speed across alone, refused at the street's ends; a solid thing in its
-        /// way stops it, and it walks off. Returns false when it changed state.
+        /// way stops it, and it walks off, as it does on a floor before a wall or a cell too low
+        /// `across_ahead` ahead. Returns false when it changed state.
         pub fn walkAcross(a: A) bool {
             const n = a.numbers();
             const e = a.entity;
+            if (n.across_ahead) |ax| if (a.tick.floorUnder(e.position) != null and sendsBack(a, if (e.velocity.x.raw < 0) -ax else ax, 0, n.across_lowest)) {
+                enter(a, .walk_off);
+                return false;
+            };
             const x = e.position.x.add(e.velocity.x);
             if (!x.lessThan(.zero) and x.lessThan(.pixels(n.walk_x_most))) e.position.x = x;
             return unblocked(a);
@@ -1095,6 +1144,7 @@ pub fn Of(comptime M: type) type {
         fn lie(a: A) void {
             const n = a.numbers();
             const b = body(a);
+            conveyed(a);
             if (a.entity.animation.paused) {
                 if (a.tick.world.special) return;
                 const k: u8 = b.lying_drawn orelse @intCast(a.pick(.lying, 4));
@@ -1139,6 +1189,27 @@ pub fn Of(comptime M: type) type {
             a.entity.velocity.height = v;
         }
 
+        /// After its move, flying off a blow or sliding off a throw: its move across stands only
+        /// when the cell `fly_ahead` ahead of where it was, the way it moves, has a height (a
+        /// wall stops it; its speed is kept), and within the street's ends.
+        pub fn walls(a: A) void {
+            const n = a.numbers();
+            if (a.mind.state != .knocked_down) return;
+            const b = body(a);
+            if (b.down != .flying and b.down != .sliding) return;
+            const e = a.entity;
+            const was = e.position.x.sub(e.velocity.x);
+            if (e.position.x.lessThan(.zero) or !e.position.x.lessThan(.pixels(n.walk_x_most))) {
+                e.position.x = was;
+                return;
+            }
+            const reach = n.fly_ahead orelse return;
+            const way: i32 = if (e.velocity.x.raw < 0) -reach else reach;
+            const at: fixed.Vec3 = .{ .x = .pixels(@max(was.whole() + way, 0)), .depth = e.position.depth, .height = e.position.height };
+            const c = a.tick.cellAt(at) orelse return;
+            if (c.height == 0) e.position.x = was;
+        }
+
         /// In the air after its move: down on the floor or below it, it lands, rising or not,
         /// the fraction of its height kept; its gravity is applied before its move. Over a hole
         /// it falls on: a deep one draws it in front of the planes, and fallen far enough it is
@@ -1168,6 +1239,8 @@ pub fn Of(comptime M: type) type {
             const n = a.numbers();
             const b = body(a);
             if (a.mind.state != .knocked_down) return a.stop();
+            // Each landing on a conveyor (round 6's) carries it.
+            conveyed(a);
             if (b.down == .sliding) {
                 a.sound(.thud);
                 slid(a);
@@ -1229,6 +1302,7 @@ pub fn Of(comptime M: type) type {
         pub fn knockedOut(a: A) void {
             const n = a.numbers();
             const b = body(a);
+            conveyed(a);
             b.timer -%= 1;
             if (b.timer != 0) return;
             b.blinks -%= 1;
@@ -1292,6 +1366,14 @@ pub fn Of(comptime M: type) type {
             if (b.slam != 0) return slamming(a);
             const hh = a.entity.holder orelse return enter(a, M.fights);
             const holder = a.other(hh) orelse return enter(a, M.fights);
+            // Placed by its holder at this tick, it goes where a conveyor carried its holder
+            // since, unless it leaves the hold (the original's held enemy places itself at its
+            // own turn).
+            var stays = true;
+            defer if (stays) if (a.tick.actor(player, hh)) |p| {
+                const by = player.heldCarry(p);
+                if (by != 0) a.entity.position.x = a.entity.position.x.add(.pixels(by));
+            };
             const hk = a.tick.kindOf(holder);
             const f = a.tick.frameOf(holder);
             const m: *const content_entity.Move = if (holder.move) |i| &hk.definition.moves[i] else {
@@ -1302,6 +1384,7 @@ pub fn Of(comptime M: type) type {
             };
             if (m.reaction == .knock_down and holder.animation.frame == n.flipped_frame) {
                 // Flipped over: knocked down where it is, off the hold.
+                stays = false;
                 a.mind.state = .knocked_down;
                 b.fresh = false;
                 a.sound(.hurt);
@@ -1329,6 +1412,7 @@ pub fn Of(comptime M: type) type {
                     a.sound(.hurt);
                     a.takeDamage(hh, a.tick.power(holder));
                     if (a.entity.health < 0) {
+                        stays = false;
                         enter(a, .knocked_down);
                         a.tick.letGo(hh);
                         return;
@@ -1595,10 +1679,7 @@ pub fn Of(comptime M: type) type {
             else
                 !(t.position.x.whole() - n.walk_off_near > a.entity.position.x.whole());
             if (!near) return enter(a, M.fights);
-            // Across only.
-            const x = a.entity.position.x.add(a.entity.velocity.x);
-            if (!x.lessThan(.zero) and x.lessThan(.pixels(n.walk_x_most))) a.entity.position.x = x;
-            if (a.tick.keptOut(a.handle)) enter(a, M.fights);
+            _ = walkAcross(a);
         }
 
         /// A new stretch of pacing: its ticks and its speed drawn, away from the target's side.

@@ -163,6 +163,11 @@ fn commonNumbers(d: *Def, kind: u8) Error!void {
     try d.number("fall_out", try immediate(rom, 0x977A, &.{ 0x0C, 0x68 }, 2), "ROM 0x0977A: cmpi.w #N,(24,a0) (fallen this far, out of the fight, 0x9782)");
     try d.number("floor_ahead_x", try moveq(rom, 0x9E90, 1), "ROM 0x09E90: moveq #N,d1 (the walk's look ahead for a floor, 0x9E68; none there: it walks off, 0x9EBE)");
     try d.number("floor_ahead_depth", try moveq(rom, 0x9E92, 2), "ROM 0x09E92: moveq #N,d2");
+    try d.number("fly_ahead", try moveq(rom, 0x9F56, 1), "ROM 0x09F56: moveq #N,d1 (flying off a blow, it moves across while the cell this far ahead has a height)");
+    try d.number("across_ahead", try moveq(rom, 0x9F72, 1), "ROM 0x09F72: moveq #N,d1 (its walk across looks this far ahead, 0x9F6A)");
+    try d.number("across_lowest", try immediate(rom, 0x9F84, &.{ 0x0C, 0x46 }, 2), "ROM 0x09F84: cmpi.w #N,d6 (a cell lower there sends it back)");
+    try d.number("depth_ahead", try moveq(rom, 0x9FE6, 2), "ROM 0x09FE6: moveq #N,d2 (its walk in depth looks this far ahead, 0x9FE6)");
+    try d.number("depth_lowest", try immediate(rom, 0x9FFA, &.{ 0x0C, 0x46 }, 2), "ROM 0x09FFA: cmpi.w #N,d6 (a cell lower there sends it back)");
     try d.number("lying", (try immediate(rom, 0x9A26, &.{ 0x31, 0x7C }, 2)) & 0xFF, "ROM 0x09A26: move.w #N*$101,(12,a0)");
     if (rom[0x9A4E] & 0xF1 != 0x50 or rom[0x9A4F] != 0) return error.BadData;
     try d.number("lying_least", @as(i32, rom[0x9A4E] >> 1) & 7, "ROM 0x09A4E: addq.b #N,d0 (the draw's low two bits, doubled)");

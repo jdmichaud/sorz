@@ -20,6 +20,7 @@
 //!   - `blowLanded(a, target)`: its blow was taken;
 //!   - `takeUp(a)`: put in a state from a situation another program recorded, it starts that
 //!     state's animation;
+//!   - `walls(a)`, after its move (a player's against the walls of the round's floor);
 //!   - `landed(a)`; `fall(a)`, in the air after its move: whether it lands (`a.land`) and how
 //!     it falls (by default it lands when it comes down to the ground, and its definition's
 //!     gravity adds to its speed);

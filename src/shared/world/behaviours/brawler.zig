@@ -288,6 +288,7 @@ fn shrug(a: Actor) void {
     const n = a.numbers();
     a.mind.ticks -%= 1;
     if (a.mind.ticks != 0) {
+        Common.conveyed(a);
         const s = Common.striker(a) orelse return;
         if (@abs(s.position.x.whole() - a.entity.position.x.whole()) < n.shrug_near) return;
     }
@@ -303,6 +304,10 @@ pub fn struck(a: Actor, blow: tick.Blow) bool {
 
 pub fn fall(a: Actor) void {
     Common.fall(a);
+}
+
+pub fn walls(a: Actor) void {
+    Common.walls(a);
 }
 
 pub fn landed(a: Actor) void {

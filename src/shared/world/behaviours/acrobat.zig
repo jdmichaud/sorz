@@ -503,6 +503,10 @@ pub fn fall(a: Actor) void {
     Common.fall(a);
 }
 
+pub fn walls(a: Actor) void {
+    Common.walls(a);
+}
+
 pub fn landed(a: Actor) void {
     Common.landed(a);
 }

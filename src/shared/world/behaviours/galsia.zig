@@ -359,6 +359,7 @@ fn squareSetUp(a: Actor) void {
 fn squareUp(a: Actor) void {
     const n = a.numbers();
     if (P.tooCloseOrReach(a)) return;
+    Common.conveyed(a);
     a.mind.body.timer -%= 1;
     if (a.mind.body.timer != 0) return;
     const t = Common.target(a) orelse return Common.enter(a, fights);
@@ -546,6 +547,10 @@ pub fn struck(a: Actor, blow: tick.Blow) bool {
 
 pub fn fall(a: Actor) void {
     Common.fall(a);
+}
+
+pub fn walls(a: Actor) void {
+    Common.walls(a);
 }
 
 pub fn landed(a: Actor) void {

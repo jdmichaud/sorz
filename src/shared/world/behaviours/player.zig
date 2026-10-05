@@ -184,6 +184,12 @@ pub const Mind = struct {
     knee_spark_due: bool = false,
     /// Its new life began at this tick, fallen out of a hole: it neither moves nor drops yet.
     fell_out: bool = false,
+    /// Where it was as its turn started (a wall with no height sends it back there).
+    turn_start: Vec3 = .zero,
+    /// It placed the one it holds at this tick (`placeHeld`); the conveyor carried it since,
+    /// this far across.
+    placed_held: bool = false,
+    held_carry: i8 = 0,
     /// The enemy it holds or held, drawn behind the others at its depth, and the state it held
     /// it in (`drawnBehind`).
     marked: ?Handle = null,
@@ -442,9 +448,13 @@ pub const Numbers = struct {
     /// Back over the other player held after its vault, it lets go this far back.
     vault_off_step: i16,
     /// Walls are looked for this far above its feet: fallen deeper into the ground, its move
-    /// across and in depth stops there; across, this far ahead of it (none: under it).
+    /// across and in depth stops there; across, this far ahead of it (none: under it). Landed on
+    /// a cell with no height, it is put `wall_back` back; in one after its move, it is pushed
+    /// out across, `wall_push` further each way at each step (none: neither).
     wall_above: i16,
     wall_ahead: ?i16 = null,
+    wall_back: ?i16 = null,
+    wall_push: ?i16 = null,
     /// Armed: the frames at which the plain blow and the stab end, and the swing; the plain
     /// blow's frame at which a knife leaves the hand; a knife stabs at a thing ahead within
     /// `stab_reach` across and `stab_level` either way in depth.
@@ -655,6 +665,9 @@ fn beginWith(a: Actor, state: State, own: ?Move) void {
 
 pub fn control(a: Actor, c: Command) void {
     const n = a.numbers();
+    a.mind.turn_start = a.entity.position;
+    a.mind.placed_held = false;
+    a.mind.held_carry = 0;
     a.mind.shown = .{ .animation = a.entity.animation.index, .frame = a.frame(), .facing = a.entity.facing };
     defer a.mind.request = .none;
     if (!a.mind.started) {
@@ -1216,29 +1229,95 @@ fn spark(a: Actor) void {
 pub fn fall(a: Actor) void {
     const n = a.numbers();
     const e = a.entity;
-    // Fallen so deep into the ground that the look for walls above its feet finds it (the
-    // original's walls are the level's cells, the ground's among them): its move in depth, then
-    // its move across, is undone and stops.
-    // The floor under it, and ahead across where it goes (a hole's has none: no wall there).
-    const looked_at = e.position.height.whole() - n.wall_above;
-    const reach_ahead: i32 = n.wall_ahead orelse 0;
-    const way: i32 = if (e.velocity.x.raw < 0) -reach_ahead else reach_ahead;
-    const ahead: fixed.Vec3 = .{ .x = e.position.x.add(.pixels(way)), .depth = e.position.depth, .height = e.position.height };
-    if (a.tick.floorUnder(e.position)) |under| if (e.velocity.depth.raw != 0 and looked_at > under.whole()) {
-        e.position.depth = e.position.depth.sub(e.velocity.depth);
-        e.velocity.depth = .zero;
-    };
-    if (a.tick.floorUnder(ahead)) |wall| if (looked_at >= wall.whole()) {
-        e.position.x = e.position.x.sub(e.velocity.x);
-        e.position.depth = e.position.depth.sub(e.velocity.depth);
-        e.velocity.x = .zero;
-        e.velocity.depth = .zero;
-    };
     if (e.velocity.height.raw < 0) return;
     const reach: i16 = if (a.mind.state == .air_fall) n.air_fall_reach else 0;
     const floor = a.tick.floorUnder(e.position) orelse return;
     if (e.position.height.add(.pixels(reach)).lessThan(floor)) return;
+    conveyed(a);
+    offWall(a);
     a.land(.whole);
+}
+
+/// After its move, grounded or not, the walls (the original's are the level's cells, the
+/// ground's among them; round 6's machines): looked for `wall_above` over its feet. Moving in
+/// depth into a cell whose floor is higher (not a conveyor's), its move in depth is undone and
+/// stops; a cell with a floor that high `wall_ahead` ahead across (the way it moves, right when
+/// it does not) stops it: back where its turn started when that cell has no height, else its
+/// move undone. Fallen deeper into the ground than its floor, the ground's cells are walls too.
+pub fn walls(a: Actor) void {
+    const n = a.numbers();
+    const e = a.entity;
+    const looked_at = e.position.height.whole() - n.wall_above;
+    if (e.velocity.depth.raw != 0) if (a.tick.floorUnder(e.position)) |under| if (looked_at > under.whole() and a.tick.carryUnder(e.position) == 0) {
+        e.position.depth = e.position.depth.sub(e.velocity.depth);
+        e.velocity.depth = .zero;
+    };
+    const reach_ahead: i32 = n.wall_ahead orelse 0;
+    const way: i32 = if (e.velocity.x.raw < 0) -reach_ahead else reach_ahead;
+    const ahead: fixed.Vec3 = .{ .x = e.position.x.add(.pixels(way)), .depth = e.position.depth, .height = e.position.height };
+    const wall = a.tick.floorUnder(ahead) orelse return;
+    if (looked_at < wall.whole()) return;
+    const no_height = if (a.tick.cellAt(ahead)) |c| c.height == 0 else false;
+    if (no_height) {
+        e.position.x = a.mind.turn_start.x;
+        e.position.depth = a.mind.turn_start.depth;
+    } else {
+        e.position.x = e.position.x.sub(e.velocity.x);
+        e.position.depth = e.position.depth.sub(e.velocity.depth);
+    }
+    e.velocity.x = .zero;
+    e.velocity.depth = .zero;
+}
+
+/// On a cell with no height (round 6's machines), it is put `wall_back` back across.
+fn offWall(a: Actor) void {
+    const back = a.numbers().wall_back orelse return;
+    const e = a.entity;
+    const c = a.tick.cellAt(e.position) orelse return;
+    if (!c.floor or c.height != 0) return;
+    e.position.x = .parts(@intCast(e.position.x.whole() - back), e.position.x.frac());
+}
+
+/// In a cell with no height after its move, it is pushed across to the nearest one with a
+/// height: `wall_push` further each way at each step, ahead (right) first.
+fn pushedOut(a: Actor) void {
+    const step = a.numbers().wall_push orelse return;
+    const e = a.entity;
+    if (!noHeight(a, 0)) return;
+    var by: i32 = step;
+    // The original looks until it finds one; no round lacks one in a row.
+    while (by < 4096) : (by += step) {
+        if (!noHeight(a, by)) break;
+        if (!noHeight(a, -by)) {
+            by = -by;
+            break;
+        }
+    } else return;
+    e.position.x = .parts(@intCast(e.position.x.whole() + by), e.position.x.frac());
+}
+
+/// Whether the cell `dx` across from it (at or right of the round's left end) has no height.
+fn noHeight(a: Actor, dx: i32) bool {
+    var at = a.entity.position;
+    at.x = .pixels(@max(at.x.whole() + dx, 0));
+    const c = a.tick.cellAt(at) orelse return false;
+    return c.height == 0;
+}
+
+/// On a conveyor's cell (round 6's), it is carried across its whole pixels a tick.
+/// The one it placed at this tick is told (the original's held enemy places itself at its own
+/// turn, from where its holder was carried: `heldCarry`).
+fn conveyed(a: Actor) void {
+    const e = a.entity;
+    const by = a.tick.carryUnder(e.position);
+    if (by == 0) return;
+    e.position.x = e.position.x.add(.pixels(by));
+    if (a.mind.placed_held) a.mind.held_carry = by;
+}
+
+/// How far across a conveyor carried it at this tick since it placed the one it holds.
+pub fn heldCarry(a: Actor) i8 {
+    return a.mind.held_carry;
 }
 
 pub fn landed(a: Actor) void {
@@ -1437,11 +1516,14 @@ fn placeHeld(a: Actor) void {
     const at = a.entity.position;
     const was = held.position;
     // A boss takes its places in a hold itself.
-    if (a.tick.kindOf(held).family() != .boss) held.position = .{
-        .x = .parts(@intCast(at.x.whole() + @as(i32, where.x) * a.entity.facing.sign()), was.x.frac()),
-        .depth = .parts(@intCast(at.depth.whole()), was.depth.frac()),
-        .height = .parts(@intCast(at.height.whole() + where.height), was.height.frac()),
-    };
+    if (a.tick.kindOf(held).family() != .boss) {
+        held.position = .{
+            .x = .parts(@intCast(at.x.whole() + @as(i32, where.x) * a.entity.facing.sign()), was.x.frac()),
+            .depth = .parts(@intCast(at.depth.whole()), was.depth.frac()),
+            .height = .parts(@intCast(at.height.whole() + where.height), was.height.frac()),
+        };
+        a.mind.placed_held = true;
+    }
     if (where.lets_go) a.letGo();
 }
 
@@ -1874,6 +1956,13 @@ fn onGround(a: Actor) void {
 /// the holds its depth (whole pixels, its fractions kept).
 pub fn moved(a: Actor) void {
     if (a.mind.fell_out) a.mind.fell_out = false else ledge(a);
+    // On the ground over a conveyor (round 6's), it is carried; on a cell with no height, it is
+    // put back.
+    if (!a.entity.flags.airborne and !a.entity.flags.landed and a.entity.velocity.height.raw == 0 and a.tick.onFloor(a.entity.position)) {
+        conveyed(a);
+        offWall(a);
+    }
+    pushedOut(a);
     if (a.mind.knee_spark_due) {
         a.mind.knee_spark_due = false;
         spark(a);

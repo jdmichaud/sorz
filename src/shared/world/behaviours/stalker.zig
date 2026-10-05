@@ -141,6 +141,7 @@ fn lurkSetUp(a: Actor) void {
 
 fn lurk(a: Actor) void {
     const b = &a.mind.body;
+    Common.conveyed(a);
     if (!Common.pointByOffsets(a)) return;
     if (Common.headForPoint(a)) {
         b.timer -%= 1;
@@ -255,6 +256,10 @@ pub fn heldBy(a: Actor, holder: Handle) void {
 
 pub fn fall(a: Actor) void {
     Common.fall(a);
+}
+
+pub fn walls(a: Actor) void {
+    Common.walls(a);
 }
 
 pub fn landed(a: Actor) void {

@@ -373,9 +373,10 @@ fn movement(t: *Tick) void {
 
 /// An entity moves by its speed (but in depth when it `keeps_depth`, and in height on the
 /// ground), unless it is held (its holder places it, or it follows its holder: `Tick.follow`) or
-/// still. In the air, its behaviour's `fall` decides (`Tick.fall`); by default it lands when it
-/// has come down to the ground (`Tick.land`), and otherwise its gravity adds to its speed in
-/// height. A drawn entity's depth is kept on the ground's depths, its fraction kept.
+/// still; its behaviour's `walls` may undo it (`Tick.walls`). In the air, its behaviour's `fall`
+/// decides (`Tick.fall`); by default it lands when it has come down to the ground
+/// (`Tick.land`), and otherwise its gravity adds to its speed in height. A drawn entity's depth
+/// is kept on the ground's depths, its fraction kept.
 fn move(t: *Tick, h: Handle) void {
     const e = t.world.get(h) orelse return;
     e.flags.landed = false;
@@ -385,6 +386,7 @@ fn move(t: *Tick, h: Handle) void {
     e.position = e.position.add(e.velocity);
     if (e.flags.keeps_depth) e.position.depth = was.depth;
     if (!e.flags.airborne) e.position.height = was.height;
+    t.walls(h);
     if (e.flags.airborne) t.fall(h);
     if (t.world.get(h)) |still| if (!still.flags.hidden) keepOnGround(still);
 }

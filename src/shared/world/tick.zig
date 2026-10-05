@@ -9,6 +9,7 @@
 const std = @import("std");
 const input = @import("../input.zig");
 const content_entity = @import("../content/entity.zig");
+const content_round = @import("../content/round.zig");
 const fixed = @import("fixed.zig");
 const random = @import("random.zig");
 const entity = @import("entity.zig");
@@ -198,6 +199,12 @@ pub const Tick = struct {
         dispatch(t, h, "landingCleared", void, {}, .{});
     }
 
+    /// The entity moved by its speed, before its fall: its behaviour's `walls` (the players' walls
+    /// of the round's floor by cells).
+    pub fn walls(t: *Tick, h: Handle) void {
+        dispatch(t, h, "walls", void, {}, .{});
+    }
+
     /// The entity is in the air after its move. Its behaviour's `fall` decides whether it lands
     /// (`land`) and how it falls; by default it lands when it has come down to the floor under it,
     /// and otherwise its definition's gravity adds to its speed in height.
@@ -215,6 +222,22 @@ pub const Tick = struct {
         const f = p.round.floor orelse return t.world.ground;
         const cell = f.at(at.x.whole(), at.depth.whole());
         return if (cell.floor) .pixels(cell.height) else null;
+    }
+
+    /// The kind of the round's floor's cell under `at` (its whole pixels): none where the round
+    /// has no floor by cells.
+    pub fn cellAt(t: *const Tick, at: fixed.Vec3) ?content_round.FloorKind {
+        const p = t.plan orelse return null;
+        const f = p.round.floor orelse return null;
+        return f.at(at.x.whole(), at.depth.whole());
+    }
+
+    /// The carry across a tick of the floor's cell under `at` (round 6's conveyors), in whole
+    /// pixels: none where the floor is one kind of cell.
+    pub fn carryUnder(t: *const Tick, at: fixed.Vec3) i8 {
+        const p = t.plan orelse return 0;
+        const f = p.round.floor orelse return 0;
+        return f.at(at.x.whole(), at.depth.whole()).carry;
     }
 
     /// Whether `at` is down on the floor under it, or below it (over a hole: never).

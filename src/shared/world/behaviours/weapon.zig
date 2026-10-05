@@ -122,7 +122,8 @@ pub fn Of(comptime M: type) type {
             return true;
         }
 
-        /// Lying: worn out, it blinks out; taken, it is held (counted).
+        /// Lying: worn out, it blinks out; taken, it is held (counted); else a conveyor under it
+        /// (round 6's) carries it.
         fn lying(a: A) void {
             const n = a.numbers();
             const b = &a.mind.body;
@@ -132,7 +133,12 @@ pub fn Of(comptime M: type) type {
                 a.mind.state = .blinking_out;
                 return;
             }
-            if (a.entity.holder == null) return;
+            if (a.entity.holder == null) {
+                const e = a.entity;
+                const by = a.tick.carryUnder(e.position);
+                if (by != 0) e.position.x = e.position.x.add(.pixels(by));
+                return;
+            }
             b.taken += 1;
             a.mind.state = .held;
         }

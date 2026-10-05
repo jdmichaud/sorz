@@ -232,6 +232,7 @@ fn sizeUpSetUp(a: Actor) void {
 
 fn sizeUp(a: Actor) void {
     const n = a.numbers();
+    Common.conveyed(a);
     a.mind.body.timer -%= 1;
     if (a.mind.body.timer != 0) return;
     if (a.entity.spawn.entrance == .jump_in) return Common.enter(a, fights);
@@ -329,6 +330,10 @@ pub fn struck(a: Actor, blow: tick.Blow) bool {
 
 pub fn fall(a: Actor) void {
     Common.fall(a);
+}
+
+pub fn walls(a: Actor) void {
+    Common.walls(a);
 }
 
 pub fn landed(a: Actor) void {

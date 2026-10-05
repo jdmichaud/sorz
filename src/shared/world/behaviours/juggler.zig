@@ -556,6 +556,7 @@ fn crouchSetUp(a: Actor) void {
 fn crouch(a: Actor) void {
     const m = &a.mind.juggler;
     if (!Common.falls(a)) return;
+    Common.conveyed(a);
     if (m.turns) {
         m.turn_ticks -%= 1;
         if (m.turn_ticks == 0) {
@@ -631,6 +632,10 @@ pub fn struck(a: Actor, blow: tick.Blow) bool {
 
 pub fn fall(a: Actor) void {
     Common.fall(a);
+}
+
+pub fn walls(a: Actor) void {
+    Common.walls(a);
 }
 
 pub fn landed(a: Actor) void {

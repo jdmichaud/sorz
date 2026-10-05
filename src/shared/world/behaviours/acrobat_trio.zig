@@ -433,6 +433,7 @@ fn braceSetUp(a: Actor) void {
 }
 
 fn brace(a: Actor) void {
+    Common.conveyed(a);
     a.mind.body.timer -%= 1;
     if (a.mind.body.timer == 0) go(a, .close_in);
 }
@@ -479,6 +480,10 @@ pub fn struck(a: Actor, blow: tick.Blow) bool {
 
 pub fn fall(a: Actor) void {
     Common.fall(a);
+}
+
+pub fn walls(a: Actor) void {
+    Common.walls(a);
 }
 
 pub fn landed(a: Actor) void {

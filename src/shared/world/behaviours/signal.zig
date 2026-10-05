@@ -226,6 +226,7 @@ fn sizeUpSetUp(a: Actor) void {
 fn sizeUp(a: Actor) void {
     const n = a.numbers();
     if (holdsOrWatches(a)) return;
+    Common.conveyed(a);
     const t = Common.target(a) orelse return Common.enter(a, fights);
     for ([_][]const u8{ "armed_back_attack", "down", "dying", "lying_dead", "hurt", "knocked_down" }) |s| {
         if (stateIs(t, s)) return Common.enter(a, .walk_off);
@@ -359,6 +360,10 @@ pub fn struck(a: Actor, blow: tick.Blow) bool {
 
 pub fn fall(a: Actor) void {
     Common.fall(a);
+}
+
+pub fn walls(a: Actor) void {
+    Common.walls(a);
 }
 
 pub fn landed(a: Actor) void {
