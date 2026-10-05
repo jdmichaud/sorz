@@ -16,6 +16,8 @@
 //! script) is compared at every display tick: the events of its round scenes by display tick,
 //! its sound, its pictures from a few ticks before its first round on. Its reach is the first
 //! display tick where any differs; with `--every-tick-min`, a reach below that floor fails.
+//! A picture whose differing pixels all belong to accepted differences (accepted.zig) is
+//! reported under their names, not as a difference.
 //!
 //! A scenario given with `--reach` (a recorded play, `start pads FILE V`, kept out of the
 //! repository) is not a gate: its line says how far each comparison stays equal (the trace's
@@ -43,6 +45,8 @@ const std = @import("std");
 const sorz = @import("sorz");
 const agent = @import("agent");
 const extract = @import("extract");
+
+const accepted = @import("accepted.zig");
 
 const compare = agent.trace_compare;
 const probes = agent.probe_compare;
@@ -199,6 +203,7 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
         try w.print("  the pictures: {d} of {d} differ", .{ pictures.differing, pictures.compared });
         if (pictures.first) |f| try w.print(", the first after display tick {d} ({d} pixels: {s}/{s}-z-{d}.png, its -ref- and -diff-); after display ticks {any}", .{ f.tick, f.pixels, c.out_path, sc.name, f.tick, pictures.ticks[0..@min(pictures.differing, pictures.ticks.len)] });
         try w.writeAll("\n");
+        try pictures.writeAccepted(w);
         return true;
     }
     if (sc.reach) {
@@ -226,9 +231,11 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     }
     if (result.differences == 0 and frames.first == null and sound_same and pictures.first == null) {
         try w.print("{s}: equal, {d} events, {d} entities' frames, the sound's {d} display ticks, {d} pictures ({s})\n", .{ sc.name, events, frames.entities, ticksOf(common), pictures.compared, sc.what });
+        try pictures.writeAccepted(w);
         return true;
     }
     if (pictures.first) |f| try w.print("{s}: {d} of {d} pictures differ, the first after display tick {d} ({d} pixels: {s}/{s}-z-{d}.png, its -ref- and -diff-); after display ticks {any}\n", .{ sc.name, pictures.differing, pictures.compared, f.tick, f.pixels, c.out_path, sc.name, f.tick, pictures.ticks[0..@min(pictures.differing, pictures.ticks.len)] });
+    try pictures.writeAccepted(w);
     if (result.differences != 0) try w.print("{s}: {d} differences in {d} events ({s})\n{s}\n", .{ sc.name, result.differences, events, sc.what, written.written() });
     if (frames.first) |d| try w.print("{s}: the frames differ: entity {d} at the round's tick {d}, {f} against {f}; {d} of {d} entities differ\n", .{ sc.name, d.e, d.t, startOf(d.a), startOf(d.b), frames.differing, frames.entities });
     if (!sound_same) {
@@ -281,11 +288,10 @@ fn everyTick(c: *const Context, sc: *const Scenario, scn: []const u8, a_full: *c
     try w.print("  the pictures: {d} compared, ", .{pictures.compared});
     if (pictures.first) |f| {
         try w.print("equal before display tick {d} ({d} pixels: {s}/{s}-z-{d}.png, its -ref- and -diff-); {d} differ, after display ticks", .{ f.tick, f.pixels, c.out_path, sc.name, f.tick, pictures.differing });
-        for (pictures.spans[0..pictures.span_count]) |span| {
-            if (span[0] == span[1]) try w.print(" {d}", .{span[0]}) else try w.print(" {d}-{d}", .{ span[0], span[1] });
-        }
-        try w.writeAll(if (pictures.span_count == pictures.spans.len) " ...\n" else "\n");
+        try pictures.runs.write(w);
+        try w.writeAll("\n");
     } else try w.writeAll("all equal\n");
+    try pictures.writeAccepted(w);
     var reach: u64 = end;
     for ([_]?u64{ trace_at, sound_at, if (pictures.first) |f| f.tick else null }) |at| {
         if (at) |v| reach = @min(reach, v);
@@ -369,14 +375,15 @@ fn everyPicture(c: *const Context, sc: *const Scenario, scn: []const u8, ref: *c
         const r = taker.result;
         total.first = r.first;
         total.compared += r.compared;
-        for (r.spans[0..r.span_count]) |span| {
+        for (r.runs.spans[0..r.runs.span_count]) |span| {
             var t = span[0];
             while (t <= span[1]) : (t += 1) total.note(t);
         }
         // (Past the batch's spans, only their count.)
         var noted: usize = 0;
-        for (r.spans[0..r.span_count]) |span| noted += span[1] - span[0] + 1;
+        for (r.runs.spans[0..r.runs.span_count]) |span| noted += span[1] - span[0] + 1;
         total.differing += r.differing -| noted;
+        for (&total.accepted, r.accepted) |*into, a| into.add(a);
         at = to;
     }
     return total;
@@ -391,19 +398,61 @@ const Pictures = struct {
     first: ?struct { tick: u64, pixels: usize } = null,
     /// The first display ticks whose pictures differ.
     ticks: [12]u64 = undefined,
-    /// The runs of display ticks whose pictures differ (the first `spans.len`), as they come.
-    spans: [24][2]u64 = undefined,
-    span_count: usize = 0,
+    /// The display ticks whose pictures differ.
+    runs: Runs = .{},
+    /// The display ticks whose pictures differ by accepted differences alone (accepted.zig), by
+    /// the difference.
+    accepted: [accepted.list.len]Runs = @splat(.{}),
 
     fn note(self: *Pictures, tick: u64) void {
         if (self.differing < self.ticks.len) self.ticks[self.differing] = tick;
         self.differing += 1;
+        self.runs.note(tick);
+    }
+
+    /// The accepted differences seen, a line each.
+    fn writeAccepted(self: *const Pictures, w: *std.Io.Writer) !void {
+        for (accepted.list, self.accepted) |a, runs| {
+            if (runs.count == 0) continue;
+            try w.print("  an accepted difference, {s}: {d} pictures, after display ticks", .{ a.name, runs.count });
+            try runs.write(w);
+            try w.print(" ({s})\n", .{a.reason});
+        }
+    }
+};
+
+/// Display ticks as they come: how many, and their runs (the first `spans.len`).
+const Runs = struct {
+    count: usize = 0,
+    spans: [24][2]u64 = undefined,
+    span_count: usize = 0,
+
+    fn note(self: *Runs, tick: u64) void {
+        self.count += 1;
         if (self.span_count != 0 and self.spans[self.span_count - 1][1] + 1 == tick) {
             self.spans[self.span_count - 1][1] = tick;
         } else if (self.span_count < self.spans.len) {
             self.spans[self.span_count] = .{ tick, tick };
             self.span_count += 1;
         }
+    }
+
+    /// `later`'s ticks, which come after these.
+    fn add(self: *Runs, later: Runs) void {
+        var noted: usize = 0;
+        for (later.spans[0..later.span_count]) |span| {
+            var t = span[0];
+            while (t <= span[1]) : (t += 1) self.note(t);
+            noted += span[1] - span[0] + 1;
+        }
+        self.count += later.count -| noted;
+    }
+
+    fn write(self: Runs, w: *std.Io.Writer) !void {
+        for (self.spans[0..self.span_count]) |span| {
+            if (span[0] == span[1]) try w.print(" {d}", .{span[0]}) else try w.print(" {d}-{d}", .{ span[0], span[1] });
+        }
+        if (self.span_count == self.spans.len) try w.writeAll(" ...");
     }
 };
 
@@ -475,7 +524,7 @@ const PictureTaker = struct {
         return self.wanted.contains(frame);
     }
 
-    fn take(ctx: *anyopaque, frame: u64, picture: sorz.platform.RgbaFrame) anyerror!void {
+    fn take(ctx: *anyopaque, frame: u64, drawn: agent.scenario_cmd.Drawn) anyerror!void {
         const self: *PictureTaker = @ptrCast(@alignCast(ctx));
         const c = self.c;
         const gpa = c.gpa;
@@ -486,10 +535,13 @@ const PictureTaker = struct {
         var ref = try sorz.formats.png.decode(gpa, bytes);
         defer ref.deinit(gpa);
         self.result.compared += 1;
+        const picture = drawn.picture();
+        const red: [4]u8 = .{ 255, 0, 0, 255 };
         var n: usize = 0;
         const diff = try gpa.alloc(u8, picture.width * picture.height * 4);
         defer gpa.free(diff);
-        if (ref.width != picture.width or ref.height != picture.height) {
+        const same_size = ref.width == picture.width and ref.height == picture.height;
+        if (!same_size) {
             n = picture.width * picture.height;
         } else for (0..picture.height) |y| for (0..picture.width) |x| {
             const want = ref.palette[ref.pixels[y * picture.width + x]];
@@ -498,16 +550,42 @@ const PictureTaker = struct {
             if (std.mem.eql(u8, &want, got)) {
                 d.* = .{ want[0] / 3, want[1] / 3, want[2] / 3, 255 };
             } else {
-                d.* = .{ 255, 0, 0, 255 };
+                d.* = red;
                 n += 1;
             }
         };
         if (n == 0) return;
+        // sorz's picture, before it is drawn again for the accepted differences.
+        const own = try gpa.dupe(u8, picture.pixels[0 .. picture.stride * picture.height]);
+        defer gpa.free(own);
+        var by: [accepted.list.len]bool = @splat(false);
+        if (same_size) {
+            const sprites = try gpa.alloc(sorz.render.Sprite, drawn.sprites().len);
+            defer gpa.free(sprites);
+            for (accepted.list, &by) |a, *found| {
+                a.redraw(drawn.sprites(), drawn.shadow, sprites);
+                const again = try drawn.redraw(sprites);
+                for (0..picture.height) |y| for (0..picture.width) |x| {
+                    const d = diff[(y * picture.width + x) * 4 ..][0..4];
+                    if (!std.mem.eql(u8, d, &red)) continue;
+                    const want = ref.palette[ref.pixels[y * picture.width + x]];
+                    if (!std.mem.eql(u8, &want, again.pixels[y * again.stride + x * 4 ..][0..3])) continue;
+                    // An accepted difference's pixel: yellow.
+                    d.* = .{ 255, 255, 0, 255 };
+                    found.* = true;
+                    n -= 1;
+                };
+            }
+        }
+        if (n == 0) {
+            for (by, &self.result.accepted) |found, *runs| if (found) runs.note(frame);
+            return;
+        }
         self.result.note(frame);
         if (self.result.first != null) return;
         self.result.first = .{ .tick = frame, .pixels = n };
         try cwd.writeFile(c.io, .{ .sub_path = try std.fmt.allocPrint(c.arena, "{s}/{s}-ref-{d}.png", .{ c.out_path, self.sc.name, frame }), .data = bytes });
-        const shot = try agent.png.encode(gpa, picture.width, picture.height, picture.pixels[0 .. picture.stride * picture.height]);
+        const shot = try agent.png.encode(gpa, picture.width, picture.height, own);
         defer gpa.free(shot);
         try cwd.writeFile(c.io, .{ .sub_path = try std.fmt.allocPrint(c.arena, "{s}/{s}-z-{d}.png", .{ c.out_path, self.sc.name, frame }), .data = shot });
         const diff_png = try agent.png.encode(gpa, picture.width, picture.height, diff);
@@ -745,4 +823,8 @@ fn fail(io: std.Io, message: []const u8) !void {
     try w.interface.writeAll(message);
     try w.interface.flush();
     std.process.exit(2);
+}
+
+test {
+    _ = accepted;
 }

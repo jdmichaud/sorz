@@ -20,13 +20,36 @@ const input = sorz.input;
 pub const Shot = struct { frame: u64, path: []const u8 };
 
 /// Who takes a run's pictures as they come (a check that compares them): whether it wants the
-/// one after display tick `frame` (counted as `Shot`'s), and the picture with the lines where its
-/// sprites go past the console's limits (decision D4: the original's would not show there what
-/// sorz shows).
+/// one after display tick `frame` (counted as `Shot`'s), and the picture as sorz drew it.
 pub const Pictures = struct {
     ctx: *anyopaque,
     wanted: *const fn (ctx: *anyopaque, frame: u64) bool,
-    take: *const fn (ctx: *anyopaque, frame: u64, picture: sorz.platform.RgbaFrame) anyerror!void,
+    take: *const fn (ctx: *anyopaque, frame: u64, drawn: Drawn) anyerror!void,
+};
+
+/// A picture sorz drew: its pixels, its sprites (back to front), and the same picture drawn again
+/// with other sprites (a check's account of a difference: what another order of the sprites
+/// shows). Drawing again replaces the pixels `picture` gave.
+pub const Drawn = struct {
+    view: *sorz.view.View,
+    /// The frame of the shadows on the ground, when the content has one.
+    shadow: ?*const sorz.content.art.Frame,
+
+    pub fn picture(self: Drawn) sorz.platform.RgbaFrame {
+        return self.view.frame();
+    }
+
+    pub fn sprites(self: Drawn) []const sorz.render.Sprite {
+        return self.view.sprites.items;
+    }
+
+    pub fn redraw(self: Drawn, sprites_instead: []const sorz.render.Sprite) !sorz.platform.RgbaFrame {
+        const own = self.view.screen.sprites;
+        defer self.view.screen.sprites = own;
+        self.view.screen.sprites = sprites_instead;
+        _ = try self.view.composer.compose(&self.view.screen);
+        return self.view.composer.frame();
+    }
 };
 
 pub const Options = struct {
@@ -269,7 +292,7 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
                 try cwd.writeFile(io, .{ .sub_path = s.path, .data = bytes });
                 shots_written += 1;
             };
-            if (options.pictures) |p| if (p.wanted(p.ctx, ticks)) try p.take(p.ctx, ticks, v.frame());
+            if (options.pictures) |p| if (p.wanted(p.ctx, ticks)) try p.take(p.ctx, ticks, .{ .view = v, .shadow = c.kinds.shadow });
         }
     } else r.failure = "the run reached its most ticks";
     if (shots_written != options.shots.len) r.failure = r.failure orelse "a picture asked for was past the run's end";

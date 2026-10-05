@@ -206,7 +206,10 @@ events and conditions by logic tick. The catalogue's scenarios of each character
   pictures pixel by pixel from four ticks before its first round on; its line gives the reach,
   the first display tick where any differs, and the first picture that differs beside the
   reference's; `-Dround-every-tick-min=TICK` fails a reach below it. The pictures are compared
-  whole: neither program reproduces the console's sprite limits (decision D4).
+  whole: neither program reproduces the console's sprite limits (decision D4). A picture whose
+  differing pixels are all accepted differences' (src/tools/accepted.zig: the ways sorz differs
+  on purpose, the user's choice, each with its reason and how to recognise it; the exact step,
+  PLAN item 23, revisits them) is reported under its difference's name, and the reach goes on.
 
 ## The variants
 
