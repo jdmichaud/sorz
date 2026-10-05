@@ -146,7 +146,8 @@ pub fn think(a: Actor) void {
         .start => {},
         .juggled => if (!m.ends and !juggled(a)) return,
         .tossed => if (!tossed(a)) return,
-        .caught => if (!falls(a)) return a.remove(),
+        // Turned back by a blow at this tick, it falls away from its next.
+        .caught => if (!m.ends and !falls(a)) return a.remove(),
         .flying => if (!m.ends and !flying(a)) return,
     }
     if (!m.touched) m.contact = false;
