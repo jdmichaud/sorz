@@ -344,7 +344,7 @@ check('the page keeps only its player\'s keys (pad 1\'s) from the browser, and n
   assert.equal(key('MetaLeft'), 0);
 });
 
-check('the settings key is F1 before the game reads its record; there is no settings screen yet', () => {
+check('the settings key is F1 before the game reads its record; no settings screen before the game', () => {
   const { wasm, memory } = instantiateModule();
   const code = (text) => {
     const bytes = new TextEncoder().encode(text);
@@ -354,7 +354,8 @@ check('the settings key is F1 before the game reads its record; there is no sett
   assert.equal(wasm.gp_settings_key(code('F1')), 1);
   assert.equal(wasm.gp_settings_key(code('F2')), 0);
   assert.equal(wasm.gp_settings_key(code('Escape')), 0);
-  // The menu's SETTINGS opens the game's screen (PLAN item 19): the page dims the line until then.
+  // The menu's SETTINGS opens the game's screen, which needs the game and its content (its font
+  // and its menu's colours): before `gp_start`, the page dims the line.
   assert.equal(wasm.gp_settings_available(), 0);
   assert.equal(wasm.gp_settings_open(), -1);
   assert.equal(wasm.gp_settings_frame(), 0);

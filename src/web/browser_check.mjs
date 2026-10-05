@@ -21,6 +21,12 @@
 //      screen once it has the font and the menu, which come first, then the menu, in the game's
 //      font and colours, the arrow where the game's menu has it and SETTINGS dimmed; its sounds
 //      are made from the content.
+//   flow (with --content): the page of a relay that serves the whole content tree: the menu's
+//      sounds are made before the menu shows; SETTINGS opens the game's settings screen before
+//      the game, and Escape comes back to the menu; 1 PLAYER plays the network variant
+//      (DESIGN.md 10.7): after the title, the game's own menu is START, SETTINGS, OPTIONS, not 1
+//      PLAYER and 2 PLAYERS again; the settings key opens the settings over the game, which
+//      holds, and Escape closes them.
 //   steps: 1 PLAYER, one tick per update (`sorz.step`), N ticks: the canvas's pixels and the
 //      frame's hash at the ticks the agent host wrote pictures of must equal the agent host's, and
 //      so must the state's hash and the frame's hash at the end, and every block of sound the game
@@ -700,6 +706,85 @@ async function pageCheck(browser, bareUrl) {
   }
 }
 
+// Part `flow`: the page of a relay that serves the whole content tree (DESIGN.md 10.7: the
+// network variant's flow, the settings before and in the game).
+async function flowCheck(browser) {
+  const relay = await startRelay(options.content);
+  const page = await Page.open(browser.cdp);
+  const white = [255, 255, 255];
+  const whiteIn = (pixels, row) => {
+    let n = 0;
+    for (let y = row * 8; y < row * 8 + 8; y++) for (let x = 0; x < 320; x++) {
+      const i = (y * 320 + x) * 4;
+      if (pixels[i] === white[0] && pixels[i + 1] === white[1] && pixels[i + 2] === white[2]) n += 1;
+    }
+    return n;
+  };
+  try {
+    await openGame(page, relay.url);
+    // The menu's sounds were made before the menu showed: they are there at once.
+    const atReady = await page.evaluate('sorz.stats().menu_sounds');
+    const menu = await page.evaluate('sorz.message');
+    if (options.keep) await page.screenshot(path.join(options.keep, 'page-flow-menu.png'));
+    // SETTINGS: the game's settings screen, before the game; its title on row 2.
+    await tap(page, keyEvents.down);
+    await tap(page, keyEvents.down);
+    await tap(page, keyEvents.enter);
+    await page.waitFor(`sorz.phase === 'settings'`, 5000, 'the settings screen');
+    await sleep(300);
+    const settingsPixels = Buffer.from(await page.evaluate(canvasBase64), 'base64');
+    if (options.keep) await page.screenshot(path.join(options.keep, 'page-flow-settings.png'));
+    const settingsTitle = whiteIn(settingsPixels, 2);
+    await tap(page, keyEvents.escape);
+    await page.waitFor(`sorz.phase === 'ready'`, 5000, 'the menu again');
+    const back = await page.evaluate('sorz.message');
+    // 1 PLAYER, one tick per update: START on the intro and on the title, then the game's menu.
+    await tap(page, keyEvents.up);
+    await tap(page, keyEvents.up);
+    await page.evaluate('sorz.manual = true');
+    await tap(page, keyEvents.enter);
+    await page.waitFor(`sorz.phase === 'playing'`, 5000, 'the game');
+    await page.evaluate('sorz.setPacing(true)');
+    // A key held for two ticks, as the pads read it.
+    const hold = async (key) => {
+      await page.send('Input.dispatchKeyEvent', { type: 'keyDown', ...key });
+      await page.evaluate('sorz.step(2)');
+      await page.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+      await page.evaluate('sorz.step(1)');
+    };
+    await page.evaluate('sorz.step(500)');
+    await hold(keyEvents.enter);
+    await page.evaluate('sorz.step(60)');
+    await hold(keyEvents.enter);
+    await page.evaluate('sorz.step(160)');
+    const inMenu = await page.evaluate('sorz.inspect()');
+    if (options.keep) await page.screenshot(path.join(options.keep, 'page-flow-game-menu.png'));
+    // The settings key: the settings over the game, which holds; Escape closes them.
+    await hold(keyEvents.f1);
+    await page.evaluate('sorz.step(30)');
+    const held = await page.evaluate('sorz.inspect()');
+    if (options.keep) await page.screenshot(path.join(options.keep, 'page-flow-game-settings.png'));
+    await hold(keyEvents.escape);
+    await page.evaluate('sorz.step(5)');
+    const after = await page.evaluate('sorz.inspect()');
+    const errors = page.console.filter((m) => m.type === 'error' || m.type === 'exception');
+    const pass = atReady.every((n) => n > 1000) && menu === '▶ 1 PLAYER\n2 PLAYERS\nSETTINGS' && settingsTitle > 20 &&
+      back === '1 PLAYER\n2 PLAYERS\n▶ SETTINGS' && inMenu.variant === 'network' && inMenu.scene === 'menu' &&
+      inMenu.menu === 'start,settings,options' && held.settings_open && held.ticks <= inMenu.ticks + 4 &&
+      !after.settings_open && after.ticks > held.ticks && errors.length === 0;
+    return [pass, {
+      menu_sounds_at_menu: atReady, menu, settings_title: settingsTitle, back,
+      game: { variant: inMenu.variant, scene: inMenu.scene, menu: inMenu.menu, ticks: inMenu.ticks },
+      held: { settings_open: held.settings_open, ticks: held.ticks }, after: { settings_open: after.settings_open, ticks: after.ticks },
+      errors: errors.slice(0, 3),
+    }];
+  } finally {
+    await page.close();
+    if (relay.child.exitCode === null) relay.child.kill();
+    await relay.done;
+  }
+}
+
 // Part `screens`: the page of the relay over a slow network, its tree with the content's font,
 // menu and sound: the module draws the loading screen, then the menu, in the game's style.
 async function screensCheck(browser, data) {
@@ -785,6 +870,7 @@ async function main() {
       browser = await launch(chromium, path.join(scratch, 'profile'));
       report('page', ...await pageCheck(browser, bareUrl));
       if (options.content) report('screens', ...await screensCheck(browser, path.join(scratch, 'game-screens')));
+      if (options.content) report('flow', ...await flowCheck(browser));
       return;
     }
     const began = Date.now();
@@ -801,6 +887,7 @@ async function main() {
 
     report('page', ...await pageCheck(browser, bareUrl));
     if (options.content) report('screens', ...await screensCheck(browser, path.join(scratch, 'game-screens')));
+    if (options.content) report('flow', ...await flowCheck(browser));
 
     const page = await Page.open(browser.cdp);
 

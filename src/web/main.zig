@@ -262,9 +262,13 @@ fn startGame() !void {
     errdefer gpa.destroy(g);
     g.* = try sorz.Game.init(gpa, assets.assetSource(), storage.storage());
     // The page's gain is the volume: the game's sound stays at its own level. A page has one
-    // player, alone or in network play.
+    // player, alone or in network play: the network variant (DESIGN.md 10.7), whose game has no
+    // second menu of players (the page's menu chose them). The page says network play's messages
+    // itself, over the game's picture.
     g.host_volume = true;
     g.setOnePlayer();
+    g.variant = .network;
+    g.host_messages = true;
     game = g;
     tellSettings(g);
 }
@@ -287,22 +291,33 @@ export fn gp_settings_key(code_len: u32) u32 {
 }
 
 /// Whether the game has its settings screen, which the menu's SETTINGS opens before the game
-/// starts: the page dims the line without it. TODO(PLAN item 19): the settings screen, a scene.
+/// starts: the page dims the line without it (a game without the content's font and menu).
 export fn gp_settings_available() u32 {
-    return 0;
+    const g = game orelse return 0;
+    return @intFromBool(g.panel != null);
 }
 
 /// The menu's SETTINGS: the game's settings screen, before the game starts. The page then calls
 /// `gp_settings_frame` at each animation frame until it closes. Returns 0, or -1 without a game,
 /// once the game has started, or without the screen (`gp_settings_available`).
 export fn gp_settings_open() i32 {
-    return -1;
+    const g = game orelse return -1;
+    if (g.started or g.panel == null) return -1;
+    return if (g.openSettings()) 0 else -1;
 }
 
 /// One update of the settings screen that the menu opened: 1 while it is open, 0 once the player
 /// has left it (the page shows its menu again), -2 when the update failed.
 export fn gp_settings_frame() i32 {
-    return 0;
+    const g = game orelse return 0;
+    if (g.started) return 0;
+    var p = backend.asPlatform();
+    const open = g.updateSettings(&p) catch |err| {
+        setError("{s}", .{@errorName(err)});
+        return -2;
+    };
+    tellSettings(g);
+    return @intFromBool(open);
 }
 
 /// The page left its full screen without the game asking (the player pressed Escape, which is the
@@ -437,16 +452,31 @@ export fn gp_screen_message(len: u32, over: u32) i32 {
 }
 
 /// A sound of the game's menu for the page's menu (`which`: 0 the arrow's move, 1 a choice), at
-/// 48 kHz, made from the sound content once the page gave it: its frame count, the stereo frames
-/// then at `gp_menu_sound_ptr`; 0 when there is none (the reason in `gp_error`).
+/// 48 kHz, made as the game plays it from the game's sound content (or the sound content alone,
+/// before the game or without its whole content): its frame count, the stereo frames then at
+/// `gp_menu_sound_ptr`; 0 when there is none (the reason in `gp_error`). The page makes them
+/// before it shows its menu, so that the first one plays at once.
 export fn gp_menu_sound(which: u32) u32 {
     if (!ready or which >= screens_mod.menu_sounds.len) return 0;
     gpa.free(menu_sound);
     menu_sound = &.{};
+    const name = screens_mod.menu_sounds[which];
+    // The game's sound content, or, for a game without its whole content, the sound content alone.
+    if (game) |g| if (g.content) |c| {
+        const made = sorz.sound_out.alone(gpa, &c.sounds, name, 48000) catch |err| {
+            setError("the menu's sound: {s}", .{@errorName(err)});
+            return 0;
+        };
+        menu_sound = made orelse {
+            setError("the menu's sound: sound/sounds.json has no sound \"{s}\"", .{name});
+            return 0;
+        };
+        return @intCast(menu_sound.len / 2);
+    };
     var reason: std.Io.Writer = .fixed(&error_text);
     reason.writeAll("the menu's sound: ") catch {};
     const before = reason.end;
-    menu_sound = screens_mod.menuSound(gpa, assets.assetSource(), screens_mod.menu_sounds[which], 48000, &reason) catch |err| {
+    menu_sound = screens_mod.menuSound(gpa, assets.assetSource(), name, 48000, &reason) catch |err| {
         error_len = reason.end;
         if (reason.end == before) setError("the menu's sound: {s}", .{@errorName(err)});
         return 0;
@@ -492,11 +522,16 @@ export fn gp_error() u32 {
 /// A key: its `KeyboardEvent.code` (`code_len` bytes in the scratch buffer), down or up. Returns 1
 /// when the game takes the key (the player's controls, pad 1's, or the settings key), so that the
 /// page keeps the browser from acting on it (the arrows do not scroll, F1 opens no help); the
-/// browser keeps its other keys. Escape is the browser's: it leaves the full screen, and the game
-/// quits on it natively.
+/// browser keeps its other keys. Escape is the browser's (it leaves the full screen, and the game
+/// quits on it natively), but the game's settings screen's while it is open: it saves and leaves.
 export fn gp_key(code_len: u32, down: u32, repeat: u32) u32 {
     const key = keys.fromCode(scratch[0..@min(code_len, scratch.len)]);
-    if (key == .unknown or key == .escape) return 0;
+    if (key == .unknown) return 0;
+    if (key == .escape) if (game) |g| if (g.settingsOpen()) {
+        backend.keyEvent(key, down != 0, repeat != 0);
+        return 1;
+    };
+    if (key == .escape) return 0;
     backend.keyEvent(key, down != 0, repeat != 0);
     if (game) |g| return @intFromBool(g.usesKey(key));
     if (key == (sorz.settings.Settings{}).settings_key) return 1;
@@ -611,10 +646,21 @@ export fn gp_inspect() u32 {
     _ = std.fmt.bufPrint(&settings_hash, "{x:0>16}", .{record.hash(&g.settings)}) catch unreachable;
     const s = &g.settings;
     var w: std.Io.Writer = .fixed(&scratch);
+    // The game menu's lines, when it shows: their names, comma-separated.
+    var lines_buf: [64]u8 = undefined;
+    var lines: std.Io.Writer = .fixed(&lines_buf);
+    switch (g.state.scenes.base) {
+        .menu => |*m| for (m.lines[0..m.line_count], 0..) |l, i| lines.print("{s}{s}", .{ if (i == 0) "" else ",", @tagName(l) }) catch {},
+        else => {},
+    }
     std.json.Stringify.value(.{
         .phase = if (g.finished) "finished" else "playing",
         .update_count = g.update_count,
         .ticks = g.state.tick,
+        .variant = @tagName(g.state.start.variant),
+        .scene = @tagName(std.meta.activeTag(g.state.scenes.base)),
+        .menu = lines.buffered(),
+        .settings_open = g.settingsOpen(),
         .frames_presented = g.frames_presented,
         .frame_hash = &frame_hash,
         .state_hash = &state_hash,

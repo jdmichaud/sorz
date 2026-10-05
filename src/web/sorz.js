@@ -1062,7 +1062,9 @@ function sorzTransport(Socket, events, limits = {}) {
 
   // The choice that starts the game, as the game's menu has it: 1 PLAYER plays alone on this page,
   // 2 PLAYERS with another player over the network, and SETTINGS opens the game's settings screen
-  // without starting the game. A relay offers all three; a native game that hosts here, 2 PLAYERS
+  // without starting the game. The game then plays the network variant (DESIGN.md 10.7): its own
+  // menu, after the title, has no 1 PLAYER or 2 PLAYERS (this choice made them), but START,
+  // SETTINGS and OPTIONS. A relay offers all three; a native game that hosts here, 2 PLAYERS
   // only (its player is player 1); a server without network play, 1 PLAYER only; SETTINGS whenever
   // the game has its settings screen (`gp_settings_available`). `available` has a bit for each
   // line; `note` is a line below. The arrows and Enter choose, or a gamepad's d-pad and A or Start,
@@ -1084,7 +1086,7 @@ function sorzTransport(Socket, events, limits = {}) {
     // Only a press from now on chooses: not the button that left the settings screen.
     readMenuPads(false);
     startMenuFrames();
-    // The menu's sounds, once the menu shows.
+    // The menu's sounds, if they could not be made before it showed.
     setTimeout(prepareMenuSounds, 0);
   }
 
@@ -1122,10 +1124,10 @@ function sorzTransport(Socket, events, limits = {}) {
     else begin(line);
   }
 
-  // The game's menu sounds on the page's menu: the arrow's move ($B9) and a choice ($BA), which the
-  // module makes as the game plays them (48 kHz stereo frames), played at the settings' volume.
-  // They are made when the menu first shows, not when a key wants them: making one takes a while
-  // in a debug build.
+  // The game's menu sounds on the page's menu: the arrow's move and a choice, which the module
+  // makes as the game plays them (48 kHz stereo frames), played at the settings' volume. They are
+  // made before the menu shows, not when a key wants them: making one takes a while in a debug
+  // build, and the first move would wait for it.
   const menuSounds = [];
 
   function prepareMenuSounds() {
@@ -1505,6 +1507,8 @@ function sorzTransport(Socket, events, limits = {}) {
       return;
     }
     stats.startMs = performance.now() - loaded;
+    // The menu's sounds, made while the loading screen still shows: the first move sounds at once.
+    prepareMenuSounds();
     stats.readyMs = performance.now();
     if (net.mode === 'native') ready(1, 2);
     else ready(0, net.mode === 'relay' ? 3 : 1);
