@@ -119,9 +119,10 @@ green suites. So, before an item is done:
 ## Scenarios and the similar-check
 
 The mechanics are compared with sor-remaster's (DESIGN.md V3, D14) through scenarios, in
-sor-remaster's format: a start (`start axel`), then pad events and conditions by logic tick. The
-catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (its header says
-"{N} takes the values A to B") is a run per value.
+sor-remaster's format: a start (`start axel`, or `start axel blaze` for two players), then pad
+events and conditions by logic tick. The catalogue's scenarios of each character are copied in
+`tests/scenarios/axel`, `adam` and `blaze`, the two players' in `tests/scenarios/two`; a family
+(its header says "{N} takes the values A to B") is a run per value.
 
 - `sorz-agent DIR|ROM --scenario FILE [--trace-events OUT [--probe OUT]]` runs one in sorz from
   power-on, the whole game as the hosts run it (src/agent/game_run.zig): the start passes the
@@ -151,12 +152,13 @@ catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (it
   `--renumber`, the entities numbered by their order of appearance (two runs from power-on whose
   front ends make other objects).
 - `zig build similar-check -Drom=ROM -Dremaster=DIR|AGENT` (src/tools/similar_check.zig), the
-  gate of PLAN items 05 and 11: each scenario runs in sor-remaster (its checkout, whose agent the
-  build builds, or that agent) and in sorz; then the traces, the probes and the catalogue's
+  gate of PLAN items 05, 11 and 14: each scenario runs in sor-remaster (its checkout, whose agent
+  the build builds, or that agent) and in sorz; then the traces, the probes and the catalogue's
   measurements of each move (frame data, states and their ticks, damage, pushes, arcs, speeds,
-  boxes, power, the special attack's times) are compared, all equal. It prints a verdict per
-  move, equal, within tolerance or different, with the numbers, writes it with the runs into
-  `<prefix>/similar` (`-Dsimilar-out=DIR`), and fails when a move differs.
+  boxes, power, the special attack's times; with two players, their blows on each other, the
+  enemies' choice between them, each one's special attack) are compared, all equal. It prints a
+  verdict per move, equal, within tolerance or different, with the numbers, writes it with the
+  runs into `<prefix>/similar` (`-Dsimilar-out=DIR`), and fails when a move differs.
   `-Dsimilar-only=NAME,...` runs some scenarios (or families, below).
 - With `-Dpads=FILE`, round 1's recorded play (the catalogue's game.pads, which the repository
   does not hold), similar-check compares the enemies and the items too (PLAN item 12,
@@ -176,7 +178,7 @@ catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (it
 - `zig build round-check -Drom=ROM -Dremaster=DIR|AGENT` (src/tools/round_check.zig), the gate of
   PLAN item 13: round 1's scenarios (`tests/scenarios/round1`: a walk to the first wall, standing
   through three time overs, the continue's YES and NO, two pauses, player 2's PRESS 2UP START
-  mid-round as Adam, Blaze chosen at the select) run from power-on in both
+  mid-round as Adam, Blaze chosen at the select, two players) run from power-on in both
   programs, and their round scenes' traces are compared event by event (the camera and its stops,
   the timer, play's phases, the players' places, states, health, lives and deaths, the continue,
   the game over, the placed enemies coming out, the sounds asked for), the hit sparks left out;

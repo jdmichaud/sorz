@@ -1,0 +1,17 @@
+# round 1 with two players: from power-on, 2 PLAYERS, Axel for player 1 and Blaze for player 2;
+# both walk right, player 2 jumping on the way, to the first Galsias, and stand while they come.
+start axel blaze
+until state 1 ready
+until state 2 ready
+pad 1
++right
+pad 2
++right
+wait 60
+jump
+wait 30
+pad 1
+-right
+pad 2
+-right
+wait 120

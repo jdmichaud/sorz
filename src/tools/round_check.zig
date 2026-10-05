@@ -52,6 +52,7 @@ pub const scenarios = [_]Scenario{
     .{ .name = "pause", .what = "two pauses: the pause's sounds, its ticks on the game's clock, play after it" },
     .{ .name = "join", .what = "player 2's PRESS 2UP START mid-round, the timer down: its drop-in as Adam, the timer again" },
     .{ .name = "blaze", .what = "Blaze chosen at the select: her walk to the first Galsia, her blows, her jump kick" },
+    .{ .name = "two", .what = "two players, Axel and Blaze, chosen at the select: their walk and a jump, the Galsias coming" },
 };
 
 /// The front end's objects (sor-remaster's) and the hit sparks (PLAN item 12): their events

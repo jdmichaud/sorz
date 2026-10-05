@@ -1,0 +1,18 @@
+# A family: {N} takes the values 0 to 7 (8 runs).
+# The enemies' choice between two players: Axel (player 1) and Blaze (player 2) walk right
+# together until a Galsia comes out, then Blaze {N} ticks more; the Galsias go after one of them
+# (the nearer across; player 2 on a tie, N = 0), and the other when that one is down.
+start axel blaze
+until state 1 ready
+until state 2 ready
+pad 1
++right
+pad 2
++right
+until state galsia !appear within 300
+pad 1
+-right
+wait {N}
+pad 2
+-right
+wait 300

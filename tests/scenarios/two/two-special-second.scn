@@ -1,0 +1,17 @@
+# Player 2's special attack: Axel (player 1) and Blaze (player 2) walk right until Blaze is near
+# the first Galsia (the camera follows only while both let it); then Blaze presses A (the
+# special attack) with the Galsias near.
+start axel blaze
+until state 1 ready
+until state 2 ready
+pad 1
++right
+pad 2
++right
+until near galsia 75 8
+-right
+pad 1
+-right
+pad 2
+special
+wait 700

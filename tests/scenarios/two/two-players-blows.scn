@@ -1,0 +1,30 @@
+# Axel (player 1) and Blaze (player 2): Blaze walks down to Axel's depth, then right of him and
+# turns to face him; Axel presses B four times, 12 ticks apart; then Blaze presses B four times.
+start axel blaze
+until state 1 ready
+until state 2 ready
+pad 2
++down
+until near axel 200 1 within 100
+-down
+right 12
+left
+wait 4
+pad 1
+attack
+wait 10
+attack
+wait 10
+attack
+wait 10
+attack
+wait 60
+pad 2
+attack
+wait 10
+attack
+wait 10
+attack
+wait 10
+attack
+wait 60

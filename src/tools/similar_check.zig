@@ -42,7 +42,7 @@ const compare = agent.trace_compare;
 const Event = compare.Event;
 const json = std.json;
 
-const Kind = enum { walk, jumps, jump_kick, jab, special, special_enemies, combo_chain, combo_window, grab, hit_stand };
+const Kind = enum { walk, jumps, jump_kick, jab, special, special_enemies, combo_chain, combo_window, grab, hit_stand, two_blows, two_choice };
 
 const Scenario = struct {
     /// Its directory in tests/scenarios: the character's, or `two`.
@@ -51,6 +51,8 @@ const Scenario = struct {
     kind: Kind,
     /// The move it measures, as the report names it (a family's runs all count for it).
     move: []const u8,
+    /// The player whose pad's presses its measurements start from.
+    pad: i64 = 1,
 };
 
 /// The catalogue's scenarios of each character (sorz's copies in tests/scenarios/CHARACTER), the
@@ -107,6 +109,14 @@ pub const scenarios = [_]Scenario{
     .{ .dir = "blaze", .name = "grab-release-blaze", .kind = .grab, .move = "blaze: grab: release" },
     .{ .dir = "blaze", .name = "hit-stand-blaze", .kind = .hit_stand, .move = "blaze: hurt, knocked down, getting up" },
     .{ .dir = "blaze", .name = "player-special-blaze", .kind = .special, .move = "blaze: special attack" },
+    // Two players (tests/scenarios/two): their blows on each other (the catalogue's), the enemies'
+    // choice between them, and the special attack of each with the other in play.
+    .{ .dir = "two", .name = "two-players-blows", .kind = .two_blows, .move = "two players: their blows on each other" },
+    .{ .dir = "two", .name = "two-choice-first", .kind = .two_choice, .move = "two players: the enemies' choice, player 1 ahead" },
+    .{ .dir = "two", .name = "two-choice-second", .kind = .two_choice, .move = "two players: the enemies' choice, player 2 ahead" },
+    .{ .dir = "two", .name = "two-special-first", .kind = .special_enemies, .move = "two players: player 1's special attack on enemies" },
+    .{ .dir = "two", .name = "two-special-second", .kind = .special_enemies, .move = "two players: player 2's special attack on enemies", .pad = 2 },
+    .{ .dir = "two", .name = "two-special-second", .kind = .special, .move = "two players: player 2's special attack", .pad = 2 },
 };
 
 /// The hit sparks (PLAN item 12): their events are left out of the traces' comparison.
@@ -236,6 +246,8 @@ const Run = struct {
     v0: i64,
     last: i64,
     probe: []const ProbeLine,
+    /// The player whose pad's presses the measurements read.
+    pad: i64 = 1,
 
     fn load(arena: std.mem.Allocator, trace_text: []const u8, probe_text: []const u8, sound_names: []const compare.Rename) !Run {
         var diag: compare.Diagnostic = .{};
@@ -270,12 +282,12 @@ const Run = struct {
         return .{ .arena = arena, .all = full.events, .round = round.events, .v0 = round.events[0].v, .last = last, .probe = probe.items };
     }
 
-    /// The ticks a button was newly held on pad 1 (`B`, `C`, `A`, `L`...).
+    /// The ticks a button was newly held on the run's pad (`B`, `C`, `A`, `L`...).
     fn presses(r: *const Run, button: u8) ![]const i64 {
         var out: std.ArrayList(i64) = .empty;
         var held: []const u8 = "";
         for (r.round) |e| {
-            if (!is(e, "pad") or int(e.object, "pad") != 1) continue;
+            if (!is(e, "pad") or int(e.object, "pad") != r.pad) continue;
             const now = str(e.object, "held") orelse "";
             if (std.mem.indexOfScalar(u8, now, button) != null and std.mem.indexOfScalar(u8, held, button) == null) try out.append(r.arena, e.t);
             held = now;
@@ -460,6 +472,53 @@ fn measure(kind: Kind, r: *const Run, m: *Measures) !void {
         .combo_window => try comboWindow(r, m),
         .grab => try grab(r, m),
         .hit_stand => try hitStand(r, m),
+        .two_blows => try twoBlows(r, m),
+        .two_choice => try twoChoice(r, m),
+    }
+}
+
+/// The hits on the players from tick `t0` (tick, player, by, damage, health, reaction).
+fn playerHits(r: *const Run, t0: i64) ![]const Value {
+    var v: Values = .{ .arena = r.arena };
+    for (try r.events("hit", t0, r.last)) |h| {
+        const e = int(h.object, "e") orelse continue;
+        if (e != 1 and e != 2) continue;
+        try v.num(h.t - t0);
+        try v.num(e);
+        try v.num(int(h.object, "by"));
+        try v.num(int(h.object, "damage"));
+        try v.num(int(h.object, "health"));
+        try v.text(str(h.object, "reaction") orelse "");
+    }
+    return v.list.items;
+}
+
+/// Two players' blows on each other: from player 1's first B, the hits on each and each one's
+/// states (state, tick, ticks).
+fn twoBlows(r: *const Run, m: *Measures) !void {
+    const t0 = try firstPress(r, 'B');
+    try m.add("hits on the players (tick, player, by, damage, health, reaction)", try playerHits(r, t0), .exact);
+    for ([_]i64{ 1, 2 }) |p| {
+        const tl = try r.timeline(p);
+        try m.add(try std.fmt.allocPrint(r.arena, "player {d}'s states (state, tick, ticks)", .{p}), try segmentValues(r, try segments(r, &tl, t0, tl.lastTick()), false), .exact);
+    }
+}
+
+/// The enemies' choice between two players: from play's first tick, the hits on the players,
+/// and the states of the enemies that struck them from their coming out (state, tick, ticks).
+fn twoChoice(r: *const Run, m: *Measures) !void {
+    const hits = try playerHits(r, 0);
+    try m.add("hits on the players (tick, player, by, damage, health, reaction)", hits, .exact);
+    var seen: std.ArrayList(i64) = .empty;
+    for (try r.events("hit", 0, r.last)) |h| {
+        const e = int(h.object, "e") orelse continue;
+        if (e != 1 and e != 2) continue;
+        const by = int(h.object, "by") orelse continue;
+        if (std.mem.indexOfScalar(i64, seen.items, by) != null) continue;
+        try seen.append(r.arena, by);
+        const tl = try r.timeline(by);
+        const out = tl.first(0, tl.lastTick(), &.{"appear"}, false) orelse return error.Unmeasured;
+        try m.add(try std.fmt.allocPrint(r.arena, "entity {d}'s states (state, tick, ticks)", .{by}), try segmentValues(r, try segments(r, &tl, out, tl.lastTick()), false), .exact);
     }
 }
 
@@ -667,7 +726,7 @@ fn special(r: *const Run, m: *Measures) !void {
     const round = lastRoundScene(r);
     for (r.all) |e| {
         if (e.scene == round) past_round = true;
-        if (!is(e, "lives") or int(e.object, "player") != 1) continue;
+        if (!is(e, "lives") or int(e.object, "player") != r.pad) continue;
         if (!past_round or e.t < pa) {
             before = int(e.object, "specials");
         } else if (after == null) {
@@ -1097,8 +1156,10 @@ fn runOne(c: *const Context, sc: *const Scenario, name: []const u8, text: []cons
 
     const ref_text = try cwd.readFileAlloc(c.io, ref_trace, arena, .limited(1 << 30));
     const z_text = try cwd.readFileAlloc(c.io, z_trace, arena, .limited(1 << 30));
-    const ref_run = try Run.load(arena, ref_text, try cwd.readFileAlloc(c.io, ref_probe, arena, .limited(1 << 30)), c.sound_names);
-    const z_run = try Run.load(arena, z_text, try cwd.readFileAlloc(c.io, z_probe, arena, .limited(1 << 30)), &.{});
+    var ref_run = try Run.load(arena, ref_text, try cwd.readFileAlloc(c.io, ref_probe, arena, .limited(1 << 30)), c.sound_names);
+    var z_run = try Run.load(arena, z_text, try cwd.readFileAlloc(c.io, z_probe, arena, .limited(1 << 30)), &.{});
+    ref_run.pad = sc.pad;
+    z_run.pad = sc.pad;
     const t0: i64 = @intCast((try agent.scenario.situationOf(arena, ref_text, null)).t);
 
     // The traces from the situation's tick.
@@ -1124,7 +1185,7 @@ fn runOne(c: *const Context, sc: *const Scenario, name: []const u8, text: []cons
     else
         std.mem.trimEnd(u8, written.written()[0 .. std.mem.indexOf(u8, written.written(), "\nevent ") orelse written.written().len], "\n");
     const no_difference = try std.fmt.allocPrint(arena, "no difference in {d} events", .{events});
-    ref.prefix = if (sc.kind == .jump_kick or sc.kind == .combo_window) name else "";
+    ref.prefix = if (sc.kind == .jump_kick or sc.kind == .combo_window or sc.kind == .two_choice) name else "";
     z.prefix = ref.prefix;
     try ref.text("trace", no_difference);
     try z.text("trace", verdict);
