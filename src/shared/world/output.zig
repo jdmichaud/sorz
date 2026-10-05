@@ -86,6 +86,9 @@ pub const Output = struct {
     /// The random generator's draws.
     draws: random.Draws = .{},
     sounds: List(SoundRequest, sound_most) = .{},
+    /// Where the others' turns' sounds begin among them (the movement system puts each one's
+    /// move's after its turn's).
+    turn_sounds: usize = 0,
     hits: List(Hit, 32) = .{},
     pickups: List(Pickup, 16) = .{},
     /// The high-score table's changes the round makes from the tick's rankings (the table is the
@@ -122,6 +125,7 @@ pub const Output = struct {
     pub fn begin(self: *Output) void {
         self.draws.clear();
         self.sounds.clear();
+        self.turn_sounds = 0;
         self.hits.clear();
         self.pickups.clear();
         self.rankings.clear();

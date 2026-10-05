@@ -276,6 +276,7 @@ fn betweenPlayers(t: *Tick) void {
 /// players keep the boxes their turn set); but one an enemy holds and placed is where its boxes
 /// are (the original's places itself in its own turn). Their asks to grab end with the turns.
 fn turns(t: *Tick) void {
+    t.out.turn_sounds = t.out.sounds.len;
     for (0..capacity) |i| {
         const h = t.world.handleAt(i) orelse continue;
         if (t.world.playerOf(h) != null) continue;
@@ -318,13 +319,28 @@ fn playersMove(t: *Tick) void {
     }
 }
 
-/// The other entities move, in the world's order.
+/// The other entities move, in the world's order. The sounds a move asks for (a landing's) go
+/// after those of its entity's turn, before the next ones' turns': the original's objects move in
+/// their own turn.
 fn movement(t: *Tick) void {
     var buf: [capacity]u8 = undefined;
-    for (t.world.updateOrder(&buf)) |i| {
+    const order = t.world.updateOrder(&buf);
+    var rank: [capacity]u8 = @splat(0);
+    for (order, 0..) |i, k| rank[i] = @intCast(k);
+    const list = &t.out.sounds;
+    // The turns' sounds not yet passed: from `at` to the movement's first.
+    var at = @min(t.out.turn_sounds, list.len);
+    for (order) |i| {
         const h = t.world.handleAt(i) orelse continue;
         if (t.world.playerOf(h) != null) continue;
+        const before = list.len;
+        while (at < before) : (at += 1) {
+            const by = list.items[at].by orelse continue;
+            if (rank[by.index] > rank[i]) break;
+        }
         move(t, h);
+        std.mem.rotate(output.SoundRequest, list.items[at..list.len], before - at);
+        at += list.len - before;
     }
 }
 
