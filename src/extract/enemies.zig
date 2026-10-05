@@ -21,6 +21,7 @@ const immediate = entities.immediate;
 const moveByte = entities.moveByte;
 const moveq = entities.moveq;
 const frameCompared = entities.frameCompared;
+const quick = entities.quick;
 const readAnimation = entities.readAnimation;
 const soundName = entities.soundName;
 
@@ -440,14 +441,6 @@ pub fn signal(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition
     try d.number_notes.print(arena, "; the throw at its first frame's last tick: ROM 0x0E77C: cmpi.b #1,(13,a0)", .{});
     try d.sound("slide", @bitCast(@as(i8, @intCast(try moveq(rom, 0xE850, 7)))));
     return finish(&d, "signal", 0x24, "signal", "Signal (handler 0xE4D2)");
-}
-
-/// `addq` or `subq` at `at`, whose opcode less its count is `base`: the count (0 is 8).
-fn quick(rom: []const u8, at: u32, base: u16) Error!i32 {
-    const op = u16be(rom, at);
-    if (op & 0xF1FF != base) return error.BadData;
-    const n: i32 = (op >> 9) & 7;
-    return if (n == 0) 8 else n;
 }
 
 /// `cmpi.b #N,(13,a0)`: a frame's ticks left compared.

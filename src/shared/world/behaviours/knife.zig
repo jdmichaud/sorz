@@ -118,6 +118,18 @@ pub fn dropped(a: Actor) void {
     C.dropped(a);
 }
 
+pub fn putDown(a: Actor) void {
+    C.putDown(a);
+}
+
+pub fn pickedUp(a: Actor, by: Handle) bool {
+    return C.pickedUp(a, by);
+}
+
+pub fn takeable(a: Actor) bool {
+    return C.takeable(a);
+}
+
 pub fn takeUp(a: Actor, elapsed: u32) void {
     C.takeUp(a, elapsed);
     if (a.mind.state == .flying) C.pose(a, "level");

@@ -22,7 +22,13 @@
 //!   first blow, before any lands, hurries it and keeps it going: its animation runs on into
 //!   another jab. During the first three the pad turns the player.
 //! - `back_attack`: B and C together.
-//! - `pick_up`: B near an item.
+//! - `pick_up`: B near an item or a weapon.
+//! - armed (a weapon picked up): `armed_stand`, `armed_walk` (a long weapon's own stand and
+//!   walk), its jump (`armed_jump_crouch`, `armed_jump`, `armed_land`, `armed_jump_kick`) and back
+//!   attack (`armed_back_attack`), the weapon unseen then; B swings a pipe (`armed_swing`), stabs
+//!   with a knife at a thing ahead within its reach (`armed_stab`, the traces' `armed_throw`) or
+//!   else throws it (`armed_attack`, the plain blow). The weapon strikes, not the player
+//!   (weapon.zig); a blow taken, a fall or a hold drops it.
 //! - `hurt`, `knocked_down` (thrown back, two bounces), `down`, `getting_up`, `recover`: the
 //!   player blinks from its getting up, and while it blinks nothing strikes it.
 //! - `dying` (thrown back and up, one bounce), `lying_dead`: a blow that takes its last health,
@@ -88,6 +94,22 @@ pub const State = enum {
     held_behind,
     escape,
     thrown,
+    armed_stand,
+    armed_walk,
+    armed_jump_crouch,
+    armed_jump,
+    armed_land,
+    armed_jump_kick,
+    armed_attack,
+    armed_stab,
+    armed_swing,
+    armed_back_attack,
+};
+
+/// The traces' names of its states that are not theirs.
+pub const trace_states = [_]struct { name: []const u8, state: State }{
+    // The other program's traces call the knife's stab a throw.
+    .{ .name = "armed_throw", .state = .armed_stab },
 };
 
 /// A blow taken, felt at the next tick.
@@ -150,6 +172,8 @@ pub const Mind = struct {
     paused_speed: Vec3 = .zero,
     /// The frame of the hold it last went around the one held at.
     placed_frame: ?u8 = null,
+    /// The weapon in its hand.
+    weapon: ?Handle = null,
 };
 
 pub const Animation = enum {
@@ -185,6 +209,13 @@ pub const Animation = enum {
     escape,
     counter,
     thrown,
+    armed_stand,
+    armed_stand_long,
+    armed_walk,
+    armed_walk_long,
+    armed_attack,
+    armed_stab,
+    armed_swing,
 };
 
 pub const Move = enum {
@@ -203,7 +234,7 @@ pub const Move = enum {
     counter,
 };
 
-pub const Sound = enum { jump, land, hurt, thud, death };
+pub const Sound = enum { jump, land, hurt, thud, death, armed_blow, throw_weapon, swing_weapon };
 
 pub const Numbers = struct {
     /// The walk across and in depth, straight and diagonal, a logic tick.
@@ -275,6 +306,14 @@ pub const Numbers = struct {
     thrown_x: Fixed,
     /// Held from behind, it is kept this far ahead of its holder.
     held_ahead: i16,
+    /// Armed: the frames at which the plain blow and the stab end, and the swing; the plain
+    /// blow's frame at which a knife leaves the hand; a knife stabs at a thing ahead within
+    /// `stab_reach` across and `stab_level` either way in depth.
+    armed_blow_ends: u8,
+    armed_swing_ends: u8,
+    throw_frame: u8,
+    stab_reach: i16,
+    stab_level: i16,
 };
 
 fn enter(a: Actor, state: State) void {
@@ -413,10 +452,19 @@ fn begin(a: Actor, state: State) void {
         .held_behind => a.animate(.held_behind),
         .escape => a.animate(.escape),
         .thrown => a.animate(.thrown),
+        .armed_stand => a.animate(if (weaponLong(a)) .armed_stand_long else .armed_stand),
+        .armed_walk => a.animate(if (weaponLong(a)) .armed_walk_long else .armed_walk),
+        .armed_jump_crouch, .armed_land => a.animate(.jump_crouch),
+        .armed_jump => a.animate(.jump),
+        .armed_jump_kick => a.startMove(.jump_kick),
+        .armed_attack => a.animate(.armed_attack),
+        .armed_stab => a.animate(.armed_stab),
+        .armed_swing => a.animate(.armed_swing),
+        .armed_back_attack => a.startMove(.back_attack),
     }
     // The state's speed: none but a walk's (set each tick by the walk) and a knock-down's,
     // which goes back; a jump kick keeps its speed across.
-    const keep_x = state == .jump_kick;
+    const keep_x = state == .jump_kick or state == .armed_jump_kick;
     if (!keep_x) a.entity.velocity.x = switch (state) {
         .knocked_down => n.knocked_down_x.times(a.entity.facing.sign()),
         .dying => n.dying_x.times(a.entity.facing.sign()),
@@ -481,9 +529,9 @@ fn act(a: Actor, c: Command) void {
             _ = a.step();
             choose(a, c);
         },
-        .jump_crouch => {
+        .jump_crouch, .armed_jump_crouch => {
             if (!a.countDown()) return;
-            change(a, .jump);
+            change(a, if (a.mind.state == .armed_jump_crouch) .armed_jump else .jump);
             a.entity.velocity.height = n.jump;
             a.entity.flags.airborne = true;
             if (c.held.left) {
@@ -494,12 +542,12 @@ fn act(a: Actor, c: Command) void {
                 a.entity.velocity.x = n.jump_x;
             }
         },
-        .jump => {
+        .jump, .armed_jump => {
             gravity(a);
             steer(a, c);
-            if (c.pressed.b) change(a, .jump_kick);
+            if (c.pressed.b) change(a, if (a.mind.state == .armed_jump) .armed_jump_kick else .jump_kick);
         },
-        .jump_kick => {
+        .jump_kick, .armed_jump_kick => {
             if (hitPause(a)) return;
             if (a.entity.velocity.height.raw < 0) gravity(a) else a.entity.velocity.height = a.entity.velocity.height.add(n.kick_falling_gravity);
         },
@@ -507,6 +555,21 @@ fn act(a: Actor, c: Command) void {
             if (!a.countDown()) return;
             change(a, .ready);
         },
+        .armed_land => {
+            if (!a.countDown()) return;
+            change(a, .armed_stand);
+        },
+        .armed_stand => {
+            a.entity.velocity.height = .zero;
+            choose(a, c);
+        },
+        .armed_walk => {
+            a.entity.velocity.height = .zero;
+            _ = a.step();
+            choose(a, c);
+        },
+        .armed_attack, .armed_stab => weaponBlow(a, c, n.armed_blow_ends),
+        .armed_swing, .armed_back_attack => weaponBlow(a, c, n.armed_swing_ends),
         .attack1, .attack2, .attack3 => {
             _ = a.step();
             if (a.mind.landed_blow) a.mind.window = n.combo_window;
@@ -590,6 +653,7 @@ fn act(a: Actor, c: Command) void {
 /// The actions open in ready, idle and walk, and at the end of a blow: a grab its reach caught,
 /// the back attack, a jump, a blow (or a pick-up), else the walk by the pad.
 fn choose(a: Actor, c: Command) void {
+    if (a.mind.weapon != null) return armedChoose(a, c);
     if (caught(a)) return;
     if ((c.held.b and c.pressed.c) or (c.held.c and c.pressed.b)) return change(a, .back_attack);
     if (c.pressed.c) {
@@ -707,6 +771,7 @@ fn feelBlow(a: Actor) void {
     if (a.other(t.by)) |by| a.faceToward(by);
     const knocked = t.reaction == .knock_down or a.entity.flags.airborne;
     if (knocked) a.tick.sound(fallSound(a, t.by), a.handle);
+    dropWeapon(a);
     loses(a, t.by, t.damage);
     if (a.entity.health <= 0) return die(a, t.by);
     if (!knocked) a.sound(.hurt);
@@ -738,6 +803,7 @@ fn loses(a: Actor, by: ?Handle, damage: i16) void {
 /// It dies: its cry, a hold let go, thrown back from the one who struck (facing it) and up, a
 /// life less.
 fn die(a: Actor, by: ?Handle) void {
+    dropWeapon(a);
     const n = a.numbers();
     a.sound(.death);
     if (a.entity.holding != null or a.entity.holder != null) a.letGo();
@@ -814,6 +880,10 @@ pub fn landed(a: Actor) void {
             a.sound(.land);
             change(a, .land);
         },
+        .armed_jump, .armed_jump_kick => {
+            a.sound(.land);
+            change(a, if (a.mind.weapon != null) .armed_land else .land);
+        },
         else => {},
     }
     a.entity.velocity.height = .zero;
@@ -882,7 +952,7 @@ fn hold(a: Actor, c: Command) void {
     if (a.mind.let_go >= 0) return;
     a.letGo();
     a.entity.facing = a.entity.facing.turned();
-    change(a, .ready);
+    change(a, if (a.mind.weapon != null) .armed_stand else .ready);
 }
 
 /// The vault over the one held ends behind it: the player turns and holds it from behind. A
@@ -900,7 +970,7 @@ fn vaultEnds(a: Actor) void {
         return change(a, .grab);
     }
     a.letGo();
-    change(a, .land);
+    change(a, if (a.mind.weapon != null) .armed_land else .land);
 }
 
 /// In a vault or a throw, the player goes around the one held, at each new frame of its hold
@@ -946,6 +1016,7 @@ fn feelCatch(a: Actor) void {
     a.mind.caught_by = null;
     if (a.entity.holder == null) return;
     if (a.entity.holding != null) a.letGo();
+    dropWeapon(a);
     a.mind.thrower = got.by;
     a.mind.counter_window = 0;
     change(a, if (got.behind) .held_behind else .held);
@@ -1118,4 +1189,122 @@ fn pickUp(a: Actor) bool {
     change(a, .pick_up);
     a.pickUp(item);
     return true;
+}
+
+/// It picks up `item`: a weapon is in its hand from now (one it held already lies where it was).
+pub fn picks(a: Actor, item: Handle) void {
+    const o = a.other(item) orelse return;
+    if (a.tick.kindOf(o).family() != .weapon) return;
+    if (a.mind.weapon) |old| a.tick.putDownWeapon(old);
+    a.mind.weapon = item;
+}
+
+/// Taken up holding the weapon `w`.
+pub fn takeUpWeapon(a: Actor, w: Handle) void {
+    a.mind.weapon = w;
+}
+
+// Armed ------------------------------------------------------------------------------------------
+
+/// The weapon in its hand, while it holds it still.
+fn weaponHeld(a: Actor) ?*entity.Entity {
+    const w = a.mind.weapon orelse return null;
+    const o = a.other(w) orelse return null;
+    if (o.holder == null or !o.holder.?.eql(a.handle)) return null;
+    return o;
+}
+
+/// Whether its weapon is a long one (its stand and walk are its own).
+fn weaponLong(a: Actor) bool {
+    const w = weaponHeld(a) orelse return false;
+    return (a.tick.kindOf(w).definition.number("long") orelse 0) != 0;
+}
+
+/// Its weapon drops from its hand.
+fn dropWeapon(a: Actor) void {
+    const w = a.mind.weapon orelse return;
+    a.mind.weapon = null;
+    a.tick.dropWeapon(w);
+}
+
+/// The actions open armed (standing, walking, at a blow's end): a grab its reach caught, the back
+/// attack, a jump, B (a pick-up first; a swing with a weapon swung, a stab at a thing ahead with
+/// one thrown, else the plain blow, which throws one thrown), else the walk by the pad; its weapon
+/// no longer in its hand, it is unarmed.
+fn armedChoose(a: Actor, c: Command) void {
+    if (caught(a)) return;
+    if ((c.held.b and c.pressed.c) or (c.held.c and c.pressed.b)) return change(a, .armed_back_attack);
+    if (c.pressed.c) {
+        a.sound(.jump);
+        return change(a, .armed_jump_crouch);
+    }
+    if (c.pressed.b) {
+        if (pickUp(a)) return;
+        const w = weaponHeld(a) orelse return change(a, .armed_attack);
+        const def = a.tick.kindOf(w).definition;
+        if ((def.number("swung") orelse 0) != 0) {
+            a.sound(.swing_weapon);
+            return change(a, .armed_swing);
+        }
+        if ((def.number("thrown") orelse 0) != 0 and thingAhead(a)) return change(a, .armed_stab);
+        return change(a, .armed_attack);
+    }
+    if (weaponHeld(a) == null) {
+        a.mind.weapon = null;
+        return walk(a, c);
+    }
+    armedWalk(a, c);
+}
+
+/// The walk by the pad, armed; none: it stands armed.
+fn armedWalk(a: Actor, c: Command) void {
+    const n = a.numbers();
+    const across: i32 = if (c.held.right) 1 else if (c.held.left) -1 else 0;
+    const depth: i32 = if (c.held.up) -1 else if (c.held.down) 1 else 0;
+    if (across == 0 and depth == 0) {
+        if (a.mind.state != .armed_stand) change(a, .armed_stand);
+        return;
+    }
+    if (across != 0) a.entity.facing = if (across < 0) .left else .right;
+    if (a.mind.state != .armed_walk) change(a, .armed_walk);
+    const diagonal = across != 0 and depth != 0;
+    a.entity.velocity.x = (if (diagonal) n.diagonal_x else n.walk_x).times(across);
+    a.entity.velocity.depth = (if (diagonal) n.diagonal_depth else n.walk_depth).times(depth);
+}
+
+/// Whether a thing is ahead within a stab's reach: in the enemies' places, on the side it faces
+/// (dead level across counts facing right), within the reach across and the level in depth.
+fn thingAhead(a: Actor) bool {
+    const n = a.numbers();
+    const e = a.entity;
+    const places = @import("../world.zig").World.enemy_places;
+    for (places.from..places.to) |i| {
+        const o = &a.tick.world.entities[i];
+        if (!o.alive()) continue;
+        const dx = o.position.x.whole() - e.position.x.whole();
+        const ahead = if (e.facing == .right) dx >= 0 else dx < 0;
+        if (!ahead or @abs(dx) >= n.stab_reach) continue;
+        const dd = o.position.depth.whole() - e.position.depth.whole();
+        if (dd < -n.stab_level or dd >= n.stab_level) continue;
+        return true;
+    }
+    return false;
+}
+
+/// A blow with the weapon: its frames run; the plain blow's frame that holds a knife out throws
+/// it (else it sounds the blow); at the blow's last frame (`ends`) the actions are open again.
+fn weaponBlow(a: Actor, c: Command, ends: u8) void {
+    const n = a.numbers();
+    const was = a.frame();
+    _ = a.step();
+    if (a.mind.state == .armed_attack and a.frame() == n.throw_frame and a.frame() != was) {
+        const w = weaponHeld(a);
+        const throws = if (w) |x| (a.tick.kindOf(x).definition.number("thrown") orelse 0) != 0 else false;
+        if (throws) {
+            a.tick.throwWeapon(a.mind.weapon.?);
+            a.mind.weapon = null;
+            a.sound(.throw_weapon);
+        } else a.sound(.armed_blow);
+    }
+    if (a.frame() == ends) choose(a, c);
 }

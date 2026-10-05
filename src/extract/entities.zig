@@ -86,6 +86,11 @@ const State = struct {
     pub const attack4 = 0x1E;
     pub const back_attack = 0x20;
     pub const pick_up = 0x28;
+    pub const armed_stand = 0x30;
+    pub const armed_walk = 0x32;
+    pub const armed_attack = 0x44;
+    pub const armed_stab = 0x46;
+    pub const armed_swing = 0x48;
     pub const down = 0x54;
     pub const dying = 0x56;
     pub const lying_dead = 0x58;
@@ -265,6 +270,14 @@ pub fn soundName(request: u8) Error![]const u8 {
     return error.BadData;
 }
 
+/// `addq` or `subq` at `at`, whose opcode less its count is `base`: the count (0 is 8).
+pub fn quick(rom: []const u8, at: u32, base: u16) Error!i32 {
+    const op = u16be(rom, at);
+    if (op & 0xF1FF != base) return error.BadData;
+    const n: i32 = (op >> 9) & 7;
+    return if (n == 0) 8 else n;
+}
+
 /// The immediate value of the instruction at `at`, checked: its first bytes must be `opcode`;
 /// the value is the `width` bytes after them (1: the low byte of a word, a `moveq`'s byte), sign
 /// extended.
@@ -339,6 +352,13 @@ const player_animations = [_]PlayerAnimation{
     .{ .name = "escape", .state = State.escape },
     .{ .name = "counter", .state = State.counter },
     .{ .name = "thrown", .state = State.thrown },
+    // Armed: standing and walking, a weapon in hand; its blows: the plain one (in which a knife
+    // is thrown), the stab, the swing (0x2F2C).
+    .{ .name = "armed_stand", .state = State.armed_stand },
+    .{ .name = "armed_walk", .state = State.armed_walk },
+    .{ .name = "armed_attack", .state = State.armed_attack },
+    .{ .name = "armed_stab", .state = State.armed_stab },
+    .{ .name = "armed_swing", .state = State.armed_swing },
 };
 
 /// The set's entry of state `state`'s animation facing right (its byte offset / 2).
@@ -397,6 +417,39 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
         const raw = try readAnimation(arena, rom, set, entry);
         try d.animations.append(arena, .{ .name = pa.name, .loop = true, .frames = try playerFrames(&d, pa.name, entry, raw.timing, character) });
     }
+    // A long weapon in hand (a pipe), the stand and the walk are the next entries (0x2E32:
+    // animation +4).
+    if (try quick(rom, 0x2E66, 0x5068) != 4) return error.BadData;
+    for ([_]struct { name: []const u8, state: u8 }{
+        .{ .name = "armed_stand_long", .state = State.armed_stand },
+        .{ .name = "armed_walk_long", .state = State.armed_walk },
+    }) |pa| {
+        const entry = try stateEntry(rom, pa.state) + 2;
+        const raw = try readAnimation(arena, rom, set, entry);
+        try d.animations.append(arena, .{ .name = pa.name, .loop = true, .frames = try playerFrames(&d, pa.name, entry, raw.timing, character) });
+    }
+    // The weapon in hand, frame by frame (0x5FC8), by the armed animations in the original's
+    // order.
+    for ([_][]const u8{ "armed_stand", "armed_stand_long", "armed_walk", "armed_walk_long", "armed_attack", "armed_stab", "armed_swing" }, 0..) |armed, k| {
+        try weapons.playerHands(&d, armed, @intCast(k), character);
+    }
+    // The armed blows: the stab and the swing sound at their second frame as the combo's
+    // blows do (0x2242); the plain blow's sound is its behaviour's (a knife thrown sounds the
+    // throw instead, 0x2226).
+    const armed_swing = try soundName(@bitCast(@as(i8, @intCast(try moveq(rom, 0x2242, 7)))));
+    for ([_][]const u8{ "armed_stab", "armed_swing" }) |n| {
+        @constCast(d.animations.items[d.animationIndex(n).?].frames)[1].sound = armed_swing;
+    }
+    try d.sound("armed_blow", @bitCast(@as(i8, @intCast(try moveq(rom, 0x2242, 7)))));
+    try d.sound("throw_weapon", @bitCast(@as(i8, @intCast(try moveq(rom, 0x2226, 7)))));
+    try d.sound("swing_weapon", @bitCast(@as(i8, @intCast(try moveq(rom, 0x311C, 7)))));
+    try d.number("armed_blow_ends", try moveq(rom, 0x21E6, 1), "ROM 0x021E6: moveq #N,d1 (the plain blow's and the stab's last frame)");
+    try d.number("armed_swing_ends", try moveq(rom, 0x225C, 1), "ROM 0x0225C: moveq #N,d1 (the swing's)");
+    try d.number("throw_frame", try frameCompared(rom, 0x2214), "ROM 0x02214: cmpi.b #N,(10,a0) (a knife leaves the hand)");
+    try d.number("stab_reach", try immediate(rom, 0x3106, &.{ 0x0C, 0x44 }, 2), "ROM 0x03106: cmpi.w #N,d4 (a thing ahead within it, 0x30C4)");
+    try d.number("stab_level", try immediate(rom, 0x30D2, &.{ 0x04, 0x42 }, 2), "ROM 0x030D2: subi.w #N,d2 (its depth within it either way, 0x030D8)");
+    if (try immediate(rom, 0x30D8, &.{ 0x06, 0x43 }, 2) != 2 * try immediate(rom, 0x30D2, &.{ 0x04, 0x42 }, 2)) return error.BadData;
+
     // A blow of the combo's first pressed again while it runs hurries: the rest of its frames
     // take the durations of the list the code sets (0x205A).
     const attack1 = try stateEntry(rom, State.attack1);

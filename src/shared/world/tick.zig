@@ -382,6 +382,11 @@ pub const Tick = struct {
         dispatch(t, w, "dropped", void, {}, .{});
     }
 
+    /// The holder of the weapon `w` took another: `w` lies where it is (`putDown`).
+    pub fn putDownWeapon(t: *Tick, w: Handle) void {
+        dispatch(t, w, "putDown", void, {}, .{});
+    }
+
     /// The entity is held: it follows its holder now that its holder has moved (`follow`; by
     /// default its holder places it).
     pub fn follow(t: *Tick, h: Handle) void {
@@ -568,6 +573,7 @@ pub const Tick = struct {
             const family = t.kindOf(o).family();
             if (family != .item and family != .weapon) continue;
             if (o.holder != null) continue;
+            if (family == .weapon and !dispatch(t, oh, "takeable", bool, true, .{})) continue;
             const dx = o.position.x.whole() - e.position.x.whole();
             const dd = o.position.depth.whole() - e.position.depth.whole();
             const dh = o.position.height.whole() - e.position.height.whole();

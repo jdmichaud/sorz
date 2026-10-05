@@ -82,12 +82,13 @@ pub const Frame = struct {
 
 /// A weapon in the hand: `x` ahead of the holder, `height` downward, a pixel in front of it in
 /// depth or behind; the weapon shows its animation `pose` (one of its own, facing the holder's
-/// way); `strikes`: its blow is under way.
+/// way, or the other way when `turned`); `strikes`: its blow is under way.
 pub const Hand = struct {
     x: i16 = 0,
     height: i16 = 0,
     pose: []const u8,
     front: bool = false,
+    turned: bool = false,
     strikes: bool = false,
 };
 
@@ -407,12 +408,13 @@ fn frame(node: json.Node, d: *const Definition, a: *const art.Art) json.Error!Fr
 }
 
 fn hand(node: json.Node) json.Error!Hand {
-    try node.only(&.{ "x", "height", "pose", "front", "strikes" });
+    try node.only(&.{ "x", "height", "pose", "front", "turned", "strikes" });
     return .{
         .x = if (try node.opt("x")) |n| try n.int(i16) else 0,
         .height = if (try node.opt("height")) |n| try n.int(i16) else 0,
         .pose = try (try node.get("pose")).string(),
         .front = if (try node.opt("front")) |n| try n.boolean() else false,
+        .turned = if (try node.opt("turned")) |n| try n.boolean() else false,
         .strikes = if (try node.opt("strikes")) |n| try n.boolean() else false,
     };
 }
@@ -528,6 +530,7 @@ pub fn value(arena: std.mem.Allocator, d: *const Definition) error{OutOfMemory}!
                     if (h.height != 0) try hs.append(arena, .{ .key = "height", .value = json.Value.num(h.height) });
                     try hs.append(arena, .{ .key = "pose", .value = .{ .str = h.pose } });
                     if (h.front) try hs.append(arena, .{ .key = "front", .value = .{ .bool = true } });
+                    if (h.turned) try hs.append(arena, .{ .key = "turned", .value = .{ .bool = true } });
                     if (h.strikes) try hs.append(arena, .{ .key = "strikes", .value = .{ .bool = true } });
                     try fs.append(arena, .{ .key = "hand", .value = .{ .object = hs.items } });
                 }

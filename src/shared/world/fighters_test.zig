@@ -54,6 +54,11 @@ fn anim(comptime name: []const u8, comptime frames: []const u8) []const u8 {
 
 const place = ", \"place\": {\"x\": -3, \"height\": -44}";
 
+/// A weapon in the hand of a frame: across, height, pose, and more fields.
+fn hand(comptime x: []const u8, comptime height: []const u8, comptime pose: []const u8, comptime more: []const u8) []const u8 {
+    return ", \"hand\": {\"x\": " ++ x ++ ", \"height\": " ++ height ++ ", \"pose\": \"" ++ pose ++ "\"" ++ more ++ "}";
+}
+
 const hero =
     \\{"family": "player", "team": "player", "behaviour": "player", "health": 80, "gravity": 59392,
     \\ "shadow": true,
@@ -68,9 +73,11 @@ const hero =
     \\   "walk_x": 196608, "dying_x": -262144, "dying_up": -589824, "dead": 38,
     \\   "escape_frame": 3, "escape_window": 8, "thrown_first": 5, "thrown_pace": 3,
     \\   "thrown_falls": 2, "thrown_ahead": 32, "thrown_up": -196608, "thrown_x": 229376,
-    \\   "held_ahead": 16},
+    \\   "held_ahead": 16, "armed_blow_ends": 2, "armed_swing_ends": 3, "throw_frame": 1,
+    \\   "stab_reach": 144, "stab_level": 12},
     \\ "sounds": {"jump": "jump", "land": "landing", "hurt": "player hit", "thud": "heavy fall",
-    \\   "death": "axel death cry"},
+    \\   "death": "axel death cry", "armed_blow": "swing", "throw_weapon": "throw weapon",
+    \\   "swing_weapon": "pipe swing"},
     \\ "boxes": {"body": {"x": [0, 13], "depth": [-8, 8], "height": [-51, 0]},
     \\   "reach": {"x": [0, 16], "depth": [-8, 8], "height": [-57, 0]},
     \\   "fist": {"x": [16, 57], "depth": [-8, 8], "height": [-64, -32]}},
@@ -106,7 +113,14 @@ const hero =
     anim("held_behind", fr("30", "")) ++ "," ++
     anim("escape", fr("4", "") ++ "," ++ fr("6", "") ++ "," ++ fr("2", "") ++ "," ++ fr("4", "")) ++ "," ++
     anim("counter", fr("5", ", \"held\": {\"x\": 16, \"pose\": 0}") ++ "," ++ fr("15", ", \"blow\": true, \"held\": {\"x\": 40, \"height\": -32, \"lets_go\": true}") ++ "," ++ fr("4", "")) ++ "," ++
-    anim("thrown", bare("100", ", \"place\": {\"x\": -24}") ++ "," ++ bare("12", ", \"place\": {\"x\": -4, \"height\": -48}") ++ "," ++ bare("8", ", \"place\": {\"x\": 16, \"height\": -40}") ++ "," ++ bare("1", ", \"place\": {}")) ++
+    anim("thrown", bare("100", ", \"place\": {\"x\": -24}") ++ "," ++ bare("12", ", \"place\": {\"x\": -4, \"height\": -48}") ++ "," ++ bare("8", ", \"place\": {\"x\": 16, \"height\": -40}") ++ "," ++ bare("1", ", \"place\": {}")) ++ "," ++
+    anim("armed_stand", fr("100", hand("-5", "-59", "lying", ""))) ++ "," ++
+    anim("armed_stand_long", fr("100", hand("-3", "-61", "lying", ""))) ++ "," ++
+    anim("armed_walk", fr("6", ", \"attack\": \"reach\"" ++ hand("-5", "-62", "lying", "")) ++ "," ++ fr("6", ", \"attack\": \"reach\"" ++ hand("-5", "-61", "lying", ""))) ++ "," ++
+    anim("armed_walk_long", fr("6", ", \"attack\": \"reach\"" ++ hand("-10", "-61", "lying", "")) ++ "," ++ fr("6", ", \"attack\": \"reach\"" ++ hand("-10", "-60", "lying", ""))) ++ "," ++
+    anim("armed_attack", fr("3", hand("4", "-61", "level", ", \"turned\": true")) ++ "," ++ fr("5", hand("54", "-31", "lying", ", \"turned\": true, \"strikes\": true")) ++ "," ++ fr("2", hand("54", "-31", "lying", ", \"turned\": true, \"strikes\": true"))) ++ "," ++
+    anim("armed_stab", fr("3", hand("24", "-37", "level", "")) ++ "," ++ fr("5", ", \"sound\": \"swing\"" ++ hand("56", "-29", "level", ", \"strikes\": true")) ++ "," ++ fr("2", hand("56", "-29", "level", ", \"strikes\": true"))) ++ "," ++
+    anim("armed_swing", fr("3", hand("4", "-46", "upright", "")) ++ "," ++ fr("3", ", \"sound\": \"swing\"" ++ hand("36", "-42", "level", ", \"strikes\": true")) ++ "," ++ fr("9", hand("6", "-58", "lying", "")) ++ "," ++ fr("2", hand("6", "-58", "lying", ""))) ++
     \\ },
     \\ "moves": {"attack1": {"animation": "attack1", "damage": 1},
     \\   "attack2": {"animation": "attack1", "damage": 1},
@@ -293,9 +307,11 @@ const galsia_pipe =
 /// A pipe: its poses, how long it lasts and falls.
 const pipe =
     \\{"family": "weapon", "team": "neutral", "behaviour": "weapon", "gravity": 34816,
-    \\ "numbers": {"power": 4, "uses": 3, "blink": 16, "drop": 131072, "left_behind": 96},
+    \\ "numbers": {"power": 4, "uses": 3, "blink": 16, "drop": 131072, "left_behind": 96,
+    \\   "long": 1, "swung": 1, "thrown": 0},
+    \\ "boxes": {"end": {"x": [0, 30], "depth": [-8, 8], "height": [-20, 0]}},
     \\ "animations": {
-++ anim("lying", bare("1", "")) ++ "," ++ anim("level", bare("1", "")) ++ "," ++ anim("upright", bare("1", "")) ++ "," ++ anim("blinking", bare("1", "") ++ "," ++ bare("1", "")) ++
+++ anim("lying", bare("1", "")) ++ "," ++ anim("level", "{\"frame\": \"t/f1\", \"ticks\": 1, \"attack\": \"end\"}") ++ "," ++ anim("upright", bare("1", "")) ++ "," ++ anim("blinking", bare("1", "") ++ "," ++ bare("1", "")) ++
     \\ }}
 ;
 
@@ -358,7 +374,8 @@ const knife =
     \\{"family": "weapon", "team": "neutral", "behaviour": "knife", "gravity": 34816,
     \\ "numbers": {"power": 5, "uses": 3, "blink": 16, "drop": 131072, "left_behind": 96,
     \\   "throw_speed": 1048576, "throw_ahead": 48, "throw_below": 16, "flight_from": -16,
-    \\   "flight_to": 336, "bounce_shift": 2, "bounce_gravity": 38912},
+    \\   "flight_to": 336, "bounce_shift": 2, "bounce_gravity": 38912, "long": 0, "swung": 0,
+    \\   "thrown": 1},
     \\ "boxes": {"blade": {"x": [-8, 8], "depth": [-8, 8], "height": [-8, 0]}},
     \\ "animations": {
 ++ anim("lying", bare("1", "")) ++ "," ++ anim("level", "{\"frame\": \"t/f1\", \"ticks\": 1, \"body\": \"blade\", \"attack\": \"blade\"}") ++ "," ++ anim("blinking", bare("1", "") ++ "," ++ bare("1", "")) ++
@@ -1451,4 +1468,52 @@ test "Antonio throws his boomerang: it leaves his hand at his throw's third fram
     try testing.expect(b.missile != null);
     for (0..32) |_| r.step(.{});
     try testing.expectEqualStrings("back", behaviours.stateName(&b.mind).?);
+}
+
+test "a player picks up a pipe: hidden in the pick-up, then in hand; B swings it, its blow knocks a punk down" {
+    var r = try Round.init();
+    defer r.deinit();
+    const p = try r.w.spawnWithin(&r.f.kinds, r.f.kinds.find("pipe").?, World.weapon_places.from, World.weapon_places.to, .pixels(810, 64, 160), .right);
+    r.w.get(p).?.mind.weapon.state = .lying;
+    r.step(.{});
+    r.step(b_pad);
+    try testing.expectEqualStrings("pick_up", r.state());
+    for (0..7) |_| r.step(.{});
+    try testing.expectEqualStrings("armed_stand", r.state());
+    const w = r.w.get(p).?;
+    try testing.expectEqualStrings("held", behaviours.stateName(&w.mind).?);
+    // In hand: behind the player, up, at the player's depth.
+    try testing.expectEqual(@as(i32, 800 - 3), w.position.x.whole());
+    try testing.expectEqual(@as(i32, 160 - 61), w.position.height.whole());
+    try testing.expectEqual(@as(i32, 64), w.position.depth.whole());
+    const g = try r.punk(850);
+    r.w.get(g).?.mind.galsia.state = .stand;
+    r.w.get(g).?.mind.galsia.body.fresh = true;
+    const before = r.w.get(g).?.health;
+    r.step(b_pad);
+    try testing.expectEqualStrings("armed_swing", r.state());
+    var down = false;
+    for (0..12) |_| {
+        r.step(.{});
+        if (std.mem.eql(u8, behaviours.stateName(&r.w.get(g).?.mind).?, "knocked_down")) down = true;
+    }
+    try testing.expect(down);
+    // The pipe's blow, its power.
+    try testing.expectEqual(before - 4, r.w.get(g).?.health);
+}
+
+test "an armed player struck lets its weapon fall; a knife held is thrown by the plain blow when nothing is ahead" {
+    var r = try Round.init();
+    defer r.deinit();
+    const k = try r.w.spawnWithin(&r.f.kinds, r.f.kinds.find("knife").?, World.weapon_places.from, World.weapon_places.to, .pixels(810, 64, 160), .right);
+    r.w.get(k).?.mind.knife.state = .lying;
+    r.step(.{});
+    r.step(b_pad);
+    for (0..7) |_| r.step(.{});
+    try testing.expectEqualStrings("armed_stand", r.state());
+    r.step(b_pad);
+    try testing.expectEqualStrings("armed_attack", r.state());
+    for (0..4) |_| r.step(.{});
+    try testing.expectEqualStrings("flying", behaviours.stateName(&r.w.get(k).?.mind).?);
+    try testing.expect(r.player().mind.player.weapon == null);
 }
