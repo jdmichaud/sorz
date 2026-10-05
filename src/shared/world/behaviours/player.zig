@@ -236,8 +236,8 @@ pub const Mind = struct {
     lifting_over: bool = false,
     step: u8 = 0,
     shown: Shown = .{},
-    /// Its walk's way, by the pad's directions: a walk kept out of a thing keeps it (the
-    /// original numbers its walks' states by the pad, not by the move).
+    /// Its walk's way, by the pad's directions, armed or not: a walk kept out of a thing keeps it
+    /// (the original numbers its walks' states by the pad, not by the move).
     way: Way = .across,
 };
 
@@ -2220,6 +2220,7 @@ fn armedWalk(a: Actor, c: Command) void {
     if (across != 0) a.entity.facing = if (across < 0) .left else .right;
     if (a.mind.state != .armed_walk) change(a, .armed_walk);
     const diagonal = across != 0 and depth != 0;
+    a.mind.way = if (depth < 0) (if (diagonal) .up_across else .up) else if (depth > 0) (if (diagonal) .down_across else .down) else .across;
     a.entity.velocity.x = (if (diagonal) n.diagonal_x else n.walk_x).times(across);
     a.entity.velocity.depth = (if (diagonal) n.diagonal_depth else n.walk_depth).times(depth);
 }

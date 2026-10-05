@@ -768,8 +768,8 @@ pub const Round = struct {
     }
 
     /// A player's state as the original numbers its states: its behaviour's state, and a walk's
-    /// way (by the pad: across, up, down, or across and up or down) and side; null for one not
-    /// playing.
+    /// way (by the pad: across, up, down, or across and up or down) and side, armed or not;
+    /// null for one not playing.
     /// Another state's side is not a state of its own: the original turns a blow or a jump in
     /// place (its art not copied again).
     fn poseOf(e: *const world.Entity) ?u16 {
@@ -777,8 +777,9 @@ pub const Round = struct {
             .player => |m| m,
             else => return null,
         };
-        const way: u16 = if (m.state == .walk) @backingInt(m.way) else 0;
-        const side: u16 = if (m.state == .walk) @intFromBool(e.facingLeft()) else 0;
+        const walks = m.state == .walk or m.state == .armed_walk;
+        const way: u16 = if (walks) @backingInt(m.way) else 0;
+        const side: u16 = if (walks) @intFromBool(e.facingLeft()) else 0;
         return @as(u16, @backingInt(m.state)) << 4 | way << 1 | side;
     }
 
