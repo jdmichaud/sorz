@@ -154,7 +154,7 @@ pub const Options = struct {
     pub fn tick(self: *Options, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
         self.ticks +|= 1;
         self.colours.latch();
-        defer turn.frame = .{ .colours = self.colours.copy };
+        defer turn.frame = .{ .colours = self.colours.copy, .first_line = true };
         const reads_start = self.phase == .first_line or self.phase == .lines;
         if (reads_start and turn.pressed.pad1.start) {
             // START leaves from any line, its fade at once.

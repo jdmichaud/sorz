@@ -12,6 +12,8 @@ pub const Load = struct {
     left: u16 = 0,
     /// Whether the sound's driver waits too.
     sound_held: bool = true,
+    /// The sound's driver runs at its first tick all the same (flow.zig).
+    driver_once: bool = false,
 
     pub const Assets = struct {
         pub const names = .{};
@@ -20,6 +22,11 @@ pub const Load = struct {
 
     pub fn tick(self: *Load, turn: *scene.Turn, _: *const Assets) ?flow.Exit {
         if (self.sound_held) turn.sound_driver = false;
+        if (self.driver_once) {
+            self.driver_once = false;
+            turn.sound_driver = true;
+            turn.lag = true;
+        }
         turn.read_pads = false;
         self.left -|= 1;
         return null;

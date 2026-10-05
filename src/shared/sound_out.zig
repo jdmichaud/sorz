@@ -36,6 +36,9 @@ pub const SoundOut = struct {
     sound: ?audio.Sound = null,
     /// The stretch the sound's output plays at.
     stretch_ppm: u32 = 0,
+    /// The sounds asked for, which the next update takes.
+    asked: [16]audio.sound.Id = undefined,
+    asked_len: u8 = 0,
 
     const unit: u64 = tick_rate_numerator * 1_000_000;
 
@@ -57,6 +60,7 @@ pub const SoundOut = struct {
     /// The sound from power-on: nothing playing, nothing asked for.
     pub fn reset(self: *SoundOut, allocator: std.mem.Allocator) !void {
         self.rest = 0;
+        self.asked_len = 0;
         if (self.sound) |*s| {
             const c = s.sounds;
             s.deinit(allocator);
@@ -70,26 +74,41 @@ pub const SoundOut = struct {
     /// it, as the original's loads hold its driver) with the sounds asked for before, then the
     /// tick's frames, `stretch_ppm` millionths longer (network play's balancing); `requests`, the
     /// sounds the tick asked for, play from the next update on, as the original's driver takes
-    /// the requests of a frame's logic at the next frame. `restart` starts the sequencer again
+    /// the requests of a frame's logic at the next frame; `now`, those of a logic tick's first
+    /// half, from this update on (the frame in the logic tick's middle takes them). `restart` starts the sequencer again
     /// from its first state after the update (the original's start-up loads its driver again):
-    /// its next update stops every sound, the chips ringing on until then. `held`: the cycles the
+    /// its next update stops every sound, the chips ringing on until then. `lag`: a tick the logic
+    /// takes in its middle, the driver's update before the sounds the ticks before asked for.
+    /// `held`: the cycles the
     /// game stopped the sound's processor at this frame's start (the picture's transfers, the
-    /// pads' reading: screens/transfers.zig), which delay the samples and the voices' clock.
+    /// pads' reading: screens/transfers.zig), which delay the samples and the voices' clock; `work`:
+    /// the frame's work before the driver (its looks at the sample player come after it).
     /// The frames stay valid until the next call. Without the content's sound, silence.
-    pub fn play(self: *SoundOut, stretch_ppm: u32, requests: []const audio.sound.Id, driver: bool, restart: bool, held: u32) []const i16 {
+    pub fn play(self: *SoundOut, stretch_ppm: u32, now: []const audio.sound.Id, requests: []const audio.sound.Id, driver: bool, restart: bool, lag: bool, held: u32, work: i32) []const i16 {
         const s = if (self.sound) |*s| s else return self.tick(stretch_ppm);
         const ppm = @min(stretch_ppm, max_stretch_ppm);
         if (ppm != self.stretch_ppm) {
             s.output.stretch(ppm);
             self.stretch_ppm = ppm;
         }
+        // The sounds the ticks before asked for, but at a tick the logic takes in its middle (its
+        // requests come after); then those of a logic tick's first half: this update takes them
+        // (a load's, the next).
+        if (!lag) {
+            for (self.asked[0..self.asked_len]) |r| s.play(r);
+            self.asked_len = 0;
+        }
+        for (now) |r| s.play(r);
         const frames = if (driver) blk: {
-            const t = s.sequencer.update();
+            const t = s.sequencer.updateAfter(work);
             s.sequencer.clock.held +|= held;
             break :blk s.output.tickHeld(t, held);
         } else s.output.tick(&.{});
         if (restart) s.sequencer = .init(s.sounds);
-        for (requests) |r| s.play(r);
+        for (requests) |r| if (self.asked_len < self.asked.len) {
+            self.asked[self.asked_len] = r;
+            self.asked_len += 1;
+        };
         return frames;
     }
 

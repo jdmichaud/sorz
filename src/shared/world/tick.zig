@@ -97,6 +97,7 @@ pub const Tick = struct {
 
     /// The frame `e` is on starts showing: its sound is asked for.
     pub fn frameStarts(t: *Tick, h: Handle, e: *const Entity) void {
+        t.out.new_frames[h.index] = true;
         const f = t.frameOf(e) orelse return;
         if (f.sound) |s| t.sound(s, h);
     }

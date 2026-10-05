@@ -67,6 +67,9 @@ pub const Output = struct {
     pickups: List(Pickup, 16) = .{},
     /// By the entities' places in the pool: the frame each showed (the animation system).
     shown: [capacity]?Shown = @splat(null),
+    /// The entities whose frame started at this tick (the game copies a player's art for its new
+    /// frame).
+    new_frames: [capacity]bool = @splat(false),
     /// The draw list, back to front: what the renderer's `Screen.sprites` takes. It stays until
     /// the next logic tick, so the display ticks in between draw it again.
     sprites: List(render.Sprite, 2 * capacity) = .{},
@@ -88,6 +91,7 @@ pub const Output = struct {
         self.hits.clear();
         self.pickups.clear();
         @memset(&self.shown, null);
+        @memset(&self.new_frames, false);
     }
 };
 

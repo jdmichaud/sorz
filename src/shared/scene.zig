@@ -107,10 +107,17 @@ pub const Turn = struct {
     /// The player who chose the settings at this tick (the game menu's SETTINGS): the game opens
     /// them over the scenes, on that player's machine (game.zig).
     settings: ?u1 = null,
+    /// The sounds asked for in the first half of a logic tick of play (its players'), which the
+    /// sound's driver takes at the frame in the logic tick's middle: this tick's update, before
+    /// `requests`, which it takes at the next.
+    requests_now: Requests = .{},
     /// Whether the sound's driver runs at this tick: a load holds it, as the original's do.
     sound_driver: bool = true,
     /// Whether the pads are read at this tick: a load reads none.
     read_pads: bool = true,
+    /// A display tick the logic takes in its middle (an interrupt a load left waiting): the
+    /// sound's driver runs, but no frame's work.
+    lag: bool = false,
     /// Set by a set-up: every button counts as held, so that none is pressed at the next reading.
     release_pads: bool = false,
     /// Set by the start-up: the sound's driver starts again from its first state (the original
@@ -137,6 +144,13 @@ pub const Turn = struct {
         if (self.requests.len == self.requests.items.len) return;
         self.requests.items[self.requests.len] = s;
         self.requests.len += 1;
+    }
+
+    /// `play`, for a sound of a logic tick's first half (`requests_now`).
+    pub fn playNow(self: *Turn, s: library.Sound) void {
+        if (self.requests_now.len == self.requests_now.items.len) return;
+        self.requests_now.items[self.requests_now.len] = s;
+        self.requests_now.len += 1;
     }
 };
 
@@ -207,7 +221,7 @@ pub const Stack = struct {
     load_after_setup: Load = .{},
     setup_left: u8 = 0,
 
-    pub const Next = struct { kind: Kind, load: u16, sound_held: bool };
+    pub const Next = struct { kind: Kind, load: u16, sound_held: bool, driver_once: bool = false };
 
     /// The scene on top: the last overlay, or the base.
     pub const Top = union(enum) { scene: *Scene, overlay: *Overlay };
@@ -266,7 +280,7 @@ pub fn tick(stack: *Stack, graph: *const flow.Graph, turn: *Turn, assets: ?*cons
     }
     if (stack.next) |n| {
         stack.replace(.start(n.kind, turn.setup));
-        stack.load_after_setup = .{ .left = n.load, .sound_held = n.sound_held };
+        stack.load_after_setup = .{ .left = n.load, .sound_held = n.sound_held, .driver_once = n.driver_once };
         stack.setup_left = setupTicks(n.kind);
         stack.next = null;
     }
@@ -301,7 +315,7 @@ pub fn tick(stack: *Stack, graph: *const flow.Graph, turn: *Turn, assets: ?*cons
         std.log.warn("the scene {s} ended by {s}, which the flow does not follow", .{ @tagName(s.*), @tagName(how) });
         return;
     };
-    stack.next = .{ .kind = edge.to, .load = edge.load, .sound_held = edge.sound_held };
+    stack.next = .{ .kind = edge.to, .load = edge.load, .sound_held = edge.sound_held, .driver_once = edge.driver_once };
 }
 
 /// The scenes at power-on: the flow's first scene, its set-up at the first tick, and the original's

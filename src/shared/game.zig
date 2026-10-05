@@ -63,6 +63,39 @@ pub const Pacing = enum { clock, per_update };
 /// What the game has to tell about its settings record.
 pub const Notice = overlay.Notice;
 
+/// What the frame that starts the next tick does before the sound's driver: the last tick's
+/// picture's transfers (the cycles they hold the sound's processor) and its other work.
+pub const Due = struct {
+    held: u32 = 0,
+    work: i32 = transfers.costs.split,
+};
+
+/// The frame that starts a tick, before the sound's driver: the last tick's picture's transfers
+/// and the pads' reading hold the sound's processor, unless a load holds the frame's work and
+/// the sound together; and its work. `due` keeps this tick's picture's for the next.
+pub fn transfersOf(due: *Due, turn: *const scene.Turn) Due {
+    // A tick the logic takes in its middle: the driver alone, the frame's for the next.
+    if (turn.lag) return .{ .held = 0, .work = transfers.costs.lag };
+    var now: Due = .{ .held = 0, .work = due.work };
+    if (turn.sound_driver) {
+        now.held = due.held + transfers.pads;
+        due.held = 0;
+    }
+    // A load's ticks leave what the frame before it carries for the frame after it.
+    if (turn.frame) |f| {
+        due.held = transfers.hold(f);
+        due.work = transfers.work(f);
+    } else if (turn.sound_driver) due.work = transfers.work(null);
+    return now;
+}
+
+/// A tick's sound: its frames from the sounds it asked for and the frame's holds and work
+/// (`transfersOf`).
+pub fn tickSound(sound: *sound_out.SoundOut, due: *Due, turn: *const scene.Turn, stretch_ppm: u32) []const i16 {
+    const frame = transfersOf(due, turn);
+    return sound.play(stretch_ppm, turn.requests_now.slice(), turn.requests.slice(), turn.sound_driver, turn.sound_restart, turn.lag, frame.held, frame.work);
+}
+
 /// Everything that decides what the game does next. Its canonical form (canonical.zig) is what
 /// the tests and network play compare: the same pads from power-on give the same state on every
 /// platform.
@@ -175,7 +208,7 @@ pub const Game = struct {
     drawn: scene.Scene = .{ .load = .{} },
     /// The cycles the last frame's transfers stop the sound's processor at the next frame's start
     /// (screens/transfers.zig).
-    transfers_due: u32 = 0,
+    transfers_due: Due = .{},
     /// The test pattern's picture, without content, and what it shows.
     pic: picture.Picture,
     pattern_drawn: scene.TestPattern.Drawn = .{},
@@ -644,22 +677,14 @@ pub const Game = struct {
             self.settings.sound.volume = v;
             self.writeSettings(&self.settings);
         };
-        // The frame that starts this tick holds the sound's processor for the last tick's picture
-        // and the pads' reading, unless a load holds the frame's work and the sound together.
-        var held: u32 = 0;
-        if (turn.sound_driver) {
-            held = self.transfers_due + transfers.pads;
-            self.transfers_due = 0;
-        }
-        if (turn.frame) |f| self.transfers_due = transfers.hold(f);
         if (self.sound) |*s| {
-            const frames = s.play(self.stretchPpm(), turn.requests.slice(), turn.sound_driver, turn.sound_restart, held);
+            const frames = tickSound(s, &self.transfers_due, &turn, self.stretchPpm());
             // After a hold, the sound fades in, and the jingle of the hold stops.
             const shaped = if (self.faded) self.fade(frames, .in) else frames;
             if (self.faded) self.jingle_at = null;
             self.faded = false;
             _ = p.audioQueue(self.atVolume(shaped)) catch {};
-        }
+        } else _ = transfersOf(&self.transfers_due, &turn);
         if (self.netplay) |np| {
             np.ran();
             if (np.checkDue()) {
@@ -677,7 +702,7 @@ pub const Game = struct {
         self.state = self.startState();
         self.redraw = true;
         self.pattern_drawn = .{};
-        self.transfers_due = 0;
+        self.transfers_due = .{};
         if (self.view) |*v| v.shows = null;
         self.clock_base_ns = p.nowNs();
         self.clock_ticks = 0;
@@ -721,7 +746,7 @@ pub const Game = struct {
         if (self.faded) return;
         const s = if (self.sound) |*s| s else return;
         if (p.audioStatus().queued_frames > s.maxFrames()) return;
-        _ = p.audioQueue(self.atVolume(self.fade(s.play(self.stretchPpm(), &.{}, false, false, 0), .out))) catch {};
+        _ = p.audioQueue(self.atVolume(self.fade(s.play(self.stretchPpm(), &.{}, &.{}, false, false, false, 0, transfers.costs.split), .out))) catch {};
         self.faded = true;
     }
 

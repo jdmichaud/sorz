@@ -220,10 +220,17 @@ pub const Sequencer = struct {
 
     /// One update: the requests, the fade, the song's tracks, the effects'. Returns its writes.
     pub fn update(s: *Sequencer) *const Tick {
+        return s.updateAfter(0);
+    }
+
+    /// `update`, after `work_before` cycles of the frame's work (its looks at the sample player
+    /// come after it: screens/transfers.zig).
+    pub fn updateAfter(s: *Sequencer, work_before: i32) *const Tick {
         s.tick.len = 0;
         s.tick.lost = 0;
         s.held = 0;
         s.clock.newUpdate();
+        s.clock.work = work_before;
         s.clock.spend(.update);
         s.step();
         s.clock.held += s.held;

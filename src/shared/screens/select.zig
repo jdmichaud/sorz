@@ -366,11 +366,11 @@ pub const Select = struct {
             },
             .leaving => {
                 turn.play(a.stop);
-                turn.frame = .{ .colours = self.colours.copy };
+                turn.frame = .{ .colours = self.colours.copy, .first_line = true };
                 return .chosen;
             },
         }
-        turn.frame = .{ .colours = self.colours.copy, .tiles = self.copies(a) };
+        turn.frame = .{ .colours = self.colours.copy, .tiles = self.copies(a), .first_line = true };
         return null;
     }
 

@@ -38,9 +38,11 @@ const render = @import("../render/root.zig");
 const input = @import("../input.zig");
 const art = @import("../content/art.zig");
 const records = @import("../content/screens.zig");
+const content_round = @import("../content/round.zig");
 const world = @import("../world/root.zig");
 const setup_mod = @import("../setup.zig");
 const Colours = @import("colours.zig").Colours;
+const transfers = @import("transfers.zig");
 const Setup = setup_mod.Setup;
 
 /// The palette cycles of a round's colours at most.
@@ -170,6 +172,20 @@ pub const Round = struct {
     start_pressed: bool = false,
     /// The logic tick ran at this display tick (the traces observe the world then).
     logic_ran: bool = false,
+    /// The display tick was the first of a logic tick's two (no picture ends there).
+    split: bool = false,
+    /// What the next picture's frame carries (screens/transfers.zig): each player's art for its
+    /// new frame (its copies' tiles), its health bar's partial cell built (`health` the health
+    /// it shows, null before its first), the planes' columns the camera brought in.
+    art_due: [2][2]u16 = @splat(.{ 0, 0 }),
+    colours_due: bool = false,
+    bar_due: [2]bool = .{ false, false },
+    health: [2]?i16 = .{ null, null },
+    strips_due: u8 = 0,
+    strip_blocks_due: u16 = 0,
+    strip_rows_due: u8 = 0,
+    /// The round ended (its last tick).
+    done: bool = false,
     /// The exit after the fade out.
     outcome: flow.Exit = .cleared,
     trace_scene: TraceScene = .round_intro,
@@ -265,6 +281,8 @@ pub const Round = struct {
 
     /// One display tick.
     pub fn tick(self: *Round, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
+        const was = self.phase;
+        defer turn.frame = self.pictureOf(a, was);
         self.colours.latch();
         self.shown_phase = self.phase;
         self.shown_pause = self.phase == .paused or self.resumed;
@@ -274,6 +292,7 @@ pub const Round = struct {
         self.shown_game_over = self.gameOver() != null;
         if (turn.world_out) |o| o.latch();
         self.logic_ran = false;
+        self.split = false;
         // A tick of the pause is counted as it goes on: the one it ends at is play's.
         if (self.phase != .setup and self.phase != .play and self.phase != .paused) self.waited();
         const b = &a.screen.banner;
@@ -347,6 +366,7 @@ pub const Round = struct {
             },
             .leaving => if (self.colours.stepFade()) {
                 turn.play(a.stop);
+                self.done = true;
                 return self.outcome;
             },
         }
@@ -400,6 +420,87 @@ pub const Round = struct {
         return null;
     }
 
+    /// What the frame that follows the tick carries to the picture (screens/transfers.zig):
+    /// nothing after the set-up (its load follows) or in the middle of a logic tick (`was`: the
+    /// phase the tick began in); else play's picture: the status bar's image, the colours when
+    /// they changed.
+    fn pictureOf(self: *Round, a: *const Assets, was: Phase) ?transfers.Frame {
+        // What a tick without a picture changes waits for the next one.
+        if (self.colours.copy) self.colours_due = true;
+        if (was == .setup or self.split) return null;
+        const sb = &a.screen.status_bar;
+        var f: transfers.Frame = .{ .play = true, .colours = self.colours_due, .status_rows = sb.image_rows, .status_cells = sb.image_cells };
+        // The round ended at this tick: its next frame is the next scene's, without the bar.
+        if (self.done) f.status_rows = 0;
+        self.colours_due = false;
+        for (&self.art_due) |*due| {
+            for (due) |tiles| f.tiles.add(tiles * transfers.words_per_tile);
+            due.* = .{ 0, 0 };
+        }
+        for (&self.bar_due) |*due| {
+            if (due.*) f.bar_parts += 1;
+            due.* = false;
+        }
+        f.strips = self.strips_due;
+        f.strip_blocks = self.strip_blocks_due;
+        f.strip_rows = self.strip_rows_due;
+        self.strips_due = 0;
+        self.strip_blocks_due = 0;
+        self.strip_rows_due = 0;
+        return f;
+    }
+
+    /// The columns and rows of blocks the camera's move from `before` to `after` brings into the
+    /// planes (the round's bands: each band's place across crossing a column of blocks, the
+    /// camera's down crossing a row), due at the next picture.
+    fn noteStrips(self: *Round, r: *const content_round.Round, before: world.Camera, after: world.Camera) void {
+        const block = 16;
+        const pb = r.camera.plane_b;
+        const planes = [2][2]i32{
+            .{ before.x.whole(), after.x.whole() },
+            .{ @divFloor(before.x.whole() * pb[0], pb[1]), @divFloor(after.x.whole() * pb[0], pb[1]) },
+        };
+        for (r.camera.bands, planes) |bands, x| for (bands) |b| {
+            const from = @divTrunc(x[0] * b.times, b.per);
+            const to = @divTrunc(x[1] * b.times, b.per);
+            if (@divFloor(from, block) == @divFloor(to, block)) continue;
+            self.strips_due +|= 1;
+            self.strip_blocks_due +|= b.rows;
+        };
+        if (@divFloor(before.y.whole(), block) != @divFloor(after.y.whole(), block)) {
+            for (r.camera.bands) |bands| if (bands.len != 0) {
+                self.strip_rows_due +|= 1;
+            };
+        }
+    }
+
+    /// After the world's tick (`out` its output): each player's new frame's art, and its health
+    /// bar's partial cell when its health changed, are due at the next picture.
+    fn noteTransfers(self: *Round, kinds: *const world.Kinds, out: *const world.Output) void {
+        const w = &self.play.world;
+        for (w.players, 0..) |p, k| {
+            const h = p.entity orelse continue;
+            const e = w.getConst(h) orelse continue;
+            if (out.new_frames[h.index]) if (e.animation.index) |index| {
+                const c = kinds.get(e.kind.?).frames[index][e.animation.frame].copied;
+                self.art_due[k] = .{ if (c.len > 0) c[0] else 0, if (c.len > 1) c[1] else 0 };
+            };
+        }
+        self.noteBars();
+    }
+
+    /// Each player's health bar's partial cell is built again when its health changed.
+    fn noteBars(self: *Round) void {
+        const w = &self.play.world;
+        for (w.players, 0..) |p, k| {
+            const h = p.entity orelse continue;
+            const e = w.getConst(h) orelse continue;
+            if (e.mind != .player) continue;
+            if (self.health[k] == null or self.health[k].? != e.health) self.bar_due[k] = true;
+            self.health[k] = e.health;
+        }
+    }
+
     /// A display tick ends while the world waits (the round's start, the pause, the time over, the
     /// end): the game's clock counts it, as the original counts every tick of its logic that ends
     /// (`World.tick`; in play the world counts its own logic ticks), and so does the trace's.
@@ -426,16 +527,29 @@ pub const Round = struct {
             break :blk &scratch;
         };
         const p = self.plan(turn.setup, a);
-        if (!self.play.roundTick(a.kinds, turn.random.?, turn.pads, out, &p)) return null;
+        const camera_before = self.play.world.camera;
+        if (!self.play.roundTick(a.kinds, turn.random.?, turn.pads, out, &p)) {
+            self.split = true;
+            return null;
+        }
         self.logic_ran = true;
         self.trace_t += 1;
-        for (out.sounds.slice()) |s| if (a.sounds.find(s.name)) |id| turn.play(id);
+        self.noteTransfers(a.kinds, out);
+        self.noteStrips(self.stage(a).script, camera_before, self.play.world.camera);
+        // The players' sounds are the logic tick's first half's (the original updates its players
+        // before the wait in its middle), the others' its second's.
+        const w0 = &self.play.world;
+        for (out.sounds.slice()) |s| if (a.sounds.find(s.name)) |id| {
+            const first = if (s.by) |h| w0.playerOf(h) != null else false;
+            if (first) turn.playNow(id) else turn.play(id);
+        };
         self.cycle(a);
         const w = &self.play.world;
         self.join.blink(w.players[1].entity == null, self.waiting(0), a.screen.status_bar.join.blink);
         for (&self.out_blinks, w.players) |*b, pl| b.blink(pl.out, !self.answeredNo(pl), a.screen.status_bar.join.blink);
         if (w.timer.up) {
-            turn.play(a.stop);
+            // The timer is the logic tick's first half's: its sound with the players'.
+            turn.playNow(a.stop);
             self.phase = .time_over;
             self.left = a.screen.time_over.ticks;
         } else if (w.script.stage == .won) {
@@ -464,6 +578,7 @@ pub const Round = struct {
             if (e.health < 0) e.health = 0;
             if (turn.world_out) |out| out.hits.append(.{ .attacker = null, .target = h, .damage = t.health });
         }
+        self.noteBars();
         self.phase = .play;
         self.play.schedule = .{ .rate = .play };
     }
@@ -532,6 +647,7 @@ pub const Round = struct {
         }
         world.script.placeFirst(&t, &p);
         world.systems.picture(&t);
+        self.noteTransfers(a.kinds, out);
         self.join = .{ .ticks = a.screen.status_bar.join.blink };
         self.colours.palettes = .{};
         self.colours.aim(s.colours);

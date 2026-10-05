@@ -124,7 +124,7 @@ pub const Menu = struct {
     pub fn tick(self: *Menu, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
         self.ticks +|= 1;
         self.colours.latch();
-        defer turn.frame = .{ .colours = self.colours.copy };
+        defer turn.frame = .{ .colours = self.colours.copy, .first_line = true };
         self.shown_arrow = if (self.hidden) null else self.choice;
         const pad = turn.policies.menuPad(turn.pressed);
         switch (self.phase) {

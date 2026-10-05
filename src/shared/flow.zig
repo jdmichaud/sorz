@@ -57,13 +57,15 @@ pub const Exit = enum {
 
 /// One edge of the graph: scene `from`, ended by `exit`, goes to `to`, after a load of `load`
 /// display ticks (0: none) during which the screen is dark and, when `sound_held`, the sound's
-/// driver does not run (the original's loads hold its interrupts).
+/// driver does not run (the original's loads hold its interrupts); with `driver_once`, it runs
+/// at the load's first tick (an interrupt the original's load leaves waiting, then takes).
 pub const Edge = struct {
     from: Kind,
     exit: Exit,
     to: Kind,
     load: u16 = 0,
     sound_held: bool = true,
+    driver_once: bool = false,
 };
 
 /// A flow graph: its edges, and the scene the game starts on at power-on, after `power_on`
@@ -95,7 +97,9 @@ pub const original: Graph = .{
         .{ .from = .intro, .exit = .menu, .to = .menu, .load = 3 },
         .{ .from = .title, .exit = .done, .to = .demo, .load = 47 },
         .{ .from = .title, .exit = .start, .to = .menu, .load = 3 },
-        .{ .from = .demo, .exit = .done, .to = .high_scores, .load = 4 },
+        // The high scores' set-up holds 5 ticks (the game over's); the demo's stand-in, timed to
+        // their first picture, ends a tick late (TODO(PLAN item 13): the attract demo).
+        .{ .from = .demo, .exit = .done, .to = .high_scores, .load = 4, .driver_once = true },
         .{ .from = .demo, .exit = .start, .to = .sega_logo, .load = 14 },
         .{ .from = .high_scores, .exit = .done, .to = .sega_logo, .load = 14 },
         .{ .from = .high_scores, .exit = .start, .to = .sega_logo, .load = 14 },
@@ -105,7 +109,7 @@ pub const original: Graph = .{
         .{ .from = .options, .exit = .done, .to = .menu, .load = 3 },
         .{ .from = .select, .exit = .chosen, .to = .round, .load = 53 },
         .{ .from = .round, .exit = .cleared, .to = .round_clear },
-        .{ .from = .round, .exit = .game_over, .to = .high_scores, .load = 4 },
+        .{ .from = .round, .exit = .game_over, .to = .high_scores, .load = 5, .driver_once = true },
         .{ .from = .round_clear, .exit = .done, .to = .next_round },
     },
 };

@@ -53,7 +53,7 @@ pub const SegaLogo = struct {
         self.colours.latch();
         defer self.ticks +|= 1;
         // Its frames are play's, whose scroll by cells has nothing to scroll.
-        defer turn.frame = .{ .colours = self.colours.copy, .cell_scroll = true };
+        defer turn.frame = .{ .colours = self.colours.copy, .cell_scroll = true, .play = true };
         switch (self.phase) {
             .setup => {
                 // The logo white and the sweep's colours black, the pads released, the sound's
