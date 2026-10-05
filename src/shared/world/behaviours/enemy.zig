@@ -825,7 +825,7 @@ pub fn Of(comptime M: type) type {
 
         // Blows ------------------------------------------------------------------------------
 
-        /// A blow meets its body. A player's blow, off the screen's middle, does not land,
+        /// A blow meets its body. A blow, a missile's too, off the screen's middle, does not land,
         /// whatever its state (the original tests its place before the blow is its state's).
         /// Hidden, down, held, or in a state that takes no blows, it is not struck. A missile (a
         /// thrown body, a weapon) knocks it down with its damage at once. A player's blow makes
@@ -835,9 +835,9 @@ pub fn Of(comptime M: type) type {
         pub fn struck(a: A, blow: tick.Blow) bool {
             const n = a.numbers();
             const b = body(a);
+            const sx = a.entity.position.x.whole() - a.tick.world.camera.x.whole();
+            if (sx < n.struck_from or sx >= n.struck_to) return false;
             if (!blow.missile) {
-                const sx = a.entity.position.x.whole() - a.tick.world.camera.x.whole();
-                if (sx < n.struck_from or sx >= n.struck_to) return false;
                 // Its set-up at this tick left its state for another (a punch off the screen
                 // walks off): its tick ended there, before the original's test of the blows.
                 if (b.left and b.fresh) return false;
