@@ -407,7 +407,9 @@ fn blowsOnPlayers(t: *Tick, xh: Handle) void {
             // A boss's blow leaves the hold's request (the original's bosses clear the
             // reaction instead), and so does a blow that knocks down (its striker asks for the
             // hold in front again): the one held is let go as the player feels the blow.
-            if (t.kindOf(x).family() != .boss and !knocksDown(t, x)) freedByBlow(t, xh, th);
+            if (t.kindOf(x).family() == .boss) return;
+            if (knocksDown(t, x)) return heldInFront(t, xh, th);
+            freedByBlow(t, xh, th);
             return;
         }
     }
@@ -423,6 +425,17 @@ fn freedByBlow(t: *Tick, xh: Handle, th: Handle) void {
     const held = p.holding orelse return;
     if (t.isPlayer(held) or held.index < xh.index) return;
     t.letGo(th);
+}
+
+/// An enemy's blow that knocks down a player who holds an enemy asks for the hold in front again
+/// (the original's striker writes it after the hit test cleared the request): the one held, its
+/// turn still to come, reads a plain hold, not the knee its holder started at this tick (the
+/// holder's move ends here; it feels the blow at its next tick).
+fn heldInFront(t: *Tick, xh: Handle, th: Handle) void {
+    const p = t.world.get(th) orelse return;
+    const held = p.holding orelse return;
+    if (t.isPlayer(held) or held.index < xh.index) return;
+    p.move = null;
 }
 
 /// Whether `a`'s move under way knocks down.
