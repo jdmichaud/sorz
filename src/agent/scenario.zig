@@ -412,8 +412,13 @@ pub const Situation = struct {
         /// The other program's place for it (its object slot), which the order of updates
         /// follows.
         slot: ?u8 = null,
-        /// A player's: the ticks whose thinks saw B newly pressed in its state.
+        /// A player's: the ticks of the pads that newly pressed B in its state, and of its last
+        /// press; each is seen by its think `press_lag` ticks later (a press read in the logic
+        /// tick's first display tick at once, in its second at the next tick: the trace tells
+        /// the tick alone), as the press that began its state was (none: the next tick).
         presses: []const u64 = &.{},
+        last_press: ?u64 = null,
+        press_lag: u64 = 1,
         /// The tick its speed became what it is, and the last random draws by then (perhaps
         /// another's); the bounces it made in its state (its speed down turned up).
         course_since: u64 = 0,
@@ -534,6 +539,8 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
                 x.players_depth = players_depth;
                 x.since = @intCast(int(o, "t") orelse 0);
                 x.presses = &.{};
+                // A press read at this tick began it at once (the pads come before the states).
+                x.press_lag = if (x.last_press == x.since) 0 else 1;
                 x.bounces = 0;
                 if (x.player != null and std.mem.eql(u8, state, "recover")) x.got_up_at = x.since;
                 if (x.player != null) {
@@ -586,14 +593,14 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             s.camera_stop = .{ @intCast(int(o, "x") orelse 0), @intCast(int(o, "y_min") orelse 0), @intCast(int(o, "y_max") orelse 0) };
             if (in_round) try history.append(arena, .{ .t = ev_t, .what = .{ .wall = s.camera_stop[0] } });
         } else if (std.mem.eql(u8, ev, "pad")) {
-            // A press read at a tick is seen by its player's think at the next.
             const p: usize = @intCast((int(o, "pad") orelse 1) - 1);
             if (p >= 2) continue;
             const b = std.mem.indexOfScalar(u8, str(o, "held") orelse "", 'B') != null;
             s.pads[p] = padOf(str(o, "held") orelse "");
             if (b and !held_b[p]) for (seen.values()) |*x| if (x.player != null and x.player.? == p + 1) {
-                const seen_at = @as(u64, @intCast(int(o, "t") orelse 0)) + 1;
-                x.presses = try std.mem.concat(arena, u64, &.{ x.presses, &.{seen_at} });
+                const read: u64 = @intCast(int(o, "t") orelse 0);
+                x.presses = try std.mem.concat(arena, u64, &.{ x.presses, &.{read} });
+                x.last_press = read;
             };
             held_b[p] = b;
         } else if (std.mem.eql(u8, ev, "timer")) {
@@ -1072,10 +1079,12 @@ pub const Run = struct {
             if (e.presses.len != 0) {
                 var ticks: [16]u32 = undefined;
                 var k: usize = 0;
-                for (e.presses) |at| if (at > e.since and at <= situation.t and k < ticks.len) {
+                for (e.presses) |read| {
+                    const at = read + e.press_lag;
+                    if (at <= e.since or at > situation.t or k == ticks.len) continue;
                     ticks[k] = @intCast(at - e.since);
                     k += 1;
-                };
+                }
                 const landed: ?u32 = if (e.landed) |l| (if (l > e.since and l <= situation.t) @as(u32, @intCast(l - e.since)) else null) else null;
                 t.takeUpPresses(h, @intCast(situation.t - e.since), ticks[0..k], landed);
             }
