@@ -1224,8 +1224,11 @@ pub fn Of(comptime M: type) type {
             const n = a.numbers();
             const b = body(a);
             const t = target(a) orelse return;
-            if (!@hasDecl(M, "walks_off_facing") or M.walks_off_facing) faceOf(a, t);
-            a.animate(.walk);
+            // An armed one walks off as it was, its weapon in hand: its look kept.
+            if (!@hasDecl(M, "walks_off_as_it_was") or !M.walks_off_as_it_was) {
+                faceOf(a, t);
+                a.animate(.walk);
+            }
             a.pause(false);
             a.pace(n.walk_off_pace, 1);
             b.right_side = !a.entity.position.x.lessThan(t.position.x);

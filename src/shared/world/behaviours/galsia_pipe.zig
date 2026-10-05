@@ -43,6 +43,9 @@ pub const Mind = struct {
     swung: bool = false,
 };
 
+/// It walks off as it was, its pipe in hand (its walk, its side kept).
+pub const walks_off_as_it_was = true;
+
 pub const Animation = enum { walk, down, reel, stand, thrown, slammed, walk_pipe, walk_pipe_b, swing, swing_b };
 pub const Move = enum { swing, swing_b };
 pub const Sound = enum { hurt, thud, cry, cry_odd, swing };

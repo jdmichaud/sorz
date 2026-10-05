@@ -311,7 +311,9 @@ pub const Tick = struct {
         const kind = t.kinds.find(name) orelse return null;
         const p = world_mod.World.weapon_places;
         const w = t.world.spawnWithin(t.kinds, kind, p.from, p.to, .zero, .right) catch return null;
-        t.world.get(w).?.holder = by;
+        const e = t.world.get(w).?;
+        e.holder = by;
+        e.flags.hidden = true;
         t.out.pickups.append(.{ .item = w, .kind = kind, .by = by });
         return w;
     }
