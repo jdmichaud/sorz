@@ -205,13 +205,14 @@ that the guest joins); on the real game, from the user's ROM:
 - `zig build netplay-check -Drom=ROM`, the gate of PLAN item 18:
   - src/tools/netplay_check.zig, several games in one process over the in-memory network, each with
     its own clock and keys: `own_menus` (a move of the host's arrow leaves the guest's; the guest's
-    OPTIONS its own lines alone), `select` (the guest's 2 PLAYERS joins the host's select: each
+    OPTIONS its own lines alone, its ADVANCED SETTINGS its own settings), `select` (the guest's 2 PLAYERS joins the host's select: each
     player's cursor its own; round 1 with two players; the two games' states and pictures the same
     at the same ticks, the guest's sound the round's music, the session's checks without a
     difference; player 1's START opening its settings, both games held, the guest told),
     `round` (the host plays alone; the guest chooses on its own select, the host's
     character taken, and drops in mid-round; the same games; a third game turned away plays alone;
-    the guest quits, player 2 out of the game, the host plays on; a new guest joins later), `away`
+    the guest quits, player 2 out of the game, the host plays on; a new guest joins later; the
+    host quits, player 1 out of the game, the guest plays on alone as player 2), `away`
     (a dropped connection: both hold and say so; back in time, the same session; not back in time,
     the host plays on without player 2 and the guest goes back to its own menu), `difference` (a
     bit of the guest's state flipped: both stop at the next check and name the field). With

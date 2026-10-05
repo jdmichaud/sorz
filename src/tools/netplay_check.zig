@@ -6,7 +6,7 @@
 //!
 //! - own_menus: the host and the guest each at their own game menu; a move of the host's arrow
 //!   leaves the guest's where it was; the guest's OPTIONS (its own lines alone) leaves the host's
-//!   menu as it was.
+//!   menu as it was; its ADVANCED SETTINGS open its settings (one player's), the host not held.
 //! - select: the host's 2 PLAYERS, its select alone; the guest's 2 PLAYERS joins it there: both
 //!   selects with two players, each player's cursor its own; both choose, round 1 with two
 //!   players; the two games the same at the same ticks (state and picture), the guest's sound the
@@ -16,7 +16,8 @@
 //! - round: the host plays round 1 alone a while; the guest's player chooses a character on its
 //!   own select (the host's taken), joins mid-round as it, and drops in; the same state and
 //!   picture after the join and on; the guest quits: the host plays on, player 2 out of the game;
-//!   a new guest joins later, the same again; a third game is turned away and plays alone.
+//!   a new guest joins later, the same again; a third game is turned away and plays alone; the
+//!   host quits: the guest plays on alone, as player 2, player 1 out of the game.
 //! - away: the connection drops in the round: both hold, the host says it waits; the guest back in
 //!   time, the same session goes on; the connection drops again and the guest is not back in
 //!   time: the host plays on without player 2, and the guest, back, goes to its own menu.
@@ -314,6 +315,20 @@ fn ownMenus(f: *Flow, r: *Room) !void {
     const o = &guest.game.state.scenes.base.options;
     try f.check(o.own_only and o.advanced_settings, "the guest's OPTIONS show its own lines alone");
     try f.check(host.scene() == .menu and menuChoice(host) == .options, "the host's menu as it was");
+    // Its ADVANCED SETTINGS (above EXIT, up from SOUND TEST): its own settings, one player's; the
+    // host not held.
+    try r.press(guest, .up);
+    try r.press(guest, .up);
+    try f.check(guest.game.state.scenes.base.options.line == .advanced_settings, "ADVANCED SETTINGS");
+    try r.press(guest, .z);
+    try r.step(4);
+    const screen = guest.game.overlays.find(.settings);
+    try f.check(screen != null and screen.?.settings.facts.one_player, "the guest's settings open, one player's");
+    const ticks = host.game.state.tick;
+    try r.step(30);
+    try f.check(host.game.state.tick >= ticks + 30 and host.game.overlays.find(.peer_settings) == null, "the host not held");
+    try r.press(guest, .escape);
+    try f.check(!guest.game.settingsOpen(), "Escape leaves them");
     try f.check(!host.inSession() and !guest.inSession(), "no session");
     f.note("\"host\":\"{s}\",\"guest\":\"{s}\"", .{ @tagName(host.scene()), @tagName(guest.scene()) });
 }
@@ -470,6 +485,22 @@ fn inRound(f: *Flow, r: *Room) !void {
     try f.check(roundOf(host).?.play.world.players[1].entity != null, "the new player 2 in the game");
     try sameFor(f, r, host, next, 300);
     f.note("\"sessions\":{d}", .{host.np().sessions});
+
+    // The host quits: the guest plays on alone, as player 2, player 1 out of the game; its pad
+    // moves player 2.
+    try host.key(.escape, true);
+    try host.update();
+    r.remove(host);
+    try r.step(30);
+    const left = &roundOf(next).?.play.world;
+    try f.check(!next.inSession() and left.players[0].entity == null and left.players[0].out and left.players[1].entity != null, "player 1 out of the game, player 2 in it");
+    try f.check(next.message() == .player_1_left and next.game.seat == 1, "the guest is told, and plays player 2");
+    const second = left.players[1].entity.?;
+    const x = left.getConst(second).?.position.x;
+    try next.key(.right, true);
+    try r.step(60);
+    try next.key(.right, false);
+    try f.check(playing(next) and left.getConst(second).?.position.x.raw > x.raw, "the guest's pad moves player 2");
 }
 
 fn away(f: *Flow, r: *Room) !void {

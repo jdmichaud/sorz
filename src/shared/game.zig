@@ -205,16 +205,24 @@ pub const State = struct {
         }
     }
 
-    /// The second player leaves the game (network play's guest who quits or did not come back):
-    /// gone from the character select; out of the game in a round, as a player out of lives who
-    /// does not continue; out of the next round between two.
-    pub fn dropOut(self: *State, assets: *const scene.Assets) void {
+    /// Player `who` leaves the game (network play's other player, who quit or did not come back):
+    /// out of the game in a round, as a player out of lives who does not continue; out of the next
+    /// round between two; the second player gone from the character select.
+    pub fn dropOut(self: *State, who: u1, assets: *const scene.Assets) void {
         switch (self.scenes.base) {
-            .select => |*s| s.leave(&self.setup, &assets.select),
-            .round => |*r| r.dropOut(1),
-            .round_clear, .next_round => self.setup.progress.players[1].in_play = false,
+            .select => |*s| if (who == 1) s.leave(&self.setup, &assets.select),
+            .round => |*r| r.dropOut(who),
+            .round_clear, .next_round => self.setup.progress.players[who].in_play = false,
             else => {},
         }
+    }
+
+    /// Whether the game plays its rounds: in a round or between two (past its select).
+    pub fn inRounds(self: *const State) bool {
+        return self.inGame() and switch (self.scenes.base) {
+            .round, .round_clear, .next_round => true,
+            else => false,
+        };
     }
 
     /// Back to the game menu, with `setup` (network play's guest whose game ended without it:
@@ -300,6 +308,9 @@ pub const Game = struct {
     /// The settings' arrow as last drawn (it blinks while they wait for a key).
     arrow_shown: bool = true,
     alone: bool = false,
+    /// The player this machine's pad plays outside a session: player 2 for a guest whose host
+    /// left the game under way, until that game ends (network_play.zig); else player 1.
+    seat: u1 = 0,
     /// The pause's jingle that the settings play over a held game (made with the sound, before it
     /// is wanted), and where its playing is.
     jingle: []i16 = &.{},
@@ -515,6 +526,7 @@ pub const Game = struct {
         try canonical.read(State, form, s);
         if (self.own_setup == null) self.own_setup = self.state.setup;
         self.state = s.*;
+        self.seat = 0;
         self.rebuild(p);
         if (self.view) |*v| if (self.scene_assets) |*a| scene.redrawOutput(&self.state.scenes, &v.world_out, a);
         if (self.sound) |*so| if (self.scene_assets) |*a| if (scene.music(&self.state.scenes, a)) |m| so.ask(m);
@@ -542,9 +554,11 @@ pub const Game = struct {
         return false;
     }
 
-    /// Whether this machine plays player `who` (0 or 1): both without network play.
+    /// Whether this machine plays player `who` (0 or 1): both without network play; in a session,
+    /// its role's; outside one, its own game's (its seat).
     fn plays(self: *const Game, who: u1) bool {
         const np = self.netplay orelse return true;
+        if (!np.inSession()) return who == self.seat;
         return @intFromBool(np.role == .guest) == who;
     }
 
@@ -643,6 +657,8 @@ pub const Game = struct {
         if (self.netplay) |np| self.peerOverlay(np);
         // A game turned away plays alone until its character select is over.
         if (self.alone and !network_play.wantsToJoin(&self.state)) self.alone = false;
+        // A guest that played on alone as player 2: its own game's player 1 again once it ended.
+        if (self.seat == 1 and !self.state.inGame()) self.seat = 0;
         if (self.overlays.holds()) {
             self.hold(p);
         } else switch (self.pacing) {
@@ -747,7 +763,13 @@ pub const Game = struct {
         if (self.overlays.holds()) return false;
         var pads = self.controls.pads();
         const session = if (self.netplay) |np| (if (np.inSession()) np else null) else null;
-        if (session) |np| pads = np.pads(p, pads.pad1) orelse return false;
+        if (session) |np| {
+            pads = np.pads(p, pads.pad1) orelse return false;
+        } else if (self.seat == 1) {
+            // A copy first: the new value is written in place, its first pad before its second.
+            const own = pads.pad1;
+            pads = .{ .pad1 = .{}, .pad2 = own };
+        }
         const machine: State.Machine = .{ .second_pad = self.secondPad(), .guest = self.guest, .taken = network_play.taken(self) };
         const turn = self.state.stepWith(pads, machine, if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
         self.redraw = true;

@@ -13,8 +13,10 @@
 //!   character select, where it asks to join: at once when the host's game is at its select; once
 //!   it chose a character when the host plays (that character taken: `Turn.taken`); once the host
 //!   has a game when it has none (it waits, its choice made). It loads the host's game when it
-//!   comes (`Game.load`), and when that game ends it plays on alone; when the host leaves, it goes
-//!   back to its own menu. A guest turned away (two play there, other data) plays alone.
+//!   comes (`Game.load`), and when that game ends it plays on alone. When the host leaves the game
+//!   under way, its player plays on alone, as player 2, until that game ends (`Game.seat`); at
+//!   the select, or when its own connection did not come back in time (its player left the game),
+//!   it goes back to its own menu. A guest turned away (two play there, other data) plays alone.
 //! - **The session's end**: both machines end it at the same tick, the one their game ends at.
 //!
 //! What crosses the network is the session's (net/); what the player is told is this machine's
@@ -144,16 +146,20 @@ fn joined(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
 }
 
 /// The session ended: the game went on to its end on both machines (each plays on alone from
-/// there), or the other player left: the host's game goes on without player 2, the guest's goes
-/// back to its own menu.
+/// there), or the other player left: the host's game goes on without player 2; the guest's, past
+/// its select, without player 1 when the host left it, else back to its own menu.
 fn ended(g: *Game, p: *platform.Platform, role: net.netplay.Role, why: net.session.End) void {
     if (why == .game_over) return;
     switch (role) {
         .host => {
-            if (g.scene_assets) |*a| g.state.dropOut(a);
+            if (g.scene_assets) |*a| g.state.dropOut(1, a);
             g.tellNetwork(.player_2_left);
         },
-        .guest => {
+        .guest => if (why == .left and g.state.inRounds() and g.scene_assets != null) {
+            g.state.dropOut(0, &g.scene_assets.?);
+            g.seat = 1;
+            g.tellNetwork(.player_1_left);
+        } else {
             g.state.backToMenu(g.own_setup orelse g.state.setup);
             g.own_setup = null;
             g.rebuild(p);
