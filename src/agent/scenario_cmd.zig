@@ -14,6 +14,8 @@ const input = sorz.input;
 pub const Options = struct {
     scenario: []const u8,
     situation: ?[]const u8 = null,
+    /// The other program's probe of the same run, for the entities' frames at the situation.
+    situation_probe: ?[]const u8 = null,
     /// The other program's tick counter at the script's start (its `script_game_tick`).
     game_tick: ?u32 = null,
     trace: ?[]const u8 = null,
@@ -45,10 +47,17 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
         .players => null,
         .pads => |p| p.vblanks + 1,
     };
-    const situation = scenario.situationOf(arena, situation_text, at) catch |e| {
+    var situation = scenario.situationOf(arena, situation_text, at) catch |e| {
         std.log.err("{s}: no situation in the trace ({s}): a round scene's play is needed", .{ situation_path, @errorName(e) });
         return e;
     };
+    if (options.situation_probe) |path| {
+        const probe_text = try cwd.readFileAlloc(io, path, arena, .limited(1 << 30));
+        scenario.framesOf(&situation, arena, probe_text) catch |e| {
+            std.log.err("{s}: not a probe ({s})", .{ path, @errorName(e) });
+            return e;
+        };
+    }
 
     var content_diag: sorz.content.Diagnostic = .{};
     const c = sorz.content.load(arena, assets, &content_diag) catch |e| {

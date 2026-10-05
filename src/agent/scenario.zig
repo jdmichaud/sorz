@@ -338,11 +338,15 @@ pub const Situation = struct {
     last_count: u32 = 0,
     special: bool = false,
     entities: []const Seen,
+    /// The players' places across (whole pixels) from the round scene's start, by tick: when a
+    /// shutter opened (it opens as its player comes near) is read from them.
+    players_x: []const PlayerX = &.{},
     /// The enemies and things the round's script brings after the situation, at their ticks,
     /// in the order they came (a stand-in for the round's script: PLAN item 13).
     later: []const Later = &.{},
 
     pub const Later = struct { t: u64, seen: Seen };
+    pub const PlayerX = struct { t: u64, x: i32 };
 
     pub const Seen = struct {
         id: u32,
@@ -364,6 +368,13 @@ pub const Situation = struct {
         struck_by: ?u32 = null,
         struck_at: ?u64 = null,
         landed: ?u64 = null,
+        /// A weapon's or an item's: who picked it up last, and how many times it was.
+        holder: ?u32 = null,
+        taken: u8 = 0,
+        /// The frame of its animation at the situation's tick and the tick it began showing, as
+        /// the other program's probe tells them (`framesOf`).
+        frame: ?u8 = null,
+        frame_since: u64 = 0,
         /// The other program's place for it (its object slot), which the order of updates
         /// follows.
         slot: ?u8 = null,
@@ -375,6 +386,7 @@ pub const Situation = struct {
 /// replayed for what they say of the entities, the camera, the players and the random draws.
 pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !Situation {
     var seen: std.AutoArrayHashMapUnmanaged(u32, Situation.Seen) = .empty;
+    var players_x: std.ArrayList(Situation.PlayerX) = .empty;
     var s: Situation = .{ .v = 0, .t = 0, .entities = &.{} };
     var in_round = false;
     var playing = false;
@@ -452,6 +464,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             if (std.mem.indexOf(u8, x.states, state) == null) x.states = try std.fmt.allocPrint(arena, "{s} {s}", .{ x.states, state });
         } else if (std.mem.eql(u8, ev, "pos")) {
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
+            if (x.player != null and in_round) try players_x.append(arena, .{ .t = @intCast(int(o, "t") orelse 0), .x = @intCast((int(o, "x") orelse 0) >> 16) });
             x.position = .{ @intCast(int(o, "x") orelse 0), @intCast(int(o, "d") orelse 0), @intCast(int(o, "h") orelse 0) };
             x.velocity = .{ @intCast(int(o, "vx") orelse 0), @intCast(int(o, "vd") orelse 0), @intCast(int(o, "vh") orelse 0) };
         } else if (std.mem.eql(u8, ev, "hit")) {
@@ -462,6 +475,10 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             if (by) |b| x.struck_by = b;
             x.struck_at = @intCast(int(o, "t") orelse 0);
+        } else if (std.mem.eql(u8, ev, "pickup")) {
+            const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
+            if (int(o, "by")) |by| x.holder = @intCast(by);
+            x.taken +|= 1;
         } else if (std.mem.eql(u8, ev, "health")) {
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             x.health = @intCast(int(o, "health") orelse 0);
@@ -495,6 +512,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
     s.t = l.t;
     const entities = try arena.dupe(Situation.Seen, seen.values());
     s.entities = entities;
+    s.players_x = players_x.items;
     // The round's script's spawns after the situation, in the same round scene.
     var later: std.ArrayList(Situation.Later) = .empty;
     while (after orelse lines.next()) |line| {
@@ -535,6 +553,27 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
     }
     s.later = later.items;
     return s;
+}
+
+/// What another program's probe (its `--probe` lines, `{"t","e","anim","frame",...}`) says of
+/// the situation's entities: the frame each shows at the situation's tick, since its tick.
+pub fn framesOf(situation: *Situation, arena: std.mem.Allocator, probe_text: []const u8) !void {
+    const entities = @constCast(situation.entities);
+    var lines = std.mem.splitScalar(u8, probe_text, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        const v = std.json.parseFromSliceLeaky(std.json.Value, arena, line, .{}) catch return error.BadTrace;
+        if (v != .object) return error.BadTrace;
+        const o = v.object;
+        const t: u64 = @intCast(int(o, "t") orelse continue);
+        if (t > situation.t) break;
+        const id: u32 = @intCast(int(o, "e") orelse continue);
+        const f: u8 = @intCast(int(o, "frame") orelse continue);
+        for (entities) |*x| if (x.id == id) {
+            if (x.frame != f) x.frame_since = t;
+            x.frame = f;
+        };
+    }
 }
 
 /// The kinds the round's script places: its enemies, its boss, its breakables.
@@ -687,6 +726,19 @@ pub const Run = struct {
                 if (o.e.id == by) x.struck_by = o.h;
             };
         }
+        // A weapon in its holder's hand.
+        for (made) |m_| {
+            const m = m_ orelse continue;
+            const by = m.e.holder orelse continue;
+            if (!std.mem.eql(u8, m.e.state orelse "", "held")) continue;
+            for (made) |o_| {
+                const o = o_ orelse continue;
+                if (o.e.id != by) continue;
+                w.get(m.h).?.holder = o.h;
+                var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
+                t.takeUpWeapon(o.h, m.h);
+            }
+        }
         for (made) |m_| {
             const m = m_ orelse continue;
             const h = m.h;
@@ -695,6 +747,7 @@ pub const Run = struct {
             if (trace) |tw| tw.assignId(h.index, h.generation, e.id);
             var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
             t.takeUp(h, @intCast(situation.t -| e.since));
+            if (e.taken != 0) t.takeUpTaken(h, e.taken);
             // Its blow that cost another health in its state: at the situation's tick (the
             // trace tells it at the next), or so many ticks before.
             if (e.landed) |at| if (at > e.since) t.takeUpLanded(h, if (at > situation.t) null else @intCast(situation.t - at));
@@ -707,6 +760,37 @@ pub const Run = struct {
                 };
                 t.takeUpStruck(h, @intCast(situation.t - at), striking);
             };
+        }
+        // A shutter waiting opened when its player first came near it since it was put up.
+        if (kinds.find(world.tick.Tick.shutter_kind)) |sk| {
+            const near = kinds.get(sk).definition.number("near") orelse 0;
+            for (made) |m_| {
+                const m = m_ orelse continue;
+                const x = w.get(m.h) orelse continue;
+                if (x.kind != sk or x.mind.shutter.state != .wait) continue;
+                const edge = x.position.x.whole() - near;
+                for (situation.players_x) |px| {
+                    if (px.t < m.e.since or px.x < edge) continue;
+                    var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
+                    t.takeUpOpened(m.h, @intCast(situation.t -| px.t));
+                    break;
+                }
+            }
+        }
+        // The frames the other program's probe saw at the ends of its ticks (but the players',
+        // which step theirs by the ticks of their state), each as far through as it was.
+        for (made) |m_| {
+            const m = m_ orelse continue;
+            if (m.e.player != null) continue;
+            const f = m.e.frame orelse continue;
+            const x = w.get(m.h) orelse continue;
+            const index = x.animation.index orelse continue;
+            const an = kinds.get(x.kind.?).definition.animations[index];
+            if (f >= an.frames.len) continue;
+            x.animation.frame = f;
+            const ticks: u64 = x.animation.pace orelse an.frames[f].ticks;
+            const shown = situation.t -| m.e.frame_since;
+            x.animation.left = if (ticks > shown) @intCast(ticks - shown) else 1;
         }
         // What the take-ups asked for is not the tick's.
         r.out.begin();
