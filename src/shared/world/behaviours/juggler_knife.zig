@@ -137,7 +137,11 @@ pub fn begin(a: Actor) void {
             if (m.fresh) flyingSetUp(a);
             if (!m.back) inHand(a);
         },
-        .caught => m.fresh = false,
+        .caught => {
+            // A copy unseen until its first turn (`copy`) shows from it.
+            if (m.fresh) a.entity.flags.hidden = false;
+            m.fresh = false;
+        },
     }
 }
 
@@ -316,8 +320,11 @@ fn copy(a: Actor) void {
     const h = w.spawnWithin(a.tick.kinds, a.entity.kind.?, places.from, places.to, at, .right) catch
         w.spawnWithin(a.tick.kinds, a.entity.kind.?, world_mod.World.weapon_places.from, world_mod.World.weapon_places.from + 1, at, .right) catch return;
     const c = w.get(h).?;
-    // It moves itself, from its first turn (this tick's, in a place after this one's).
+    // It moves itself, from its first turn (this tick's, in a place after this one's). In a
+    // place before this one's, its first turn is at the next tick, and it is not seen till then:
+    // the original draws an object at its turn.
     c.flags.still = true;
+    c.flags.hidden = h.index < a.handle.index;
     c.animation = a.entity.animation;
     c.animation.frame = 0;
     c.animation.paused = true;
