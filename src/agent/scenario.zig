@@ -942,6 +942,8 @@ pub const Run = struct {
         game_tick: ?u32 = null,
         /// The round's script, whose records placed the enemies.
         round: ?*const sorz.content.round.Round = null,
+        /// The high-score table's last entry, which a score must beat for its name to be entered.
+        last_score: ?world.script.Ranked = null,
     };
 
     pub fn init(gpa: std.mem.Allocator, kinds: *const world.Kinds, script: *const Script, situation: *const Situation, extras: Extras, trace: ?*world.trace.Writer, probe: ?*Probe) !Run {
@@ -975,7 +977,7 @@ pub const Run = struct {
         r.later = situation.later;
         r.others = situation.others;
         r.round = extras.round;
-        try takeUpScript(&r, round, situation);
+        try takeUpScript(&r, round, situation, extras.last_score);
         var made: [world.entity.capacity]?struct { h: world.Handle, e: *const Situation.Seen } = @splat(null);
         // A game of two players: the script's records for two players are its.
         const two = for (situation.entities) |*e| {
@@ -1199,9 +1201,9 @@ pub const Run = struct {
 
     /// The round's script, its records left to the stand-in: the section the camera stops at
     /// the wall of, and the timer as it last counted (the ticks of its second since).
-    fn takeUpScript(r: *Run, round: *const sorz.content.round.Round, situation: *const Situation) !void {
+    fn takeUpScript(r: *Run, round: *const sorz.content.round.Round, situation: *const Situation, last_score: ?world.script.Ranked) !void {
         const w = &r.play.world;
-        r.plan = .{ .round = round };
+        r.plan = .{ .round = round, .last_score = last_score };
         w.script.stage = .stand_in;
         const two = for (situation.entities) |*e| {
             if (e.player == 2) break true;
