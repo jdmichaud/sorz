@@ -131,6 +131,13 @@ pub const World = struct {
         const index = for (&self.entities, 0..) |*e, i| {
             if (!e.alive()) break i;
         } else return error.Full;
+        return self.spawnIn(kinds, kind, index, position, facing);
+    }
+
+    /// `spawn` in the place `index` (the order the world updates its entities in follows the
+    /// places), which must be free.
+    pub fn spawnIn(self: *World, kinds: *const Kinds, kind: KindId, index: usize, position: Vec3, facing: entity.Facing) Full!Handle {
+        if (index >= capacity or self.entities[index].alive()) return error.Full;
         const k = kinds.get(kind);
         const e = &self.entities[index];
         e.* = .{

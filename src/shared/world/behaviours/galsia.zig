@@ -46,6 +46,10 @@ pub const State = enum {
 /// The state it takes up the fight in.
 pub const fights: State = .choose;
 
+/// The states whose count goes down every tick from their set-up (a situation taken up there
+/// counts on).
+pub const countdowns = [_]State{ .close_in, .approach, .hesitate, .square_up, .wait, .stand };
+
 pub const Mind = struct {
     state: State = .appear,
     body: enemy.Body = .{},
@@ -549,6 +553,6 @@ pub fn specialBlast(a: Actor) void {
     Common.specialBlast(a);
 }
 
-pub fn takeUp(a: Actor) void {
-    Common.takeUp(a);
+pub fn takeUp(a: Actor, elapsed: u32) void {
+    Common.takeUp(a, elapsed);
 }

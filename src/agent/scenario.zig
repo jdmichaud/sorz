@@ -338,6 +338,11 @@ pub const Situation = struct {
     last_count: u32 = 0,
     special: bool = false,
     entities: []const Seen,
+    /// The enemies and things the round's script brings after the situation, at their ticks,
+    /// in the order they came (a stand-in for the round's script: PLAN item 13).
+    later: []const Later = &.{},
+
+    pub const Later = struct { t: u64, seen: Seen };
 
     pub const Seen = struct {
         id: u32,
@@ -351,8 +356,14 @@ pub const Situation = struct {
         /// Where it appeared, and the kind it was before a change (an armed Galsia's).
         spawned_at: [2]i32 = .{ 0, 0 },
         was_kind: ?[]const u8 = null,
-        /// The states it has been in, joined by spaces.
+        /// The states it has been in, joined by spaces; the scene's tick its state began at.
         states: []const u8 = "",
+        since: u64 = 0,
+        /// The id of the last one whose blow cost it health.
+        struck_by: ?u32 = null,
+        /// The other program's place for it (its object slot), which the order of updates
+        /// follows.
+        slot: ?u8 = null,
     };
 };
 
@@ -366,6 +377,8 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
     var playing = false;
     var last: ?struct { v: u64, t: u64 } = null;
     var lines = std.mem.splitScalar(u8, trace_text, '\n');
+    // The first line after the situation, which the spawns after it start from.
+    var after: ?[]const u8 = null;
     while (lines.next()) |line| {
         if (line.len == 0) continue;
         const v = std.json.parseFromSliceLeaky(std.json.Value, arena, line, .{}) catch return error.BadTrace;
@@ -378,6 +391,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             const ev_v: u64 = @intCast(int(o, "v") orelse 0);
             if (ev_v > limit) {
                 if (!in_round or !playing) return error.NoPlay;
+                after = line;
                 break;
             }
             if (in_round) last = .{ .v = ev_v, .t = @intCast(int(o, "t") orelse 0) };
@@ -416,6 +430,8 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
                 .health = if (int(o, "health")) |h| @intCast(h) else null,
                 .spawned_at = .{ x >> 16, d >> 16 },
                 .states = state orelse "",
+                .since = @intCast(int(o, "t") orelse 0),
+                .slot = if (int(o, "_slot")) |sl| @intCast(sl) else null,
             });
             s.next_id = @max(s.next_id, e + 1);
         } else if (std.mem.eql(u8, ev, "remove")) {
@@ -427,6 +443,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
         } else if (std.mem.eql(u8, ev, "state")) {
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             const state = str(o, "state") orelse return error.BadTrace;
+            if (x.state == null or !std.mem.eql(u8, x.state.?, state)) x.since = @intCast(int(o, "t") orelse 0);
             x.state = try arena.dupe(u8, state);
             if (str(o, "facing")) |f| x.left = std.mem.eql(u8, f, "left");
             if (std.mem.indexOf(u8, x.states, state) == null) x.states = try std.fmt.allocPrint(arena, "{s} {s}", .{ x.states, state });
@@ -434,6 +451,9 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             x.position = .{ @intCast(int(o, "x") orelse 0), @intCast(int(o, "d") orelse 0), @intCast(int(o, "h") orelse 0) };
             x.velocity = .{ @intCast(int(o, "vx") orelse 0), @intCast(int(o, "vd") orelse 0), @intCast(int(o, "vh") orelse 0) };
+        } else if (std.mem.eql(u8, ev, "hit")) {
+            const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
+            if (int(o, "by")) |by| x.struck_by = @intCast(by);
         } else if (std.mem.eql(u8, ev, "health")) {
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             x.health = @intCast(int(o, "health") orelse 0);
@@ -466,7 +486,42 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
     s.v = l.v;
     s.t = l.t;
     s.entities = try arena.dupe(Situation.Seen, seen.values());
+    // The round's script's spawns after the situation, in the same round scene.
+    var later: std.ArrayList(Situation.Later) = .empty;
+    while (after orelse lines.next()) |line| {
+        after = null;
+        if (line.len == 0) continue;
+        const v = std.json.parseFromSliceLeaky(std.json.Value, arena, line, .{}) catch return error.BadTrace;
+        if (v != .object) return error.BadTrace;
+        const o = v.object;
+        const ev = str(o, "ev") orelse return error.BadTrace;
+        if (std.mem.eql(u8, ev, "end") or std.mem.eql(u8, ev, "scene")) break;
+        if (!std.mem.eql(u8, ev, "spawn")) continue;
+        const kind = str(o, "kind") orelse return error.BadTrace;
+        if (!scripted(kind)) continue;
+        const x: i32 = @intCast(int(o, "x") orelse 0);
+        const d: i32 = @intCast(int(o, "d") orelse 0);
+        try later.append(arena, .{ .t = @intCast(int(o, "t") orelse 0), .seen = .{
+            .id = @intCast(int(o, "e") orelse return error.BadTrace),
+            .kind = try arena.dupe(u8, kind),
+            .position = .{ x, d, @intCast(int(o, "h") orelse 0) },
+            .state = if (str(o, "state")) |st| try arena.dupe(u8, st) else null,
+            .left = if (str(o, "facing")) |f| std.mem.eql(u8, f, "left") else false,
+            .health = if (int(o, "health")) |h| @intCast(h) else null,
+            .spawned_at = .{ x >> 16, d >> 16 },
+            .slot = if (int(o, "_slot")) |sl| @intCast(sl) else null,
+        } });
+    }
+    s.later = later.items;
     return s;
+}
+
+/// The kinds the round's script places: its enemies, its boss, its breakables.
+fn scripted(kind: []const u8) bool {
+    for ([_][]const u8{ "galsia", "galsia_stalker", "galsia_knife", "galsia_pipe", "signal", "acrobat", "brawler", "antonio", "breakable" }) |k| {
+        if (std.mem.eql(u8, k, kind)) return true;
+    }
+    return false;
 }
 
 /// The random generator's state the situation's draws leave: its draws stepped from power-on;
@@ -533,6 +588,11 @@ pub const Run = struct {
     skipped: std.ArrayList([]const u8) = .empty,
     /// The script's tick 0's display tick.
     script_v: u64,
+    /// The round's script's stand-in: the spawns still to come, and the records they take.
+    later: []const Situation.Later = &.{},
+    next_later: usize = 0,
+    round: ?*const sorz.content.round.Round = null,
+    used: [256]bool = @splat(false),
 
     /// What the run takes up besides the situation: the round's clock (the other program's tick
     /// counter at the script's start, when known) and the round's spawn records.
@@ -569,8 +629,10 @@ pub const Run = struct {
             .y_max = .of(situation.camera_stop[2]),
             .follows = true,
         };
-        var used: [256]bool = @splat(false);
-        for (situation.entities) |e| {
+        r.later = situation.later;
+        r.round = extras.round;
+        var made: [world.entity.capacity]?struct { h: world.Handle, e: *const Situation.Seen } = @splat(null);
+        for (situation.entities) |*e| {
             var kind_name = e.kind;
             if (e.player) |p| switch (script.start) {
                 // The trace names a player by its character; the script chose it.
@@ -581,7 +643,7 @@ pub const Run = struct {
                 try r.skipped.append(gpa, e.kind);
                 continue;
             };
-            const h = try w.spawn(kinds, kind, .{ .x = .of(e.position[0]), .depth = .of(e.position[1]), .height = .of(e.position[2]) }, if (e.left) .left else .right);
+            const h = try spawnSeen(w, kinds, kind, e);
             const x = w.get(h).?;
             x.velocity = .{ .x = .of(e.velocity[0]), .depth = .of(e.velocity[1]), .height = .of(e.velocity[2]) };
             if (x.position.height.lessThan(w.ground)) x.flags.airborne = true;
@@ -590,11 +652,26 @@ pub const Run = struct {
             if (e.player) |p| {
                 w.players[p - 1] = .{ .entity = h, .lives = situation.lives[p - 1][0], .specials = situation.lives[p - 1][1], .score = situation.scores[p - 1] };
             }
-            if (x.team == .enemy) takeUpSpawn(kinds, x, &e, extras.round, &used);
+            if (x.team == .enemy) takeUpSpawn(kinds, x, e, extras.round, &r.used);
+            made[h.index] = .{ .h = h, .e = e };
+        }
+        // Who struck each last, by the trace's ids; then each takes its state up.
+        for (made) |m_| {
+            const m = m_ orelse continue;
+            const x = w.get(m.h).?;
+            if (m.e.struck_by) |by| for (made) |o_| {
+                const o = o_ orelse continue;
+                if (o.e.id == by) x.struck_by = o.h;
+            };
+        }
+        for (made) |m_| {
+            const m = m_ orelse continue;
+            const h = m.h;
+            const e = m.e;
             r.ids[h.index] = e.id;
             if (trace) |tw| tw.assignId(h.index, h.generation, e.id);
             var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
-            t.takeUp(h);
+            t.takeUp(h, @intCast(situation.t -| e.since));
         }
         if (trace) |tw| {
             tw.next_id = situation.next_id;
@@ -661,6 +738,15 @@ pub const Run = struct {
         }
     }
 
+    /// An entity the other program had, in its place there when it is free (so that the order
+    /// of updates is the other program's), else in the first free place.
+    fn spawnSeen(w: *world.World, kinds: *const world.Kinds, kind: world.entity.KindId, e: *const Situation.Seen) !world.Handle {
+        const at: world.fixed.Vec3 = .{ .x = .of(e.position[0]), .depth = .of(e.position[1]), .height = .of(e.position[2]) };
+        const facing: world.entity.Facing = if (e.left) .left else .right;
+        if (e.slot) |sl| if (w.spawnIn(kinds, kind, sl, at, facing)) |h| return h else |_| {};
+        return w.spawn(kinds, kind, at, facing);
+    }
+
     fn spawnOf(rec: *const sorz.content.round.Spawn) world.Spawn {
         var sp: world.Spawn = .{ .strength = @intCast(rec.strength) };
         if (rec.entrance) |way| sp.entrance = std.meta.stringToEnum(world.Entrance, @tagName(way)) orelse .approach;
@@ -686,6 +772,7 @@ pub const Run = struct {
         _ = self.play.displayTick(self.kinds, &self.random, pads, &self.out);
         self.v += 2;
         self.t += 1;
+        try self.bringLater();
         const w = &self.play.world;
         if (self.trace) |tw| {
             tw.setPhase(if (w.special) "special" else "play");
@@ -694,6 +781,29 @@ pub const Run = struct {
         self.noteIds();
         if (self.probe) |p| try p.observe(self.v, self.t, w, self.kinds, &self.ids);
         return true;
+    }
+
+    /// The round's script's stand-in: what the other program's script brought at the end of this
+    /// tick comes now, with its id and the record that placed it (its first tick is the next).
+    fn bringLater(self: *Run) !void {
+        const w = &self.play.world;
+        while (self.next_later < self.later.len and self.later[self.next_later].t <= self.t) : (self.next_later += 1) {
+            const l = &self.later[self.next_later];
+            if (l.t < self.t) continue;
+            const e = &l.seen;
+            const kind = self.kinds.find(e.kind) orelse {
+                try self.skipped.append(self.gpa, e.kind);
+                continue;
+            };
+            const h = spawnSeen(w, self.kinds, kind, e) catch return error.Full;
+            const x = w.get(h).?;
+            if (e.health) |hp| x.health = @intCast(hp);
+            if (x.team == .enemy) takeUpSpawn(self.kinds, x, e, self.round, &self.used);
+            self.ids[h.index] = e.id;
+            if (self.trace) |tw| tw.assignId(h.index, h.generation, e.id);
+            var t: world.tick.Tick = .{ .world = w, .kinds = self.kinds, .random = &self.random, .out = &self.out };
+            t.takeUp(h, 0);
+        }
     }
 
     /// The ids of entities new at this tick: the trace's, or in order of their places.

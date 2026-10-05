@@ -243,7 +243,8 @@ pub fn startLife(a: Actor) void {
 
 /// Taken up in its state from a situation another program recorded: its state's animation and
 /// move, its speed kept.
-pub fn takeUp(a: Actor) void {
+pub fn takeUp(a: Actor, elapsed: u32) void {
+    _ = elapsed;
     const v = a.entity.velocity;
     begin(a, a.mind.state);
     a.entity.velocity = v;

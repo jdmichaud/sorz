@@ -199,9 +199,10 @@ pub const Tick = struct {
     }
 
     /// The entity was put in its state from a situation another program recorded (a converted
-    /// start, DESIGN.md decision D14): its behaviour takes it up from there.
-    pub fn takeUp(t: *Tick, h: Handle) void {
-        dispatch(t, h, "takeUp", void, {}, .{});
+    /// start, DESIGN.md decision D14), `elapsed` logic ticks after it entered it: its behaviour
+    /// takes it up from there.
+    pub fn takeUp(t: *Tick, h: Handle, elapsed: u32) void {
+        dispatch(t, h, "takeUp", void, {}, .{elapsed});
     }
 
     /// The entity landed on the ground (the movement system).

@@ -1165,18 +1165,62 @@ pub fn Of(comptime M: type) type {
             enterAtBlow(a, .knocked_down);
         }
 
-        /// Taken up in its state from a situation another program recorded.
-        pub fn takeUp(a: A) void {
+        // Taken up from a situation -----------------------------------------------------------
+
+        /// Taken up in its state from a situation another program recorded, `elapsed` ticks
+        /// after it entered it (its set-up at the tick after): knocked out, its blinks counted
+        /// down by then; in a state its module says counts down every tick (`countdowns`), set up
+        /// now and its count gone down by the ticks since; another, set up at its next tick.
+        pub fn takeUp(a: A, elapsed: u32) void {
+            if (elapsed >= 1 and @hasDecl(M, "countdowns")) {
+                for (M.countdowns) |st| if (a.mind.state == st) {
+                    takeUpTarget(a);
+                    body(a).fresh = true;
+                    body(a).waits = false;
+                    M.begin(a);
+                    body(a).timer -|= @intCast(@min(elapsed, 255));
+                    return;
+                };
+            }
+            takeUpTarget(a);
             switch (a.mind.state) {
                 .appear => {
                     a.entity.flags.hidden = true;
                     a.animate(.walk);
+                },
+                .knocked_out => {
+                    const n = a.numbers();
+                    const b = body(a);
+                    knockedOutSetUp(a);
+                    b.fresh = false;
+                    var k: u32 = 0;
+                    while (k < elapsed) : (k += 1) {
+                        b.timer -%= 1;
+                        if (b.timer != 0) continue;
+                        if (b.blinks > 1) b.blinks -= 1;
+                        a.entity.flags.blinked = !a.entity.flags.blinked;
+                        b.timer = n.blink;
+                    }
                 },
                 else => {
                     body(a).fresh = true;
                     if (a.entity.animation.index == null) a.animate(.walk);
                 },
             }
+        }
+
+        /// Taken up out of hiding: the one whose blow it took last, and the player it goes after
+        /// (chosen now, its state kept, when the situation did not say).
+        fn takeUpTarget(a: A) void {
+            if (a.mind.state == .appear) return;
+            body(a).other = a.entity.struck_by;
+            if (body(a).target != null) return;
+            const was = a.mind.state;
+            const fresh = body(a).fresh;
+            _ = chooseTarget(a);
+            a.mind.state = was;
+            body(a).fresh = fresh;
+            body(a).alone = false;
         }
     };
 }
