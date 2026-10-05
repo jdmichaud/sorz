@@ -54,8 +54,14 @@ pub fn entryFrames(d: *Def, name: []const u8, entry: u32, first: ?usize, bodiles
 /// $11 and $19 take (0x3BC4: d4 = 0 for them): across and in depth, both sides excluded; in
 /// height, the body's of `d`'s first frame.
 pub fn solidBox(d: *Def) Error!void {
+    return solidBoxAt(d, 0);
+}
+
+/// The box that stops the fighters' walks (0x3C00) of the entry at byte `entry` of 0x3C6A's
+/// table (a type's `moveq #N,d4`, 0x3BC4), as `solidBox`.
+pub fn solidBoxAt(d: *Def, entry: u32) Error!void {
     const rom = d.rom;
-    const solid = 0x3C6A;
+    const solid = 0x3C6A + entry;
     const from_x = rom_mod.s16be(rom, solid);
     const span_x = rom_mod.s16be(rom, solid + 2);
     const from_d = rom_mod.s16be(rom, solid + 4);

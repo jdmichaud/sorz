@@ -51,7 +51,7 @@
 //! and his `boomerang`, and the `hit_spark` a player's blow makes (PLAN item 12); round 2's
 //! scenery (PLAN item 15): the oil drums a blow knocks away (`knockable`), the `drip`s, the
 //! `flight`s across the screen, their `flier`s and the posters' corners they stir
-//! (`flight_scenery`), and the `bottle` a drum holds; round 3's: the `lamp`s.
+//! (`flight_scenery`), and the `bottle` a drum holds; round 3's: the `lamp`s, the `crate`s, the `drifter`s.
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -89,6 +89,8 @@ pub const flight = @import("behaviours/flight.zig");
 pub const flier = @import("behaviours/flier.zig");
 pub const flight_scenery = @import("behaviours/flight_scenery.zig");
 pub const lamp = @import("behaviours/lamp.zig");
+pub const crate = @import("behaviours/crate.zig");
+pub const drifter = @import("behaviours/drifter.zig");
 
 /// An entity's behaviour and its memory: one line a behaviour module.
 pub const Mind = union(enum) {
@@ -126,6 +128,8 @@ pub const Mind = union(enum) {
     flier: flier.Mind,
     flight_scenery: flight_scenery.Mind,
     lamp: lamp.Mind,
+    crate: crate.Mind,
+    drifter: drifter.Mind,
 };
 
 pub const Behaviour = std.meta.Tag(Mind);
