@@ -30,6 +30,8 @@ const world_mod = @import("world.zig");
 const World = world_mod.World;
 const Round = content_round.Round;
 const Spawn = content_round.Spawn;
+const StreamOf = content_round.StreamOf;
+const Streamed = content_round.Streamed;
 
 /// What the script follows besides the world: the round's script and the options of the game.
 pub const Plan = struct {
@@ -41,6 +43,45 @@ pub const Plan = struct {
     /// The high-score table's last entry, which the score of a player out of lives must beat for
     /// its name to be entered (lives.zig); null: no table, no name entry.
     last_score: ?Ranked = null,
+    /// The round's art still streams in (`ArtQueue.loading`) as the logic tick's first half runs,
+    /// and as its second half runs.
+    art_loading: [2]bool = .{ false, false },
+};
+
+/// The art the round streams in, as the original's load queue is decoded: a display tick's share
+/// at a time (`content_round.Streamed`, from the end of the logic tick that queued it). The
+/// round's picture holds it (its shares are its frames' work); the world sees whether it still
+/// loads through its plan.
+pub const ArtQueue = struct {
+    /// The list under way, and its display ticks done.
+    of: ?StreamOf = null,
+    at: u16 = 0,
+
+    /// Art queued at this logic tick (`Output.streamed`), decoded from its last display tick on.
+    pub fn start(q: *ArtQueue, of: StreamOf) void {
+        q.* = .{ .of = of };
+    }
+
+    /// The display tick's share, the queue on to the next.
+    pub fn next(q: *ArtQueue, r: *const Round) Streamed {
+        const of = q.of orelse return .{};
+        const list = of.of(r);
+        if (q.at >= list.len) {
+            q.of = null;
+            return .{};
+        }
+        defer q.at += 1;
+        return list[q.at];
+    }
+
+    /// Whether it still loads as a logic tick's first half runs (before the frame in its middle
+    /// decodes its share), and as its second half runs: asked at the logic tick, its first
+    /// display tick's share done.
+    pub fn loading(q: *const ArtQueue, r: *const Round) [2]bool {
+        const of = q.of orelse return .{ false, false };
+        const n = of.of(r).len;
+        return .{ q.at <= n, q.at < n };
+    }
 };
 
 /// An entry of the high-score table as a score is ranked against it: its score, its level and

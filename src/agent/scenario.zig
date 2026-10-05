@@ -794,6 +794,9 @@ pub const Run = struct {
     /// The round's plan, its records left to the stand-in: the timer and the new lives follow
     /// it.
     plan: ?world.script.Plan = null,
+    /// The art the world queues (the special attack's car's), streamed in as the round's
+    /// picture streams it: a share a display tick.
+    art: world.script.ArtQueue = .{},
 
     /// What the run takes up besides the situation: the round's clock (the other program's tick
     /// counter at the script's start, when known) and the round's spawn records.
@@ -1125,10 +1128,17 @@ pub const Run = struct {
             if (self.body.timed_out != null) self.failure = "a condition did not come in time";
             return false;
         };
-        // The pads are held over both display ticks of the logic tick.
+        // The pads are held over both display ticks of the logic tick; the art streams a share at
+        // each, as the round's picture streams it (screens/round.zig).
         const plan = if (self.plan) |*p| p else null;
-        _ = self.play.roundTick(self.kinds, &self.random, pads, &self.out, plan);
-        _ = self.play.roundTick(self.kinds, &self.random, pads, &self.out, plan);
+        for (0..2) |_| {
+            if (self.plan) |*p| p.art_loading = self.art.loading(p.round);
+            const ran = self.play.roundTick(self.kinds, &self.random, pads, &self.out, plan);
+            if (self.plan) |*p| {
+                if (ran) if (self.out.streamed) |of| self.art.start(of);
+                _ = self.art.next(p.round);
+            }
+        }
         self.v += 2;
         self.t += 1;
         try self.bringLater();

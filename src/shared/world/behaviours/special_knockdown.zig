@@ -1,8 +1,10 @@
 //! The special attack's own, never drawn: made at the call (`Tick.callSpecial`), it sends the
 //! camera running back across the round; once the camera has run back far enough the police car
 //! comes (police_car.zig, whose bazooka's smoke, or gunfire, sends the camera running ahead);
-//! back where it was, the shot comes: player 1's rocket (special_blast.zig), player 2's fire
-//! (special_fire.zig). Then it knocks the enemies down (each a fall without the knock-down's
+//! as it runs ahead, the colours are copied at every tick the round's art is loaded, and within
+//! `again_within` of its place at the call the enemies' art the car took the place of streams in
+//! again (the section's `again`); back where it was, the shot comes: player 1's rocket
+//! (special_blast.zig), player 2's fire (special_fire.zig). Then it knocks the enemies down (each a fall without the knock-down's
 //! damage: their health went at the call):
 //! - player 1's: as the blast's line (the depth of its latest explosion at its largest, less a
 //!   little) comes up the screen, every enemy below it, but one already falling or lying (in its
@@ -29,9 +31,11 @@ pub const Mind = struct {
     /// The one who called it, and whether that is the second player.
     by: ?Handle = null,
     second: bool = false,
-    /// The camera's place at the call; the car came; the shot came.
+    /// The camera's place at the call; the car came; its art gave way to the enemies' again;
+    /// the shot came.
     from: Fixed = .zero,
     car: bool = false,
+    again: bool = false,
     shot: bool = false,
     /// The blast's line in depth (none yet); the rest are to be knocked down; the first bullet's
     /// impact shook the screen.
@@ -59,6 +63,9 @@ pub const Numbers = struct {
     second_every: i8,
     /// The last pass spares one in its knock-down's pose but at this frame.
     rest_frame: u8,
+    /// The camera running ahead this close to its place at the call, the enemies' art comes
+    /// again.
+    again_within: i16,
 };
 
 /// The kinds it brings.
@@ -96,6 +103,18 @@ pub fn think(a: Actor) void {
                 car.entity.position.depth = .pixels(cn.depth);
                 car.entity.position.height = .pixels(cn.height);
                 police_car.arrive(car, m.second);
+            }
+        }
+    };
+    // Running ahead, the car there, the round's art loaded: the colours copied; close enough,
+    // the enemies' art again.
+    if (m.car and !m.again) if (c.run) |r| if (r.state == .ahead) {
+        const loading = if (a.tick.plan) |p| p.art_loading[0] else false;
+        if (!loading) {
+            a.tick.out.colours = true;
+            if (c.x.whole() >= m.from.whole() - n.again_within) {
+                m.again = true;
+                a.tick.out.streamed = .{ .part = w.script.part, .again = true };
             }
         }
     };

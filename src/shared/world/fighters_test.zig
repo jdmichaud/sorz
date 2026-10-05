@@ -456,7 +456,7 @@ const police_car_fixture =
     \\{"frame": "t/f0", "ticks": 3}], "loop": true}, "smoke": {"frames": [{"frame": "t/f0",
     \\"ticks": 4}, {"frame": "t/f0", "ticks": 4}, {"frame": "t/f0", "ticks": 4},
     \\{"frame": "t/f0", "ticks": 4}], "loop": true}}, "behaviour": "police_car",
-    \\"family": "effect", "numbers": {"aim": 12, "aim_ends": 2, "art": 29, "bazooka_depth": 4,
+    \\"family": "effect", "numbers": {"aim": 12, "aim_ends": 2, "bazooka_depth": 4,
     \\"bazooka_top": 32, "bazooka_up": 16, "brakes_ahead": 128, "depth": 64, "drive": 1572864,
     \\"gone_behind": -256, "gunfire": 60, "height": 168, "officer_depth": 4, "parked": 20,
     \\"puff_ends": 3, "rise": -196608, "slowing": -90112, "smoke_after": 6},
@@ -466,7 +466,7 @@ const police_car_fixture =
 
 const special_knockdown_fixture =
     \\{"behaviour": "special_knockdown", "family": "effect", "numbers": {"arrives": -832,
-    \\"comes": 33554432, "rest_frame": 3, "run": 1048576, "run_most": 50331648,
+    \\"comes": 33554432, "again_within": 544, "rest_frame": 3, "run": 1048576, "run_most": 50331648,
     \\"second_every": 4, "second_first": 48}, "team": "neutral"}
 ;
 
@@ -725,6 +725,17 @@ const Round = struct {
         systems.runRound(&r.w, &r.f.kinds, &r.rng, .{ .pads = .{ .{}, pads } }, &r.out, plan);
     }
 
+    /// `step`, the round's art streamed in as the round's picture streams it: a display tick's
+    /// share before the tick, whether it still loads told to the world, the art the tick queues
+    /// started, and the second display tick's share.
+    fn stepArt(r: *Round, pads: input.Pads, plan: *script.Plan, queue: *script.ArtQueue) void {
+        _ = queue.next(plan.round);
+        plan.art_loading = queue.loading(plan.round);
+        systems.runRound(&r.w, &r.f.kinds, &r.rng, tick_mod.Input.steady(pads), &r.out, plan);
+        if (r.out.streamed) |of| queue.start(of);
+        _ = queue.next(plan.round);
+    }
+
     fn player(r: *Round) *entity.Entity {
         return r.w.get(r.hero).?;
     }
@@ -914,8 +925,13 @@ test "the special attack: the camera runs back, the car comes, the punk stands w
     r.w.get(p).?.mind.galsia.state = .close_in;
     r.w.get(p).?.mind.galsia.body.target = r.hero;
     r.w.get(p).?.health = 12;
-    r.step(.{});
-    r.step(.{ .pad1 = .{ .a = true } });
+    // The round's script stands in (no section opens), its art streamed in: the car's, its 58
+    // display ticks loaded at the 29th tick after it is queued.
+    r.w.script.stage = .stand_in;
+    var plan: script.Plan = .{ .round = &special_round };
+    var queue: script.ArtQueue = .{};
+    r.stepArt(.{}, &plan, &queue);
+    r.stepArt(.{ .pad1 = .{ .a = true } }, &plan, &queue);
     try testing.expect(r.w.special);
     try testing.expectEqual(@as(u8, 0), r.w.players[0].specials);
     try testing.expectEqual(@as(i16, -1), r.w.get(p).?.health);
@@ -930,7 +946,8 @@ test "the special attack: the camera runs back, the car comes, the punk stands w
     var returned_at: ?usize = null;
     for (1..330) |i| {
         const was = r.w.camera.x.whole();
-        r.step(.{ .pad1 = .{ .right = true } });
+        r.stepArt(.{ .pad1 = .{ .right = true } }, &plan, &queue);
+        if (i == 33) try testing.expect(queue.of.?.special.? == 0);
         const now = r.w.camera.x.whole();
         if (back_at == null and now == 0) back_at = i;
         if (ahead_at == null and now > was) ahead_at = i;
@@ -953,7 +970,7 @@ test "the special attack: the camera runs back, the car comes, the punk stands w
     try testing.expectEqual(@as(?usize, 180 + 81), knocked_at);
     try testing.expectEqual(@as(?usize, 32 + 286), ended_at);
     // A second call needs a special left.
-    r.step(.{ .pad1 = .{ .a = true } });
+    r.stepArt(.{ .pad1 = .{ .a = true } }, &plan, &queue);
     try testing.expect(!r.w.special);
     // Knocked out, the punk blinked and went, and the player it went after scored its points.
     try testing.expect(r.w.get(p) == null);
@@ -965,6 +982,14 @@ const lives_round: content_round.Round = blk: {
     var r = content_round.example;
     r.sections = &.{.{ .wall = 1216, .timer = 40, .opens_after = 61 }};
     r.boss = .{ .fade = "fade out", .music = "boss music", .music_after = 86, .wave_after = 59 };
+    break :blk r;
+};
+
+/// A round whose special attack's art takes 58 display ticks to stream in.
+const special_round: content_round.Round = blk: {
+    var r = lives_round;
+    const share: [58]content_round.Streamed = @splat(.{ .tiles = 5 });
+    r.special = .{ .streamed = .{ &share, &share } };
     break :blk r;
 };
 

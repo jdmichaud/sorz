@@ -259,6 +259,32 @@ fn artLoads(arena: std.mem.Allocator, rom: []const u8, kinds: [4]u8, first: u32,
     if (kinds[3] != 0) try out.append(arena, .{ .after = after, .blocks = try loadStream(arena, rom, kinds[3]) });
 }
 
+/// The special attack's art (0x599E): as its police car comes (its first update, the queue
+/// empty), load list 0 (the car's, moveq #0 at 0x59D2) and list 9, or 10 when player 2 called it
+/// ($FFFA1C: moveq #9 at 0x59D8, moveq #10 at 0x59E0), queued together by the car, streamed from
+/// its tick's end.
+fn specialArt(arena: std.mem.Allocator, rom: []const u8) Error!round.Special {
+    if (u16be(rom, 0x59D2) != 0x7000 or u16be(rom, 0x59D8) != 0x7009 or u16be(rom, 0x59E0) != 0x700A or u32be(rom, 0x59DA) != 0x4A38FA1C) return error.BadData;
+    const car = try loadStream(arena, rom, 0);
+    var both: [2][]const round.Streamed = undefined;
+    for (&both, [_]u16{ 9, 10 }) |*o, n| {
+        const blocks = try std.mem.concat(arena, []const round.Streamed, &.{ car, try loadStream(arena, rom, n) });
+        o.* = try stream.schedule(arena, &.{.{ .after = 0, .blocks = blocks, .before_head = true }});
+    }
+    return .{ .provenance = "the police car's art (0x599E): load lists 0 and 9, or 10 when player 2 called the special attack, queued at the car's first update (its queue empty), streamed from that tick's end (0x84BA after the objects, 0x8510)", .streamed = both };
+}
+
+/// A section's art again after the special attack (0x18E3C, as the camera comes back): the boss's
+/// load ($FFFA63, art slot 3's kind), else art slot 1's kind's own load ((kind - 1) * 3 + $C:
+/// muls.w #3 and addi.w #$C at 0x18E8C), else none; queued by the camera, streamed from its
+/// tick's end. (TODO(PLAN item 15): round 5's twins' case, 0x18E96; an arrival that takes art
+/// slot 1 before the special attack, 0x9CA.)
+fn againStream(arena: std.mem.Allocator, rom: []const u8, kinds: [4]u8) Error![]const round.Streamed {
+    if (u32be(rom, 0x18E8C) != 0xC1FC0003 or u16be(rom, 0x18E90) != 0x0640 or u16be(rom, 0x18E92) != first_art_load + 1) return error.BadData;
+    const load: u16 = if (kinds[3] != 0) kinds[3] else if (kinds[1] != 0) @as(u16, kinds[1] - 1) * 3 + first_art_load + 1 else return &.{};
+    return stream.schedule(arena, &.{.{ .after = 0, .blocks = try loadStream(arena, rom, load), .before_head = true }});
+}
+
 /// A waiting entry's kind's art streamed from its call: a tick, then its load (0xB76).
 fn arrivalStream(arena: std.mem.Allocator, rom: []const u8, t: u8) Error![]const round.Streamed {
     if (!commonEnemy(t)) return &.{};
@@ -524,6 +550,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
             .timer = if (k < later_from) timer_first else timer_later,
             .opens_after = @intCast(if (k == 0) art + 1 else art + 2),
             .streamed = try stream.schedule(arena, loads.items),
+            .again = try againStream(arena, rom, kinds),
             .placed = placed.items,
             .wave = try wave(arena, rom, &l),
             .reserve = try reserve(arena, rom, &l),
@@ -556,6 +583,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .music_after = @intCast(music_after),
         .wave_after = @intCast(wave_after),
         .streamed = try stream.schedule(arena, boss_loads.items),
+        .again = try againStream(arena, rom, kinds),
         .wave = try wave(arena, rom, &l),
         .reserve = try reserve(arena, rom, &l),
     };
@@ -601,6 +629,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
             .pace = @intCast(pace),
         },
         .sections = sections,
+        .special = try specialArt(arena, rom),
         .boss = boss_section,
     };
 }

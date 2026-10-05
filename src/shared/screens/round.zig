@@ -215,10 +215,9 @@ pub const Round = struct {
     strips_due: u8 = 0,
     strip_blocks_due: u16 = 0,
     strip_rows_due: u8 = 0,
-    /// The art play streams in (a section's, the boss's, an arriving enemy's): its list, and the
-    /// display tick of it that comes next.
-    stream: ?content_round.StreamOf = null,
-    stream_at: u16 = 0,
+    /// The art play streams in (a section's, the boss's, an arriving enemy's, the special
+    /// attack's): its list, and the display tick of it that comes next.
+    art: world.script.ArtQueue = .{},
     /// The round ended (its last tick).
     done: bool = false,
     /// The exit after the fade out.
@@ -341,6 +340,7 @@ pub const Round = struct {
             .level = @intCast(@min(setup.level, 3)),
             .lives = setup_mod.Progress.livesOf(setup),
             .last_score = .{ .score = last.score, .level = last.level, .round = last.round },
+            .art_loading = self.art.loading(self.stage(a).script),
         };
     }
 
@@ -442,8 +442,7 @@ pub const Round = struct {
                 self.play.schedule = .{ .rate = .play };
                 // The first section's art, queued with the round's load, streams in from play's
                 // first tick, the list from the tick before.
-                self.stream = .{ .part = 0 };
-                self.stream_at = 0;
+                self.art.start(.{ .part = 0 });
             },
             .play => return self.playTick(turn, a, true),
             // START in the pause ends it (its text shows a display tick longer).
@@ -556,14 +555,7 @@ pub const Round = struct {
 
     /// The display tick's share of the art streamed in: the next of its list's.
     fn nextStreamed(self: *Round, a: *const Assets) content_round.Streamed {
-        const of = self.stream orelse return .{};
-        const list = of.of(self.stage(a).script);
-        if (self.stream_at >= list.len) {
-            self.stream = null;
-            return .{};
-        }
-        defer self.stream_at += 1;
-        return list[self.stream_at];
+        return self.art.next(self.stage(a).script);
     }
 
     /// The columns and rows of blocks the camera's move from `before` to `after` brings into the
@@ -785,10 +777,7 @@ pub const Round = struct {
         }
         self.logic_ran = true;
         self.trace_t += 1;
-        if (out.streamed) |of| {
-            self.stream = of;
-            self.stream_at = 0;
-        }
+        if (out.streamed) |of| self.art.start(of);
         self.noteTransfers(a.kinds, out);
         self.rank(turn.setup, a, out.rankings.slice());
         if (out.colours) self.colours_due = true;

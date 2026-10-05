@@ -179,12 +179,15 @@ pub const Load = struct {
     /// The ticks after the last load's end (or the sequence's start) that it is queued at.
     after: u32,
     blocks: []const []const Streamed,
+    /// Queued before its tick looks at the queue's head (0x84BA, after the objects: an object's
+    /// load, the camera's): its first block starts in that tick, not the next.
+    before_head: bool = false,
 };
 
 /// The display ticks of a sequence of loads, from the end of the tick the sequence counts from:
 /// index 0 is the display tick that ends it, 1 the next tick's middle, 2 its end... Each load's
-/// first block starts at the tick after it is queued (0x84BA in the tick's second half) and is
-/// decoded from that tick's end; a block finished in a tick's middle lets the next start in the
+/// first block starts at the tick after it is queued (0x84BA in the tick's second half, after the
+/// level's events; an object's load, in its own tick) and is decoded from that tick's end; a block finished in a tick's middle lets the next start in the
 /// same tick, at its end at the next. A load is over in the tick a next block would start in,
 /// whose end sees the queue empty; the next load is queued `after` ticks later (the first,
 /// `after` ticks after the sequence's tick; a load of no block takes its tick only).
@@ -195,7 +198,7 @@ pub fn schedule(arena: std.mem.Allocator, loads: []const Load) Error![]const Str
     for (loads) |l| {
         tick += l.after;
         if (l.blocks.len == 0) continue;
-        var start = tick + 1;
+        var start = if (l.before_head) tick else tick + 1;
         for (l.blocks) |b| {
             // The block's display ticks: its start tick's end, then each tick's middle and end.
             const first = 2 * start;

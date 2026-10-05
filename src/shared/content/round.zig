@@ -64,17 +64,23 @@ pub const Streamed = struct {
 };
 
 /// Which of a round's streamed lists: a section's (the boss's, `part` the sections' count), or
-/// one of its reserve's records'.
+/// one of its reserve's records'; a section's art again after the special attack (`again`); or
+/// the special attack's of a caller (`special`: player 1's, player 2's), as its police car comes.
 pub const StreamOf = struct {
-    part: u8,
+    part: u8 = 0,
     record: ?u8 = null,
+    again: bool = false,
+    special: ?u1 = null,
 
     pub fn of(self: StreamOf, r: *const Round) []const Streamed {
+        if (self.special) |k| return r.special.streamed[k];
         if (self.part < r.sections.len) {
             const s = &r.sections[self.part];
+            if (self.again) return s.again;
             return if (self.record) |k| s.reserve[k].streamed else s.streamed;
         }
         const b = &(r.boss orelse return &.{});
+        if (self.again) return b.again;
         return if (self.record) |k| b.reserve[k].streamed else b.streamed;
     }
 };
@@ -126,6 +132,9 @@ pub const Section = struct {
     /// Its art (its kinds' and the boss's), streamed in from its start (the first section's
     /// from the round's start).
     streamed: []const Streamed = &.{},
+    /// The art of its enemies the special attack's car took the place of (the boss's, or its
+    /// second art kind's), streamed in again as the camera comes back.
+    again: []const Streamed = &.{},
     placed: []const Spawn = &.{},
     wave: []const Spawn = &.{},
     reserve: []const Spawn = &.{},
@@ -143,8 +152,17 @@ pub const Boss = struct {
     /// The boss's art, then the section's and the boss's again, streamed in from the last
     /// section's clear.
     streamed: []const Streamed = &.{},
+    /// The boss's art again after the special attack, as a section's (`Section.again`).
+    again: []const Streamed = &.{},
     wave: []const Spawn = &.{},
     reserve: []const Spawn = &.{},
+};
+
+/// The special attack's art, streamed in as its police car comes, by its caller (player 1's,
+/// player 2's): the car's, then the caller's weapon's.
+pub const Special = struct {
+    provenance: []const u8 = "",
+    streamed: [2][]const Streamed = .{ &.{}, &.{} },
 };
 
 pub const Camera = struct {
@@ -216,6 +234,8 @@ pub const Round = struct {
     players: Players,
     timer: Timer,
     sections: []const Section,
+    /// The special attack's art (its police car's), streamed in as the car comes.
+    special: Special = .{},
     boss: ?Boss = null,
 };
 
@@ -313,6 +333,7 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         .{ .key = "timer", .value = json.Value.num(s.timer) },
         .{ .key = "opens_after", .value = json.Value.num(s.opens_after) },
         .{ .key = "streamed", .value = try streamedValue(arena, s.streamed) },
+        .{ .key = "again", .value = try streamedValue(arena, s.again) },
         .{ .key = "placed", .value = try spawnsValue(arena, s.placed, .placed) },
         .{ .key = "wave", .value = try spawnsValue(arena, s.wave, .wave) },
         .{ .key = "reserve", .value = try spawnsValue(arena, s.reserve, .reserve) },
@@ -350,12 +371,20 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         }) },
         .{ .key = "sections", .value = .{ .array = sections } },
     });
+    if (r.special.streamed[0].len != 0 or r.special.streamed[1].len != 0) {
+        const both = try arena.alloc(json.Value, 2);
+        for (both, r.special.streamed) |*o, list| o.* = try streamedValue(arena, list);
+        try fields.append(arena, .{ .key = "special", .value = try withProvenance(arena, r.special.provenance, &.{
+            .{ .key = "streamed", .value = .{ .array = both } },
+        }) });
+    }
     if (r.boss) |*b| try fields.append(arena, .{ .key = "boss", .value = try withProvenance(arena, b.provenance, &.{
         .{ .key = "fade", .value = .{ .str = b.fade } },
         .{ .key = "music", .value = .{ .str = b.music } },
         .{ .key = "music_after", .value = json.Value.num(b.music_after) },
         .{ .key = "wave_after", .value = json.Value.num(b.wave_after) },
         .{ .key = "streamed", .value = try streamedValue(arena, b.streamed) },
+        .{ .key = "again", .value = try streamedValue(arena, b.again) },
         .{ .key = "wave", .value = try spawnsValue(arena, b.wave, .wave) },
         .{ .key = "reserve", .value = try spawnsValue(arena, b.reserve, .reserve) },
     }) });
@@ -456,7 +485,7 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "ground", "camera", "players", "timer", "sections", "boss" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "camera", "players", "timer", "sections", "special", "boss" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
@@ -524,13 +553,14 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     if (sections.len == 0) return ss.fail("no section");
     for (sections, 0..) |*s, i| {
         const n = try ss.at(i);
-        try n.only(&.{ "provenance", "wall", "timer", "opens_after", "streamed", "placed", "wave", "reserve" });
+        try n.only(&.{ "provenance", "wall", "timer", "opens_after", "streamed", "again", "placed", "wave", "reserve" });
         s.* = .{
             .provenance = try provenanceOf(n),
             .wall = try (try n.get("wall")).int(i32),
             .timer = try (try n.get("timer")).int(u8),
             .opens_after = try (try n.get("opens_after")).int(u16),
             .streamed = try readStreamed(arena, try n.get("streamed")),
+            .again = if (try n.opt("again")) |x| try readStreamed(arena, x) else &.{},
             .placed = try readSpawns(arena, try n.get("placed"), .placed),
             .wave = try readSpawns(arena, try n.get("wave"), .wave),
             .reserve = try readSpawns(arena, try n.get("reserve"), .reserve),
@@ -541,8 +571,14 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     }
     r.sections = sections;
 
+    if (try root.opt("special")) |sp| {
+        try sp.only(&.{ "provenance", "streamed" });
+        const both = try sp.get("streamed");
+        if (try both.len() != 2) return both.fail("not the two callers' lists");
+        r.special = .{ .provenance = try provenanceOf(sp), .streamed = .{ try readStreamed(arena, try both.at(0)), try readStreamed(arena, try both.at(1)) } };
+    }
     if (try root.opt("boss")) |b| {
-        try b.only(&.{ "provenance", "fade", "music", "music_after", "wave_after", "streamed", "wave", "reserve" });
+        try b.only(&.{ "provenance", "fade", "music", "music_after", "wave_after", "streamed", "again", "wave", "reserve" });
         r.boss = .{
             .provenance = try provenanceOf(b),
             .fade = try (try b.get("fade")).string(),
@@ -550,6 +586,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
             .music_after = try (try b.get("music_after")).int(u16),
             .wave_after = try (try b.get("wave_after")).int(u16),
             .streamed = try readStreamed(arena, try b.get("streamed")),
+            .again = if (try b.opt("again")) |x| try readStreamed(arena, x) else &.{},
             .wave = try readSpawns(arena, try b.get("wave"), .wave),
             .reserve = try readSpawns(arena, try b.get("reserve"), .reserve),
         };

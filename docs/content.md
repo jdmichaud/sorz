@@ -401,6 +401,12 @@ play).
   tiles it decodes and the decoder's reads (its codes, those written out in full among them, and
   its bytes); `[0, 0, 0, 0]` where it decodes nothing. Their time comes before the sound's
   driver (A4).
+- `again` (a section's, the boss's): its enemies' art that the special attack's police car took
+  the place of (the boss's, or the section's second art kind's), streamed in again as the camera
+  runs back ahead, close to where it was at the call; as `streamed`, from the tick it is queued.
+- `special.streamed`: the special attack's art, by its caller (player 1's, player 2's): the
+  police car's and the caller's weapon's, queued as the car comes, once nothing else streams in;
+  the car shows when it is all in.
 
 A record of `placed`, `wave` or `reserve` is one entity:
 

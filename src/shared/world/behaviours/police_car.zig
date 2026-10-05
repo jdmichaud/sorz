@@ -1,8 +1,10 @@
 //! The police car of the special attack and its parts (special_knockdown.zig brings the car when
 //! the camera has run back far enough):
-//! - the car (`arriving`): unseen while its art loads; then the siren, and it drives in from the
-//!   screen's left, slowing (`driving`), brakes past the screen's left part (`braking`) and stays
-//!   (`parked`); its officer rides with it (`riding`), still once it brakes;
+//! - the car (`arriving`): unseen, it queues its art (the round's `special` stream, by its
+//!   caller) once the round's art is loaded, and waits while it loads; then the siren, and it
+//!   drives in from the screen's left, slowing (`driving`), brakes past the screen's left part
+//!   (`braking`) and stays (`parked`); its officer rides with it (`riding`), still once it
+//!   brakes;
 //! - a moment after it brakes, player 1's bazooka (player 2's gun) rises out of it (`rising`),
 //!   aims a moment (`aiming`) and fires (`firing`): player 1's flash then smoke (`puffing`,
 //!   `fading`), whose end sends the camera running ahead; player 2's gunfire a while (`fading`),
@@ -34,16 +36,17 @@ pub const Mind = struct {
     other: ?u8 = null,
     /// Made at this tick: its first tick only sets it up.
     fresh: bool = true,
+    /// The car's art was queued.
+    queued: bool = false,
 };
 
 pub const Animation = enum { car, officer, bazooka, gun, flash, smoke, gunfire };
 pub const Sound = enum { siren, brakes, bazooka, gun };
 
 pub const Numbers = struct {
-    /// The car's depth and height as it comes; the ticks its art takes to load.
+    /// The car's depth and height as it comes.
     depth: i16,
     height: i16,
-    art: u8,
     /// Its speed in, slowing each tick; past the camera's place and `brakes_ahead` it brakes,
     /// and stays `parked` ticks before the bazooka rises; its officer rides `officer_depth` in
     /// front.
@@ -102,22 +105,36 @@ pub fn think(a: Actor) void {
     }
 }
 
-/// The car is made unseen, its art to load.
+/// The car is made unseen, its art to load: queued at once when the round's art is loaded.
 pub fn arrive(a: Actor, second: bool) void {
     const m = a.mind;
-    m.* = .{ .state = .arriving, .part = .car, .second = second, .timer = a.numbers().art };
+    m.* = .{ .state = .arriving, .part = .car, .second = second };
     a.entity.flags.hidden = true;
     a.animate(.car);
+    queueArt(a);
 }
 
-/// Its art loaded: the siren, it shows and drives in, its officer with it.
+/// Whether the round's art still loads as the car looks (the logic tick's second half).
+fn artLoading(a: Actor) bool {
+    const plan = a.tick.plan orelse return false;
+    return plan.art_loading[1];
+}
+
+/// Its art queued, when the round's is loaded: the stream of its caller's.
+fn queueArt(a: Actor) void {
+    if (artLoading(a)) return;
+    a.mind.queued = true;
+    a.tick.out.streamed = .{ .special = @intFromBool(a.mind.second) };
+}
+
+/// Its art queued, then loaded: the siren, it shows and drives in, its officer with it.
 fn arriving(a: Actor) void {
     const n = a.numbers();
     const m = a.mind;
     const e = a.entity;
     e.flags.hidden = true;
-    if (m.timer != 0) m.timer -= 1;
-    if (m.timer != 0) return;
+    if (!m.queued) return queueArt(a);
+    if (artLoading(a)) return;
     a.sound(.siren);
     m.state = .driving;
     e.flags.hidden = false;

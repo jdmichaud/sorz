@@ -70,44 +70,6 @@ fn finish(d: *Def, name: []const u8, behaviour: []const u8, what: []const u8, hi
     };
 }
 
-/// The calls of the art's decoder a block of `tiles` tiles takes (0x8554: five tiles a call).
-fn calls(tiles: u32) u32 {
-    return (tiles + 4) / 5;
-}
-
-/// The tiles of the art list `list`'s first block (0x8672: a word offset per list to its count
-/// less one, then a long source and a word address per block; the block's header word & $7FFF).
-fn listTiles(rom: []const u8, list: u32) Error!u32 {
-    const at: u32 = @intCast(@as(i32, 0x8672) + s16be(rom, 0x8672 + 2 * list));
-    if (u16be(rom, at) != 0) return error.BadData;
-    const source = u32be(rom, at + 2);
-    return u16be(rom, source) & 0x7FFF;
-}
-
-/// The ticks from the tick the car queues its art (the queue idle) to the tick it sees it all
-/// loaded (2.2 of the reading): the decoder runs twice a tick, in the middle of the objects' run
-/// and at its end; a job of c calls from the end of tick s ends at the end of tick s + (c−1)/2 if
-/// c is odd, in the middle of tick s + c/2 if even; the next job starts at the end of the tick
-/// the last ended in the middle of, else at the end of the next; the car (after the middle) sees
-/// the queue empty in the tick of a middle finish, in the next after an end finish.
-fn artTicks(first: u32, second: u32) u32 {
-    var start: u32 = 0;
-    var seen: u32 = 0;
-    for ([_]u32{ first, second }) |tiles| {
-        const c = calls(tiles);
-        if (c % 2 == 1) {
-            const end = start + (c - 1) / 2;
-            start = end + 1;
-            seen = end + 1;
-        } else {
-            const end = start + c / 2;
-            start = end;
-            seen = end;
-        }
-    }
-    return seen;
-}
-
 /// The special attack's own: the camera's run, the car's coming, the knock-downs.
 pub fn specialKnockdown(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
     var d: Def = .{ .arena = arena, .rom = rom, .dir = "police", .set = 0x70A78, .box_table = entities.object_boxes, .frame_addresses = &.{} };
@@ -122,6 +84,8 @@ pub fn specialKnockdown(arena: std.mem.Allocator, rom: []const u8) Error!entity.
     if (u16be(rom, 0x10186) != 0x11FC) return error.BadData;
     try d.number("second_every", rom[0x10189], "ROM 0x10186: move.b #N,$FA42 (player 2's: reloaded after each knock-down, which comes when the count goes below 0)");
     try d.number("rest_frame", try immediate(rom, 0x10144, &.{ 0x0C, 0x29, 0x00 }, 1), "ROM 0x10144: cmpi.b #N,(10,a1) (the last pass spares one in its knock-down's flight but at this frame)");
+    if (u32be(rom, 0x18E3C) != 0x4AB8DCD0 or u32be(rom, 0x18E44) != 0x11FC0001) return error.BadData;
+    try d.number("again_within", try immediate(rom, 0x18E4E, &.{ 0x04, 0x40 }, 2), "ROM 0x18E4E: subi.w #N,d0 (0x18E3C: the camera running ahead, its art loaded, within this of its place at the call: the enemies' art again)");
     return finish(&d, "special_knockdown", "special_knockdown", "the special attack's own (type $29, 0x100B6; the camera's run 0x18CC4, 0x18DC2, its limit 0x192E4), never drawn", true);
 }
 
@@ -141,11 +105,8 @@ pub fn policeCar(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definit
     try animation(&d, "gunfire", rom[0x5A11]);
     try d.number("depth", try movedWord(rom, 0x18D06, 0x14), "ROM 0x18D06: move.w #N,(20,a6)");
     try d.number("height", try movedWord(rom, 0x18D0C, 0x18), "ROM 0x18D0C: move.w #N,(24,a6)");
-    // Its art: lists 0 and 9 (player 1's) or 10 (player 2's), queued as it comes (0x59D4).
-    const car_tiles = try listTiles(rom, 0);
-    const first = artTicks(car_tiles, try listTiles(rom, 9));
-    if (first != artTicks(car_tiles, try listTiles(rom, 10))) return error.BadData;
-    try d.number("art", @intCast(first), "the ticks its art takes to load (lists 0 and 9, or 10, at 0x8672: their blocks' tiles, five a decoder's call, two calls a tick, 0x8554)");
+    // Its art (lists 0 and 9, or 10, queued as it comes, 0x59D4) is the round's `special`
+    // stream (scripts.zig), which it waits for.
     try d.number("drive", (try movedWord(rom, 0x5A32, 0x1C)) << 16, "ROM 0x05A32: move.w #N,(28,a0)");
     try d.number("slowing", try immediate(rom, 0x5A96, &.{ 0x06, 0xA8 }, 4), "ROM 0x05A96: addi.l #N,(28,a0)");
     try d.number("brakes_ahead", try immediate(rom, 0x5AA6, &.{ 0x06, 0x40 }, 2), "ROM 0x05AA6: addi.w #N,d0 (the camera's place across and this; past it, it brakes)");
