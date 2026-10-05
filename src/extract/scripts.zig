@@ -77,9 +77,9 @@ const tiles_a_display_tick = 5;
 const end_mark = 0x99;
 const wave_end: u16 = 0x0099;
 
-/// The rounds whose scripts the extractor writes (PLAN item 13: round 1; the others, whose last
-/// sections differ, with PLAN item 15).
-pub const extracted = [_]u8{1};
+/// The rounds whose scripts the extractor writes (PLAN items 13 and 15: rounds 1 and 2; the others,
+/// whose last sections differ, to come).
+pub const extracted = [_]u8{ 1, 2 };
 
 /// The trace's names of the original's object types (sor-remaster's docs/traces.md).
 fn kindName(t: u8) ?[]const u8 {
@@ -90,6 +90,9 @@ fn kindName(t: u8) ?[]const u8 {
         0x0B => "pipe_b",
         0x0C => "bottle",
         0x11 => "breakable",
+        0x13 => "flight_scenery",
+        0x14 => "drip",
+        0x19 => "knockable",
         0x20 => "galsia_knife",
         0x21 => "galsia_stalker",
         0x22 => "galsia",
@@ -104,6 +107,7 @@ fn kindName(t: u8) ?[]const u8 {
         0x47 => "beef",
         0x4B => "apple",
         0x4C => "life",
+        0x4D => "flight",
         0x4F => "special_item",
         0x55 => "boss_r2",
         0x56 => "antonio",
@@ -456,7 +460,7 @@ fn artKinds(rom: []const u8, at: u32) [4]u8 {
 
 /// Round `n`'s script (1 to 8; the rounds of `extracted`).
 pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Round {
-    if (n != 1) return error.BadData;
+    if (n == 0 or n > rounds.count) return error.BadData;
     const r: u32 = n - 1;
     const lists_at = spawn_lists + @as(u32, u16be(rom, spawn_lists + 2 * r));
     const lists = (try nemesis.decompress(arena, rom, lists_at)).bytes;
