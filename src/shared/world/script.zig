@@ -24,6 +24,7 @@ const content_screens = @import("../content/screens.zig");
 const fixed = @import("fixed.zig");
 const entity = @import("entity.zig");
 const tick_mod = @import("tick.zig");
+const behaviours = @import("behaviours.zig");
 
 const Fixed = fixed.Fixed;
 const Tick = tick_mod.Tick;
@@ -707,11 +708,12 @@ fn bossColours(t: *Tick) void {
 
 /// As the reserve begins (0x810), the enemies in the world are added to the tallies: each to
 /// its art's slot (art none holds: uncounted) and to the colours it shows on, by the line it
-/// took (those not yet out are not counted).
+/// took (those not yet out are not counted; one out but hidden is, an acrobat's leap in).
 fn tally(t: *Tick, p: *const Plan) void {
     const s = &t.world.script;
     for (&t.world.entities) |*e| {
-        if (!e.alive() or e.flags.hidden) continue;
+        if (!e.alive()) continue;
+        if (e.flags.hidden) if (behaviours.stateName(&e.mind)) |name| if (std.mem.eql(u8, name, "appear")) continue;
         const c = e.spawn.colours orelse continue;
         if (e.spawn.art) |a| if (a & 0x80 == 0) {
             if (std.mem.indexOfScalar(u8, &s.art, a)) |i| s.art_counts[i] +%= 1;

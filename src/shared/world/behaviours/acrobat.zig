@@ -446,7 +446,7 @@ fn enterFlight(a: Actor) void {
     if (!a.atGround()) return;
     e.position.height = .parts(@intCast(a.tick.world.ground.whole()), e.position.height.frac());
     a.sound(.land);
-    e.spawn = .{ .offset_x = e.spawn.offset_x, .offset_depth = e.spawn.offset_depth, .strength = e.spawn.strength, .colours = e.spawn.colours };
+    e.spawn = .{ .offset_x = e.spawn.offset_x, .offset_depth = e.spawn.offset_depth, .strength = e.spawn.strength, .colours = e.spawn.colours, .art = e.spawn.art };
     e.velocity.height = .zero;
     go(a, .close_in, .{});
 }
