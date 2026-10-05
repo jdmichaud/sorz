@@ -1060,7 +1060,10 @@ fn feelBlow(a: Actor) void {
     const t = a.mind.taken orelse return;
     a.mind.taken = null;
     const n = a.numbers();
-    if (a.other(t.by)) |by| faceStriker(a, by);
+    // It faces the place of the one who struck it, whatever holds that place now (a thrown knife
+    // gone at its blow: an emptied place's across is 0), as the original reads that object.
+    const o = &a.tick.world.entities[t.by.index];
+    if (o.alive()) faceStriker(a, o) else a.entity.facing = if (a.entity.position.x.whole() >= 0) .left else .right;
     const knocked = t.reaction == .knock_down or a.entity.flags.airborne;
     if (knocked) a.tick.sound(fallSound(a, t.by), a.handle);
     dropWeapon(a);
