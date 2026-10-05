@@ -219,7 +219,7 @@ pub fn think(a: Actor) void {
     }
 }
 
-/// Knocked down (by a blow, a throw, a new life's knock-back), its first tick it only looks
+/// Knocked down (by a blow, a throw; not a new life's knock-back), its first tick it only looks
 /// whether to flip away: it falls from the next, a tick behind the others; but placed to flip
 /// away, with health left, on an odd tick it falls at once, on an even one it flips away from
 /// the next. Flipped over its holder, it looks at no flip away.
@@ -527,15 +527,20 @@ pub fn letGoBy(a: Actor, holder: Handle) void {
     Common.letGoBy(a, holder);
 }
 
-/// A new life's knock-back knocks it down anew, also when it was down: it looks again.
 /// Brought back at a wall (enemy.zig's `leftBehind`).
 pub fn leftBehind(a: Actor) void {
     Common.leftBehind(a);
 }
 
+/// A new life's knock-back knocks it down anew, also when it was down: it does not look whether
+/// to flip away (one placed to, on an odd tick, does not fall at once), and flies from its next
+/// tick (the original's acrobat passes a knock-back's first tick on to its own knock-down's
+/// state, the look skipped).
 pub fn knockedBack(a: Actor) void {
     Common.knockedBack(a);
-    if (a.mind.state == .knocked_down) a.mind.looked = false;
+    if (a.mind.state != .knocked_down) return;
+    a.mind.looked = true;
+    a.mind.body.waits = true;
 }
 
 pub fn specialCalled(a: Actor) void {
