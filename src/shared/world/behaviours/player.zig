@@ -826,6 +826,15 @@ fn hitPause(a: Actor) bool {
 
 // Taking blows ---------------------------------------------------------------------------------
 
+/// Struck and not yet back on its feet (hurt to its recovery, thrown, dying): the special attack
+/// leaves it as it is (the original's players keep a mark of it through these states).
+fn struckDown(state: State) bool {
+    return switch (state) {
+        .hurt, .knocked_down, .down, .getting_up, .recover, .dying, .lying_dead, .thrown => true,
+        else => false,
+    };
+}
+
 /// Down or hurt: no blow is felt, and no health left does not kill it yet.
 fn downOrHurt(state: State) bool {
     return switch (state) {
@@ -1237,7 +1246,7 @@ fn throwFall(a: Actor) void {
 fn leftBySpecial(a: Actor) void {
     const n = a.numbers();
     const e = a.entity;
-    if (e.velocity.height.raw != 0) return;
+    if (e.velocity.height.raw != 0 or struckDown(a.mind.state)) return;
     if (e.position.x.whole() < a.tick.world.camera.x.whole() + n.special_beyond) return;
     e.position.height = .parts(@intCast(a.tick.world.ground.whole()), e.position.height.frac());
     e.velocity = .zero;
@@ -1248,6 +1257,10 @@ fn leftBySpecial(a: Actor) void {
     }
     if (e.holding != null or e.holder != null) a.letGo();
     change(a, .ready);
+    // Its boxes are none until its tick shows them again, at the special attack's end (the
+    // original's frame is not yet read as it stands it up).
+    e.boxes.body = null;
+    e.boxes.attack = null;
 }
 
 /// A (the special attack): standing in play (not dropping in), with health and a special left,

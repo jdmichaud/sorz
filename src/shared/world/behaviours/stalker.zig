@@ -257,10 +257,11 @@ pub fn landed(a: Actor) void {
     Common.landed(a);
 }
 
-/// Its blow landed: a punch goes on that tick.
+/// Its blow landed: a punch goes on that tick; the one it struck is the last it touched (as
+/// galsia.zig's).
 pub fn blowLanded(a: Actor, target: Handle) void {
-    _ = target;
     a.mind.body.landed = true;
+    a.mind.body.other = target;
 }
 
 pub fn grabbable(a: Actor, by: Handle) bool {

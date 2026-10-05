@@ -483,10 +483,12 @@ fn endTaunt(a: Actor) void {
     Common.enter(a, fights);
 }
 
-/// Its blow landed: a taunt ends, a punch goes on that tick.
+/// Its blow landed: a taunt ends, a punch goes on that tick; the one it struck is the last it
+/// touched (the original's hit test notes the other for every touch, its own blows' too: the
+/// special attack's traces name it).
 pub fn blowLanded(a: Actor, target: Handle) void {
-    _ = target;
     a.mind.body.landed = true;
+    a.mind.body.other = target;
 }
 
 // Waiting ---------------------------------------------------------------------------------------
