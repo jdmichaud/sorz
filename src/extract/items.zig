@@ -149,6 +149,70 @@ fn breakable(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition 
     };
 }
 
+/// Round 6's crate that shatters (type $41, handler 0x791A, sor-remaster's obj/shatter.zig): its
+/// stand (the set's first entry, its first frame), its breaking (that entry's two frames, the
+/// second a blank one), its pieces' look (the second entry: 0x793E writes that animation's word
+/// alone), its body, its solid box (0x3C6A's entry for type $41), how it shatters (0x7978): its
+/// eight pieces from the table at 0x79FE (as the breakables': speeds, a byte, an index into the
+/// offsets across at 0x79FA) in the effects' places (0x7EBE), and their flight (0x6C3C).
+fn shatter(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set: u32 = @bitCast(try immediate(rom, 0x792E, &.{ 0x43, 0xF9 }, 4));
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "round6", .prefix = "shatter", .set = set, .box_table = entities.object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
+    try d.animations.append(arena, .{ .name = "stand", .loop = true, .frames = try entryFrames(&d, "stand", 0, 1, false) });
+    try d.animations.append(arena, .{ .name = "breaking", .loop = true, .frames = try entryFrames(&d, "breaking", 0, null, true) });
+    if (rom_mod.u32be(rom, 0x793E) != 0x317C0002 or u16be(rom, 0x7942) != 8) return error.BadData;
+    try d.animations.append(arena, .{ .name = "piece", .loop = true, .frames = try entryFrames(&d, "piece", 1, null, true) });
+    // The solid box: 0x3C6A's entry for type $41 (0x3BF4: moveq #32,d4 for cmpi.b #$41).
+    if (try moveq(rom, 0x3BF4, 4) != 32 or rom[0x3BF9] != 0x41) return error.BadData;
+    try solidBoxAt(&d, 32);
+
+    if (rom_mod.u32be(rom, 0x794C) != 0x0028_0001 or u16be(rom, 0x7950) != 58) return error.BadData;
+    try d.number("height", try immediate(rom, 0x7952, &.{ 0x31, 0x7C }, 2), "ROM 0x07952: move.w #N,(24,a0) (it stands solid: 0x794C)");
+    try d.number("breaking", try moveByte(rom, 0x7988, 71), "ROM 0x07988: move.b #N,(71,a0) (then it goes, 0x7A62)");
+    try d.number("pieces", try moveq(rom, 0x79AC, 3) + 1, "ROM 0x079AC: moveq #N-1,d3 (dbf)");
+    try d.number("piece_x", -(try immediate(rom, 0x799E, &.{ 0x04, 0x44 }, 2)), "ROM 0x0799E: subi.w #-N,d4");
+    if (u16be(rom, 0x79A6) != 0x5045 or u16be(rom, 0x79B8) != 0x5146) return error.BadData;
+    try d.number("piece_depth", 8, "ROM 0x079A6: addq.w #8,d5");
+    try d.number("piece_above", 8, "ROM 0x079B8: subq.w #8,d6 (before each piece)");
+    try d.number("piece_gravity", try immediate(rom, 0x6C48, &.{ 0x06, 0xA8 }, 4), "ROM 0x06C48: addi.l #N,(36,a0) (the pieces' flight, 0x6C3C)");
+    try d.number("left_behind", try immediate(rom, 0x6A7C, &.{ 0x04, 0x40 }, 2), "ROM 0x06A7C: subi.w #N,d0 (from the camera's place across, 0x6A70)");
+    const drawn = try drawnOffset(rom);
+    try d.number("screen_from", try immediate(rom, 0xAABA, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x0AABA: cmpi.w #N,(40,a0), less 0xAF6E's offset (a blow lands on the screen)");
+    try d.number("screen_to", try immediate(rom, 0xAAC2, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x0AAC2: cmpi.w #N,(40,a0), less 0xAF6E's offset (excluded)");
+
+    const table = 0x79FE;
+    const offsets = 0x79FA;
+    if (u16be(rom, 0x79AE) != 0x45FA or u16be(rom, 0x79B0) != table - 0x79B0 or u16be(rom, 0x79DC) != 0x103B or rom[0x79DF] != offsets - 0x79DE) return error.BadData;
+    const n = 8;
+    var vx: [n]i32 = undefined;
+    var vh: [n]i32 = undefined;
+    var off: [n]i32 = undefined;
+    for (0..n) |k| {
+        const e = table + 10 * @as(u32, @intCast(k));
+        vx[k] = @bitCast(rom_mod.u32be(rom, e));
+        vh[k] = @bitCast(rom_mod.u32be(rom, e + 4));
+        // Its byte $0B, which marks it a piece (0x7938), never 0.
+        if (rom[e + 8] == 0 or rom[e + 9] > 3) return error.BadData;
+        off[k] = entities.s8(rom, offsets + @as(u32, rom[e + 9]));
+    }
+    try d.table("piece_speed_x", try arena.dupe(i32, &vx), "ROM 0x079FE: each piece's first long");
+    try d.table("piece_speed_up", try arena.dupe(i32, &vh), "ROM 0x079FE: each piece's second long");
+    try d.table("piece_offset", try arena.dupe(i32, &off), "ROM 0x079FE: each piece's index into ROM 0x079FA's offsets across");
+    try d.sound("shatter", @bitCast(@as(i8, @intCast(try moveq(rom, 0x797E, 7)))));
+    return .{
+        .name = "shatter",
+        .provenance = try std.fmt.allocPrint(arena, "round 6's crates that shatter, type $41 (handler 0x791A): the animation set at ROM 0x{X:0>5}{s}", .{ set, d.number_notes.items }),
+        .family = .scenery,
+        .team = .neutral,
+        .behaviour = "shatter",
+        .numbers = d.numbers.items,
+        .tables = d.tables.items,
+        .sounds = d.sounds.items,
+        .boxes = d.boxes.items,
+        .animations = d.animations.items,
+    };
+}
+
 // --- The items ---------------------------------------------------------------------------------
 
 /// What an item gives (0x69F8's effects, by the item's kind).
@@ -249,5 +313,6 @@ fn item(arena: std.mem.Allocator, rom: []const u8, it: Item) Error!entity.Defini
 /// The definitions this module writes, appended to `out`.
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
     try out.append(arena, try breakable(arena, rom));
+    try out.append(arena, try shatter(arena, rom));
     for (items) |it| try out.append(arena, try item(arena, rom, it));
 }
