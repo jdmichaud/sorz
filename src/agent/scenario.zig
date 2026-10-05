@@ -406,8 +406,10 @@ pub const Situation = struct {
         course_draws: []const u16 = &.{},
         /// The tick its speed across became what it is.
         across_since: u64 = 0,
-        /// A player's: the tick it last got up (its blinking starts then).
+        /// A player's: the tick it last got up (its blinking starts then); its knees in the hold
+        /// it is in.
         got_up_at: ?u64 = null,
+        knees: u8 = 0,
         bounces: u8 = 0,
     };
 };
@@ -507,6 +509,11 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
                 x.presses = &.{};
                 x.bounces = 0;
                 if (x.player != null and std.mem.eql(u8, state, "recover")) x.got_up_at = x.since;
+                if (x.player != null) {
+                    if (std.mem.eql(u8, state, "knee") or std.mem.eql(u8, state, "knee_last")) {
+                        x.knees +|= 1;
+                    } else if (!std.mem.eql(u8, state, "grab")) x.knees = 0;
+                }
             }
             x.state = try arena.dupe(u8, state);
             if (str(o, "facing")) |f| x.left = std.mem.eql(u8, f, "left");
@@ -910,6 +917,7 @@ pub const Run = struct {
             t.takeUpSince(h, @intCast(situation.t -| e.across_since), @intCast(situation.t -| e.anim_since));
             if (e.came_from) |from| t.takeUpCameFrom(h, from);
             if (e.got_up_at) |at| t.takeUpBlink(h, @intCast(situation.t -| at));
+            if (e.knees != 0) t.takeUpKnees(h, e.knees);
             t.takeUpPlayersThen(h, e.players_depth);
             if (e.taken != 0) t.takeUpTaken(h, e.taken);
             t.takeUpCourse(h, @intCast(situation.t -| e.course_since), e.course_draws);

@@ -286,6 +286,11 @@ pub const Tick = struct {
         dispatch(t, h, "takeUpBlink", void, {}, .{ago});
     }
 
+    /// Taken up, the entity (a player) has kneed the one it holds `knees` times in this hold.
+    pub fn takeUpKnees(t: *Tick, h: Handle, knees: u8) void {
+        dispatch(t, h, "takeUpKnees", void, {}, .{knees});
+    }
+
     /// Taken up from a situation, the entity holds the weapon `weapon` (its holder set already).
     pub fn takeUpWeapon(t: *Tick, h: Handle, weapon: Handle) void {
         dispatch(t, h, "takeUpWeapon", void, {}, .{weapon});
