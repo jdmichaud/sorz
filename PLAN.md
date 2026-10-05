@@ -101,10 +101,13 @@
 
 - [ ] **18 — Network play** — Depends: 02, 13.
   - The session on the new canonical state; A1 and A2's checks (DESIGN.md section 9).
-- [ ] **19 — Settings and variants** — Depends: 08.
+- [x] **19 — Settings and variants** — Depends: 08.
   - The settings scene; the variants (original, extended, network: DESIGN.md 10.7) as flow
     graphs and policies; the extended OPTIONS lines; the network flow (one player a machine).
   - Gate: each variant's flow tested; the original's screens equal sor-remaster's.
+  - [x] Checked 2026-10-05: `variants-check -Drom` (the four flows, a negative control fails),
+    `screens-check` on the original, `browser-check -Drom` (part `flow`), the SDL build under
+    Xvfb with XTEST keys. The user's play is pending.
 - [ ] **20 — An extension** — Depends: 19, 14.
   - The same character twice in two players, its palette from data.
   - Gate: it plays, and nothing outside the policy and the content changed.
