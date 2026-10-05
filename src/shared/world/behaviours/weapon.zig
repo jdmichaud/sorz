@@ -45,8 +45,9 @@ pub const Numbers = struct {
 pub const Body = struct {
     /// The times it was taken up.
     taken: u8 = 0,
-    /// Its holder dropped it.
+    /// Its holder dropped it; put it down (it took another).
     dropped: bool = false,
+    put_down: bool = false,
     /// The ticks left of its blinking out.
     blink: u8 = 0,
     /// In a player's hand: the ticks its blow has struck, which it leaves a tick at a time.
@@ -143,9 +144,14 @@ pub fn Of(comptime M: type) type {
             a.mind.state = .held;
         }
 
-        /// Held: dropped, it shows and falls.
+        /// Held: put down, it lies (from its next tick); dropped, it shows and falls.
         fn held(a: A) void {
             const b = &a.mind.body;
+            if (b.put_down) {
+                b.put_down = false;
+                a.mind.state = .lying;
+                return;
+            }
             if (!b.dropped) return;
             b.dropped = false;
             b.strikes = 0;
@@ -179,17 +185,18 @@ pub fn Of(comptime M: type) type {
             a.entity.holder = null;
         }
 
-        /// Its holder took another: it lies where it is, on its holder's ground, as it showed;
-        /// it may be taken again.
+        /// Its holder took another: it lies where it is, on its holder's ground (its whole
+        /// pixels; its own fraction kept), as it showed, from its own turn when it is held (the
+        /// original's weapon sees it in its hold); it may be taken again.
         pub fn putDown(a: A) void {
             const e = a.entity;
             if (e.holder) |h| if (a.other(h)) |holder| {
-                e.position.height = holder.position.height;
+                e.position.height = .parts(@intCast(holder.position.height.whole()), e.position.height.frac());
             };
             e.holder = null;
             e.missile = null;
             a.mind.body.strikes = 0;
-            a.mind.state = .lying;
+            if (a.mind.state == .held) a.mind.body.put_down = true else a.mind.state = .lying;
         }
 
         /// Picked up: in its taker's hand (counted at its next tick).
