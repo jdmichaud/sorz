@@ -195,6 +195,9 @@ pub const Camera = struct {
     y_max: i32,
     /// Plane B scrolls across by `times` / `per` of the camera's move.
     plane_b: [2]u8 = .{ 1, 1 },
+    /// Plane B moves down as plane A does (the camera's shake too); else it keeps its place
+    /// down, the camera's at the start.
+    plane_b_down: bool = false,
     /// The camera has reached a section's wall when it is less than this from it.
     wall_within: i32 = 4,
     /// Where a wave's or a reserve's record comes in, across from the camera's left edge: on the
@@ -291,6 +294,27 @@ fn pair(arena: std.mem.Allocator, a: anytype, b: anytype) !json.Value {
 }
 
 /// The fields of a record, its provenance first when it has one.
+fn cameraValue(arena: std.mem.Allocator, c: *const Camera) !json.Value {
+    var f: std.ArrayList(json.Field) = .empty;
+    try f.appendSlice(arena, &.{
+        .{ .key = "at", .value = try pair(arena, c.x, c.y) },
+        .{ .key = "x_min", .value = json.Value.num(c.x_min) },
+        .{ .key = "y", .value = try pair(arena, c.y_min, c.y_max) },
+        .{ .key = "plane_b", .value = try pair(arena, c.plane_b[0], c.plane_b[1]) },
+        .{ .key = "wall_within", .value = json.Value.num(c.wall_within) },
+        .{ .key = "edges", .value = try pair(arena, c.edges[0], c.edges[1]) },
+        .{ .key = "left_behind", .value = try pair(arena, c.left_behind[0], c.left_behind[1]) },
+        .{ .key = "follow", .value = try pair(arena, c.follow[0], c.follow[1]) },
+        .{ .key = "follow_most", .value = json.Value.num(c.follow_most) },
+        .{ .key = "kept_x", .value = try pair(arena, c.kept_x[0], c.kept_x[1]) },
+        .{ .key = "kept_depth", .value = try pair(arena, c.kept_depth[0], c.kept_depth[1]) },
+        .{ .key = "shake", .value = try pair(arena, c.shake[0], c.shake[1]) },
+        .{ .key = "bands", .value = try bandsValue(arena, c.bands) },
+    });
+    if (c.plane_b_down) try f.append(arena, .{ .key = "plane_b_down", .value = .{ .bool = true } });
+    return withProvenance(arena, c.provenance, f.items);
+}
+
 fn withProvenance(arena: std.mem.Allocator, provenance: []const u8, rest: []const json.Field) !json.Value {
     var fields: std.ArrayList(json.Field) = .empty;
     if (provenance.len != 0) try fields.append(arena, .{ .key = "provenance", .value = .{ .str = provenance } });
@@ -385,21 +409,7 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         .{ .key = "art", .value = .{ .str = r.art } },
         .{ .key = "music", .value = .{ .str = r.music } },
         .{ .key = "ground", .value = json.Value.num(r.ground) },
-        .{ .key = "camera", .value = try withProvenance(arena, c.provenance, &.{
-            .{ .key = "at", .value = try pair(arena, c.x, c.y) },
-            .{ .key = "x_min", .value = json.Value.num(c.x_min) },
-            .{ .key = "y", .value = try pair(arena, c.y_min, c.y_max) },
-            .{ .key = "plane_b", .value = try pair(arena, c.plane_b[0], c.plane_b[1]) },
-            .{ .key = "wall_within", .value = json.Value.num(c.wall_within) },
-            .{ .key = "edges", .value = try pair(arena, c.edges[0], c.edges[1]) },
-            .{ .key = "left_behind", .value = try pair(arena, c.left_behind[0], c.left_behind[1]) },
-            .{ .key = "follow", .value = try pair(arena, c.follow[0], c.follow[1]) },
-            .{ .key = "follow_most", .value = json.Value.num(c.follow_most) },
-            .{ .key = "kept_x", .value = try pair(arena, c.kept_x[0], c.kept_x[1]) },
-            .{ .key = "kept_depth", .value = try pair(arena, c.kept_depth[0], c.kept_depth[1]) },
-            .{ .key = "shake", .value = try pair(arena, c.shake[0], c.shake[1]) },
-            .{ .key = "bands", .value = try bandsValue(arena, c.bands) },
-        }) },
+        .{ .key = "camera", .value = try cameraValue(arena, c) },
         .{ .key = "players", .value = try withProvenance(arena, p.provenance, &.{
             .{ .key = "x", .value = json.Value.num(p.x) },
             .{ .key = "depth", .value = try pair(arena, p.depth[0], p.depth[1]) },
@@ -552,7 +562,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     } else return (try root.get("art")).fail("no art set of this name");
 
     const c = try root.get("camera");
-    try c.only(&.{ "provenance", "at", "x_min", "y", "plane_b", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "bands" });
+    try c.only(&.{ "provenance", "at", "x_min", "y", "plane_b", "plane_b_down", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "bands" });
     const at = try readPair(try c.get("at"), i32);
     const y = try readPair(try c.get("y"), i32);
     r.camera = .{
@@ -563,6 +573,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         .y_min = y[0],
         .y_max = y[1],
         .plane_b = try readPair(try c.get("plane_b"), u8),
+        .plane_b_down = if (try c.opt("plane_b_down")) |n| try n.boolean() else false,
         .wall_within = try (try c.get("wall_within")).int(i32),
         .edges = try readPair(try c.get("edges"), i32),
         .left_behind = try readPair(try c.get("left_behind"), i32),

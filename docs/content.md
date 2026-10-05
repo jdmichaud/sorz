@@ -411,7 +411,8 @@ play).
   lasts (each round's art takes its own time; measured, sor-remaster's); else the flow's.
 - `camera`: the view's top-left corner at the start (`at`), how far back it may go at the start
   (`x_min`; it never goes back after), its limits down (`y`), and plane B's scroll across,
-  `plane_b` = [times, per] of the camera's. It has reached a wall when it is less than
+  `plane_b` = [times, per] of the camera's; `plane_b_down`, optional: true when plane B moves
+  down as plane A does (the camera's shake too), else it keeps its place down. It has reached a wall when it is less than
   `wall_within` pixels from it. A wave's records come in at `edges`, across from its left edge on
   the left and on the right; when it reaches a wall, the section's enemies at or behind
   `left_behind`'s first (across from its left edge) come back there, at its second's depth. In
@@ -420,7 +421,8 @@ play).
   within `kept_x` across from its left edge (but in a hold) and on the depths `kept_depth`; a
   heavy fall shakes it `shake`'s first ticks, its second's pixels down and up in turn. `bands`,
   each plane's bands (plane A's, then B's): `[rows, times, per]`, a band `rows` blocks high whose
-  place across is its plane's times `times` / `per`; as it crosses a column of blocks (16
+  place across is its plane's times `times` / `per` (a plane whose bands' ratios differ scrolls
+  by lines, each band's at its place); as it crosses a column of blocks (16
   pixels) the game writes the column coming in (and a row as the camera crosses one): their time
   comes before the sound's driver (A4).
 - `players`: where a life starts: `x` from the camera's left edge, each player's `depth`, and the

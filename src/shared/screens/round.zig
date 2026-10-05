@@ -1148,7 +1148,15 @@ pub const Round = struct {
         v.screen.plane_a.x = c[0];
         v.screen.plane_a.y = c[1];
         v.screen.plane_b.x = @divFloor(c[0] * r.camera.plane_b[0], r.camera.plane_b[1]);
-        v.screen.plane_b.y = c[2];
+        v.screen.plane_b.y = if (r.camera.plane_b_down) c[1] else c[2];
+        // A plane whose bands scroll at their own ratios scrolls by lines, each band's at its
+        // place across.
+        for ([_]view.Plane{ .a, .b }, r.camera.bands, [_]i32{ v.screen.plane_a.x, v.screen.plane_b.x }) |p, bands, x| {
+            if (!ownRatios(bands)) continue;
+            var left: [render.height]i16 = undefined;
+            bandLines(bands, x, &left);
+            v.lineScroll(p, &left);
+        }
         // The bosses' bars make the status bar a row taller.
         const lines = barLines(a) + if (now.bosses != null) bossesRows(a) * art.tile_side else 0;
         v.screen.window.lines = .{ .top = 0, .bottom = lines };
@@ -1168,6 +1176,36 @@ pub const Round = struct {
         if (self.shown_game_over) try v.sprites.append(v.gpa, .of(a.game_over_text, 0, 0));
     }
 };
+
+/// Whether a plane's bands scroll at their own ratios of its place across, not all at it.
+fn ownRatios(bands: []const content_round.Band) bool {
+    for (bands) |b| if (b.times != b.per) return true;
+    return false;
+}
+
+/// The place across of each line of the screen in a plane of `bands` at `x`: its band's, `x`
+/// times the band's ratio (toward zero, as the original's division), each band `rows` blocks
+/// of lines from the top; the lines past the last band, the last band's.
+fn bandLines(bands: []const content_round.Band, x: i32, left: *[render.height]i16) void {
+    const block = 16;
+    var line: usize = 0;
+    var last: i16 = @intCast(x);
+    for (bands) |b| {
+        last = @intCast(@divTrunc(x * b.times, b.per));
+        const end = @min(line + @as(usize, b.rows) * block, left.len);
+        @memset(left[line..end], last);
+        line = end;
+    }
+    @memset(left[line..], last);
+}
+
+test "a plane's lines at their bands' ratios" {
+    const bands = [_]content_round.Band{ .{ .rows = 6, .times = 1, .per = 4 }, .{ .rows = 3, .times = 1, .per = 2 }, .{ .rows = 6, .times = 1, .per = 1 } };
+    var left: [render.height]i16 = undefined;
+    bandLines(&bands, 803, &left);
+    try std.testing.expect(ownRatios(&bands));
+    try std.testing.expectEqual([4]i16{ 200, 200, 401, 803 }, [4]i16{ left[0], left[95], left[96], left[223] });
+}
 
 /// Which enemies' colours (by number, a bit each) are a kind's own.
 fn ownColours(ec: *const library.EnemyColours) u16 {

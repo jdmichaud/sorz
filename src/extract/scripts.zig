@@ -570,18 +570,20 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     if (u32be(rom, 0x19372) != 0x4A78FF02 or u16be(rom, 0x19376) != 0x6702 or u16be(rom, 0x19378) & 0xF1FF != 0xE040) return error.BadData;
     const plane_b_shift: u3 = @intCast((u16be(rom, 0x19378) >> 9) & 7);
     const plane_b: [2]u8 = switch (mode_b) {
-        0 => .{ 1, 1 },
+        // Round 5's plane B keeps its own place down and wobbles (0x1934A, 0x1916C): with round 5.
+        0 => if (r == 4) return error.BadData else .{ 1, 1 },
         1 => .{ 1, if (r == 0) 1 else @as(u8, 1) << plane_b_shift },
         else => return error.BadData,
     };
     const camera: round.Camera = .{
-        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down; the planes in their modes (the header's mode words): in mode 0 (0x18C4A, 0x1934A) their bands at the camera's X times their ratios, plane B at plane A's X; in mode 1 plane A at the camera's X, plane B at it in round 1, a quarter of it in the others (ROM 0x19378: asr.w #2); the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282); the planes' bands, their rows and ratios, from the layout records (0x199C6, the table at ROM 0x5F788), the strips the camera brings in (0x18B3C)", .{ h, limits_set / 8 }),
+        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down; the planes in their modes (the header's mode words): in mode 0 (0x18C4A, 0x1934A) their bands at the camera's X times their ratios, plane B at plane A's X and Y; in mode 1 plane A at the camera's X, plane B at it in round 1, a quarter of it in the others (ROM 0x19378: asr.w #2); the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282); the planes' bands, their rows and ratios, from the layout records (0x199C6, the table at ROM 0x5F788), the strips the camera brings in (0x18B3C)", .{ h, limits_set / 8 }),
         .x = u16be(rom, h + 6),
         .y = u16be(rom, h + 8),
         .x_min = u16be(rom, limits + 4),
         .y_min = u16be(rom, limits),
         .y_max = u16be(rom, limits + 2),
         .plane_b = plane_b,
+        .plane_b_down = mode_b == 0,
         .wall_within = @intCast(wall_within),
         .edges = .{ -8, @intCast(right_edge) },
         .left_behind = .{ -@as(i32, @intCast(behind_x)), @intCast(behind_depth) },
