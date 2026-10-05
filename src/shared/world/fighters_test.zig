@@ -612,7 +612,8 @@ const antonio_fixture =
     \\"ticks": 6}, {"body": "stand_body", "frame": "t/f0", "hand": {"height": -76,
     \\"pose": "held", "x": -14}, "ticks": 6}], "loop": true},
     \\"knocked": {"frames": [{"body": "knocked_body", "frame": "t/f0", "ticks": 1}],
-    \\"loop": true}, "lifted": {"frames": [{"attack": "lifted_attack", "frame": "t/f0",
+    \\"loop": true}, "flinch": {"frames": [{"body": "knocked_body", "frame": "t/f0",
+    \\"ticks": 1}], "loop": true}, "lifted": {"frames": [{"attack": "lifted_attack", "frame": "t/f0",
     \\"ticks": 1}], "loop": true}, "stand": {"frames": [{"body": "stand_body", "frame": "t/f0",
     \\"hand": {"height": -80, "pose": "held", "x": -18}, "ticks": 6}, {"body": "stand_body",
     \\"frame": "t/f0", "hand": {"height": -81, "pose": "held", "x": -18}, "ticks": 6},
@@ -679,7 +680,7 @@ const antonio_fixture =
     \\"keep_step_2": 26, "knee_damage": 2, "knock_back_ticks": 8, "knock_down_ticks": 30,
     \\"knocked_bounces": 2, "knocked_gravity": 65536, "knocked_up": -327680,
     \\"knocked_x": -327680, "last_knee_damage": 3, "level_far": 32, "level_mid": 16,
-    \\"level_near": 8, "missile_damage": 1, "near": 120, "on_screen_from": 0,
+    \\"level_near": 8, "missile_damage": 1, "near": 120, "on_screen_from": 0, "pepper_ticks": 30,
     \\"on_screen_to": 320, "outside_power": 2, "points": 3000, "points_at": 90, "power": 20,
     \\"push_from": -32, "push_to": 352, "screen_middle": 160, "shake": 2, "special_damage": 10,
     \\"special_grounded": 20, "special_ticks": 300, "special_ticks_second": 390,
@@ -2141,6 +2142,33 @@ test "a player picks up a pipe: hidden in the pick-up, then in hand; B swings it
     try testing.expect(down);
     // The pipe's blow, its power.
     try testing.expectEqual(before - 4, r.w.get(g).?.health);
+}
+
+test "a pepper shaker thrown at Antonio on his ground stops him a while, his stand and his flinch by turns; then he walks again" {
+    var r = try Round.init();
+    defer r.deinit();
+    _ = try r.w.spawnItem(&r.f.kinds, r.f.kinds.find("pepper").?, .pixels(810, 64, 160));
+    r.step(.{});
+    r.step(b_pad);
+    for (0..7) |_| r.step(.{});
+    try testing.expectEqualStrings("armed_stand", r.state());
+    const h = try r.w.spawnEnemy(&r.f.kinds, r.f.kinds.find("antonio").?, .pixels(900, 64, 160), .{});
+    r.step(.{});
+    r.step(b_pad);
+    const e = r.w.get(h).?;
+    var ticks: usize = 0;
+    while (!std.mem.eql(u8, behaviours.stateName(&e.mind).?, "peppered")) : (ticks += 1) {
+        try testing.expect(ticks < 40);
+        r.step(.{});
+    }
+    const health = e.health;
+    for (0..29) |_| {
+        r.step(.{});
+        try testing.expectEqualStrings("peppered", behaviours.stateName(&e.mind).?);
+    }
+    r.step(.{});
+    try testing.expectEqualStrings("walk", behaviours.stateName(&e.mind).?);
+    try testing.expectEqual(health, e.health);
 }
 
 test "a pepper shaker is thrown by the plain blow, a thing ahead or not; on the ground it bursts: its cloud, then its 8 pinches two ticks apart" {

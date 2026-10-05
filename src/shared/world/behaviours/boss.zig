@@ -5,10 +5,11 @@
 //! boss_r2.zig) has its own target, walk and blow, and the rest of its tick from this body.
 //!
 //! A boss's behaviour `M` gives the body: its `State` (with `appear`, `walk`, `swing` its blow,
-//! `knocked_back`, `held`, `down`, `tossed`, `vaulted`, `flung`, `special_still`), its `Mind` with
-//! the body's fields (as Antonio's), its `Numbers` with the body's, its `Animation` (with
-//! `stand`, its animation 0, and `knocked`, `held`, `held_behind`, `flight`, `bounce`, `down`,
-//! `lifted`), its `Sound` (`hurt`, `cry`, `thud`), and `walkAfresh(a)`, its walk from its start.
+//! `knocked_back`, `held`, `down`, `tossed`, `vaulted`, `flung`, `peppered`, `special_still`), its
+//! `Mind` with the body's fields (as Antonio's), its `Numbers` with the body's, its `Animation`
+//! (with `stand`, its animation 0, and `knocked`, `held`, `held_behind`, `flight`, `bounce`,
+//! `down`, `lifted`, `flinch`), its `Sound` (`hurt`, `cry`, `thud`), and `walkAfresh(a)`, its walk
+//! from its start.
 const std = @import("std");
 const tick = @import("../tick.zig");
 const fixed = @import("../fixed.zig");
@@ -182,20 +183,22 @@ pub fn Of(comptime M: type) type {
             faceAndShow(a, .stand);
         }
 
-        /// A blow meets him: walking, swinging or held, on the screen, a player's blow costs him its
-        /// damage at his next tick (knocking him down when it does); a thing thrown or swung (but by a
-        /// hand), a weapon's power or a body's, and it knocks down. His own blow does not land at this
-        /// tick.
+        /// A blow meets him: walking, swinging, held or peppered, on the screen, a player's blow
+        /// costs him its damage at his next tick (knocking him down when it does); a thing thrown or
+        /// swung (but by a hand), a weapon's power or a body's, and it knocks down; the pepper's, on
+        /// his ground, pepper him (`peppered`), else it does nothing. His own blow does not land at
+        /// this tick.
         pub fn struck(a: A, blow: tick.Blow) bool {
             const n = a.numbers();
             const m = a.mind;
             switch (m.state) {
-                .walk, .swing, .held => {},
+                .walk, .swing, .held, .peppered => {},
                 else => return false,
             }
             if (m.ended) return false;
             const sx = a.entity.position.x.whole() - a.tick.world.camera.x.whole();
             if (sx < n.struck_from or sx >= n.struck_to) return false;
+            if (blow.missile and blow.reaction == .sneeze) return peppered(a, blow);
             a.endMove();
             if (blow.missile) {
                 const thing = a.other(blow.attacker);
@@ -210,6 +213,35 @@ pub fn Of(comptime M: type) type {
             m.attacker = blow.attacker;
             m.knocks_down = blow.reaction == .knock_down;
             return true;
+        }
+
+        /// The pepper meets him: on his ground (not held), from its thrower, he stops where he is a
+        /// while, his tick over, showing his stand from its start; off his ground it does nothing.
+        fn peppered(a: A, blow: tick.Blow) bool {
+            const m = a.mind;
+            if (m.state == .held or a.entity.position.height.raw != m.ground.raw) return true;
+            a.endMove();
+            const thing = a.other(blow.attacker);
+            m.attacker = if (thing) |x| if (x.missile) |mi| mi.by else blow.attacker else blow.attacker;
+            m.state = .peppered;
+            m.count = a.numbers().pepper_ticks;
+            a.animate(.stand);
+            end(a);
+            return true;
+        }
+
+        /// Peppered: unmoving, his stand and his flinch by turns, two ticks each, until his ticks
+        /// run out; then he walks again.
+        pub fn pepperedTick(a: A) void {
+            const m = a.mind;
+            m.count -%= 1;
+            if (m.count == 0) {
+                M.walkAfresh(a);
+                a.pause(false);
+                return walkAgain(a);
+            }
+            a.animate(if (m.count & 2 != 0) .stand else .flinch);
+            a.pause(true);
         }
 
         /// The damage of a blow met at the last tick: he stops; his last health, a blow that knocks

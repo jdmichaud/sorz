@@ -36,6 +36,7 @@ pub const State = enum {
     tossed,
     vaulted,
     flung,
+    peppered,
     special_still,
 };
 
@@ -45,6 +46,7 @@ pub const trace_states = [_]struct { name: []const u8, state: State }{
     .{ .name = "thrown6", .state = .tossed },
     .{ .name = "thrown7", .state = .vaulted },
     .{ .name = "thrown8", .state = .flung },
+    .{ .name = "struck_by_bottle", .state = .peppered },
 };
 
 /// His step within his state (one byte of the original's for both): walking, he walks or turns;
@@ -113,7 +115,7 @@ pub const Mind = struct {
 };
 
 /// `stand` is his walk (his animation 0); `turn` his turn; `wind_up`... his charge's looks.
-pub const Animation = enum { stand, turn, wind_up, wind_up_2, wind_up_3, rush, knocked, held, held_behind, flight, bounce, down, lifted };
+pub const Animation = enum { stand, turn, wind_up, wind_up_2, wind_up_3, rush, knocked, held, held_behind, flight, bounce, down, lifted, flinch };
 pub const Sound = enum { hurt, cry, thud, rush };
 
 pub const Tables = struct {
@@ -217,6 +219,7 @@ pub const Numbers = struct {
     special_ticks: u16,
     special_ticks_second: u16,
     special_damage: u8,
+    pepper_ticks: u8,
     blast_x: Fixed,
     blast_up: Fixed,
     dying_x: Fixed,
@@ -281,6 +284,7 @@ pub fn begin(a: Actor) void {
             if (m.holder) |h| if (a.other(h)) |holder| C.measure(a, holder, false);
             if (C.takeDamage(a) or C.holdTaken(a)) C.end(a);
         },
+        .peppered => if (C.takeDamage(a) or C.holdTaken(a)) C.end(a),
         else => {},
     }
 }
@@ -298,6 +302,7 @@ pub fn think(a: Actor) void {
         .tossed => C.tossed(a),
         .vaulted => C.vaulted(a),
         .flung => C.flung(a),
+        .peppered => C.pepperedTick(a),
         .special_still => C.specialStill(a),
     };
     if (!a.entity.alive()) return;

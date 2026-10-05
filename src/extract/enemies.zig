@@ -866,6 +866,10 @@ fn bossBody(d: *Def, kind: u8) Error!void {
     try d.number("special_ticks", try movedWord(rom, 0x16B60, 0x54), "ROM 0x16B60: move.w #N,(84,a0)");
     try d.number("special_ticks_second", try movedWord(rom, 0x16B6C, 0x54), "ROM 0x16B6C: move.w #N,(84,a0) (the second player's)");
     try d.number("special_damage", try immediate(rom, 0x16A66, &.{ 0x04, 0x68 }, 2), "ROM 0x16A66: subi.w #N,(50,a0)");
+    // The pepper (a thrown thing of type $0C, 0x17BE0; on his ground, 0x17BAC): state 9
+    // (0x16B88) a while, his look 0 and the flinch by turns (bit 1 of his ticks, 0x16BAC).
+    if (u32be(rom, 0x17BE0) != 0x0C11000C or u32be(rom, 0x16BAC) != 0x08280001 or u16be(rom, 0x16BB0) != 98 or try moveq(rom, 0x16BAA, 0) != 0) return error.BadData;
+    try d.number("pepper_ticks", try moveByte(rom, 0x17BC2, 98), "ROM 0x17BC2: move.b #N,(98,a0) (peppered: state 9, 0x16B88)");
     try d.number("blast_x", try movedLong(rom, 0x16A84), "ROM 0x16A84: move.l #N,(28,a0)");
     try d.number("blast_up", try movedLong(rom, 0x16A8C), "ROM 0x16A8C: move.l #N,(36,a0); 0x16A7A");
     if (try movedLong(rom, 0x16A7A) != try movedLong(rom, 0x16A8C)) return error.BadData;
@@ -893,6 +897,7 @@ pub fn antonio(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definitio
         .{ .name = "bounce", .word = try animWord(rom, 0x17CC2) + try immediate(rom, 0x163F8, &.{ 0x06, 0x68 }, 2) + try quick(rom, 0x1640E, 0x5068) },
         .{ .name = "down", .word = try immediate(rom, 0x16490, &.{ 0x30, 0x3C }, 2) },
         .{ .name = "lifted", .word = try animWord(rom, 0x1662A) },
+        .{ .name = "flinch", .word = try moveq(rom, 0x16BB4, 0) },
         .{ .name = "idle", .word = try moveq(rom, 0x17058, 0) },
         .{ .name = "walk", .word = try moveq(rom, 0x1703A, 0) },
         .{ .name = "taunt", .word = try moveq(rom, 0x16FEE, 0) },
@@ -1087,6 +1092,7 @@ pub fn bossR2(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition
         .{ .name = "bounce", .word = try animWord(rom, 0x17CC2) + try immediate(rom, 0x163F8, &.{ 0x06, 0x68 }, 2) + try quick(rom, 0x1640E, 0x5068) },
         .{ .name = "down", .word = try immediate(rom, 0x16490, &.{ 0x30, 0x3C }, 2) },
         .{ .name = "lifted", .word = try animWord(rom, 0x1662A) },
+        .{ .name = "flinch", .word = try moveq(rom, 0x16BB4, 0) },
     };
     for (anims) |an| try d.animations.append(arena, .{ .name = an.name, .loop = true, .frames = try enemyFrames(&d, an.name, try wordEntry(an.word)) });
     // The slash's frames with an attack box are blows (from its first: the claws only show
@@ -1316,6 +1322,7 @@ pub fn bossR4(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition
         .{ .name = "bounce", .word = try animWord(rom, 0x17CC2) + try immediate(rom, 0x163F8, &.{ 0x06, 0x68 }, 2) + try quick(rom, 0x1640E, 0x5068) },
         .{ .name = "down", .word = try immediate(rom, 0x16490, &.{ 0x30, 0x3C }, 2) },
         .{ .name = "lifted", .word = try animWord(rom, 0x1662A) },
+        .{ .name = "flinch", .word = try moveq(rom, 0x16BB4, 0) },
     };
     for (anims) |an| try d.animations.append(arena, .{ .name = an.name, .loop = true, .frames = try enemyFrames(&d, an.name, try wordEntry(an.word)) });
     // His blow's power cleared each tick (0x174E8: clr.b (52,a0)): his own frames strike nothing.
