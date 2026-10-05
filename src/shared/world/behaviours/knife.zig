@@ -3,11 +3,10 @@
 //! across at its speed (`flying`), a thing thrown: its blow is its power and knocks down, on the
 //! enemies when a player threw it, on the players when an enemy did. It is gone (`gone`, then out
 //! of the world at its next tick) when its blow lands or a blow meets it; out of the screen's
-//! sides, it is out of the world at once. Its numbers and its poses are its definition's
-//! (`entities/knife.json`).
-//!
-//! TODO(PLAN item 15): its bounce off a wall (`bouncing`: a quarter of its speed back, falling,
-//! worn out once down) waits for the round's floor, whose cells say where the walls are.
+//! sides, it is out of the world at once. Where the round's floor stops it (`stopped`: a wall's
+//! cell, round 7's lift) it bounces (`bouncing`): a thing thrown no more, it goes back at a
+//! quarter of its speed, falling, and once down on the round's ground it lies worn out, to blink
+//! out. Its numbers and its poses are its definition's (`entities/knife.json`).
 const tick = @import("../tick.zig");
 const fixed = @import("../fixed.zig");
 const entity = @import("../entity.zig");
@@ -55,7 +54,7 @@ pub fn think(a: Actor) void {
             a.mind.went = true;
             return;
         },
-        .bouncing => {},
+        .bouncing => return bouncing(a),
         else => {},
     }
     if (C.act(a)) _ = C.leftBehind(a);
@@ -88,7 +87,42 @@ fn fly(a: Actor) void {
     e.flags.still = true;
     const from_camera = e.position.x.whole() - a.tick.world.camera.x.whole();
     if (from_camera < n.flight_from or from_camera >= n.flight_to) return a.remove();
+    if (stopped(a)) {
+        // Back at a quarter of its speed, from its next tick, a thing thrown no more.
+        e.velocity.x = .{ .raw = -%e.velocity.x.raw >> n.bounce_shift };
+        e.missile = null;
+        a.mind.state = .bouncing;
+        return;
+    }
     e.position = e.position.add(e.velocity);
+}
+
+/// Whether the round's floor stops it where it is: the cell there has a floor at its height or
+/// above (a wall's cell has one everywhere), as the original's cell attribute answers (its
+/// height taken from 0 down).
+fn stopped(a: Actor) bool {
+    const e = a.entity;
+    const c = a.tick.cellAt(e.position) orelse return false;
+    return c.floor and @max(e.position.height.whole(), 0) >= c.height;
+}
+
+/// Bouncing off a wall: it falls, faster each tick, and moves; stopped where it is now (a cell's
+/// floor, a wall's), when it is below the round's ground (its height compared unsigned, as the
+/// original's word), it lies on the ground (the fraction of its height and its speeds kept), worn
+/// out (its pick-ups at their end), as it showed.
+fn bouncing(a: Actor) void {
+    const n = a.numbers();
+    const e = a.entity;
+    e.flags.still = true;
+    e.velocity.height = e.velocity.height.add(n.bounce_gravity);
+    e.position = e.position.add(e.velocity);
+    if (!stopped(a)) return;
+    const ground = a.tick.world.ground.whole();
+    const z: u16 = @bitCast(@as(i16, @truncate(e.position.height.whole())));
+    if (ground >= z) return;
+    e.position.height = .parts(@intCast(ground), e.position.height.frac());
+    a.mind.body.taken = n.uses;
+    a.mind.state = .lying;
 }
 
 fn gone(a: Actor) void {
