@@ -102,19 +102,27 @@
 ## F6 — Network play, settings and variants
 
 - [x] **18 — Network play** — Depends: 02, 13.
-  - The session on the new canonical state; A1 and A2's checks (DESIGN.md section 9).
-  - [x] Checked 2026-10-05 on round 1 as it is: `netplay-check -Drom` (two agent hosts over
-    WebSockets from power-on into the round, the same state; a difference planted in the round,
-    named on both sides), `browser-check -Drom` (a Chromium guest on a native host's page into the
-    round, the same state; two pages through the relay), the host's variant both games'.
+  - Each machine its own front end; the players meet in the game: the second player's 2 PLAYERS
+    joins the first's at the select or mid-round, the host's canonical form loaded by the guest
+    (a loadable form), then lockstep; leaving, a dropped connection, a third turned away; A1 and
+    A2's checks (DESIGN.md section 9).
+  - [x] Checked 2026-10-05 on round 1 as it is: `netplay-check -Drom` (own menus; joins at the
+    select and mid-round, the states and pictures equal on; a guest leaving and another joining;
+    a third turned away; a dropped connection back in time and not; a planted difference named;
+    two processes over WebSockets, the guest joining mid-round), `browser-check -Drom` (a page
+    joining a native host's round; two pages through the relay, the first alone before the second
+    joins; a third turned away; the guest leaving).
   - [ ] Open: two real machines under `netem`'s latency and loss (A1), and the user's play.
 - [x] **19 — Settings and variants** — Depends: 08.
-  - The settings scene; the variants (original, extended, network: DESIGN.md 10.7) as flow
-    graphs and policies; the extended OPTIONS lines; the network flow (one player a machine).
+  - The settings scene, reached from OPTIONS' ADVANCED SETTINGS and from START during play (the
+    settings key in the original), showing the machine's own players; the variants (original,
+    extended, network: DESIGN.md 10.7) as flow graphs and policies; the network flow (each
+    machine its own menus: 2 PLAYERS and OPTIONS).
   - Gate: each variant's flow tested; the original's screens equal sor-remaster's.
-  - [x] Checked 2026-10-05: `variants-check -Drom` (the four flows, a negative control fails),
-    `screens-check` on the original, `browser-check -Drom` (part `flow`), the SDL build under
-    Xvfb with XTEST keys. The user's play is pending.
+  - [x] Checked 2026-10-05: `variants-check -Drom` (the original's menu, options, pause and
+    settings key; the extended ADVANCED SETTINGS and START opening the settings; the network
+    page's menu, settings and START; a guest's OPTIONS), `screens-check` on the original,
+    `browser-check -Drom` (part `flow`). The user's play is pending.
 - [ ] **20 — An extension** — Depends: 19, 14.
   - The same character twice in two players, its palette from data.
   - Gate: it plays, and nothing outside the policy and the content changed.
