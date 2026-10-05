@@ -331,7 +331,9 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   palette or the `counted` one while it is counted; the `wait` between the steps; the bonuses
   (`clear_bonus` for the round and each special attack left, `time_bonus` a second left,
   `level_bonus` a LEVEL), counted `count` points a tick; the `colours` faded in over the status
-  bar's.
+  bar's. `buttons`, the players' buttons by the options' CONTROL: for each choice in its order
+  (`layouts`), the pad's button (`a`, `b` or `c`) that gives the `special` attack, the `attack`
+  and the `jump`; left out, the cartridge's first alone.
   The parts' pictures are the `play` set's: `play/status_bar`
   under them, `play/time_digits` (the big digits, a column of two cells each), `play/health_1`
   and `_2` and `play/enemy_bar_1` and `_2` (a bar's full cells, its partial cell, its empty

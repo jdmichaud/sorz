@@ -268,6 +268,24 @@ pub const Clear = struct {
     colours: []const u8,
 };
 
+/// A pad's buttons that the options' CONTROL gives actions to.
+pub const Button = enum { a, b, c };
+
+/// The button that gives each of a player's actions: the special attack, the attack, the jump.
+pub const Layout = struct { special: Button = .a, attack: Button = .b, jump: Button = .c };
+
+/// The layouts of the options' CONTROL choices, in their order (the first, the cartridge's
+/// default).
+pub const Buttons = struct {
+    provenance: []const u8 = "",
+    layouts: []const Layout = &.{.{}},
+
+    /// Choice `control`'s layout (past the last: the first's).
+    pub fn of(self: *const Buttons, control: u8) Layout {
+        return if (control < self.layouts.len) self.layouts[control] else self.layouts[0];
+    }
+};
+
 /// Play's screen (`screens/round`): its fixed texts and its status bar.
 pub const Round = struct {
     banner: Banner,
@@ -278,6 +296,8 @@ pub const Round = struct {
     name_entry: NameEntry,
     enemy_colours: EnemyColours,
     clear: Clear,
+    /// The players' buttons by the options' CONTROL.
+    buttons: Buttons = .{},
 };
 
 /// The screens' records a tree has.
@@ -516,7 +536,38 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
         }) },
         .{ .key = "name_entry", .value = try nameEntryValue(arena, &r.name_entry) },
         .{ .key = "enemy_colours", .value = try enemyColoursValue(arena, &r.enemy_colours) },
+        .{ .key = "buttons", .value = try buttonsValue(arena, &r.buttons) },
     });
+}
+
+fn buttonsValue(arena: std.mem.Allocator, b: *const Buttons) !json.Value {
+    const layouts = try arena.alloc(json.Value, b.layouts.len);
+    for (layouts, b.layouts) |*o, l| {
+        const f = try arena.alloc(json.Field, 3);
+        f[0] = .{ .key = "special", .value = .{ .str = @tagName(l.special) } };
+        f[1] = .{ .key = "attack", .value = .{ .str = @tagName(l.attack) } };
+        f[2] = .{ .key = "jump", .value = .{ .str = @tagName(l.jump) } };
+        o.* = .{ .object = f };
+    }
+    return withProvenance(arena, b.provenance, &.{.{ .key = "layouts", .value = .{ .array = layouts } }});
+}
+
+fn readButtons(arena: std.mem.Allocator, n: json.Node) Error!Buttons {
+    try n.only(&.{ "provenance", "layouts" });
+    const ls = try n.get("layouts");
+    const count = try ls.len();
+    if (count == 0 or count > 8) return ls.fail("not 1 to 8 layouts");
+    const layouts = try arena.alloc(Layout, count);
+    for (layouts, 0..) |*o, k| {
+        const e = try ls.at(k);
+        try e.only(&.{ "special", "attack", "jump" });
+        inline for (.{ "special", "attack", "jump" }) |action| {
+            const v = try e.get(action);
+            @field(o, action) = std.meta.stringToEnum(Button, try v.string()) orelse return v.fail("not a button (a, b or c)");
+        }
+        if (o.special == o.attack or o.special == o.jump or o.attack == o.jump) return e.fail("a button for two actions");
+    }
+    return .{ .provenance = if (try n.opt("provenance")) |x| try x.string() else "", .layouts = layouts };
 }
 
 fn enemyColoursValue(arena: std.mem.Allocator, ec: *const EnemyColours) !json.Value {
@@ -728,7 +779,7 @@ fn readFrame(n: json.Node, a: ?*const art.Art) Error![]const u8 {
 }
 
 fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!Round {
-    try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue", "name_entry", "enemy_colours", "clear" });
+    try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue", "name_entry", "enemy_colours", "clear", "buttons" });
     const b = try n.get("banner");
     try b.only(&.{ "provenance", "left", "numbers", "right", "fade", "in", "in_ticks", "wait", "out", "out_ticks", "after" });
     const ns = try b.get("numbers");
@@ -800,6 +851,7 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
         },
         .name_entry = try readNameEntry(arena, try n.get("name_entry")),
         .enemy_colours = try readEnemyColours(arena, try n.get("enemy_colours"), a),
+        .buttons = if (try n.opt("buttons")) |x| try readButtons(arena, x) else .{},
         .banner = .{
             .provenance = if (try b.opt("provenance")) |x| try x.string() else "",
             .left = try readFrame(try b.get("left"), a),

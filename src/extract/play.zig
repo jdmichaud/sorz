@@ -781,5 +781,48 @@ pub fn extract(b: *Builder) !records.Round {
         .name_entry = try nameEntry(arena, rom, &players),
         .enemy_colours = try enemyColours(arena, rom),
         .clear = clear,
+        .buttons = try buttons(arena, rom),
+    };
+}
+
+/// The players' buttons by the options' CONTROL (0x568A, each player's pad as its tick reads it,
+/// both players', but in the attract demo): choice 1 moves the pad's B, C and A each to the next
+/// one's bit (B's to C's, C's to A's, A's around to B's), choice 2 each to the one before; the
+/// player then reads B's bit as the attack (0x2BA8: btst #4), C's as the jump (0x2FCC: btst
+/// #5), A's as the special attack (0x3FCC: btst #6). The pad's byte: start, A, C, B (bits 7 to
+/// 4), then the directions.
+fn buttons(arena: std.mem.Allocator, rom: []const u8) !records.Buttons {
+    const code = [_]struct { at: u32, words: []const u16 }{
+        // move.w ($FFC8).w,d7 (the option); beq (none: the pad as it is); the buttons moved
+        // (andi.w #$7070,d0) and the rest kept (andi.w #$8F0F,d1); cmpi.b #1,d7; beq.
+        .{ .at = 0x56A8, .words = &.{ 0x3E38, 0xFFC8, 0x6732, 0x3200, 0x0240, 0x7070, 0x0241, 0x8F0F, 0x0C07, 0x0001, 0x6710 } },
+        // Choice 2: lsr.w #1,d0, the bits out of the group (andi.w #$0808) back at its top
+        // (lsl.w #3).
+        .{ .at = 0x56BE, .words = &.{ 0xE248, 0x3400, 0x0240, 0x7070, 0x0242, 0x0808, 0xE74A } },
+        // Choice 1: lsl.w #1,d0, the bits out of the group (andi.w #$8080) back at its bottom
+        // (lsr.w #3).
+        .{ .at = 0x56CE, .words = &.{ 0xE348, 0x3400, 0x0240, 0x7070, 0x0242, 0x8080, 0xE64A } },
+        .{ .at = 0x2BA8, .words = &.{ 0x0828, 0x0004, 0x0055 } },
+        .{ .at = 0x2FCC, .words = &.{ 0x0828, 0x0005, 0x0055 } },
+        .{ .at = 0x3FCC, .words = &.{ 0x0828, 0x0006, 0x0055 } },
+    };
+    for (code) |c| for (c.words, 0..) |w, k| {
+        if (u16be(rom, c.at + 2 * @as(u32, @intCast(k))) != w) return error.BadData;
+    };
+    // The bits of B, C and A (4 to 6); a choice moves each by `step` within them.
+    const button_of_bit = [3]records.Button{ .b, .c, .a };
+    const steps = [3]i8{ 0, 1, -1 };
+    const out = try arena.alloc(records.Layout, steps.len);
+    for (out, steps) |*o, step| {
+        var action_of: [3]records.Button = undefined;
+        for (button_of_bit, 0..) |button, bit| {
+            const to: usize = @intCast(@mod(@as(i8, @intCast(bit)) + step, 3));
+            action_of[to] = button;
+        }
+        o.* = .{ .attack = action_of[0], .jump = action_of[1], .special = action_of[2] };
+    }
+    return .{
+        .provenance = "the players' pads by the options' CONTROL (0x568A, the code at ROM 0x56A8 to 0x56D8: choice 1 moves B, C and A each to the next one's bit, choice 2 each to the one before), read as the player reads them: B's bit the attack (0x2BA8), C's the jump (0x2FCC), A's the special attack (0x3FCC)",
+        .layouts = out,
     };
 }
