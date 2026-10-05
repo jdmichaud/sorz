@@ -994,7 +994,7 @@ pub const Run = struct {
             .state => |st| {
                 for (&w.entities, 0..) |*e, i| {
                     if (!e.alive() or !self.is(i, e, st.who)) continue;
-                    const now = world.behaviours.stateName(&e.mind) orelse continue;
+                    const now = world.behaviours.traceName(&e.mind) orelse continue;
                     var found = false;
                     for (st.states[0..st.count]) |name| found = found or std.mem.eql(u8, name, now);
                     if (found != st.negate) return true;

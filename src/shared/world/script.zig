@@ -359,6 +359,10 @@ fn place(t: *Tick, rec: *const Spawn, x: i32) void {
         std.log.warn("the world is full: the round's script's {s} is skipped", .{rec.kind});
         return;
     };
+    // A breakable holds the item its record names.
+    if (rec.holds) |name| {
+        if (t.kinds.find(name)) |item| t.give(h, item) else std.log.warn("the round's script's {s} holds a {s}, which the content does not define yet: it holds none", .{ rec.kind, name });
+    }
     // An enemy comes hidden, its health not yet given: its behaviour brings it out when its
     // place is on the screen.
     switch (t.kinds.get(kind).family()) {

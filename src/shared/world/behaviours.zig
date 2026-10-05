@@ -31,6 +31,9 @@
 //!   - `leftBehind(a)`: an enemy left behind the camera was brought back to its edge by the
 //!     round's script (script.zig);
 //!   - `knockedBack(a)`: an enemy on the screen as a player's new life drops in (lives.zig);
+//!   - `given(a, item)`: the round's script gave it an item to hold (a breakable's);
+//! - `trace_states`, the names the semantic traces give its states when they are not theirs (the
+//!   other program numbers some types' states): `traceName`;
 //! - `drives_animation`, true when its behaviour advances its animation's frames itself, as the
 //!   original's players do (`a.step()`), and keeps its boxes (`a.showBoxes()`): the animation
 //!   system then only notes the frame it shows.
@@ -39,7 +42,8 @@
 //! is the original's players' (PLAN item 11); `galsia` round 1's Galsias', on the enemies' common
 //! body (behaviours/enemy.zig, not a behaviour of its own: the states every enemy shares);
 //! `police_car` the special attack's, `go_arrow` the arrow a section's opening shows,
-//! `player_waiting` a player out of lives (PLAN item 13).
+//! `player_waiting` a player out of lives (PLAN item 13); `breakable` and `item` the street's
+//! breakables and what they leave (PLAN item 12).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -54,6 +58,8 @@ pub const galsia_pipe = @import("behaviours/galsia_pipe.zig");
 pub const acrobat = @import("behaviours/acrobat.zig");
 pub const shutter = @import("behaviours/shutter.zig");
 pub const weapon = @import("behaviours/weapon.zig");
+pub const breakable = @import("behaviours/breakable.zig");
+pub const item = @import("behaviours/item.zig");
 pub const police_car = @import("behaviours/police_car.zig");
 pub const go_arrow = @import("behaviours/go_arrow.zig");
 pub const player_waiting = @import("behaviours/player_waiting.zig");
@@ -71,6 +77,8 @@ pub const Mind = union(enum) {
     acrobat: acrobat.Mind,
     shutter: shutter.Mind,
     weapon: weapon.Mind,
+    breakable: breakable.Mind,
+    item: item.Mind,
     police_car: police_car.Mind,
     go_arrow: go_arrow.Mind,
     player_waiting: player_waiting.Mind,
@@ -136,6 +144,21 @@ pub fn stateName(m: *const Mind) ?[]const u8 {
     switch (m.*) {
         .none => return null,
         inline else => |*x| return @tagName(x.state),
+    }
+}
+
+/// The name the semantic traces give the state the entity is in: its module's `trace_states`
+/// name for it, else its own.
+pub fn traceName(m: *const Mind) ?[]const u8 {
+    switch (m.*) {
+        .none => return null,
+        inline else => |*x, tag| {
+            const M = module(tag);
+            if (@hasDecl(M, "trace_states")) {
+                for (M.trace_states) |p| if (p.state == x.state) return p.name;
+            }
+            return @tagName(x.state);
+        },
     }
 }
 

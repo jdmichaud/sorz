@@ -535,8 +535,8 @@ pub fn Of(comptime M: type) type {
         }
 
         /// It walks by its speed, across and in depth, each refused at the street's limits; a
-        /// solid thing in its way stops it, and it walks off. Returns false when it changed
-        /// state.
+        /// solid thing in its way stops it (`Tick.keptOut`), and it walks off (anew when it
+        /// walked off already). Returns false when it changed state.
         pub fn walk(a: A) bool {
             const n = a.numbers();
             const e = a.entity;
@@ -544,13 +544,9 @@ pub fn Of(comptime M: type) type {
             if (!x.lessThan(.zero) and x.lessThan(.pixels(n.walk_x_most))) e.position.x = x;
             const d = e.position.depth.add(e.velocity.depth);
             if (!d.lessThan(.pixels(n.walk_depth_least)) and d.lessThan(.pixels(n.walk_depth_most))) e.position.depth = d;
-            if (a.tick.solidAt(a.handle, e.position)) {
-                e.position = e.position.sub(.{ .x = e.velocity.x, .depth = e.velocity.depth });
-                a.stop();
-                walkOffOrFight(a);
-                return false;
-            }
-            return true;
+            if (!a.tick.keptOut(a.handle)) return true;
+            enter(a, .walk_off);
+            return false;
         }
 
         /// It walks by its speed in depth alone (a circle's, a line up's), refused at the
@@ -561,7 +557,7 @@ pub fn Of(comptime M: type) type {
             const e = a.entity;
             const d = e.position.depth.add(e.velocity.depth);
             if (!d.lessThan(.pixels(n.walk_depth_least)) and d.lessThan(.pixels(n.walk_depth_most))) e.position.depth = d;
-            return unblocked(a, .{ .depth = e.velocity.depth });
+            return unblocked(a);
         }
 
         /// It walks by its speed across alone, refused at the street's ends; a solid thing in its
@@ -571,13 +567,11 @@ pub fn Of(comptime M: type) type {
             const e = a.entity;
             const x = e.position.x.add(e.velocity.x);
             if (!x.lessThan(.zero) and x.lessThan(.pixels(n.walk_x_most))) e.position.x = x;
-            return unblocked(a, .{ .x = e.velocity.x });
+            return unblocked(a);
         }
 
-        fn unblocked(a: A, moved: fixed.Vec3) bool {
-            if (!a.tick.solidAt(a.handle, a.entity.position)) return true;
-            a.entity.position = a.entity.position.sub(moved);
-            a.stop();
+        fn unblocked(a: A) bool {
+            if (!a.tick.keptOut(a.handle)) return true;
             walkOffOrFight(a);
             return false;
         }
@@ -1278,11 +1272,7 @@ pub fn Of(comptime M: type) type {
             // Across only.
             const x = a.entity.position.x.add(a.entity.velocity.x);
             if (!x.lessThan(.zero) and x.lessThan(.pixels(n.walk_x_most))) a.entity.position.x = x;
-            if (a.tick.solidAt(a.handle, a.entity.position)) {
-                a.entity.position.x = a.entity.position.x.sub(a.entity.velocity.x);
-                a.stop();
-                enter(a, M.fights);
-            }
+            if (a.tick.keptOut(a.handle)) enter(a, M.fights);
         }
 
         /// A new stretch of pacing: its ticks and its speed drawn, away from the target's side.

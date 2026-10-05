@@ -201,6 +201,8 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
 - `boxes`: named boxes, each a span `[from, to]` (both included) on each axis from the entity's
   place, for the entity facing right. Facing left, the span across is `x_left` if given, else `x`
   mirrored (`[-to, -from]`). Two boxes meet when their spans overlap or touch on all three axes.
+  A box named `solid` stops the fighters' walks while its behaviour holds it solid (a
+  breakable's): a fighter whose place comes within it across and in depth goes back.
 - `animations`: each a list of `frames`, at least one: `frame`, a sprite frame by its full name;
   `ticks`, how many logic ticks it shows (1 to 255); `flip`, drawn mirrored besides the entity's
   facing; `body`, the box blows strike it in, and `attack`, the box its blow strikes with, while

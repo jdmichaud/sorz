@@ -310,6 +310,49 @@ const shutter =
     \\ }}
 ;
 
+/// A breakable: it stands (its body, its solid box), blinks broken; three pieces fly off.
+const breakable =
+    \\{"family": "scenery", "team": "neutral", "behaviour": "breakable",
+    \\ "numbers": {"height": 160, "breaking": 10, "going": 8, "pieces": 3, "piece_x": -12,
+    \\   "piece_depth": 4, "piece_above": 8, "piece_gravity": 61440, "left_behind": 96,
+    \\   "screen_from": -8, "screen_to": 328},
+    \\ "tables": {"piece_speed_x": [-65536, 81920, -81920, 0, 0, 0, 0, 0, 0, 0],
+    \\   "piece_speed_up": [-163840, -131072, -196608, 0, 0, 0, 0, 0, 0, 0],
+    \\   "piece_frame": [2, 3, 1, 1, 1, 1, 1, 1, 1, 1],
+    \\   "piece_offset": [0, 24, 0, 0, 0, 0, 0, 0, 0, 0]},
+    \\ "sounds": {"shatter": "smash"},
+    \\ "boxes": {"body": {"x": [-16, 16], "depth": [-10, 10], "height": [-80, 0]},
+    \\   "solid": {"x": [-27, 27], "depth": [-9, 3], "height": [-80, 0]}},
+    \\ "animations": {
+++ anim("stand", fr("2", "")) ++ "," ++ anim("blink", bare("2", "") ++ "," ++ bare("2", "")) ++ "," ++
+    anim("piece_1", bare("1", "")) ++ "," ++ anim("piece_2", bare("1", "")) ++ "," ++ anim("piece_3", bare("1", "")) ++
+    \\ }}
+;
+
+/// An apple: 20 health, up to 80.
+const apple =
+    \\{"family": "item", "team": "neutral", "behaviour": "item",
+    \\ "numbers": {"fall": 196608, "left_behind": 96, "health_most": 80, "health": 20, "lives": 0,
+    \\   "specials": 0, "points": 0},
+    \\ "sounds": {"picked": "food"},
+    \\ "boxes": {"body": {"x": [-8, 8], "depth": [-8, 8], "height": [-16, 0]}},
+    \\ "animations": {
+++ anim("lying", fr("1", "")) ++
+    \\ }}
+;
+
+/// A gold bar: 5000 points.
+const gold =
+    \\{"family": "item", "team": "neutral", "behaviour": "item",
+    \\ "numbers": {"fall": 196608, "left_behind": 96, "health_most": 80, "health": 0, "lives": 0,
+    \\   "specials": 0, "points": 5000},
+    \\ "sounds": {"picked": "pickup"},
+    \\ "boxes": {"body": {"x": [-8, 8], "depth": [-8, 8], "height": [-16, 0]}},
+    \\ "animations": {
+++ anim("lying", fr("1", "")) ++
+    \\ }}
+;
+
 const car =
     \\{"family": "effect", "team": "neutral", "behaviour": "police_car",
     \\ "numbers": {"run": 1048576, "run_most": 50331648, "comes": 33554432, "siren": 29,
@@ -343,6 +386,9 @@ const Fixture = struct {
             .{ .name = "galsia_pipe", .text = galsia_pipe },
             .{ .name = "pipe", .text = pipe },
             .{ .name = "shutter", .text = shutter },
+            .{ .name = "breakable", .text = breakable },
+            .{ .name = "apple", .text = apple },
+            .{ .name = "gold", .text = gold },
             .{ .name = "police_car", .text = car },
             .{ .name = "player_waiting", .text = waiting },
         };
@@ -989,4 +1035,56 @@ test "a Galsia behind a shutter: unseen until its player comes near, then the sl
     try testing.expect(down_at != null and down_at.? > 64);
     try testing.expectEqual(@as(i32, 160), r.w.get(g).?.position.height.whole());
     try testing.expectEqual(world_mod.Entrance.close_in, r.w.get(g).?.spawn.entrance);
+}
+
+test "a breakable stops the player at its side; a blow on the screen breaks it: its item, its pieces, its blink" {
+    var r = try Round.init();
+    defer r.deinit();
+    const b = try r.w.spawnWithin(&r.f.kinds, r.f.kinds.find("breakable").?, 2, 34, .pixels(870, 64, 160), .right);
+    var t = r.tick();
+    t.give(b, r.f.kinds.find("apple").?);
+    r.step(.{});
+    try testing.expectEqualStrings("s1", behaviours.traceName(&r.w.get(b).?.mind).?);
+    try testing.expect(r.w.get(b).?.flags.solid);
+    // Walking right, the player stops against its side, 28 pixels from its place.
+    for (0..20) |_| r.step(.{ .pad1 = .{ .right = true } });
+    try testing.expectEqual(@as(i32, 842), r.player().position.x.whole());
+    r.step(.{});
+    // The jab's blow breaks it: the apple where it stood, in the items' places; its pieces after.
+    r.step(b_pad);
+    for (0..3) |_| r.step(.{});
+    try testing.expectEqualStrings("breaking", behaviours.stateName(&r.w.get(b).?.mind).?);
+    try testing.expect(!r.w.get(b).?.flags.solid);
+    const item = r.w.handleAt(World.item_places.from).?;
+    try testing.expectEqualStrings("apple", r.f.kinds.get(r.w.get(item).?.kind.?).name());
+    try testing.expectEqual(@as(i32, 870), r.w.get(item).?.position.x.whole());
+    try testing.expectEqualStrings("lying", behaviours.stateName(&r.w.get(item).?.mind).?);
+    var pieces: usize = 0;
+    for (World.item_places.from + 1..World.item_places.to) |i| {
+        const ph = r.w.handleAt(i) orelse continue;
+        try testing.expectEqualStrings("s2", behaviours.traceName(&r.w.get(ph).?.mind).?);
+        pieces += 1;
+    }
+    try testing.expectEqual(@as(usize, 3), pieces);
+    // The pieces fall and go; it blinks 18 ticks and goes.
+    for (0..20) |_| r.step(.{});
+    try testing.expect(r.w.get(b) == null);
+    for (World.item_places.from + 1..World.item_places.to) |i| try testing.expect(r.w.handleAt(i) == null);
+}
+
+test "an item picked up gives what it gives and goes: health up to the most, points" {
+    var r = try Round.init();
+    defer r.deinit();
+    r.player().health = 70;
+    const a = try r.w.spawnItem(&r.f.kinds, r.f.kinds.find("apple").?, .pixels(810, 64, 160));
+    r.step(.{});
+    r.step(b_pad);
+    try testing.expectEqualStrings("pick_up", r.state());
+    try testing.expect(r.w.get(a) == null);
+    try testing.expectEqual(@as(i16, 80), r.player().health);
+    for (0..10) |_| r.step(.{});
+    _ = try r.w.spawnItem(&r.f.kinds, r.f.kinds.find("gold").?, .pixels(810, 64, 160));
+    r.step(.{});
+    r.step(b_pad);
+    try testing.expectEqual(@as(u32, 5000), r.w.players[0].score);
 }

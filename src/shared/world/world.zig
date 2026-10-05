@@ -217,6 +217,23 @@ pub const World = struct {
     /// original's weapons' objects, its 35th to its 42nd).
     pub const weapon_places: struct { from: usize, to: usize } = .{ .from = 34, .to = 42 };
 
+    /// The places the items a breakable leaves and its pieces take, after the weapons' (the
+    /// original's objects 43 to 50).
+    pub const item_places: struct { from: usize, to: usize } = .{ .from = 42, .to = 50 };
+
+    /// An item a breakable leaves: in the first free place of the items', else in the last free
+    /// one below them, down to the enemies' first (as the original's).
+    pub fn spawnItem(self: *World, kinds: *const Kinds, kind: KindId, position: Vec3) Full!Handle {
+        return self.spawnWithin(kinds, kind, item_places.from, item_places.to, position, .right) catch {
+            var i = item_places.to;
+            while (i > enemy_places.from) {
+                i -= 1;
+                if (!self.entities[i].alive()) return self.spawnIn(kinds, kind, i, position, .right);
+            }
+            return error.Full;
+        };
+    }
+
     /// `spawn` in the first free place from `from` to `to` (excluded).
     pub fn spawnWithin(self: *World, kinds: *const Kinds, kind: KindId, from: usize, to: usize, position: Vec3, facing: entity.Facing) Full!Handle {
         for (from..@min(to, capacity)) |i| {

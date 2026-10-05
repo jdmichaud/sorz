@@ -185,11 +185,14 @@ fn turns(t: *Tick) void {
 /// keeps them where it orders its drawing).
 pub const ground_depths: struct { near: i32, far: i32 } = .{ .far = 0, .near = 240 };
 
-/// The entities the players play move, in their turn.
+/// The entities the players play move, in their turn; one that moved into a solid thing is
+/// kept out of it (`Tick.keptOut`).
 fn playersMove(t: *Tick) void {
     for (t.world.players) |p| {
         const h = p.entity orelse continue;
         move(t, h);
+        const e = t.world.get(h) orelse continue;
+        if (e.holder == null) _ = t.keptOut(h);
     }
 }
 
@@ -270,8 +273,8 @@ fn blowsOnPlayers(t: *Tick, xh: Handle) void {
 /// `a`'s blow under way (`Tick.power`), when its frame has an attack box, strikes `target` when
 /// the box meets its body and `a`'s team's blows land on its team: the target's behaviour takes
 /// the blow or not (`Tick.struck`: by default, its damage at once); a blow taken is told to the
-/// striker (`blowLanded`) and asks for the move's hit sound. An attack box without a blow under
-/// way is a reach, which the grabs answer.
+/// striker (`blowLanded`) and, on a fighter, asks for the move's hit sound (a breakable sounds
+/// its own). An attack box without a blow under way is a reach, which the grabs answer.
 fn blow(t: *Tick, ah: Handle, th: Handle) void {
     const a = t.world.get(ah) orelse return;
     const attack = a.boxes.attack orelse return;
@@ -297,7 +300,11 @@ fn blow(t: *Tick, ah: Handle, th: Handle) void {
     };
     if (!t.struck(th, b)) return;
     t.blowLanded(ah, th);
-    if (m.hit_sound) |snd| t.sound(snd, ah);
+    const fighter = switch (t.kindOf(target).family()) {
+        .player, .enemy, .boss => true,
+        else => false,
+    };
+    if (fighter) if (m.hit_sound) |snd| t.sound(snd, ah);
 }
 
 /// A missile (`Missile`: a body thrown, a weapon swung or thrown) strikes with its attack box

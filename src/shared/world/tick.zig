@@ -451,9 +451,9 @@ pub const Tick = struct {
         }
     }
 
-    /// Whether a solid thing other than `h` stands at `place` (whole pixels, across and in
-    /// depth): strictly inside its definition's `solid` box.
-    pub fn solidAt(t: *const Tick, h: Handle, place: Vec3) bool {
+    /// The first solid thing (in the world's order) other than `h` whose `solid` box holds
+    /// `place` (whole pixels, across and in depth).
+    fn solidThere(t: *const Tick, h: Handle, place: Vec3) ?*const Entity {
         const x = place.x.whole();
         const d = place.depth.whole();
         for (&t.world.entities, 0..) |*o, i| {
@@ -464,9 +464,35 @@ pub const Tick = struct {
             const od = o.position.depth.whole();
             if (x < ox + b.x.from or x > ox + b.x.to) continue;
             if (d < od + b.depth.from or d > od + b.depth.to) continue;
-            return true;
+            return o;
         }
-        return false;
+        return null;
+    }
+
+    /// `h` moved into a solid thing (a breakable): its move is undone by its speed, across and
+    /// in depth; moving across only, it stands against the thing's side (its whole pixels; its
+    /// fraction kept); its speed across and in depth goes. Whether it was (as in the original's
+    /// fighters' walks).
+    pub fn keptOut(t: *Tick, h: Handle) bool {
+        const e = t.world.get(h) orelse return false;
+        const o = t.solidThere(h, e.position) orelse return false;
+        e.position.x = e.position.x.sub(e.velocity.x);
+        e.position.depth = e.position.depth.sub(e.velocity.depth);
+        if (e.velocity.depth.raw == 0) {
+            const def = t.kindOf(o).definition;
+            const b = def.boxes[def.box("solid").?];
+            const ox = o.position.x.whole();
+            const side = if (ox >= e.position.x.whole()) ox + b.x.from - 1 else ox + b.x.to + 1;
+            e.position.x = .parts(@intCast(side), e.position.x.frac());
+        }
+        e.velocity.x = .zero;
+        e.velocity.depth = .zero;
+        return true;
+    }
+
+    /// The round's script gives the entity `item` to hold (a breakable's, which it leaves).
+    pub fn give(t: *Tick, h: Handle, item: entity.KindId) void {
+        dispatch(t, h, "given", void, {}, .{item});
     }
 
     /// The first item or weapon (in the world's order) that nothing holds whose place lies

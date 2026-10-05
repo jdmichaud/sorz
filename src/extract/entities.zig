@@ -17,6 +17,7 @@ const sprites = @import("sprites.zig");
 const sound_names = @import("sound_names.zig");
 const enemies = @import("enemies.zig");
 const weapons = @import("weapons.zig");
+const items = @import("items.zig");
 
 const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
@@ -734,6 +735,7 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8) Error![]const entity.Defin
     try out.append(arena, try player(arena, rom, "axel", 0));
     try enemies.all(arena, rom, &out);
     try weapons.all(arena, rom, &out);
+    try items.all(arena, rom, &out);
     try out.append(arena, try policeCar(arena, rom));
     try out.append(arena, try goArrow(arena, rom));
     try out.append(arena, try playerWaiting(arena, rom));

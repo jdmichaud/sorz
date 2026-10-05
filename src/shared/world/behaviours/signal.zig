@@ -195,11 +195,7 @@ fn diagonal(a: Actor) void {
         const x = e.position.x.add(e.velocity.x);
         const refused = x.lessThan(.zero) or !x.lessThan(.pixels(n.walk_x_most));
         if (!refused) e.position.x = x;
-        if (a.tick.solidAt(a.handle, e.position)) {
-            e.position.x = e.position.x.sub(e.velocity.x);
-            a.stop();
-            return Common.enter(a, .walk_off);
-        }
+        if (a.tick.keptOut(a.handle)) return Common.enter(a, .walk_off);
         if (!refused) {
             const past = if (e.velocity.x.raw < 0) e.position.x.whole() < b.dest_x.whole() else e.position.x.whole() >= b.dest_x.whole();
             if (!past) return;
