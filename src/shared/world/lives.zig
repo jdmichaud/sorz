@@ -41,6 +41,9 @@ pub fn lifeOver(t: *Tick, h: Handle) void {
     t.world.morph(t.kinds, h, kind);
     // The original clears its record: at the level's corner, which the camera's keeping the
     // players in view then moves (it stays hidden there).
+    // TODO(PLAN item 23, exact): the original draws its shadow object one display tick more, at
+    // the floor's top, as its owner becomes the waiting player (two display ticks differ from
+    // sor-remaster's pictures there); not reproduced.
     const e = t.world.get(h).?;
     e.position = .zero;
     e.flags.hidden = true;

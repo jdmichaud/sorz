@@ -38,18 +38,60 @@ pub const Act = union(enum) {
     done,
 };
 
+/// A step of the program, and whether it is the counting's: START held on a counting step adds
+/// the bonuses left at once and goes on from the first step after the counting (the original's
+/// steps $14 to $51, then $52).
+pub const Step = struct { act: Act, counting: bool = false };
+
+fn step(act: Act) Step {
+    return .{ .act = act };
+}
+
+fn counting(act: Act) Step {
+    return .{ .act = act, .counting = true };
+}
+
 /// The steps of rounds 1 to 7 (round 8's lives bonuses come with PLAN item 15).
-pub const program = [_]Act{
-    .fade_in,        .header,           .wait,            .{ .line = 0 },   .{ .line = 1 },    .{ .line = 2 },
-    .wait,           .{ .counted = 0 }, .{ .count = 0 },  .wait,            .{ .normal = 0 },  .{ .counted = 1 },
-    .wait,           .{ .count = 1 },   .wait,            .{ .normal = 1 }, .{ .counted = 2 }, .wait,
-    .{ .count = 2 }, .wait,             .{ .normal = 2 }, .wait,            .wait,             .fade_out,
-    .done,
+pub const program = [_]Step{
+    step(.fade_in),
+    step(.header),
+    step(.wait),
+    step(.{ .line = 0 }),
+    step(.{ .line = 1 }),
+    step(.{ .line = 2 }),
+    // The counting: each bonus's line in the counted colours, its count, its line back.
+    counting(.wait),
+    counting(.{ .counted = 0 }),
+    counting(.{ .count = 0 }),
+    counting(.wait),
+    counting(.{ .normal = 0 }),
+    counting(.{ .counted = 1 }),
+    counting(.wait),
+    counting(.{ .count = 1 }),
+    counting(.wait),
+    counting(.{ .normal = 1 }),
+    counting(.{ .counted = 2 }),
+    counting(.wait),
+    counting(.{ .count = 2 }),
+    counting(.wait),
+    counting(.{ .normal = 2 }),
+    step(.wait),
+    step(.wait),
+    step(.fade_out),
+    step(.done),
 };
 
-/// The step from which START held adds the bonuses at once, and the one it goes to.
-const skip_from = 7;
-const skip_to = 21;
+/// The first step after the counting, where START held goes. The counting's steps are one run.
+const skip_to = blk: {
+    var first: ?usize = null;
+    var after: ?usize = null;
+    for (program, 0..) |s, i| {
+        if (s.counting and first == null) first = i;
+        if (s.counting and after != null) @compileError("the counting's steps are not one run");
+        if (!s.counting and first != null and after == null) after = i;
+    }
+    break :blk after orelse @compileError("no step after the counting");
+};
 
 /// What a bonus's line shows: nothing, its text in the normal or the counted colours, and its
 /// digits (null: the text's own zeros).
@@ -133,8 +175,8 @@ pub const RoundClear = struct {
         }
         const c = &a.screen.clear;
         const g = &turn.setup.progress;
-        if (self.act >= skip_from and self.act < skip_to and startHeld(turn, g)) self.skip(g, a);
-        switch (program[self.act]) {
+        if (program[self.act].counting and startHeld(turn, g)) self.skip(g, a.screen.status_bar.score_most);
+        switch (program[self.act].act) {
             .fade_in, .fade_out => if (self.colours.stepFade()) self.next(),
             .header => {
                 self.now.header = true;
@@ -174,7 +216,7 @@ pub const RoundClear = struct {
                     const n = @min(c.count, self.bonuses[k]);
                     self.bonuses[k] -= n;
                     self.counting = k;
-                    for (&g.players) |*p| if (p.in_play) addScore(p, n, a);
+                    for (&g.players) |*p| if (p.in_play) addScore(p, n, a.screen.status_bar.score_most);
                     turn.play(a.tick);
                     self.now.lines[k].digits = self.bonuses[k];
                 }
@@ -190,7 +232,7 @@ pub const RoundClear = struct {
 
     fn next(self: *RoundClear) void {
         self.act += 1;
-        if (program[self.act] == .fade_out) self.colours.startFade(.black);
+        if (program[self.act].act == .fade_out) self.colours.startFade(.black);
     }
 
     /// START held on the pad of a player in play.
@@ -200,13 +242,17 @@ pub const RoundClear = struct {
         return false;
     }
 
-    /// START held: what is left of the bonuses goes to the scores at once, the lines show them
-    /// all, and the counting ends.
-    fn skip(self: *RoundClear, g: *setup_mod.Progress, a: *const Assets) void {
+    /// START held: what is left of the bonuses goes to the scores at once (held at `most`), the
+    /// lines are drawn again with their own zeros (the original's from the ROM), and the
+    /// counting ends.
+    fn skip(self: *RoundClear, g: *setup_mod.Progress, most: u32) void {
         var left: u32 = 0;
         for (self.bonuses) |b| left += b;
-        for (&g.players) |*p| if (p.in_play) addScore(p, left, a);
-        for (&self.now.lines, self.bonuses) |*l, b| l.* = .{ .shown = true, .digits = if (b != 0) b else null };
+        for (&g.players) |*p| if (p.in_play) addScore(p, left, most);
+        for (&self.now.lines) |*l| l.* = .{ .shown = true };
+        // The timer shows 00 from then on: the original draws it from the other byte of the
+        // timer's count, which a round's timer leaves at 0.
+        g.timer = 0;
         self.counting = null;
         self.act = skip_to;
         self.left = 0;
@@ -283,9 +329,9 @@ fn drawLine(v: *view.View, a: *const RoundClear.Assets, k: usize, l: Line) !void
     }
 }
 
-/// `points` to a player's score, which holds at the most a score holds (play's record's).
-fn addScore(p: *setup_mod.Gamer, points: u32, a: *const RoundClear.Assets) void {
-    p.score = @min(p.score + points, a.screen.status_bar.score_most);
+/// `points` to a player's score, which holds at `most` (play's record's `score_most`).
+fn addScore(p: *setup_mod.Gamer, points: u32, most: u32) void {
+    p.score = @min(p.score +| points, most);
 }
 
 /// The status bar of the game under way: the players in play's parts, the timer.
@@ -298,7 +344,24 @@ fn barOf(g: *const setup_mod.Progress) round_screen.Bar {
     return b;
 }
 
-test "the steps: a wait is its first tick and the record's ticks" {
-    try std.testing.expect(program[0] == .fade_in and program[program.len - 1] == .done);
-    try std.testing.expect(program[skip_to] == .wait and program[skip_from] == .counted);
+test "the steps: the counting from the wait after the lines, a skip to the wait after it" {
+    try std.testing.expect(program[0].act == .fade_in and program[program.len - 1].act == .done);
+    // The original's skip starts at the wait after the level's line ($14), and goes to the wait
+    // after the level's line back in the normal colours ($52).
+    try std.testing.expect(program[5].act == .line and program[6].counting and program[6].act == .wait);
+    try std.testing.expect(program[skip_to - 1].act == .normal and program[skip_to].act == .wait);
+}
+
+test "START held at the counting's first wait: the bonuses at once, held at the most, the lines' zeros" {
+    var r: RoundClear = .{ .act = 6, .bonuses = .{ 20000, 4500, 10000 } };
+    r.now.lines[0] = .{ .shown = true, .digits = 20000 };
+    var g: setup_mod.Progress = .{ .round = 1, .timer = 45 };
+    g.players[0] = .{ .in_play = true, .score = 995_000 };
+    g.players[1] = .{ .in_play = false, .score = 100 };
+    r.skip(&g, 999_900);
+    try std.testing.expectEqual(@as(u32, 999_900), g.players[0].score);
+    try std.testing.expectEqual(@as(u32, 100), g.players[1].score);
+    try std.testing.expectEqual(@as(u8, skip_to), r.act);
+    try std.testing.expectEqual(@as(u8, 0), g.timer);
+    for (r.now.lines) |l| try std.testing.expect(l.shown and !l.counted and l.digits == null);
 }
