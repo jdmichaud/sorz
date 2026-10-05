@@ -149,7 +149,8 @@ pub fn Of(comptime M: type) type {
         }
 
         /// It falls, faster each tick: once at or under the ground, it lies there (the fraction
-        /// of its height kept), still.
+        /// of its height kept), still, facing right (the original clears its pose and its way as
+        /// it lands, whichever way its holder faced).
         fn falling(a: A) void {
             const e = a.entity;
             e.velocity.height = e.velocity.height.add(.of(a.kind.definition.gravity));
@@ -160,6 +161,7 @@ pub fn Of(comptime M: type) type {
             }
             e.position.height = .parts(@intCast(ground), e.position.height.frac());
             e.velocity = .zero;
+            e.facing = .right;
             pose(a, "lying");
             a.mind.state = .lying;
         }
