@@ -304,15 +304,17 @@ pub const Animation = struct {
 
 pub const AnimationStep = struct { map: []const u8, colours: []const u8 };
 
-/// A sound a round plays by itself (round 3's waves): `sound` (a name of the sound content),
-/// `times` times, the first at play's `first`th tick, then every `every` ticks; counted again
-/// from each section's opening. It counts in play, the special attack's too.
+/// A sound a round plays by itself (round 3's waves, round 5's horn): `sound` (a name of the
+/// sound content), `times` times (none: endlessly), the first at play's `first`th tick, then every
+/// `every` ticks; counted again from each section's opening when `per_section`. It counts in
+/// play, the special attack's too.
 pub const OwnSound = struct {
     provenance: []const u8 = "",
     sound: []const u8,
-    first: u8,
-    every: u8,
-    times: u8,
+    first: u16,
+    every: u16,
+    times: ?u8 = null,
+    per_section: bool = true,
 };
 
 /// The rounds a tree may have, by their files' names.
@@ -514,7 +516,8 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         .{ .key = "sound", .value = .{ .str = o.sound } },
         .{ .key = "first", .value = json.Value.num(o.first) },
         .{ .key = "every", .value = json.Value.num(o.every) },
-        .{ .key = "times", .value = json.Value.num(o.times) },
+        .{ .key = "times", .value = if (o.times) |n| json.Value.num(n) else .null },
+        .{ .key = "per_section", .value = .{ .bool = o.per_section } },
     }) });
     if (r.boss) |*b| try fields.append(arena, .{ .key = "boss", .value = try withProvenance(arena, b.provenance, &.{
         .{ .key = "fade", .value = .{ .str = b.fade } },
@@ -748,13 +751,15 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         if (r.animation.?.every == 0) return (try an.get("every")).fail("not 1 or more");
     }
     if (try root.opt("own_sound")) |o| {
-        try o.only(&.{ "provenance", "sound", "first", "every", "times" });
+        try o.only(&.{ "provenance", "sound", "first", "every", "times", "per_section" });
+        const times = try o.get("times");
         r.own_sound = .{
             .provenance = try provenanceOf(o),
             .sound = try (try o.get("sound")).string(),
-            .first = try (try o.get("first")).int(u8),
-            .every = try (try o.get("every")).int(u8),
-            .times = try (try o.get("times")).int(u8),
+            .first = try (try o.get("first")).int(u16),
+            .every = try (try o.get("every")).int(u16),
+            .times = if (times.isNull()) null else try times.int(u8),
+            .per_section = if (try o.opt("per_section")) |n| try n.boolean() else true,
         };
         if (r.own_sound.?.first == 0) return (try o.get("first")).fail("not 1 or more");
         if (r.own_sound.?.every == 0) return (try o.get("every")).fail("not 1 or more");

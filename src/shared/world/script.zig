@@ -223,7 +223,7 @@ pub const State = struct {
     chosen: u8 = 0,
     chosen_art: ?u3 = null,
     /// The round's own sound (`Round.own_sound`): its times left, the ticks to the next.
-    own_sound: struct { left: u8 = 0, ticks: u8 = 0 } = .{},
+    own_sound: struct { left: ?u8 = 0, ticks: u16 = 0 } = .{},
     /// The round's animation (`Round.animation`): the step it shows, the ticks to the next.
     animation: struct { step: u8 = 0, ticks: u8 = 0 } = .{},
 };
@@ -279,6 +279,11 @@ fn ownSoundAgain(w: anytype, r: *const Round) void {
     if (r.own_sound) |o| w.script.own_sound = .{ .left = o.times, .ticks = o.first };
 }
 
+/// At a section's opening, the round's own sound counts again when it does so.
+fn ownSoundAtSection(w: anytype, r: *const Round) void {
+    if (r.own_sound) |o| if (o.per_section) ownSoundAgain(w, r);
+}
+
 /// The round's own sound, asked for before the entities' turns (in the tick's first half): while
 /// it has times left, its ticks count down; at zero it plays, and the next is due `every` ticks
 /// later.
@@ -286,11 +291,11 @@ pub fn ownSound(t: *Tick) void {
     const p = t.plan orelse return;
     const o = p.round.own_sound orelse return;
     const s = &t.world.script.own_sound;
-    if (s.left == 0) return;
+    if (s.left) |n| if (n == 0) return;
     s.ticks -|= 1;
     if (s.ticks != 0) return;
     s.ticks = o.every;
-    s.left -= 1;
+    if (s.left) |*n| n.* -= 1;
     t.out.sounds.append(.{ .name = o.sound, .first = true });
 }
 
@@ -351,7 +356,7 @@ pub fn opening(t: *Tick) void {
     // The first section's wall and timer are the round's own.
     if (s.part == 0) return;
     t.world.camera.x_max = .pixels(p.round.sections[s.part].wall);
-    ownSoundAgain(t.world, p.round);
+    ownSoundAtSection(t.world, p.round);
     restartTimer(t.world, p);
     // The GO arrow, in a free place of the effects'.
     if (t.kinds.find(go_arrow)) |kind| {
