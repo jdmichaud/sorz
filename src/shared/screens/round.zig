@@ -795,10 +795,8 @@ pub const Round = struct {
         self.noteStrips(self.stage(a).script, camera_before, self.play.world.camera);
         // The players' sounds are the logic tick's first half's (the original updates its players
         // before the wait in its middle), the others' its second's.
-        const w0 = &self.play.world;
         for (out.sounds.slice()) |s| if (a.sounds.find(s.name)) |id| {
-            const first = if (s.by) |h| w0.playerOf(h) != null else false;
-            if (first) turn.playNow(id) else turn.play(id);
+            if (s.first) turn.playNow(id) else turn.play(id);
         };
         self.cycle(a);
         const w = &self.play.world;

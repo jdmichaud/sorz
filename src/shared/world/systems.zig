@@ -586,18 +586,43 @@ fn animation(t: *Tick) void {
 
 // Sound events ------------------------------------------------------------------------------------
 
-/// The tick's sounds go out in the order they were asked for; a sound asked for twice in a tick
-/// is asked for once, as the original's sound requests are.
+/// The tick's sounds go out in the order they were asked for, each in the half of the logic tick
+/// that asked for it: the players' in the first, the others' in the second (the frame between
+/// them takes the first's). A sound asked for twice in a half is asked for once, as the
+/// original's sound queue holds a request once until the driver takes it; asked for in both
+/// halves, it is asked for twice.
 fn sounds(t: *Tick) void {
     const list = &t.out.sounds;
     var n: usize = 0;
     for (list.items[0..list.len]) |s| {
+        var x = s;
+        x.first = if (s.by) |h| t.world.playerOf(h) != null else false;
         for (list.items[0..n]) |kept| {
-            if (std.mem.eql(u8, kept.name, s.name)) break;
+            if (kept.first == x.first and std.mem.eql(u8, kept.name, x.name)) break;
         } else {
-            list.items[n] = s;
+            list.items[n] = x;
             n += 1;
         }
     }
     list.len = n;
+}
+
+test "a sound asked for in both halves of a tick goes out twice; twice in a half, once" {
+    var w: World = .{};
+    const hero: Handle = .{ .index = 0, .generation = 1 };
+    const punk: Handle = .{ .index = 9, .generation = 1 };
+    w.players[0].entity = hero;
+    var kinds: Kinds = undefined;
+    var rng: random.Random = .{};
+    var out: Output = .{};
+    var t: Tick = .{ .world = &w, .kinds = &kinds, .random = &rng, .out = &out };
+    t.sound("heavy fall", hero);
+    t.sound("heavy fall", punk);
+    t.sound("heavy fall", hero);
+    t.sound("heavy fall", null);
+    sounds(&t);
+    const s = out.sounds.slice();
+    try std.testing.expectEqual(@as(usize, 2), s.len);
+    try std.testing.expect(s[0].first and s[0].by.?.eql(hero));
+    try std.testing.expect(!s[1].first and s[1].by.?.eql(punk));
 }

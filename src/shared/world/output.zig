@@ -44,8 +44,10 @@ pub fn List(comptime T: type, comptime n: usize) type {
     };
 }
 
-/// A sound asked for, by its name in the sound content (DESIGN.md A1), and who asked.
-pub const SoundRequest = struct { name: []const u8, by: ?Handle = null };
+/// A sound asked for, by its name in the sound content (DESIGN.md A1), who asked, and whether in
+/// the logic tick's first half (a player's: the original updates its players before the frame in
+/// the tick's middle, whose sound driver takes the requests made so far; the sounds system says).
+pub const SoundRequest = struct { name: []const u8, by: ?Handle = null, first: bool = false };
 
 /// A blow that landed: who struck (null: no entity, the special attack's), whom, and the health
 /// it took.
