@@ -230,9 +230,10 @@ pub const Round = struct {
     trace_t: u32 = 0,
     /// What the picture shows is the tick before's (the console takes its sprite table, the
     /// status bar's image and the planes' scroll as a frame starts, like its colours): the phase,
-    /// the banner's place, the status bar and the camera's place (across, down) then.
+    /// the banner's place, the status bar and the camera's place then (across, down, and down
+    /// without its shake, which plane B does not take: the original shakes plane A alone).
     shown_phase: Phase = .setup,
-    shown_camera: [2]i32 = .{ 0, 0 },
+    shown_camera: [3]i32 = .{ 0, 0, 0 },
     shown_banner: i16 = 0,
     shown_bar: Bar = .{},
     shown_game_over: bool = false,
@@ -407,7 +408,10 @@ pub const Round = struct {
         self.shown_pause = self.phase == .paused or self.resumed;
         self.resumed = false;
         self.shown_banner = self.banner;
-        self.shown_camera = .{ self.play.world.camera.x.whole(), self.play.world.camera.y.whole() };
+        const cam = &self.play.world.camera;
+        // The shake's move down, at an odd tick of it left (world/systems.zig).
+        const shaken: i32 = if (cam.shake & 1 != 0) if (cam.follows) |rules| rules.shake_by else 0 else 0;
+        self.shown_camera = .{ cam.x.whole(), cam.y.whole(), cam.y.whole() - shaken };
         self.shown_bar = self.bar(a);
         self.shown_game_over = self.gameOver() != null;
         if (turn.world_out) |o| o.latch();
@@ -1143,7 +1147,7 @@ pub const Round = struct {
         v.screen.plane_a.x = c[0];
         v.screen.plane_a.y = c[1];
         v.screen.plane_b.x = @divFloor(c[0] * r.camera.plane_b[0], r.camera.plane_b[1]);
-        v.screen.plane_b.y = c[1];
+        v.screen.plane_b.y = c[2];
         // The bosses' bars make the status bar a row taller.
         const lines = barLines(a) + if (now.bosses != null) bossesRows(a) * art.tile_side else 0;
         v.screen.window.lines = .{ .top = 0, .bottom = lines };
