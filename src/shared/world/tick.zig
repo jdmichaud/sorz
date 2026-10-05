@@ -177,13 +177,13 @@ pub const Tick = struct {
     }
 
     /// How a landing puts the entity on the ground: on its whole pixels, or with the fraction
-    /// of its height kept (the original's objects other than the players set the whole pixels
-    /// alone).
+    /// of its height kept and its speed in height left as it was (the original's objects other
+    /// than the players set the whole pixels alone, and leave the speed).
     pub const Landing = enum { whole, fraction_kept };
 
     /// The entity lands on the ground: out of the air, its behaviour told (`landed`) while its
     /// speed of the fall is still there (a bounce takes some of it back); then, unless it is in
-    /// the air again, that speed is gone.
+    /// the air again or its landing keeps it, that speed is gone.
     pub fn land(t: *Tick, h: Handle, how: Landing) void {
         const e = t.world.get(h) orelse return;
         e.position.height = switch (how) {
@@ -193,6 +193,7 @@ pub const Tick = struct {
         e.flags.airborne = false;
         e.flags.landed = true;
         t.landed(h);
+        if (how == .fraction_kept) return;
         if (t.world.get(h)) |x| if (!x.flags.airborne) {
             x.velocity.height = .zero;
         };

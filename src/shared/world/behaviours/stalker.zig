@@ -197,7 +197,9 @@ fn escaping(t: *const entity.Entity) bool {
 /// its ticks, the one it leaves the hold at too.
 fn grabSetUp(a: Actor) void {
     a.pause(true);
-    a.stop();
+    // Its walk stops; its speed in height stays as it was.
+    a.entity.velocity.x = .zero;
+    a.entity.velocity.depth = .zero;
 }
 
 fn grab(a: Actor) void {

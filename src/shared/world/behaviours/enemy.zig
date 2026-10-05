@@ -282,6 +282,7 @@ pub fn Of(comptime M: type) type {
             // It moves only where its state walks or flies (`go`, `walk`), its speed kept
             // otherwise.
             a.entity.flags.still = true;
+            a.entity.flags.keeps_depth = false;
             if (b.shakes) {
                 b.shakes = false;
                 a.tick.shake();
@@ -491,9 +492,11 @@ pub fn Of(comptime M: type) type {
             return a.numbers().power;
         }
 
-        /// It moves by its speed at this tick (a flight, a fall).
+        /// It flies by its speed at this tick, across and in height (a knock-down, a throw): its
+        /// depth stays, whatever its speed in depth.
         pub fn go(a: A) void {
             a.entity.flags.still = false;
+            a.entity.flags.keeps_depth = true;
         }
 
         /// Whether its place was drawn within the screen's middle at the last tick (where its
@@ -674,8 +677,12 @@ pub fn Of(comptime M: type) type {
             if (striker(a)) |s| faceOf(a, s) else a.entity.facing = .left;
             a.animate(.down);
             a.pause(false);
-            a.entity.velocity.x = if (a.entity.facingLeft()) x else x.neg();
-            a.entity.velocity.height = n.knocked_up;
+            // Its speeds' whole pixels are set, their fractions kept from the speeds it had (the
+            // original writes the whole pixels alone).
+            const v = a.entity.velocity;
+            const across: i32 = if (a.entity.facingLeft()) x.whole() else -x.whole();
+            a.entity.velocity.x = .parts(@intCast(across), v.x.frac());
+            a.entity.velocity.height = .parts(@intCast(n.knocked_up.whole()), v.height.frac());
             a.entity.flags.airborne = true;
         }
 

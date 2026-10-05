@@ -79,7 +79,10 @@ pub const Flags = packed struct(u16) {
     /// It stops whoever walks into it, within its definition's `solid` box (a breakable
     /// standing).
     solid: bool = false,
-    _: u4 = 0,
+    /// It moves across and in height alone at this tick, its speed in depth kept (the
+    /// original's knock-downs and throws leave the depth as it was).
+    keeps_depth: bool = false,
+    _: u3 = 0,
 };
 
 /// The animation an entity plays: one of its kind's, the frame it is on, and the logic ticks
