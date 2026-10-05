@@ -36,7 +36,7 @@ pub const entries = [_]Entry{
     .{ .request = 0xA1, .name = "landing", .file = "landing", .note = "sound test SE 2; a landing, a throw's landing, a letter typed" },
     .{ .request = 0xA2, .name = "player hit", .file = "player_hit", .note = "sound test SE 3; a player takes a blow" },
     .{ .request = 0xA3, .name = "heavy fall", .file = "heavy_fall", .note = "sound test SE 4; a body slam, a boss's fall" },
-    .{ .request = 0xA4, .name = "whip hit", .file = "whip_hit", .note = "sound test SE 5; a player knocked down by the whip woman (from the code, not heard)" },
+    .{ .request = 0xA4, .name = "whip hit", .file = "whip_hit", .note = "sound test SE 5; a player knocked down by the brawler (0x34A4)" },
     .{ .request = 0xA5, .name = "stab", .file = "stab", .note = "sound test SE 6; a knife's stab, a profile picture's arrival" },
     .{ .request = 0xA6, .name = "swing", .file = "swing", .note = "sound test SE 7; a punch or kick's swing" },
     .{ .request = 0xA7, .name = "pipe swing", .file = "pipe_swing", .note = "sound test SE 8" },

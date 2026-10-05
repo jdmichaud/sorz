@@ -657,6 +657,10 @@ pub fn brawler(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definitio
     try d.number("sides_from", try immediate(rom, 0x97E8, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x097E8: cmpi.w #N,(40,a0), less 0xAF6E's offset (0xF142)");
     try d.number("sides_to", try immediate(rom, 0x97F0, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x097F0: cmpi.w #N,(40,a0), less 0xAF6E's offset (excluded)");
     try d.sound("shrug", @bitCast(@as(i8, @intCast(try moveq(rom, 0xF090, 7)))));
+    // A player it knocks down falls with a sound of its own (the player's knock-down, 0x3496,
+    // asks for it when its striker is of the brawler's type).
+    if (try immediate(rom, 0x349C, &.{ 0x0C, 0x29, 0x00 }, 1) != 0x26) return error.BadData;
+    try d.sound("fells", @bitCast(@as(i8, @intCast(try moveq(rom, 0x34A4, 7)))));
     try shutterNumbers(&d);
     return finish(&d, "brawler", 0x26, "brawler", "the brawler (handler 0xF038)");
 }

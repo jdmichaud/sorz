@@ -692,7 +692,7 @@ fn feelBlow(a: Actor) void {
     const n = a.numbers();
     if (a.other(t.by)) |by| a.faceToward(by);
     const knocked = t.reaction == .knock_down or a.entity.flags.airborne;
-    if (knocked) a.sound(.hurt);
+    if (knocked) a.tick.sound(fallSound(a, t.by), a.handle);
     loses(a, t.by, t.damage);
     if (a.entity.health <= 0) return die(a, t.by);
     if (!knocked) a.sound(.hurt);
@@ -706,6 +706,13 @@ fn feelBlow(a: Actor) void {
     }
     change(a, .hurt);
     a.mind.timer = n.hurt;
+}
+
+/// The sound of its knock-down by `by`: the hurt's, or the one its striker's kind gives those
+/// it fells (`fells`: the brawler's).
+fn fallSound(a: Actor, by: Handle) []const u8 {
+    if (a.other(by)) |s| if (a.tick.kindOf(s).definition.sound("fells")) |own| return own;
+    return a.kind.sound_of[@backingInt(Sound.hurt)];
 }
 
 /// It loses `damage` health, down to none (the original's player keeps no less): what it lost is
