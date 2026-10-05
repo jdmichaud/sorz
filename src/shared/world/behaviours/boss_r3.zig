@@ -247,7 +247,7 @@ pub fn grabbable(a: Actor, by: Handle) bool {
     if (!m.looks or m.hit != .none) return false;
     const holder = a.other(by) orelse return false;
     if (@abs(holder.position.height.whole() - a.entity.position.height.whole()) > 8) return false;
-    if (a.tables().grab_states[request(a, holder)] < 0) return false;
+    if (a.tables().grab_states[request(holder)] < 0) return false;
     m.hit = .{ .grab = by };
     return true;
 }
@@ -265,9 +265,9 @@ pub fn letGoBy(a: Actor, holder: Handle) void {
 
 /// What a player holding him asks of him by its state (the original's request, its $7D): 1
 /// holding him in front, 2 from behind, 3 a knee, 4 the last knee, 5 and 7 a throw over the
-/// shoulder, 6 a vault over him, 9 a throw back, 10 an escape; 0 none.
-fn request(a: Actor, holder: *const Entity) u8 {
-    _ = a;
+/// shoulder, 6 a vault over him, 9 a throw back, 10 an escape; 0 none (Mr. X's code reads it
+/// too: mr_x.zig).
+pub fn request(holder: *const Entity) u8 {
     const name = behaviours.stateName(&holder.mind) orelse return 0;
     const table = [_]struct { []const u8, u8 }{
         .{ "grab", 1 },
@@ -570,7 +570,7 @@ fn hitCheck(a: Actor) bool {
             m.target = g;
             m.hitter = g;
             const holder = a.other(g) orelse return true;
-            const s = a.tables().grab_states[request(a, holder)];
+            const s = a.tables().grab_states[request(holder)];
             if (s >= 0) setState(a, @fromBackingInt(@intCast(s)));
         },
         .missile => |t| {
@@ -1151,7 +1151,7 @@ fn held(a: Actor) void {
             if (m.ticks != 0) return reaction(a);
             const hh = m.hitter orelse return breakHold(a);
             const holder = a.other(hh) orelse return breakHold(a);
-            if (request(a, holder) != 9) return breakHold(a);
+            if (request(holder) != 9) return breakHold(a);
             if (!blowOnPlayers(a)) return breakHold(a);
             if (m.state == .held) {
                 a.letGo();
@@ -1206,7 +1206,7 @@ fn reaction(a: Actor) void {
     const m = a.mind;
     const hh = m.hitter orelse return;
     const holder = a.other(hh) orelse return;
-    switch (request(a, holder)) {
+    switch (request(holder)) {
         0 => {
             a.letGo();
             setState(a, .back_off);
@@ -1282,7 +1282,7 @@ fn thrownOver(a: Actor) void {
         m.ticks -%= 1;
         if (m.ticks != 0) {
             const holder = if (m.hitter) |h| a.other(h) else null;
-            const r = if (holder) |h| request(a, h) else 0;
+            const r = if (holder) |h| request(h) else 0;
             if (r == 6) return setState(a, .slammed);
             if (r == 2) return;
         }

@@ -41,31 +41,31 @@ const hug_x = 0x14E92;
 const hug_height = 0x14E9A;
 
 /// `move.l #N,(D,a0)`: the long written, its displacement checked.
-fn movedLong(rom: []const u8, at: u32, displacement: u16) Error!i32 {
+pub fn movedLong(rom: []const u8, at: u32, displacement: u16) Error!i32 {
     if (u16be(rom, at + 6) != displacement) return error.BadData;
     return immediate(rom, at, &.{ 0x21, 0x7C }, 4);
 }
 
 /// `move.w #N,(D,a0)`: the word written (sign extended), its displacement checked.
-fn movedWord(rom: []const u8, at: u32, displacement: u16) Error!i32 {
+pub fn movedWord(rom: []const u8, at: u32, displacement: u16) Error!i32 {
     if (u16be(rom, at) != 0x317C or u16be(rom, at + 4) != displacement) return error.BadData;
     return s16be(rom, at + 2);
 }
 
 /// `cmpi.w #N,dK` or `cmpi.w #N,(D,a0)`: the word compared.
-fn comparedWord(rom: []const u8, at: u32) Error!i32 {
+pub fn comparedWord(rom: []const u8, at: u32) Error!i32 {
     const op = u16be(rom, at);
     if (op & 0xFFF8 != 0x0C40 and op != 0x0C68) return error.BadData;
     return s16be(rom, at + 2);
 }
 
 /// `move.l #N,d0`: the long moved.
-fn longMoved(rom: []const u8, at: u32) Error!i32 {
+pub fn longMoved(rom: []const u8, at: u32) Error!i32 {
     return immediate(rom, at, &.{ 0x20, 0x3C }, 4);
 }
 
 /// `subq.w #N,(50,a0)`: the health taken.
-fn healthTaken(rom: []const u8, at: u32) Error!i32 {
+pub fn healthTaken(rom: []const u8, at: u32) Error!i32 {
     if (u16be(rom, at + 2) != 50) return error.BadData;
     return quick(rom, at, 0x5168);
 }
@@ -73,14 +73,22 @@ fn healthTaken(rom: []const u8, at: u32) Error!i32 {
 /// The frames of animation `word` (facing right: its entry's bit 1 clear) with the next entry's
 /// (facing left), each shown for the animation's timing (a timing of 0: still, its frames set
 /// by his code), their boxes.
-fn frames(d: *Def, name: []const u8, word: i32) Error![]entity.Frame {
+pub fn frames(d: *Def, name: []const u8, word: i32) Error![]entity.Frame {
+    return framesShown(d, name, word, null);
+}
+
+/// The first `shown` frames of animation `word` (all: null), as `frames`: an animation his code
+/// holds still on its first frames, the next ones not frames of a pair.
+pub fn framesShown(d: *Def, name: []const u8, word: i32, shown: ?usize) Error![]entity.Frame {
     if (word < 0 or @mod(word, 2) != 0) return error.BadData;
     const entry: u32 = @intCast(@divExact(word, 2) & ~@as(i32, 1));
     const right = try readAnimation(d.arena, d.rom, d.set, entry);
     const left = try readAnimation(d.arena, d.rom, d.set, entry + 1);
     if (right.frames.len != left.frames.len or right.timing != left.timing) return error.BadData;
-    const out = try d.arena.alloc(entity.Frame, right.frames.len);
-    for (out, right.frames, left.frames) |*f, r, l| {
+    const count = shown orelse right.frames.len;
+    if (count == 0 or count > right.frames.len) return error.BadData;
+    const out = try d.arena.alloc(entity.Frame, count);
+    for (out, right.frames[0..count], left.frames[0..count]) |*f, r, l| {
         if (r.address != l.address or r.mirrored == l.mirrored) return error.BadData;
         const flipped = r.mirrored;
         // A box of a negative width facing left (box 48: 0 over -32, the hug's last frame's
@@ -110,7 +118,7 @@ fn inverted(d: *const Def, right: u8, left: u8) bool {
 
 /// The frames of entry `entry` alone, for the side `left` (a part whose two sides show frames of
 /// their own), without boxes.
-fn sideFrames(d: *Def, entry: u32, left: bool) Error![]entity.Frame {
+pub fn sideFrames(d: *Def, entry: u32, left: bool) Error![]entity.Frame {
     const a = try readAnimation(d.arena, d.rom, d.set, entry);
     const out = try d.arena.alloc(entity.Frame, a.frames.len);
     for (out, a.frames) |*f, r| {
@@ -119,6 +127,25 @@ fn sideFrames(d: *Def, entry: u32, left: bool) Error![]entity.Frame {
         f.* = .{ .frame = try d.frameName(r.address), .ticks = @max(a.timing, 1), .flip = r.mirrored != left };
     }
     return out;
+}
+
+/// The places of one thrown, from its holder (0x15220, which Mr. X's code shares): by the holder's
+/// character, its rows (thrown over or held from behind, slammed, thrown) of 4 by the holder's
+/// frame, across then in height.
+pub fn throwTables(d: *Def) Error!void {
+    const rom = d.rom;
+    for ([_][]const u8{ "axel", "adam", "blaze" }, 0..) |who, c| {
+        const across: u32 = @intCast(@as(i32, throw_offsets) + s16be(rom, throw_offsets + 2 * @as(u32, @intCast(c))));
+        const up: u32 = @intCast(@as(i32, throw_offsets) + s16be(rom, throw_offsets + 2 * @as(u32, @intCast(c)) + 6));
+        var xs: [12]i32 = undefined;
+        var hs: [12]i32 = undefined;
+        for (&xs, &hs, 0..) |*x, *h, k| {
+            x.* = s16be(rom, across + 2 * @as(u32, @intCast(k)));
+            h.* = s16be(rom, up + 2 * @as(u32, @intCast(k)));
+        }
+        try d.table(try std.fmt.allocPrint(d.arena, "throw_x_{s}", .{who}), &xs, "ROM 0x35060: by the holder's character, its rows (thrown over, slammed, thrown) of 4 by its frame (0x15220)");
+        try d.table(try std.fmt.allocPrint(d.arena, "throw_height_{s}", .{who}), &hs, "ROM 0x35066: the same, in height");
+    }
 }
 
 fn def(arena: std.mem.Allocator, rom: []const u8) Error!Def {
@@ -158,18 +185,7 @@ pub fn boss(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
     var grabs: [12]i32 = undefined;
     for (&grabs, 0..) |*v, k| v.* = @as(i8, @bitCast(rom[grab_states + k]));
     try d.table("grab_states", &grabs, "ROM 0x155B2: the state a grab sends him to by the holder's request (negative: none, 0x154E0)");
-    for ([_][]const u8{ "axel", "adam", "blaze" }, 0..) |who, c| {
-        const across: u32 = @intCast(@as(i32, throw_offsets) + s16be(rom, throw_offsets + 2 * @as(u32, @intCast(c))));
-        const up: u32 = @intCast(@as(i32, throw_offsets) + s16be(rom, throw_offsets + 2 * @as(u32, @intCast(c)) + 6));
-        var xs: [12]i32 = undefined;
-        var hs: [12]i32 = undefined;
-        for (&xs, &hs, 0..) |*x, *h, k| {
-            x.* = s16be(rom, across + 2 * @as(u32, @intCast(k)));
-            h.* = s16be(rom, up + 2 * @as(u32, @intCast(k)));
-        }
-        try d.table(try std.fmt.allocPrint(arena, "throw_x_{s}", .{who}), &xs, "ROM 0x35060: by the holder's character, its rows (thrown over, slammed, thrown) of 4 by its frame (0x15220)");
-        try d.table(try std.fmt.allocPrint(arena, "throw_height_{s}", .{who}), &hs, "ROM 0x35066: the same, in height");
-    }
+    try throwTables(&d);
     var ht: [4]i32 = undefined;
     var hx: [4]i32 = undefined;
     var hh: [4]i32 = undefined;

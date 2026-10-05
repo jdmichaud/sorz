@@ -939,13 +939,17 @@ fn keptWithin(v: Fixed, from: i32, to: i32) Fixed {
 
 /// Where the players are drawn at this tick's end, after the others' turns (one may have moved a
 /// player: a hold, a throw), for the camera's next, as the original's camera reads where its
-/// players were drawn (a player waiting to continue is not drawn).
+/// players were drawn (a player waiting to continue is not drawn); and the line each is drawn on,
+/// for what reads it at the next tick.
 fn noteDrawn(t: *Tick) void {
-    for (t.world.players, &t.world.camera.drawn) |p, *d| {
+    const c = &t.world.camera;
+    for (t.world.players, &c.drawn, &c.drawn_lines) |p, *d, *line| {
         d.* = null;
+        line.* = null;
         const e = t.world.get(p.entity orelse continue) orelse continue;
         if (e.flags.hidden) continue;
         d.* = e.position.x;
+        line.* = @truncate(draw_list.screenPlace(t.world, e).y);
     }
 }
 

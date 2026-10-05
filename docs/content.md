@@ -269,7 +269,10 @@ posters' corners they stir, `flight_scenery`), round 3's (the `lamp`s, the `crat
 raindrops, its sky's flashes the round's art set's palettes `flash_N`), round 3's acrobats of a
 trio (`acrobat_trio`) and its boss (`boss_r3`, his part `boss_r3_part`, which shows its own
 frames by side, `stand` and `stand_left`, and the helper of a pair, `boss_r3_helper`, with no
-art), round 8's corridor's gold statues (`statue`); the other characters and enemies come with PLAN
+art), round 8's corridor's gold statues (`statue`) and its boss Mr. X standing (`mr_x`: his
+struck pose its first frame alone, the second of its pair being none), with his gun's shots
+(`mr_x_shot`) and their cartridges (`mr_x_cartridge`, which shows its own frames whatever its way);
+the other characters and enemies come with PLAN
 items 12 to 15. Their numbers are read from the ROM's
 tables and from the immediate values of the code that uses them, each with its place in the
 definition's provenance, but the car's times, which the original's car, camera and shells make

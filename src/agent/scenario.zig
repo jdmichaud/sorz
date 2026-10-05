@@ -383,6 +383,8 @@ pub const Situation = struct {
     last_values: []const u16 = &.{},
     last_count: u32 = 0,
     special: bool = false,
+    /// Round 8's room's script runs (the phase `script`): taken up in its fight.
+    script: bool = false,
     /// The round's timer as it last counted or started before the situation: its seconds and
     /// the scene's tick of that count.
     timer: ?Count = null,
@@ -670,7 +672,8 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
         } else if (std.mem.eql(u8, ev, "phase")) {
             const phase = str(o, "phase") orelse "";
             if (in_round) {
-                playing = std.mem.eql(u8, phase, "play") or std.mem.eql(u8, phase, "special");
+                playing = std.mem.eql(u8, phase, "play") or std.mem.eql(u8, phase, "special") or std.mem.eql(u8, phase, "script");
+                s.script = std.mem.eql(u8, phase, "script");
                 s.special = std.mem.eql(u8, phase, "special");
                 try history.append(arena, .{ .t = ev_t, .what = .{ .special = s.special } });
             }
@@ -1061,6 +1064,7 @@ pub const Run = struct {
         if (extras.game_tick) |g| w.tick = g + 1;
         if (generatorOf(situation)) |g| r.random = g;
         w.special = situation.special;
+        if (situation.script) w.room.offer = world.room.fight;
         const round = extras.round orelse return error.NoRound;
         w.ground = .pixels(round.ground);
         w.camera = .{
@@ -1103,6 +1107,7 @@ pub const Run = struct {
                 w.players[p - 1] = .{ .entity = h, .character = kind, .lives = situation.lives[p - 1][0], .specials = situation.lives[p - 1][1], .score = situation.scores[p - 1], .last = situation.pads[p - 1] };
                 // The camera follows from where the situation's tick drew the player.
                 w.camera.drawn[p - 1] = x.position.x;
+                w.camera.drawn_lines[p - 1] = @truncate(world.draw_list.screenPlace(w, x).y);
             }
             if (x.team == .enemy) takeUpSpawn(kinds, x, e, extras.round, two, &r.used);
             // A breakable standing still holds the item its record names.
@@ -1402,7 +1407,7 @@ pub const Run = struct {
                 const o = &self.others[self.next_other];
                 if (self.kinds.find(o.kind) == null) tw.next_id = @max(tw.next_id, o.id + 1);
             }
-            tw.setPhase(if (won) "leaving" else if (w.special) "special" else "play");
+            tw.setPhase(if (won) "leaving" else w.playPhase());
             try tw.observe(self.v, w, self.kinds, &self.out);
         }
         self.noteIds();
@@ -1483,7 +1488,7 @@ pub const Run = struct {
         const w = &self.play.world;
         switch (c) {
             .scene => |name| return std.mem.eql(u8, name, "round"),
-            .phase => |name| return std.mem.eql(u8, name, if (w.special) "special" else "play"),
+            .phase => |name| return std.mem.eql(u8, name, w.playPhase()),
             .camera => |x| return w.camera.x.whole() >= x,
             .state => |st| {
                 for (&w.entities, 0..) |*e, i| {

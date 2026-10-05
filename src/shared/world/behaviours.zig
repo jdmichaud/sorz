@@ -63,7 +63,8 @@
 //! its boss `boss_r4` and his shoulder (`boss_r4_shoulder`); round 5's: its bosses the twins
 //! (`boss_r5`); round 6's: the crates that shatter (`shatter`), the presses (`press`) and
 //! their rods' links (`press_link`); round 7's: its lift's still pieces and its opener (`lift`),
-//! its rails (`lift_rails`); round 8's: the corridor's gold statues (`statue`).
+//! its rails (`lift_rails`); round 8's: the corridor's gold statues (`statue`), its boss `mr_x`
+//! standing, with his gun's shots (`mr_x_shot`) and their cartridges (`mr_x_cartridge`).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -123,6 +124,9 @@ pub const press_link = @import("behaviours/press_link.zig");
 pub const lift = @import("behaviours/lift.zig");
 pub const lift_rails = @import("behaviours/lift_rails.zig");
 pub const statue = @import("behaviours/statue.zig");
+pub const mr_x = @import("behaviours/mr_x.zig");
+pub const mr_x_shot = @import("behaviours/mr_x_shot.zig");
+pub const mr_x_cartridge = @import("behaviours/mr_x_cartridge.zig");
 
 /// An entity's behaviour and its memory: one line a behaviour module.
 pub const Mind = union(enum) {
@@ -182,6 +186,9 @@ pub const Mind = union(enum) {
     lift: lift.Mind,
     lift_rails: lift_rails.Mind,
     statue: statue.Mind,
+    mr_x: mr_x.Mind,
+    mr_x_shot: mr_x_shot.Mind,
+    mr_x_cartridge: mr_x_cartridge.Mind,
 };
 
 pub const Behaviour = std.meta.Tag(Mind);

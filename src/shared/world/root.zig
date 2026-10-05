@@ -24,6 +24,7 @@ pub const draw_list = @import("draw_list.zig");
 pub const schedule = @import("schedule.zig");
 pub const trace = @import("trace.zig");
 pub const script = @import("script.zig");
+pub const room = @import("room.zig");
 pub const lives = @import("lives.zig");
 const world = @import("world.zig");
 

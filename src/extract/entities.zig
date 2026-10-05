@@ -24,6 +24,7 @@ const beach = @import("beach.zig");
 const obstacles = @import("obstacles.zig");
 const boss_r3 = @import("boss_r3.zig");
 const corridor = @import("corridor.zig");
+const mrx = @import("mrx.zig");
 
 const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
@@ -1150,6 +1151,7 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8) Error![]const entity.Defin
     try obstacles.all(arena, rom, &out);
     try boss_r3.all(arena, rom, &out);
     try corridor.all(arena, rom, &out);
+    try mrx.all(arena, rom, &out);
     try special.all(arena, rom, &out);
     try out.append(arena, try goArrow(arena, rom));
     try out.append(arena, try playerWaiting(arena, rom));

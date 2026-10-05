@@ -14,6 +14,7 @@ const kinds_mod = @import("kinds.zig");
 const behaviours = @import("behaviours.zig");
 const script = @import("script.zig");
 const shadows_mod = @import("shadows.zig");
+const room_mod = @import("room.zig");
 
 const Fixed = fixed.Fixed;
 const Vec3 = fixed.Vec3;
@@ -91,6 +92,9 @@ pub const Camera = struct {
     /// last tick drew them, and never goes back: its limit on the left follows it.
     follows: ?Rules = null,
     drawn: [2]?Fixed = .{ null, null },
+    /// The line each player was drawn on at the last tick, from the screen's top (what Mr. X's
+    /// approach reads of his target).
+    drawn_lines: [2]?i16 = .{ null, null },
     /// The special attack's run, while it lasts: the camera neither follows nor holds the players.
     run: ?Run = null,
     /// Its place across at the last tick (what moved with it moves by the difference).
@@ -224,8 +228,18 @@ pub const World = struct {
     bosses: [2]?Handle = .{ null, null },
     /// The shadows in the weapons' places (shadows.zig): a place a shadow holds is not free.
     shadows: [shadows_mod.count]?shadows_mod.Shadow = @splat(null),
+    /// Round 8's last room's script (room.zig).
+    room: room_mod.State = .{},
 
     pub const Full = error{Full};
+
+    /// Play's phase as the traces name it, while the round plays: the special attack's, the room's
+    /// script's, or play.
+    pub fn playPhase(self: *const World) []const u8 {
+        if (self.special) return "special";
+        if (self.room.offer != null) return "script";
+        return "play";
+    }
 
     /// The entity `h` names, or null when it has gone.
     pub fn get(self: *World, h: Handle) ?*Entity {

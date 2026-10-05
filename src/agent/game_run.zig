@@ -709,7 +709,7 @@ pub const Run = struct {
 /// Play's phase as the traces name it.
 fn phaseName(r: *const scene.Round) []const u8 {
     return switch (r.phase) {
-        .play => if (r.play.world.special) "special" else "play",
+        .play => r.play.world.playPhase(),
         .paused => "paused",
         .time_over => "time_up",
         .leaving => "leaving",
