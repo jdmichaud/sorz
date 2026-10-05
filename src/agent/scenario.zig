@@ -47,8 +47,10 @@ comptime {
 }
 
 pub const Start = union(enum) {
-    /// One player (or two) of these characters, from the start of play in round 1.
-    players: struct { first: []const u8, second: ?[]const u8 },
+    /// One player (or two) of these characters, from the start of play in round `round` (2 to 8:
+    /// the options' hidden first round set first, opened by pad 2's code as the menu leaves for
+    /// the options).
+    players: struct { first: []const u8, second: ?[]const u8, round: u8 = 1 },
     /// A recorded play's pads (a line per display tick from power-on: pad 1's and pad 2's
     /// buttons in hexadecimal, sor-remaster's `--pads` format), for its first `vblanks` display
     /// ticks; the file is named from the scenario's directory.
@@ -149,8 +151,16 @@ pub fn parse(gpa: std.mem.Allocator, text: []const u8, diag: *Diagnostic) !Scrip
                 start = .{ .pads = .{ .path = w[2], .vblanks = number(w[3]) orelse return refuse(diag, n, "`start pads FILE VBLANKS`") } };
                 continue;
             }
-            if (w.len < 2 or w.len > 3) return refuse(diag, n, "a start is `start CHARACTER [CHARACTER]` or `start pads FILE VBLANKS`");
-            start = .{ .players = .{ .first = w[1], .second = if (w.len == 3) w[2] else null } };
+            var who = w[1..];
+            var round: u8 = 1;
+            if (who.len >= 3 and std.mem.eql(u8, who[who.len - 2], "round")) {
+                const r = number(who[who.len - 1]) orelse 0;
+                if (r < 1 or r > 8) return refuse(diag, n, "a round is 1 to 8");
+                round = @intCast(r);
+                who = who[0 .. who.len - 2];
+            }
+            if (who.len < 1 or who.len > 2) return refuse(diag, n, "a start is `start CHARACTER [CHARACTER] [round N]` or `start pads FILE VBLANKS`");
+            start = .{ .players = .{ .first = who[0], .second = if (who.len == 2) who[1] else null, .round = round } };
             continue;
         }
         if (start == null) return refuse(diag, n, "the script begins with its start");
@@ -1539,6 +1549,12 @@ test "a script: its start, presses, holds, waits and conditions" {
     try std.testing.expectEqual(@as(u8, 0b0110_0000), s.commands[4].op.press.buttons);
     try std.testing.expectError(error.BadScenario, parse(gpa, "start axel\nkick\n", &diag));
     try std.testing.expectEqual(@as(u32, 2), diag.line);
+    try std.testing.expectEqual(@as(u8, 1), s.start.players.round);
+    var later = try parse(gpa, "start axel blaze round 2\nwait 1\n", &diag);
+    defer later.deinit(gpa);
+    try std.testing.expectEqual(@as(u8, 2), later.start.players.round);
+    try std.testing.expectEqualStrings("blaze", later.start.players.second.?);
+    try std.testing.expectError(error.BadScenario, parse(gpa, "start axel round 9\n", &diag));
 }
 
 test "a start from a recorded play, and the random generator its draws left" {

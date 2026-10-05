@@ -50,10 +50,10 @@ pub const Progress = struct {
 
     /// A new game: the players of the game menu's choice in play, each with the lives of the
     /// options (1, 3, 5 or 7) and three continues (the original's, set as the character select
-    /// ends), the other player's lives set too, as the original's are. It starts at round 1
-    /// (TODO(PLAN item 15): the options' first round, once rounds 2 to 8 are there).
+    /// ends), the other player's lives set too, as the original's are. It starts at the options'
+    /// first round (round 1 but by the hidden line).
     pub fn new(setup: *const Setup) Progress {
-        var p: Progress = .{ .round = 1 };
+        var p: Progress = .{ .round = setup.first_round + 1 };
         for (&p.players, 0..) |*g, k| g.* = .{
             .in_play = k == 0 or setup.players == .two,
             .lives = livesOf(setup),

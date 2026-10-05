@@ -327,13 +327,31 @@ pub const Run = struct {
                     return .{};
                 }
                 const s = &self.state.scenes.base;
+                // A first round other than 1: the options' first round first, the options opened
+                // with pad 2's code (A, B, C and right held as the menu leaves for them); start
+                // leaves them when it is set.
+                const first_round = players.round - 1;
+                switch (s.*) {
+                    .options => |*o| {
+                        if (o.phase != .lines) return .{};
+                        if (o.values.first_round == first_round or !o.hidden_lines) return self.tapping(0, .start);
+                        return self.tapping(0, if (o.line != .first_round) .down else .right);
+                    },
+                    else => {},
+                }
                 const m = switch (s.*) {
                     .menu => |*m| m,
                     else => return .{},
                 };
+                if (self.state.setup.first_round != first_round) {
+                    if (m.choice != .options) return self.tapping(0, .down);
+                    var in = self.tapping(0, .start);
+                    in.pad2 = .{ .a = true, .b = true, .c = true, .right = true };
+                    return in;
+                }
                 const want: sorz.screens.menu.Line = if (players.second != null) .two_players else .one_player;
-                if (@backingInt(m.choice) > @backingInt(want)) return self.fail("the menu's arrow went past 2 PLAYERS");
-                return self.tapping(0, if (m.choice != want) .down else .start);
+                if (@backingInt(m.choice) > @backingInt(want) and players.round == 1) return self.fail("the menu's arrow went past 2 PLAYERS");
+                return self.tapping(0, if (@backingInt(m.choice) < @backingInt(want)) .down else if (m.choice != want) .up else .start);
             },
             .select_wait => {
                 if (self.in_stage < 60) return .{};
