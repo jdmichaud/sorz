@@ -66,15 +66,26 @@ pub const Play = struct {
 
     /// `displayTick` in a round, whose world follows the round's script `plan`.
     pub fn roundTick(self: *Play, kinds: *const kinds_mod.Kinds, rng: *random.Random, pads: input.Pads, out: *output.Output, plan: ?*const script.Plan) bool {
+        return self.roundTickJoined(kinds, rng, pads, out, plan, null);
+    }
+
+    /// Whether a logic tick ends with the next display tick.
+    pub fn logicNext(self: *const Play) bool {
+        return self.schedule.rate == .display or self.schedule.into == 1;
+    }
+
+    /// `roundTick`, a player joining the game at the logic tick (`join`, when it runs).
+    pub fn roundTickJoined(self: *Play, kinds: *const kinds_mod.Kinds, rng: *random.Random, pads: input.Pads, out: *output.Output, plan: ?*const script.Plan, join: ?tick_mod.Join) bool {
         const due = self.schedule.displayTick();
         if (!due) {
             self.first = pads;
             return false;
         }
-        const in: tick_mod.Input = switch (self.schedule.rate) {
+        var in: tick_mod.Input = switch (self.schedule.rate) {
             .play => .{ .pads = .{ self.second, self.first } },
             .display => .steady(pads),
         };
+        in.join = join;
         self.second = pads;
         systems.runRound(&self.world, kinds, rng, in, out, plan);
         return true;

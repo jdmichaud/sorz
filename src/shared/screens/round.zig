@@ -16,8 +16,10 @@
 //!   sound; the pause's text while it lasts); where the variant says so, it opens the settings in
 //!   place of the pause instead (`startOpensSettings`). The time running out is the time over: its sound
 //!   and text for its ticks, then the round's music again, and each player in play loses its
-//!   health. A player dies, and its next life drops in (world/lives.zig); out of lives, it enters
-//!   its name on its part of the status bar when its score enters the high-score table (the
+//!   health. Player 2's invitation blinks while it does not play, and at a blink's tick with its
+//!   START held it joins (`joinTick`, `dropIn`): the character after player 1's, and its first
+//!   life drops in. A player dies, and its next life drops in (world/lives.zig); out of lives, it
+//!   enters its name on its part of the status bar when its score enters the high-score table (the
 //!   table takes its entry), then asks the continue's question there; out of the game, its part
 //!   shows its name, its score and a blinking GAME OVER; the last one out counts the game over
 //!   down, its text over the picture;
@@ -159,16 +161,25 @@ pub const Join = struct {
     shown: bool = false,
 
     /// A logic tick: while player 2 is `out`, the text shows or hides every `every` ticks; while
-    /// player 1 waits to continue (`held`), the bar's cells there are cleared and the blink
-    /// holds.
+    /// player 1 waits to continue (`held`), the bar's cells there are cleared and the blink holds.
     pub fn blink(self: *Join, out: bool, held: bool, every: u8) void {
+        if (self.due(out, held, every)) self.turn();
+    }
+
+    /// The count of a logic tick (see `blink`): true at a blink's tick, the moment player 2 may
+    /// join; the caller then turns the blink (`turn`), or player 2 joins and the text goes.
+    pub fn due(self: *Join, out: bool, held: bool, every: u8) bool {
         if (!out or held) {
             self.shown = false;
-            return;
+            return false;
         }
         self.ticks -|= 1;
-        if (self.ticks != 0) return;
+        if (self.ticks != 0) return false;
         self.ticks = every;
+        return true;
+    }
+
+    pub fn turn(self: *Join) void {
         self.phase = !self.phase;
         self.shown = self.phase;
     }
@@ -225,6 +236,10 @@ pub const Round = struct {
     shown_pause: bool = false,
     resumed: bool = false,
     join: Join = .{},
+    /// Player 2 joins at the next logic tick as this character (network play's: `dropIn`).
+    join_as: ?setup_mod.Character = null,
+    /// The character of the join under way.
+    joining: ?setup_mod.Character = null,
     out_blinks: [2]OutBlink = .{ .{}, .{} },
     /// The last player out of the game is at its game over: the round ends at the next tick.
     over: bool = false,
@@ -626,6 +641,62 @@ pub const Round = struct {
         }
     }
 
+    /// Player 2's invitation, at a logic tick's start: its blink, and at a blink's tick with
+    /// player 2's START held (a second pad there, no special attack under way), player 2 joins as
+    /// the character after player 1's (the content's): the join the world's turn then makes, and
+    /// the text goes. A join asked for (`join_as`: network play's second player) is made at once.
+    fn joinTick(self: *Round, turn: *scene.Turn, a: *const Assets) ?world.tick.Join {
+        const j = &a.screen.status_bar.join;
+        const w = &self.play.world;
+        if (self.join_as) |c| {
+            self.join_as = null;
+            if (w.players[1].entity == null) if (self.joinOf(a, c, turn.setup.characters[0])) |x| return x;
+        }
+        if (!self.join.due(w.players[1].entity == null, self.waiting(0), j.blink)) return null;
+        const first = turn.setup.characters[0];
+        if (!turn.pads.pad2.start or w.special or !turn.second_pad or first == null) {
+            self.join.turn();
+            return null;
+        }
+        const x = self.joinOf(a, j.next[@backingInt(first.?)], first.?) orelse {
+            self.join.turn();
+            return null;
+        };
+        self.join.shown = false;
+        return x;
+    }
+
+    /// The join of player 2 as `character` (player 1 playing `first`): null when the content has
+    /// neither.
+    fn joinOf(self: *Round, a: *const Assets, character: setup_mod.Character, first: ?setup_mod.Character) ?world.tick.Join {
+        // TODO(PLAN item 14): Adam and Blaze. Until the content has them, a player who joins as
+        // one of them joins as player 1's character, a stand-in that round-check's join scenario
+        // allows for (its kind left aside).
+        const kind = a.kinds.find(@tagName(character)) orelse (if (first) |f| a.kinds.find(@tagName(f)) else null) orelse {
+            std.log.warn("the content defines no {s} yet: player 2 cannot join", .{@tagName(character)});
+            return null;
+        };
+        self.joining = character;
+        return .{ .player = 1, .kind = kind, .lives = a.screen.status_bar.join.lives };
+    }
+
+    /// Player 2 joined at this logic tick, as `joining`: two players in the game from now on.
+    fn joined(self: *Round, turn: *scene.Turn) void {
+        const w = &self.play.world;
+        if (w.players[1].entity == null) return;
+        turn.setup.characters[1] = self.joining;
+        turn.setup.players = .two;
+    }
+
+    /// Player 2 joins the round under way as `character` at its next logic tick, its first life
+    /// dropping in as the original's PRESS 2UP START's does (network play's second player joining
+    /// a game, DESIGN.md 9). False when player 2 plays already.
+    pub fn dropIn(self: *Round, character: setup_mod.Character) bool {
+        if (self.play.world.players[1].entity != null) return false;
+        self.join_as = character;
+        return true;
+    }
+
     /// START opens the settings in place of the pause (the extended and network variants): the
     /// game holds them as it holds the pause (game.zig: the pause's jingle with them), and the
     /// logic tick that START was seen at waits, as the pause's first tick does; play goes on with
@@ -663,11 +734,11 @@ pub const Round = struct {
         };
         const p = self.plan(turn.setup, a);
         const camera_before = self.play.world.camera;
-        // Player 2's invitation blinks before the world's tick, as the original's does: it sees the
-        // players as the tick before left them.
-        const join_out = self.play.world.players[1].entity == null;
-        const join_held = self.waiting(0);
-        if (!self.play.roundTick(a.kinds, turn.random.?, turn.pads, out, &p)) {
+        // Player 2's invitation counts at a logic tick's start, before the world's turn, as the
+        // original's does (it sees the players as the tick before left them), and a player joins
+        // in that turn.
+        const join = if (self.play.logicNext()) self.joinTick(turn, a) else null;
+        if (!self.play.roundTickJoined(a.kinds, turn.random.?, turn.pads, out, &p, join)) {
             self.split = true;
             return null;
         }
@@ -690,7 +761,7 @@ pub const Round = struct {
         };
         self.cycle(a);
         const w = &self.play.world;
-        self.join.blink(join_out, join_held, a.screen.status_bar.join.blink);
+        if (join != null) self.joined(turn);
         for (&self.out_blinks, w.players) |*b, pl| b.blink(pl.out, !self.answeredNo(pl), a.screen.status_bar.join.blink);
         if (w.timer.up) {
             // The timer is the logic tick's first half's: its sound with the players'.
@@ -1212,4 +1283,16 @@ test "player 2's invitation blinks every `blink` logic ticks while it does not p
     try std.testing.expect(!j.shown and j.phase == false);
     j.blink(false, false, 8);
     try std.testing.expect(!j.shown);
+}
+
+test "the invitation's blink's tick is the join's moment: due once every `blink` logic ticks" {
+    var j: Join = .{ .ticks = 8 };
+    var due: usize = 0;
+    for (0..24) |k| if (j.due(true, false, 8)) {
+        try std.testing.expectEqual(@as(usize, 7), k % 8);
+        due += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 3), due);
+    // Due but not turned (player 2 joins there): the blink's phase stays.
+    try std.testing.expect(!j.phase and !j.shown);
 }

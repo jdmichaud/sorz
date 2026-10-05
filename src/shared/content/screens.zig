@@ -8,6 +8,7 @@
 const std = @import("std");
 const json = @import("../formats/json.zig");
 const art = @import("art.zig");
+pub const Character = @import("../setup.zig").Character;
 
 pub const Error = json.Error;
 
@@ -128,8 +129,16 @@ pub const BarPlayer = struct {
 };
 
 /// Player 2's invitation to join while it does not play: its text (`fonts/main`) from its cell,
-/// shown and hidden in turn every `blink` logic ticks of play.
-pub const Join = struct { text: []const u8, at: Cell, blink: u8 };
+/// shown and hidden in turn every `blink` logic ticks of play; at a blink's tick with player 2's
+/// START held, player 2 joins with `lives` (the one it plays counted) as the character `next`
+/// gives by player 1's (indexed by the game's characters: Adam, Axel, Blaze).
+pub const Join = struct {
+    text: []const u8,
+    at: Cell,
+    blink: u8,
+    lives: u8 = 3,
+    next: [3]Character = .{ .blaze, .adam, .axel },
+};
 
 /// The bosses' bars (the original's enemies' bars: round 1's Antonio's, and those after), shown
 /// below the players' from the tick after a boss's first in its section: the fixed layer a row
@@ -472,6 +481,8 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
                 .{ .key = "text", .value = .{ .str = r.status_bar.join.text } },
                 .{ .key = "at", .value = try cellValue(arena, r.status_bar.join.at) },
                 .{ .key = "blink", .value = json.Value.num(r.status_bar.join.blink) },
+                .{ .key = "lives", .value = json.Value.num(r.status_bar.join.lives) },
+                .{ .key = "next", .value = try nextValue(arena, &r.status_bar.join.next) },
             }) },
         }) },
         .{ .key = "clear", .value = try clearValue(arena, &r.clear) },
@@ -667,7 +678,7 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
     const image = try s.get("image");
     if (try image.len() != 2) return image.fail("not [rows, cells]");
     const j = try s.get("join");
-    try j.only(&.{ "text", "at", "blink" });
+    try j.only(&.{ "text", "at", "blink", "lives", "next" });
     const ps = try s.get("players");
     if (try ps.len() != 2) return ps.fail("not the two players'");
     var players: [2]BarPlayer = undefined;
@@ -746,7 +757,13 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
             .provenance = if (try s.opt("provenance")) |x| try x.string() else "",
             .players = players,
             .time = try readCell(try s.get("time")),
-            .join = .{ .text = try (try j.get("text")).string(), .at = try readCell(try j.get("at")), .blink = try (try j.get("blink")).int(u8) },
+            .join = .{
+                .text = try (try j.get("text")).string(),
+                .at = try readCell(try j.get("at")),
+                .blink = try (try j.get("blink")).int(u8),
+                .lives = try (try j.get("lives")).int(u8),
+                .next = try readNext(try j.get("next")),
+            },
             .score_most = try (try s.get("score_most")).int(u32),
             .image_rows = try (try image.at(0)).int(u8),
             .image_cells = try (try image.at(1)).int(u8),
@@ -754,11 +771,30 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
         },
     };
     if (r.status_bar.join.blink == 0) return (try j.get("blink")).fail("not 1 or more");
+    if (r.status_bar.join.lives == 0 or r.status_bar.join.lives > 9) return (try j.get("lives")).fail("not 1 to 9");
     if (r.status_bar.score_most == 0 or r.status_bar.score_most > 999_999_999) return (try s.get("score_most")).fail("not 1 to 9 digits");
     if (r.banner.fade == 0 or r.banner.fade > 64) return (try b.get("fade")).fail("not 1 to 64 colours");
     if (r.banner.in_ticks == 0 or r.banner.out_ticks == 0 or r.banner.wait == 0 or r.banner.after == 0) return b.fail("a part of no ticks");
     if (r.time_over.ticks == 0) return (try t.get("ticks")).fail("not 1 or more");
     return r;
+}
+
+/// The join's characters: by each character's name, the character player 2 joins as.
+fn nextValue(arena: std.mem.Allocator, next: *const [3]Character) !json.Value {
+    var fields: [3]json.Field = undefined;
+    for (&fields, std.enums.values(Character)) |*f, c| f.* = .{ .key = @tagName(c), .value = .{ .str = @tagName(next[@backingInt(c)]) } };
+    return obj(arena, &fields);
+}
+
+fn readNext(n: json.Node) Error![3]Character {
+    try n.only(&.{ "adam", "axel", "blaze" });
+    var out: [3]Character = undefined;
+    for (std.enums.values(Character)) |c| {
+        const v = try n.get(@tagName(c));
+        out[@backingInt(c)] = std.meta.stringToEnum(Character, try v.string()) orelse return v.fail("not a character (adam, axel, blaze)");
+        if (out[@backingInt(c)] == c) return v.fail("player 1's own character");
+    }
+    return out;
 }
 
 /// Reads record `name` (its file's parsed `root`) into `into`; frames are checked against `a`.

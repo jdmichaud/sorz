@@ -17,6 +17,7 @@ const tick_mod = @import("tick.zig");
 const draw_list = @import("draw_list.zig");
 const behaviours = @import("behaviours.zig");
 const script = @import("script.zig");
+const lives = @import("lives.zig");
 
 const Fixed = fixed.Fixed;
 const Entity = entity.Entity;
@@ -44,6 +45,7 @@ pub const pipeline = [_]System{
     .{ .name = "commands", .run = commands },
     .{ .name = "control", .run = control },
     .{ .name = "players_move", .run = playersMove },
+    .{ .name = "join", .run = joining },
     .{ .name = "section", .run = script.opening },
     .{ .name = "camera", .run = camera },
     .{ .name = "between_players", .run = betweenPlayers },
@@ -89,6 +91,18 @@ pub fn runRound(world: *World, kinds: *const Kinds, rng: *random.Random, in: Inp
     var t: Tick = .{ .world = world, .kinds = kinds, .random = rng, .out = out, .input = in, .plan = plan };
     inline for (pipeline) |s| s.run(&t);
     world.tick +%= 1;
+}
+
+// A player joining ------------------------------------------------------------------------------
+
+/// A player joining the game under way at this tick (`Input.join`: the round's PRESS 2UP START,
+/// network play's second player): its first life drops in after the players' turns and before
+/// the camera's and the others' (the original's join comes before its objects' update, and its
+/// joining player's first update sets it up without moving it), so that the camera keeps it in
+/// its view and the enemies it knocks back move away at this tick.
+fn joining(t: *Tick) void {
+    const j = t.input.join orelse return;
+    _ = lives.join(t, j.player, j.kind, j.lives);
 }
 
 // Input to commands -------------------------------------------------------------------------------

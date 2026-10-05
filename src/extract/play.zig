@@ -271,6 +271,13 @@ fn rowText(arena: std.mem.Allocator, rom: []const u8, row: u32) ![]const u8 {
 const join_rows = 0x1168A;
 const join_place = 0x1169A;
 const join_blink = 0x11638;
+/// The join itself (0x1164C): player 2's character from the byte table that `move.b
+/// (d8,pc,d0.w),($FF1F)` at ROM 0x1165E reads by player 1's character, and its lives besides the
+/// one it plays from `move.b #N,($FF24)` at ROM 0x11664.
+const join_character = 0x1165E;
+const join_lives = 0x11664;
+/// The original's characters, by their numbers in its memory (the select's, the table's).
+const original_characters = [_]records.Character{ .axel, .adam, .blaze };
 /// Where the game keeps the status bar's image in its memory ($FF6000, header first): a place in
 /// it is an offset of the image.
 const image_ram = 0x6000;
@@ -315,6 +322,20 @@ fn leaCell(rom: []const u8, at: u32, opcode: u16) !records.Cell {
 /// The join's text, its rows one space apart.
 fn joinText(arena: std.mem.Allocator, rom: []const u8) ![]const u8 {
     return rowsText(arena, rom, try leaPc(rom, join_rows), 3);
+}
+
+/// The join's characters: the table's entry of each of the original's characters, by the game's.
+fn joinNext(rom: []const u8) ![3]records.Character {
+    // move.b (d8,pc,d0.w),(abs.w): the extension word's low byte the displacement from it.
+    if (u16be(rom, join_character) != 0x11FB or u16be(rom, join_character + 2) & 0xFF00 != 0) return error.BadData;
+    const table: u32 = join_character + 2 + @as(u32, u16be(rom, join_character + 2) & 0xFF);
+    var next: [3]records.Character = undefined;
+    for (original_characters, 0..) |c, i| {
+        const n = rom[table + i];
+        if (n >= original_characters.len) return error.BadData;
+        next[@backingInt(c)] = original_characters[n];
+    }
+    return next;
 }
 
 // --- The round's clear ---------------------------------------------------------------------------
@@ -715,7 +736,7 @@ pub fn extract(b: *Builder) !records.Round {
             .seconds = try decimal(try immediate(rom, 0x1099A, &.{ 0x31, 0xFC }, 2)),
         },
         .status_bar = .{
-            .provenance = "the status bar's image (0x110AC: window rows 1 to 3, 40 cells a row): the players' names (0x4CD0, the rows at 0x4D30 and 0x4D38) and their special attack's mark, their scores (0x4D60), their lives and special attacks (0x4E14) and the marks before them (0x4CD0), their health bars (0x4E6C), player 2's 26 cells on but its lives and special attacks swapped; the timer (0x10C88); player 2's invitation to join (0x11682: its rows at ROM 0x1168A's, its place ROM 0x1169C's, its blinks ROM 0x1163C's); its image written at every frame of play, its rows and cells (ROM 0x11142's and 0x1114A's, 0x110AC); the most a score holds, where a score's overflow holds it (0x10DA6: move.l #N,(-1,a6) at ROM 0x10DC0, packed decimal)",
+            .provenance = "the status bar's image (0x110AC: window rows 1 to 3, 40 cells a row): the players' names (0x4CD0, the rows at 0x4D30 and 0x4D38) and their special attack's mark, their scores (0x4D60), their lives and special attacks (0x4E14) and the marks before them (0x4CD0), their health bars (0x4E6C), player 2's 26 cells on but its lives and special attacks swapped; the timer (0x10C88); player 2's invitation to join (0x11682: its rows at ROM 0x1168A's, its place ROM 0x1169C's, its blinks ROM 0x1163C's) and the join (0x1164C: its character by player 1's from the table ROM 0x1165E reads, the original's characters numbered Axel, Adam, Blaze; its lives ROM 0x11666's and the one it plays); its image written at every frame of play, its rows and cells (ROM 0x11142's and 0x1114A's, 0x110AC); the most a score holds, where a score's overflow holds it (0x10DA6: move.l #N,(-1,a6) at ROM 0x10DC0, packed decimal)",
             .players = players,
             .time = cellAt(0x2E),
             .join = .{
@@ -726,6 +747,8 @@ pub fn extract(b: *Builder) !records.Round {
                     break :at cellAt(u16be(rom, join_place + 4) - image_ram);
                 },
                 .blink = @intCast(try immediate(rom, join_blink, &.{ 0x11, 0xFC }, 2)),
+                .lives = @intCast(1 + try immediate(rom, join_lives, &.{ 0x11, 0xFC }, 2)),
+                .next = try joinNext(rom),
             },
             .score_most = try scoreMost(rom),
             .image_rows = image[0],

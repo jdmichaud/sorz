@@ -271,7 +271,9 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   cells high) and the `lives_mark` and `specials_mark` before them, and the special attack's
   `icon`) and the timer's (`time`), and `join`, player 2's invitation to join while it does not
   play: its `text` (`fonts/main`, its words only: a space leaves the bar's cell) `at` its cell,
-  shown and hidden in turn every `blink` logic ticks of play; `score_most`, the most a score
+  shown and hidden in turn every `blink` logic ticks of play; at a blink's tick with player 2's
+  START held, player 2 joins with `lives` (the one it plays counted) as the character `next`
+  names by player 1's (`{"adam": ..., "axel": ..., "blaze": ...}`); `score_most`, the most a score
   holds (points past it are lost), its digits the bar's score's; `image`, the bar's rows and
   cells the game writes at every frame of play (their time comes before the sound's driver, A4);
   `bosses`, the bosses' bars, shown from the tick after a boss's first in its section (its

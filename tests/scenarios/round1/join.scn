@@ -1,0 +1,10 @@
+# round 1: player 2 joins mid-round (PRESS 2UP START), the timer down a few seconds: pad 2 holds
+# START from a tick that is not the invitation's blink, past the next blink's tick, where player 2
+# drops in as the character after Axel (Adam), the timer starting again. It ends before player 2
+# has stood long enough to idle.
+start axel
+until state 1 ready
+wait 203
+pad 2
++start 12
+wait 90

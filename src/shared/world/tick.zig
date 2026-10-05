@@ -35,12 +35,18 @@ const capacity_ = entity.capacity;
 /// player reads them).
 pub const Input = struct {
     pads: [2]input.Pads = .{ .{}, .{} },
+    /// A player who joins the game under way at this tick (lives.zig `join`).
+    join: ?Join = null,
 
     /// The same pads at both display ticks.
     pub fn steady(pads: input.Pads) Input {
         return .{ .pads = .{ pads, pads } };
     }
 };
+
+/// A player joining the game under way: who, as which kind, with how many lives (the one it
+/// plays counted).
+pub const Join = struct { player: u1, kind: entity.KindId, lives: u8 };
 
 /// A blow that meets an entity's body (at the struck one's turn, systems.zig).
 pub const Blow = struct {
