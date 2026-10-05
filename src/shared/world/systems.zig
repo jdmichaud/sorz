@@ -467,13 +467,21 @@ fn camera(t: *Tick) void {
     for (t.world.players) |p| {
         const e = t.world.get(p.entity orelse continue) orelse continue;
         if (e.holding == null and e.holder == null) {
-            const left = c.x.add(.pixels(following.margin));
-            const right = left.add(.pixels(following.width - 2 * following.margin));
-            e.position.x = e.position.x.clamp(left, right);
+            const left = c.x.whole() + following.margin;
+            e.position.x = keptWithin(e.position.x, left, left + following.width - 2 * following.margin);
         }
-        e.position.depth = e.position.depth.clamp(.pixels(following.depth_from), .pixels(following.depth_to));
+        e.position.depth = keptWithin(e.position.depth, following.depth_from, following.depth_to);
     }
     noteDrawn(t);
+}
+
+/// `v` kept within whole pixels `from` to `to`, as the original keeps its players: its whole
+/// pixels compared and set, its fraction kept.
+fn keptWithin(v: Fixed, from: i32, to: i32) Fixed {
+    const w = v.whole();
+    if (w < from) return .parts(@intCast(from), v.frac());
+    if (w > to) return .parts(@intCast(to), v.frac());
+    return v;
 }
 
 /// Where the players are drawn at this tick, for the camera's next (a player waiting to continue
