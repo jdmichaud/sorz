@@ -38,6 +38,8 @@ pub const Mind = struct {
     piece: u8 = 0,
     /// It was on the screen at its last tick's end: a blow lands on it.
     shown: bool = false,
+    /// It broke at this tick's blows: its breaking counts from its next.
+    broke: bool = false,
 };
 
 pub const Animation = enum { stand, blink, piece_1, piece_2, piece_3 };
@@ -78,7 +80,9 @@ pub fn think(a: Actor) void {
         .start => start(a),
         .stand => {},
         .piece => if (!fly(a)) return,
-        .breaking => {
+        .breaking => if (a.mind.broke) {
+            a.mind.broke = false;
+        } else {
             a.mind.timer -%= 1;
             if (a.mind.timer == 0) {
                 a.mind.timer = a.numbers().going;
@@ -127,17 +131,18 @@ fn fly(a: Actor) bool {
     return true;
 }
 
-/// A blow or a thing thrown that meets it, standing on the screen, breaks it.
+/// A blow or a thing thrown that meets it, standing on the screen, breaks it. The blow lands
+/// (a player's opens its combo's window) unless a piece found no place: the original's
+/// breakable then forgets the one that struck it.
 pub fn struck(a: Actor, blow: tick.Blow) bool {
     _ = blow;
     if (a.mind.state != .stand or !a.mind.shown) return false;
-    breaks(a);
-    return true;
+    return breaks(a);
 }
 
 /// It breaks: no longer solid, it sounds, leaves its item where it stood, blinks, and its
-/// pieces fly off in the items' free places.
-fn breaks(a: Actor) void {
+/// pieces fly off in the items' free places. Whether every piece found one.
+fn breaks(a: Actor) bool {
     const n = a.numbers();
     const t = a.tables();
     const w = a.tick.world;
@@ -151,6 +156,7 @@ fn breaks(a: Actor) void {
     }
     a.mind.timer = n.breaking;
     a.mind.state = .breaking;
+    a.mind.broke = true;
     a.animate(.blink);
     var height = at.height.whole();
     for (0..@min(n.pieces, t.piece_speed_x.len)) |k| {
@@ -161,11 +167,12 @@ fn breaks(a: Actor) void {
             .height = .pixels(height),
         };
         const places = world_mod.World.item_places;
-        const h = w.spawnWithin(a.tick.kinds, a.entity.kind.?, places.from, places.to, place, .right) catch return;
+        const h = w.spawnWithin(a.tick.kinds, a.entity.kind.?, places.from, places.to, place, .right) catch return false;
         const p = w.get(h).?;
         p.velocity = .{ .x = .of(t.piece_speed_x[k]), .height = .of(t.piece_speed_up[k]) };
         p.mind.breakable.piece = @intCast(k + 1);
     }
+    return true;
 }
 
 /// A player does not hold it.
