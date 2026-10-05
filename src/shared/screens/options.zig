@@ -5,6 +5,11 @@
 //! which reads no input but START. Left and right change a value (the sound test's change stops
 //! the sound); A, B or C on the sound test plays its entry, on EXIT leaves. START leaves from any
 //! line (stopping the sound), a tick sooner than EXIT. Leaving fades out to the game menu.
+//!
+//! The port's VOLUME line (the extended and network variants, on the machine of player 1 when it
+//! sounds the game itself: variant.zig) comes between CONTROL's table and EXIT, which moves a row
+//! down: its name and its value as the other lines', left and right change it by 10 (0 to 100),
+//! and the game's sound follows it (game.zig).
 const std = @import("std");
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
@@ -24,6 +29,10 @@ const sound_test_cells = 11;
 const level_cells = 7;
 const control_cells = 16;
 const control_rows = 5;
+/// The VOLUME line's value: right-aligned in three cells; its step, and its most.
+const volume_cells = 3;
+const volume_step = 10;
+const volume_most = 100;
 
 pub const Line = enum(u8) {
     sound_test,
@@ -31,6 +40,8 @@ pub const Line = enum(u8) {
     control,
     lives,
     first_round,
+    /// The port's.
+    volume,
     exit,
 
     fn hidden(l: Line) bool {
@@ -45,9 +56,11 @@ pub const Values = struct {
     control: u8 = 0,
     lives: u8 = 0,
     first_round: u8 = 0,
+    /// Null without the VOLUME line.
+    volume: ?u8 = null,
 
     fn of(s: *const Setup) Values {
-        return .{ .sound_test = s.sound_test, .level = s.level, .control = s.control, .lives = s.lives, .first_round = s.first_round };
+        return .{ .sound_test = s.sound_test, .level = s.level, .control = s.control, .lives = s.lives, .first_round = s.first_round, .volume = s.volume };
     }
 
     fn store(v: Values, s: *Setup) void {
@@ -56,6 +69,7 @@ pub const Values = struct {
         s.control = v.control;
         s.lives = v.lives;
         s.first_round = v.first_round;
+        s.volume = v.volume;
     }
 };
 
@@ -117,8 +131,10 @@ pub const Options = struct {
             .stop = "stop",
         };
 
+        /// The cartridge's art of a line's name (the port's VOLUME is written in the font).
         fn name(a: *const Assets, l: Line, bright: bool) *const art.TileMap {
             return switch (l) {
+                .volume => unreachable,
                 .sound_test => if (bright) a.sound_test else a.sound_test_dim,
                 .level => if (bright) a.level else a.level_dim,
                 .control => if (bright) a.control else a.control_dim,
@@ -213,6 +229,10 @@ pub const Options = struct {
             .first_round => if (step) |up| {
                 v.first_round = wrap(v.first_round, 8, up);
             },
+            .volume => if (step) |up| {
+                const was = v.volume.?;
+                v.volume = if (up) @min(volume_most, was + volume_step) else was -| volume_step;
+            },
             .exit => if (p.a or p.b or p.c) {
                 self.phase = .leave;
             },
@@ -221,14 +241,21 @@ pub const Options = struct {
     }
 
     /// The line after the cursor's, down or up, round the ends; the hidden lines, when they are
-    /// open, come before EXIT though they are below it on the screen (quirk O2).
+    /// open, come before EXIT though they are below it on the screen (quirk O2), and the VOLUME
+    /// line, when there is one, right before EXIT.
     fn next(self: *const Options, down: bool) Line {
-        const order = [_]Line{ .sound_test, .level, .control, .lives, .first_round, .exit };
+        const order = [_]Line{ .sound_test, .level, .control, .lives, .first_round, .volume, .exit };
         var i = std.mem.indexOfScalar(Line, &order, self.line).?;
         while (true) {
             i = if (down) (i + 1) % order.len else (i + order.len - 1) % order.len;
-            if (self.hidden_lines or !order[i].hidden()) return order[i];
+            if (self.has(order[i])) return order[i];
         }
+    }
+
+    /// Whether the screen has the line now.
+    fn has(self: *const Options, l: Line) bool {
+        if (l == .volume) return self.values.volume != null;
+        return self.hidden_lines or !l.hidden();
     }
 
     fn wrap(v: u8, count: u8, up: bool) u8 {
@@ -238,7 +265,7 @@ pub const Options = struct {
     pub fn draw(self: *const Options, prev: ?*const Options, v: *view.View, a: *const Assets) !void {
         if (prev == null) try v.board(.a).drawMapAtPlace(a.title);
         for (std.enums.values(Line)) |l| {
-            if (l.hidden() and !self.hidden_lines) continue;
+            if (!self.has(l)) continue;
             if (prev) |p| if (p.bright == self.bright and std.meta.eql(p.values, self.values)) continue;
             try self.drawLine(l, v, a);
         }
@@ -248,10 +275,14 @@ pub const Options = struct {
     /// A line: its name and its value, bright or dim.
     fn drawLine(self: *const Options, l: Line, v: *view.View, a: *const Assets) !void {
         const bright = self.bright == l;
-        const name = a.name(l, bright);
-        try v.board(.a).drawMapAtPlace(name);
-        const row: i32 = (name.place orelse return).y;
         const look: render.Look = .{ .palette = if (bright) 0 else 1 };
+        if (l == .volume) return self.drawVolume(v, a, look);
+        const name = a.name(l, bright);
+        const at = name.place orelse return;
+        // With the VOLUME line, EXIT a row lower.
+        const below: i32 = if (l == .exit and self.values.volume != null) 1 else 0;
+        try v.board(.a).drawMap(name, at.x, at.y + below);
+        const row: i32 = at.y;
         const d = a.data;
         var buf: [control_cells]u8 = undefined;
         switch (l) {
@@ -266,8 +297,19 @@ pub const Options = struct {
             },
             .lives => try v.write(.a, a.text, value_column, row, &[_]u8{'1' + 2 * self.values.lives}, look),
             .first_round => try v.write(.a, a.text, value_column, row, &[_]u8{'1' + self.values.first_round}, look),
-            .exit => {},
+            .volume, .exit => {},
         }
+    }
+
+    /// The VOLUME line, on the row above EXIT's place (EXIT then a row lower): its name in the
+    /// column of the others', its value right-aligned in the values' column.
+    fn drawVolume(self: *const Options, v: *view.View, a: *const Assets, look: render.Look) !void {
+        const at = a.exit.place orelse return;
+        const row: i32 = at.y - 1;
+        try v.write(.a, a.text, at.x, row, "VOLUME", look);
+        var digits: [volume_cells]u8 = undefined;
+        const text = std.fmt.bufPrint(&digits, "{d: >3}", .{self.values.volume.?}) catch unreachable;
+        try v.write(.a, a.text, value_column, row, text, look);
     }
 
     /// `text` padded with blanks to `cells`, in `buf`.
@@ -292,4 +334,32 @@ test "the cursor's order: the hidden lines before EXIT when open, round the ends
     try std.testing.expectEqual(Line.exit, o.next(false));
     try std.testing.expectEqual(@as(u8, 72), Options.wrap(0, 73, false));
     try std.testing.expectEqual(@as(u8, 0), Options.wrap(72, 73, true));
+}
+
+test "the VOLUME line: right before EXIT when there is one, by tens from 0 to 100" {
+    var o: Options = .{ .values = .{ .volume = 90 } };
+    o.line = .control;
+    try std.testing.expectEqual(Line.volume, o.next(true));
+    o.hidden_lines = true;
+    o.line = .first_round;
+    try std.testing.expectEqual(Line.volume, o.next(true));
+    o.line = .exit;
+    try std.testing.expectEqual(Line.volume, o.next(false));
+    o.line = .volume;
+    try std.testing.expectEqual(Line.first_round, o.next(false));
+    try std.testing.expectEqual(Line.exit, o.next(true));
+
+    // Right twice: 100 at most; left: by ten; the setup keeps it.
+    var setup: Setup = .{ .volume = 90 };
+    var turn: scene.Turn = .{ .setup = &setup, .pressed = .{ .pad1 = .{ .right = true } } };
+    const a: Options.Assets = undefined;
+    o.lineInput(&turn, &a);
+    o.lineInput(&turn, &a);
+    try std.testing.expectEqual(@as(?u8, 100), setup.volume);
+    turn.pressed = .{ .pad1 = .{ .left = true } };
+    o.lineInput(&turn, &a);
+    try std.testing.expectEqual(@as(?u8, 90), setup.volume);
+    o.values.volume = 5;
+    o.lineInput(&turn, &a);
+    try std.testing.expectEqual(@as(?u8, 0), setup.volume);
 }

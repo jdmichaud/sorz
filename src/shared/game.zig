@@ -21,8 +21,12 @@
 //! clock) by up to 0.5 %. A new session starts the game from power-on; a state mismatch stops it.
 //! Without a session, nothing of this runs.
 //!
+//! Variants (DESIGN.md 10.7, variant.zig): the game starts with its variant (`variant`, which the
+//! host chooses; in network play the host's start is both games'), part of its canonical state.
+//!
 //! Settings (DESIGN.md 7): the record, read from the storage at the start, gives the controls'
-//! layout, the sound's volume and the SDL host's window. A damaged record is repaired and kept
+//! layout, the sound's volume and the SDL host's window. OPTIONS' VOLUME line (variant.zig) is the
+//! record's volume of the machine whose player 1 moves it. A damaged record is repaired and kept
 //! aside (settings/record.zig), and `notice` says so for the host and, once the game draws text,
 //! the player (TODO(PLAN item 19): the settings screen and its notices).
 const std = @import("std");
@@ -41,6 +45,7 @@ const View = @import("view.zig").View;
 const transfers = @import("screens/transfers.zig");
 const Setup = @import("setup.zig").Setup;
 const world = @import("world/root.zig");
+const variant = @import("variant.zig");
 
 pub const page_width = picture.width;
 pub const page_height = picture.height;
@@ -68,6 +73,8 @@ pub const Notice = enum {
 pub const State = struct {
     /// Display ticks since power-on.
     tick: u32 = 0,
+    /// What the game started with: its variant (its flow and its rules), the machines' players.
+    start: variant.Start = .{},
     /// The scenes; the test pattern alone without content.
     scenes: scene.Stack = .{},
     /// What the screens decide for play.
@@ -77,11 +84,13 @@ pub const State = struct {
     /// The game's random generator, with the original's algorithm (world/random.zig).
     random: world.Random = .{},
 
-    /// The state at power-on of a game with its content: the flow's first scene, its set-up, and
-    /// the original's wait after it.
-    pub fn powerOn(graph: *const flow.Graph) State {
-        var s: State = .{};
-        s.scenes = scene.powerOn(graph, &s.setup);
+    /// The state at power-on of a game with its content: the variant's flow's first scene, its
+    /// set-up, and the original's wait after it; the players and the VOLUME line the start gives.
+    pub fn powerOn(start: variant.Start) State {
+        var s: State = .{ .start = start };
+        s.setup.players = start.players;
+        s.setup.volume = start.volume;
+        s.scenes = scene.powerOn(start.variant.config().graph, &s.setup);
         return s;
     }
 
@@ -93,15 +102,17 @@ pub const State = struct {
 
     /// `step`, a round's world giving out its tick into `world_out` (the picture's).
     pub fn stepWith(self: *State, pads: input.Pads, second_pad: bool, assets: ?*const scene.Assets, world_out: ?*world.Output) scene.Turn {
+        const config = self.start.variant.config();
         var turn: scene.Turn = .{
             .pads = pads,
             .pressed = .{ .pad1 = newly(pads.pad1, self.held.pad1), .pad2 = newly(pads.pad2, self.held.pad2) },
             .second_pad = second_pad,
             .setup = &self.setup,
+            .policies = &config.policies,
             .random = &self.random,
             .world_out = world_out,
         };
-        scene.tick(&self.scenes, &flow.original, &turn, assets);
+        scene.tick(&self.scenes, config.graph, &turn, assets);
         if (turn.release_pads) {
             self.held = .{ .pad1 = all_buttons, .pad2 = all_buttons };
         } else if (turn.read_pads) self.held = pads;
@@ -151,6 +162,12 @@ pub const Game = struct {
     /// sessions from power-on that the game started for.
     netplay: ?*net.Netplay = null,
     net_epoch: u32 = 0,
+    /// The variant the game plays (variant.zig), which the host chooses before the first update:
+    /// in network play, the host's is both games'.
+    variant: variant.Variant = .extended,
+    /// The start the game plays instead of its variant's on this machine: a check's game that
+    /// plays alone what a session played (the session's start, two players on one machine).
+    fixed_start: ?variant.Start = null,
     /// The host applies the settings' volume itself (the browser's page, with its gain): the game
     /// then queues its sound at full volume.
     host_volume: bool = false,
@@ -185,6 +202,7 @@ pub const Game = struct {
         errdefer game.deinit();
         if (assets) |a| if (library.hasTree(allocator, a)) try game.loadContent(a);
         if (storage) |s| game.loadSettings(s);
+        game.state = game.startState();
         return game;
     }
 
@@ -212,7 +230,6 @@ pub const Game = struct {
         self.content = c;
         self.scene_assets = scene.Assets.find(c, &diag) catch |e| return self.refuse(e, &diag);
         self.view = try View.init(self.allocator);
-        self.state = .powerOn(&flow.original);
     }
 
     fn refuse(_: *Game, e: library.LoadError, diag: *const json.Diagnostic) InitError {
@@ -220,9 +237,35 @@ pub const Game = struct {
         return e;
     }
 
-    /// The state from power-on: with the content, the flow's first scene; without, the pattern.
+    /// The state from power-on: with the content, the variant's flow's first scene; without, the
+    /// pattern.
     fn startState(self: *const Game) State {
-        return if (self.content != null) .powerOn(&flow.original) else .{};
+        return if (self.content != null) .powerOn(self.start()) else .{};
+    }
+
+    /// What the game starts with (variant.zig): this machine's variant, its volume and its
+    /// players, or in network play the session's, which the host gives.
+    pub fn start(self: *const Game) variant.Start {
+        if (self.netplay) |np| if (np.session.start) |s| return startOf(s);
+        if (self.fixed_start) |s| return s;
+        return .of(self.variant, !self.host_volume, self.settings.sound.volume, if (self.netplay != null) .two else .one);
+    }
+
+    comptime {
+        std.debug.assert(std.enums.values(variant.Variant).len == net.protocol.Start.max_variant + 1);
+    }
+
+    /// A start as the session's welcome carries it, and back.
+    fn startOf(s: net.protocol.Start) variant.Start {
+        return .{
+            .variant = @fromBackingInt(s.variant),
+            .players = if (s.players == 1) .two else .one,
+            .volume = if (s.volume == net.protocol.Start.no_volume) null else s.volume,
+        };
+    }
+
+    fn startBytes(s: variant.Start) net.protocol.Start {
+        return .{ .variant = @backingInt(s.variant), .players = @intFromBool(s.players == .two), .volume = s.volume orelse net.protocol.Start.no_volume };
     }
 
     /// The settings from the storage: a damaged record is told (settings/record.zig).
@@ -295,14 +338,33 @@ pub const Game = struct {
         return key == self.settings.settings_key or self.controls.uses(key);
     }
 
+    /// Whether this machine plays player `who` (0 or 1): both without network play.
+    fn plays(self: *const Game, who: u1) bool {
+        const np = self.netplay orelse return true;
+        return @intFromBool(np.role == .guest) == who;
+    }
+
+    /// Whether this machine's volume is OPTIONS' VOLUME line: the game has the line, and this
+    /// machine's player 1 moves it.
+    fn volumeIsLine(self: *const Game) bool {
+        return self.start().volume != null and self.plays(0);
+    }
+
     /// The events, the ticks due, the picture.
     pub fn update(self: *Game, p: *platform.Platform) !UpdateResult {
         if (!self.started) {
             _ = try p.start();
             try p.setResolution(page_width, page_height);
             self.started = true;
+            // Power-on, with what the host chose since the game was made (its variant, a browser's
+            // page's volume).
+            self.state = self.startState();
             self.openSound(p);
             self.clock_base_ns = p.nowNs();
+            if (self.netplay) |np| {
+                // What a host's game starts with, which its welcome gives the guest.
+                np.session.config.start = startBytes(self.start());
+            }
             if (self.netplay) |np| np.start(p) catch |err| {
                 std.log.err("network play cannot start at {s}: {s}", .{ np.address, @errorName(err) });
                 return err;
@@ -416,6 +478,11 @@ pub const Game = struct {
         if (self.netplay) |np| pads = np.pads(p, pads.pad1) orelse return false;
         const turn = self.state.stepWith(pads, self.secondPad(), if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
         self.redraw = true;
+        // OPTIONS' VOLUME line is the record's volume of player 1's machine.
+        if (self.state.setup.volume) |v| if (self.volumeIsLine() and v != self.settings.sound.volume) {
+            self.settings.sound.volume = v;
+            self.writeSettings(&self.settings);
+        };
         // The frame that starts this tick holds the sound's processor for the last tick's picture
         // and the pads' reading, unless a load holds the frame's work and the sound together.
         var held: u32 = 0;

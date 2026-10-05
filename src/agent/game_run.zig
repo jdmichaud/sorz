@@ -72,7 +72,7 @@ pub const Run = struct {
             .assets = assets,
             .script = script,
             .pads = pads,
-            .state = .powerOn(&sorz.flow.original),
+            .state = .powerOn(.{ .variant = .original }),
             .body = .{ .commands = script.commands },
             .trace = trace,
             .stage = switch (script.start) {

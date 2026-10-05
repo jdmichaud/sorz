@@ -9,7 +9,9 @@
 //! the same keys in this process, on the content extracted from ROM, and each of its pictures is
 //! compared with sor-remaster's, pixel by pixel, then the sound, sample by sample. The pictures
 //! and the sound of a stand-in (a scene sorz does not have yet: the attract demo, play) are left
-//! out of the ticks compared. Prints
+//! out of the ticks compared. sorz runs its original variant (the cartridge's flow, game menu and
+//! options: variant.zig), and sor-remaster's agent its own default, which is the cartridge's too:
+//! the options without the port's VOLUME line (its `--options-volume` adds it). Prints
 //! a JSON line per scenario: the pictures compared and the first that differs (its picture and a
 //! diff are written in OUT_DIR), the first tick whose sound differs; exits with 1 when anything
 //! differs.
@@ -319,6 +321,7 @@ fn run(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator, assets: sor
     var game = try sorz.Game.init(gpa, assets, memory_storage.storage());
     defer game.deinit();
     game.pacing = .per_update;
+    game.variant = .original;
     var p = backend.asPlatform();
     var pictures: usize = 0;
     var differing: usize = 0;

@@ -59,6 +59,8 @@ const Script = struct {
 
 fn writeGame(w: *std.Io.Writer, label: []const u8, game: *const sorz.Game) !void {
     try w.print("\"{s}\":{{\"ticks\":{d},\"updates\":{d},\"state_hash\":\"{x:0>16}\"", .{ label, game.state.tick, game.update_count, game.stateHash() });
+    // The game's variant and the scene of the flow it is in (the test pattern without content).
+    try w.print(",\"variant\":\"{s}\",\"scene\":\"{s}\"", .{ @tagName(game.state.start.variant), @tagName(std.meta.activeTag(game.state.scenes.base)) });
     if (game.netplay) |n| {
         try w.print(",\"phase\":\"{s}\",\"delay\":{d},\"epoch\":{d}", .{ @tagName(n.phase()), n.session.delay, n.epoch });
         if (n.difference) |d| try w.print(",\"difference\":\"{f}\"", .{d});
@@ -79,6 +81,7 @@ pub fn process(
     served: ?platform.AssetSource,
     frames: u64,
     presses: []const Press,
+    game_variant: sorz.variant.Variant,
     out: *std.Io.Writer,
 ) !bool {
     var side: native.cli.Netplay = undefined;
@@ -90,6 +93,7 @@ pub fn process(
     var game = try sorz.Game.init(gpa, assets, storage);
     defer game.deinit();
     game.pacing = .per_update;
+    game.variant = game_variant;
     try game.startNetplay(options);
     var script = try Script.init(gpa, presses);
     defer script.deinit(gpa);
@@ -146,6 +150,8 @@ pub fn pair(
     guest_presses: []const Press,
     /// The negative control: before this tick, one bit of the guest's state flips.
     corrupt: ?u64,
+    /// The host's variant, which the guest plays too.
+    game_variant: sorz.variant.Variant,
     out: *std.Io.Writer,
 ) !bool {
     var network = net.memory.Network.init(gpa);
@@ -174,6 +180,7 @@ pub fn pair(
         made += 1;
         s.backend.transport = (try network.endpoint()).transport();
         s.game.pacing = .per_update;
+        s.game.variant = game_variant;
         try s.game.startNetplay(.{
             .role = if (host) .host else .guest,
             .address = if (host) "7000" else "ws://localhost:7000",
@@ -214,6 +221,8 @@ pub fn pair(
     var reference = try sorz.Game.init(gpa, assets, null);
     defer reference.deinit();
     reference.pacing = .per_update;
+    // The session's game: the host's start (its variant, two players), on one machine.
+    reference.fixed_start = sides[0].game.state.start;
     const shifted = try gpa.alloc(Press, host_presses.len + guest_presses.len);
     defer gpa.free(shifted);
     for (host_presses, 0..) |press, i| shifted[i] = .{ .frame = press.frame + delay, .key = press.key, .hold = press.hold };
@@ -266,14 +275,14 @@ test "two games in one process: the pair mode's verdict" {
     var w = std.Io.Writer.fixed(&buf);
     const presses = [_]Press{ .{ .frame = 10, .key = .x, .hold = 5 }, .{ .frame = 20, .key = .right, .hold = 40 } };
     const guest = [_]Press{.{ .frame = 30, .key = .down, .hold = 30 }};
-    try std.testing.expect(try pair(std.testing.allocator, null, @splat(0), 3, 120, &presses, &guest, null, &w));
+    try std.testing.expect(try pair(std.testing.allocator, null, @splat(0), 3, 120, &presses, &guest, null, .network, &w));
     try std.testing.expect(std.mem.find(u8, w.buffered(), "\"same\":true") != null);
 }
 
 test "a bit of the guest's state flipped: both games stop at the next check and name the field" {
     var buf: [4096]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try std.testing.expect(try pair(std.testing.allocator, null, @splat(0), 2, 300, &.{}, &.{}, 47, &w));
+    try std.testing.expect(try pair(std.testing.allocator, null, @splat(0), 2, 300, &.{}, &.{}, 47, .network, &w));
     const text = w.buffered();
     try std.testing.expect(std.mem.find(u8, text, "\"corrupted_before\":47,\"found_at\":60") != null);
     try std.testing.expect(std.mem.find(u8, text, "\"difference\":\"tick (byte 0, 4 bytes): ours 60, theirs 124\"") != null);

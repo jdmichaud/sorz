@@ -1,7 +1,7 @@
 //! The command-line options that the native hosts take and open for the game: the positional game
-//! path and `--saves DIR` (DESIGN.md 5.2, D8), network play's `--netplay [ADDRESS:]PORT` or
-//! `--join ws://ADDRESS:PORT`, with `--delay N`, and server mode's `--server [ADDRESS:]PORT`
-//! (DESIGN.md 9). Both serve the browser build built into the executable, never files beside it
+//! path and `--saves DIR` (DESIGN.md 5.2, D8), the variant (`--original`, DESIGN.md 10.7), network
+//! play's `--netplay [ADDRESS:]PORT` or `--join ws://ADDRESS:PORT`, with `--delay N`, and server
+//! mode's `--server [ADDRESS:]PORT` (DESIGN.md 9). Both serve the browser build built into the executable, never files beside it
 //! (DESIGN.md 1), and the game's files from the game path (`served.zig`): the page never asks the
 //! player for them (DESIGN.md 5.3).
 //!
@@ -26,6 +26,10 @@ pub const usage =
     \\                       content is extracted in memory
     \\  --saves DIR          where saves are kept (default: the per-user application data
     \\                       directory)
+    \\  --original           the cartridge exactly: its game menu and its options, without the
+    \\                       port's additions (SETTINGS in the game menu, VOLUME in OPTIONS);
+    \\                       the settings key (F1) still opens the settings. In network play,
+    \\                       the host's choice is both games'
     \\  --netplay [ADDRESS:]PORT  play with a second player over the network, as the host
     \\                       (player 1): listen at PORT (all interfaces without ADDRESS), where
     \\                       the browser build's page is served too, with the game's files
@@ -48,10 +52,16 @@ pub const Options = struct {
     join: ?[]const u8 = null,
     server: ?[]const u8 = null,
     delay: ?u8 = null,
+    /// `--original`: the cartridge's variant rather than the default (variant.zig).
+    original: bool = false,
 
     /// Consumes `--saves`, the network's options and the single positional game path. Returns
     /// false for any other argument. After `--`, a game path can start with a dash.
     pub fn take(self: *Options, arg: []const u8, args: anytype) TakeError!bool {
+        if (std.mem.eql(u8, arg, "--original")) {
+            self.original = true;
+            return true;
+        }
         if (std.mem.eql(u8, arg, "--saves")) {
             const value = args.next() orelse return error.MissingValue;
             if (value.len == 0) return error.MissingValue;
@@ -111,6 +121,12 @@ pub const Options = struct {
             return .server;
         }
         return if (self.netplay != null or self.join != null) .netplay else .none;
+    }
+
+    /// The variant the game plays: the cartridge's with `--original`, network play's with
+    /// `--netplay` or `--join`, else the default, extended.
+    pub fn variant(self: Options) sorz.variant.Variant {
+        return .of(.{ .original = self.original, .network = self.netplay != null or self.join != null });
     }
 
     /// The session's options for the game, given the data's identity.
@@ -400,6 +416,14 @@ test "the options take the game path and --saves" {
     var missing: TestArgs = .{ .items = &.{"--saves"} };
     try std.testing.expectError(error.MissingValue, options.take(missing.next().?, &missing));
     try std.testing.expectError(error.DuplicateAssets, TestArgs.all(&.{ "one", "two" }));
+}
+
+test "the variant: extended by default, network play's with --netplay or --join, --original's" {
+    try std.testing.expectEqual(sorz.variant.Variant.extended, (try TestArgs.all(&.{"game"})).variant());
+    try std.testing.expectEqual(sorz.variant.Variant.original, (try TestArgs.all(&.{ "game", "--original" })).variant());
+    try std.testing.expectEqual(sorz.variant.Variant.network, (try TestArgs.all(&.{ "game", "--netplay", "7000" })).variant());
+    try std.testing.expectEqual(sorz.variant.Variant.network, (try TestArgs.all(&.{ "--join", "ws://h:1" })).variant());
+    try std.testing.expectEqual(sorz.variant.Variant.original, (try TestArgs.all(&.{ "game", "--original", "--netplay", "7000" })).variant());
 }
 
 test "the options of network play" {

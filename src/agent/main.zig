@@ -17,7 +17,7 @@ const web_page = @import("web_page");
 
 const usage =
     \\usage: sorz-agent [--frames N] [--key FRAME:NAME[:HOLD]]... [--shot FRAME:PATH]... [--wav PATH]
-    \\                  [DIR|ROM] [--saves DIR]
+    \\                  [DIR|ROM] [--saves DIR] [--original | --page]
     \\       sorz-agent [DIR|ROM] (--netplay [ADDRESS:]PORT [--delay N] | --join ws://ADDRESS:PORT)
     \\                  [--frames N] [--key FRAME:NAME[:HOLD]]...
     \\       sorz-agent [DIR|ROM] --pair [--delay N] [--frames N] [--key ...]... [--guest-key ...]...
@@ -36,6 +36,12 @@ const usage =
     \\  DIR|ROM          the game directory (its content tree), or the user's ROM, whose content
     \\                   is extracted in memory; without either, a test pattern
     \\  --saves DIR      where saves are kept, the settings record (settings.json) among them
+    \\  --original       the cartridge's variant (DESIGN.md 10.7): its game menu and options;
+    \\                   the default is the extended game, network play's the network variant
+    \\                   (with --pair, the host's: the network variant without --original)
+    \\  --page           the game as a browser's page runs it alone (1 PLAYER on its menu):
+    \\                   the network variant, one player (pad 1's keys and every gamepad), the
+    \\                   page's own volume (no VOLUME line in OPTIONS)
     \\  --netplay, --join  network play over WebSockets, as the host (player 1) or the guest
     \\                   (player 2); --frames counts the session's ticks, and --key presses a
     \\                   pad 1 key by tick (it reaches the game --delay ticks later); prints the
@@ -99,6 +105,7 @@ pub fn main(init: std.process.Init) !void {
     var guest_presses: std.ArrayList(Press) = .empty;
     defer guest_presses.deinit(gpa);
     var pair = false;
+    var as_page = false;
     var corrupt: ?u64 = null;
     var scenario: ?agent.scenario_cmd.Options = null;
     var situation: ?[]const u8 = null;
@@ -135,6 +142,8 @@ pub fn main(init: std.process.Init) !void {
             try guest_presses.append(gpa, parsePress(args.next() orelse return fail(io)) orelse return fail(io));
         } else if (std.mem.eql(u8, arg, "--pair")) {
             pair = true;
+        } else if (std.mem.eql(u8, arg, "--page")) {
+            as_page = true;
         } else if (std.mem.eql(u8, arg, "--corrupt")) {
             corrupt = std.fmt.parseInt(u64, args.next() orelse return fail(io), 10) catch return fail(io);
         } else if (std.mem.eql(u8, arg, "--scenario")) {
@@ -222,9 +231,9 @@ pub fn main(init: std.process.Init) !void {
         var obuf: [2048]u8 = undefined;
         var ow = std.Io.File.stdout().writerStreaming(io, &obuf);
         const ok = if (pair)
-            try agent.netplay_cmd.pair(gpa, assets, identity, options.delay orelse 2, frames, presses.items, guest_presses.items, corrupt, &ow.interface)
+            try agent.netplay_cmd.pair(gpa, assets, identity, options.delay orelse 2, frames, presses.items, guest_presses.items, corrupt, if (options.original) .original else .network, &ow.interface)
         else
-            try agent.netplay_cmd.process(gpa, io, assets, storage, options.netplayOptions(identity), page, providers.assetSource(), frames, presses.items, &ow.interface);
+            try agent.netplay_cmd.process(gpa, io, assets, storage, options.netplayOptions(identity), page, providers.assetSource(), frames, presses.items, options.variant(), &ow.interface);
         try ow.interface.flush();
         if (!ok) std.process.exit(1);
         return;
@@ -237,6 +246,13 @@ pub fn main(init: std.process.Init) !void {
     var game = try sorz.Game.init(gpa, assets, storage);
     defer game.deinit();
     game.pacing = .per_update;
+    game.variant = options.variant();
+    if (as_page) {
+        // The game as a browser's page runs it alone (web/main.zig).
+        game.variant = .network;
+        game.setOnePlayer();
+        game.host_volume = true;
+    }
     var p = backend.asPlatform();
     var frame: u64 = 0;
     var shots_written: usize = 0;

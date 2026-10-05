@@ -36,6 +36,8 @@ pub const usage =
     \\  --fps N              the fallback pacer's rate, 1 to 1000 (default 60)
     \\  --saves DIR          where saves are kept (default: the per-user application data
     \\                       directory)
+    \\  --original           the cartridge exactly: its game menu and its options, without the
+    \\                       port's additions (SETTINGS in the game menu, VOLUME in OPTIONS)
     \\  --netplay [ADDRESS:]PORT  play with a second player over the network, as the host
     \\                       (player 1): listen at PORT, where the browser build's page is
     \\                       served too, with the game's files
@@ -133,6 +135,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
 
     var game = try sorz.Game.init(gpa, providers.assetSource(), providers.storage());
     defer game.deinit();
+    game.variant = options.providers.variant();
+    std.log.info("variant: {s}", .{@tagName(game.variant)});
     if (netplay) {
         backend.transport = net_side.transport.transport();
         try game.startNetplay(net_options);

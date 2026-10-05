@@ -35,6 +35,7 @@ const View = @import("view.zig").View;
 const Setup = @import("setup.zig").Setup;
 const transfers = @import("screens/transfers.zig");
 const world = @import("world/root.zig");
+const variant = @import("variant.zig");
 
 pub const Kind = flow.Kind;
 pub const Exit = flow.Exit;
@@ -100,7 +101,12 @@ pub const Turn = struct {
     /// Whether a second pad is there (the game menu dims 2 PLAYERS without it).
     second_pad: bool = true,
     setup: *Setup,
+    /// The variant's rules (variant.zig), which the scenes ask rather than the variant.
+    policies: *const variant.Policies = &variant.original.policies,
     requests: Requests = .{},
+    /// The player who chose the settings at this tick (the game menu's SETTINGS): the game opens
+    /// them over the scenes, on that player's machine (game.zig).
+    settings: ?u1 = null,
     /// Whether the sound's driver runs at this tick: a load holds it, as the original's do.
     sound_driver: bool = true,
     /// Whether the pads are read at this tick: a load reads none.

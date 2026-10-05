@@ -404,7 +404,8 @@ pub const Select = struct {
         // Any direction but right is left.
         const from = c.place;
         var to = next(from, pressed.right);
-        if (self.players == .two and self.cursors[1 - i].place == to) to = next(to, pressed.right);
+        // A character the variant's rule says is taken (the other player's, in the cartridge).
+        if (self.players == .two and turn.policies.characterTaken(self.cursors[1 - i].place, to)) to = next(to, pressed.right);
         c.place = to;
         self.portraits[@backingInt(from)].cursor = false;
         self.portraits[@backingInt(to)].cursor = true;
