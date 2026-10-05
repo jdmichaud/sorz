@@ -1,0 +1,12 @@
+# blaze: walk into the first Galsia until the grab; then C, then C again from behind.
+start blaze
+until state 1 ready
++right
+until state 1 grab within 300
+-right
+wait 4
+jump
+until state 1 grab_behind within 40
+wait 4
+jump
+wait 80

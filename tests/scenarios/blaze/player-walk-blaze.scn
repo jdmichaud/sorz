@@ -1,0 +1,20 @@
+# blaze: a walk of 8 ticks each way, then the four diagonals.
+start blaze
+until state 1 ready
+wait 30
+right 8
+wait 8
+left 8
+wait 8
+up 8
+wait 8
+down 8
+wait 8
+up+right 8
+wait 8
+down+right 8
+wait 8
+up+left 8
+wait 8
+down+left 8
+wait 8

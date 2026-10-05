@@ -456,8 +456,9 @@ pub fn build(b: *std.Build) void {
         screens_check_step.dependOn(&b.addFail("screens-check needs -Drom=ROM and -Dremaster=DIR").step);
     }
 
-    // `similar-check`, the gate of Axel (PLAN items 05 and 11, src/tools/similar_check.zig): the
-    // catalogue's scenarios of Axel (tests/scenarios/axel) run in sor-remaster and in sorz, their
+    // `similar-check`, the gate of the players' moves (PLAN items 05, 11 and 14,
+    // src/tools/similar_check.zig): the catalogue's scenarios of Axel, Adam and Blaze, and the two
+    // players' (tests/scenarios/axel, adam, blaze, two), run in sor-remaster and in sorz, their
     // traces, probes and measurements compared move by move. -Dremaster is sor-remaster's
     // checkout (its agent built as screens-check builds it) or an agent already built.
     const similar_out = b.option([]const u8, "similar-out", "Where similar-check writes its runs and report (default: <prefix>/similar)");
@@ -467,7 +468,7 @@ pub fn build(b: *std.Build) void {
     const similar_pads = b.option([]const u8, "pads", "The recorded play of round 1 (game.pads): similar-check then compares the enemies and the items in tests/scenarios/enemies");
     const similar_every = b.option(u32, "similar-every", "similar-check runs every N-th run of the enemies' families (default 1: all)");
     const similar_jobs = b.option(u32, "similar-jobs", "similar-check runs sor-remaster this many times at once for the enemies (default 4)");
-    const similar_check_step = b.step("similar-check", "Compare Axel's moves with sor-remaster's in the catalogue's scenarios (needs -Drom=ROM -Dremaster=DIR|AGENT)");
+    const similar_check_step = b.step("similar-check", "Compare the players' moves with sor-remaster's in the catalogue's scenarios (needs -Drom=ROM -Dremaster=DIR|AGENT)");
     const similar_module = b.createModule(.{
         .root_source_file = b.path("src/tools/similar_check.zig"),
         .target = target,
@@ -492,7 +493,7 @@ pub fn build(b: *std.Build) void {
             reference.has_side_effects = true;
             check.addFileArg(reference_prefix.path(b, "bin/sorz-agent"));
         } else |_| check.addArg(remaster.?);
-        check.addDirectoryArg(b.path("tests/scenarios/axel"));
+        check.addDirectoryArg(b.path("tests/scenarios"));
         if (similar_out) |dir| {
             check.addArg(dir);
         } else {

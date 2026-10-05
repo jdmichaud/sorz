@@ -1,6 +1,6 @@
-//! sorz-similar-check: the gate of Axel (PLAN items 05 and 11): his moves in sorz similar to the
-//! original's (DESIGN.md V3), as sor-remaster (the original's logic, in lockstep with it) plays
-//! them in the catalogue's scenarios.
+//! sorz-similar-check: the gate of the players' moves (PLAN items 05, 11 and 14): Axel's, Adam's
+//! and Blaze's in sorz similar to the original's (DESIGN.md V3), as sor-remaster (the original's
+//! logic, in lockstep with it) plays them in the catalogue's scenarios.
 //!
 //!   sorz-similar-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [--pads FILE --enemies DIR
 //!                      [--every N] [--jobs N]] [SCENARIO...]
@@ -10,7 +10,7 @@
 //! runs N at once. The SCENARIOs name Axel's scenarios and the enemies' families to run (all by
 //! default).
 //!
-//! For each scenario of `scenarios` below (its file SCENARIOS_DIR/NAME.scn; a family, whose
+//! For each scenario of `scenarios` below (its file SCENARIOS_DIR/DIR/NAME.scn; a family, whose
 //! header says the values its `{N}` takes, is a run per value), sor-remaster's agent runs it from
 //! power-on and writes its trace and probe into OUT_DIR; sorz runs it in this process, on the
 //! content extracted from ROM, taken up from the reference's situation at play's start
@@ -45,32 +45,68 @@ const json = std.json;
 const Kind = enum { walk, jumps, jump_kick, jab, special, special_enemies, combo_chain, combo_window, grab, hit_stand };
 
 const Scenario = struct {
+    /// Its directory in tests/scenarios: the character's, or `two`.
+    dir: []const u8,
     name: []const u8,
     kind: Kind,
     /// The move it measures, as the report names it (a family's runs all count for it).
     move: []const u8,
 };
 
-/// The catalogue's scenarios of Axel (sorz's copies in tests/scenarios/axel).
+/// The catalogue's scenarios of each character (sorz's copies in tests/scenarios/CHARACTER), the
+/// moves of Axel, then Adam's and Blaze's (the catalogue measures neither's forward jump kick
+/// nor special attack on enemies).
 pub const scenarios = [_]Scenario{
-    .{ .name = "player-walk-axel", .kind = .walk, .move = "walk" },
-    .{ .name = "player-jumps-axel", .kind = .jumps, .move = "jump" },
-    .{ .name = "player-jumpkick-axel", .kind = .jump_kick, .move = "jump kick" },
-    .{ .name = "player-jumpkick-forward-axel", .kind = .jump_kick, .move = "jump kick, forward" },
-    .{ .name = "player-jab-axel", .kind = .jab, .move = "jab and back attack" },
-    .{ .name = "combo-chain-axel", .kind = .combo_chain, .move = "combo chain" },
-    .{ .name = "combo-window-1-axel", .kind = .combo_window, .move = "combo window after blow 1" },
-    .{ .name = "combo-window-2-axel", .kind = .combo_window, .move = "combo window after blow 2" },
-    .{ .name = "combo-window-3-axel", .kind = .combo_window, .move = "combo window after blow 3" },
-    .{ .name = "grab-knees-axel", .kind = .grab, .move = "grab: knees" },
-    .{ .name = "grab-throw-axel", .kind = .grab, .move = "grab: throw" },
-    .{ .name = "grab-vault-axel", .kind = .grab, .move = "grab: vault" },
-    .{ .name = "grab-back_drop-axel", .kind = .grab, .move = "grab: back drop" },
-    .{ .name = "grab-jump_back-axel", .kind = .grab, .move = "grab: jump back" },
-    .{ .name = "grab-release-axel", .kind = .grab, .move = "grab: release" },
-    .{ .name = "hit-stand-axel", .kind = .hit_stand, .move = "hurt, knocked down, getting up" },
-    .{ .name = "player-special-axel", .kind = .special, .move = "special attack" },
-    .{ .name = "player-special-enemies-axel", .kind = .special_enemies, .move = "special attack on enemies" },
+    .{ .dir = "axel", .name = "player-walk-axel", .kind = .walk, .move = "axel: walk" },
+    .{ .dir = "axel", .name = "player-jumps-axel", .kind = .jumps, .move = "axel: jump" },
+    .{ .dir = "axel", .name = "player-jumpkick-axel", .kind = .jump_kick, .move = "axel: jump kick" },
+    .{ .dir = "axel", .name = "player-jumpkick-forward-axel", .kind = .jump_kick, .move = "axel: jump kick, forward" },
+    .{ .dir = "axel", .name = "player-jab-axel", .kind = .jab, .move = "axel: jab and back attack" },
+    .{ .dir = "axel", .name = "combo-chain-axel", .kind = .combo_chain, .move = "axel: combo chain" },
+    .{ .dir = "axel", .name = "combo-window-1-axel", .kind = .combo_window, .move = "axel: combo window after blow 1" },
+    .{ .dir = "axel", .name = "combo-window-2-axel", .kind = .combo_window, .move = "axel: combo window after blow 2" },
+    .{ .dir = "axel", .name = "combo-window-3-axel", .kind = .combo_window, .move = "axel: combo window after blow 3" },
+    .{ .dir = "axel", .name = "grab-knees-axel", .kind = .grab, .move = "axel: grab: knees" },
+    .{ .dir = "axel", .name = "grab-throw-axel", .kind = .grab, .move = "axel: grab: throw" },
+    .{ .dir = "axel", .name = "grab-vault-axel", .kind = .grab, .move = "axel: grab: vault" },
+    .{ .dir = "axel", .name = "grab-back_drop-axel", .kind = .grab, .move = "axel: grab: back drop" },
+    .{ .dir = "axel", .name = "grab-jump_back-axel", .kind = .grab, .move = "axel: grab: jump back" },
+    .{ .dir = "axel", .name = "grab-release-axel", .kind = .grab, .move = "axel: grab: release" },
+    .{ .dir = "axel", .name = "hit-stand-axel", .kind = .hit_stand, .move = "axel: hurt, knocked down, getting up" },
+    .{ .dir = "axel", .name = "player-special-axel", .kind = .special, .move = "axel: special attack" },
+    .{ .dir = "axel", .name = "player-special-enemies-axel", .kind = .special_enemies, .move = "axel: special attack on enemies" },
+    .{ .dir = "adam", .name = "player-walk-adam", .kind = .walk, .move = "adam: walk" },
+    .{ .dir = "adam", .name = "player-jumps-adam", .kind = .jumps, .move = "adam: jump" },
+    .{ .dir = "adam", .name = "player-jumpkick-adam", .kind = .jump_kick, .move = "adam: jump kick" },
+    .{ .dir = "adam", .name = "player-jab-adam", .kind = .jab, .move = "adam: jab and back attack" },
+    .{ .dir = "adam", .name = "combo-chain-adam", .kind = .combo_chain, .move = "adam: combo chain" },
+    .{ .dir = "adam", .name = "combo-window-1-adam", .kind = .combo_window, .move = "adam: combo window after blow 1" },
+    .{ .dir = "adam", .name = "combo-window-2-adam", .kind = .combo_window, .move = "adam: combo window after blow 2" },
+    .{ .dir = "adam", .name = "combo-window-3-adam", .kind = .combo_window, .move = "adam: combo window after blow 3" },
+    .{ .dir = "adam", .name = "grab-knees-adam", .kind = .grab, .move = "adam: grab: knees" },
+    .{ .dir = "adam", .name = "grab-throw-adam", .kind = .grab, .move = "adam: grab: throw" },
+    .{ .dir = "adam", .name = "grab-vault-adam", .kind = .grab, .move = "adam: grab: vault" },
+    .{ .dir = "adam", .name = "grab-back_drop-adam", .kind = .grab, .move = "adam: grab: back drop" },
+    .{ .dir = "adam", .name = "grab-jump_back-adam", .kind = .grab, .move = "adam: grab: jump back" },
+    .{ .dir = "adam", .name = "grab-release-adam", .kind = .grab, .move = "adam: grab: release" },
+    .{ .dir = "adam", .name = "hit-stand-adam", .kind = .hit_stand, .move = "adam: hurt, knocked down, getting up" },
+    .{ .dir = "adam", .name = "player-special-adam", .kind = .special, .move = "adam: special attack" },
+    .{ .dir = "blaze", .name = "player-walk-blaze", .kind = .walk, .move = "blaze: walk" },
+    .{ .dir = "blaze", .name = "player-jumps-blaze", .kind = .jumps, .move = "blaze: jump" },
+    .{ .dir = "blaze", .name = "player-jumpkick-blaze", .kind = .jump_kick, .move = "blaze: jump kick" },
+    .{ .dir = "blaze", .name = "player-jab-blaze", .kind = .jab, .move = "blaze: jab and back attack" },
+    .{ .dir = "blaze", .name = "combo-chain-blaze", .kind = .combo_chain, .move = "blaze: combo chain" },
+    .{ .dir = "blaze", .name = "combo-window-1-blaze", .kind = .combo_window, .move = "blaze: combo window after blow 1" },
+    .{ .dir = "blaze", .name = "combo-window-2-blaze", .kind = .combo_window, .move = "blaze: combo window after blow 2" },
+    .{ .dir = "blaze", .name = "combo-window-3-blaze", .kind = .combo_window, .move = "blaze: combo window after blow 3" },
+    .{ .dir = "blaze", .name = "grab-knees-blaze", .kind = .grab, .move = "blaze: grab: knees" },
+    .{ .dir = "blaze", .name = "grab-throw-blaze", .kind = .grab, .move = "blaze: grab: throw" },
+    .{ .dir = "blaze", .name = "grab-vault-blaze", .kind = .grab, .move = "blaze: grab: vault" },
+    .{ .dir = "blaze", .name = "grab-back_drop-blaze", .kind = .grab, .move = "blaze: grab: back drop" },
+    .{ .dir = "blaze", .name = "grab-jump_back-blaze", .kind = .grab, .move = "blaze: grab: jump back" },
+    .{ .dir = "blaze", .name = "grab-release-blaze", .kind = .grab, .move = "blaze: grab: release" },
+    .{ .dir = "blaze", .name = "hit-stand-blaze", .kind = .hit_stand, .move = "blaze: hurt, knocked down, getting up" },
+    .{ .dir = "blaze", .name = "player-special-blaze", .kind = .special, .move = "blaze: special attack" },
 };
 
 /// The hit sparks (PLAN item 12): their events are left out of the traces' comparison.
@@ -1251,7 +1287,7 @@ pub fn main(init: std.process.Init) !void {
     var text: std.Io.Writer.Allocating = .init(arena);
     const w = &text.writer;
     try w.writeAll(
-        \\similar-check: Axel's moves in sorz against sor-remaster's, scenario by scenario (DESIGN.md V3).
+        \\similar-check: the players' moves in sorz against sor-remaster's, scenario by scenario (DESIGN.md V3).
         \\Tolerances: start-up, active and recovery ticks, states and their ticks, damage, health,
         \\pushes, arcs, speeds, frames, boxes, power and the special attack's times: equal. Left out
         \\of the traces: the hits' effects, the round's timer, the speed up and down (a Galsia keeps
@@ -1270,7 +1306,7 @@ pub fn main(init: std.process.Init) !void {
                 if (std.mem.eql(u8, n, sc.name)) break;
             } else continue;
         }
-        const file = try std.fmt.allocPrint(arena, "{s}/{s}.scn", .{ scenarios_dir, sc.name });
+        const file = try std.fmt.allocPrint(arena, "{s}/{s}/{s}.scn", .{ scenarios_dir, sc.dir, sc.name });
         const scn = std.Io.Dir.cwd().readFileAlloc(io, file, arena, .limited(1 << 20)) catch |e| {
             return fail(io, try std.fmt.allocPrint(arena, "cannot read the scenario {s}: {s}\n", .{ file, @errorName(e) }));
         };

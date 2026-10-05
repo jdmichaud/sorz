@@ -1,0 +1,13 @@
+# adam: walk into the first Galsia until the grab; then B three times, 10 ticks apart.
+start adam
+until state 1 ready
++right
+until state 1 grab within 300
+-right
+wait 4
+attack
+wait 10
+attack
+wait 10
+attack
+wait 80

@@ -1,0 +1,7 @@
+# adam: walk toward the first Galsia, then stand still while it punches.
+start adam
+until state 1 ready
++right
+until near galsia 75 8
+-right
+wait 400

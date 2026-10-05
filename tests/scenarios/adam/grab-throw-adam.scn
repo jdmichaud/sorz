@@ -1,0 +1,9 @@
+# adam: walk into the first Galsia until the grab; then back and B (the pad away from the one held).
+start adam
+until state 1 ready
++right
+until state 1 grab within 300
+-right
+wait 4
+left+attack
+wait 80

@@ -1,0 +1,8 @@
+# blaze: B alone, then B and C together (the back attack), no one near.
+start blaze
+until state 1 ready
+wait 30
+attack
+wait 30
+attack+jump
+wait 40

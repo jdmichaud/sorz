@@ -1,0 +1,12 @@
+# adam: walk into the first Galsia until the grab; then C, then B from behind.
+start adam
+until state 1 ready
++right
+until state 1 grab within 300
+-right
+wait 4
+jump
+until state 1 grab_behind within 40
+wait 4
+attack
+wait 80

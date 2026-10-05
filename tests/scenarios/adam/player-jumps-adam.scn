@@ -1,0 +1,16 @@
+# adam: a jump in place, a jump to the right, a jump to the left (the direction held).
+start adam
+until state 1 ready
+wait 30
+jump
+wait 40
++right
+jump
+wait 30
+-right
+wait 20
++left
+jump
+wait 30
+-left
+wait 20
