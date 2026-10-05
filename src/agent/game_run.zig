@@ -445,14 +445,26 @@ pub const Run = struct {
     /// The trace of the display tick just run.
     fn observe(self: *Run, turn: *const scene.Turn) !void {
         const v: u64 = self.state.tick;
-        const top = self.state.scenes.topKind();
-        const serial = self.state.scenes.topSerial();
+        const traced = tracedScene(&self.state.scenes);
+        const top = traced.kind;
+        const serial = traced.serial;
         if (self.round()) |r| {
             const name: []const u8 = @tagName(r.trace_scene);
             const tw = self.trace orelse return self.noteIds(&r.play.world);
             // The round's last tick, its fade out over: the sounds asked for then are the next
-            // scene's start's, as sor-remaster's trace has them.
-            if (r.phase == .leaving and r.colours.fade == null) return self.holdSounds(turn);
+            // scene's start's, as sor-remaster's trace has them; a next scene whose set-up and
+            // load run the sound's driver (the clear's) begins there, as the original's mode.
+            if (r.phase == .leaving and r.colours.fade == null) {
+                const after = self.state.scenes.next orelse return self.holdSounds(turn);
+                if (after.sound_held) return self.holdSounds(turn);
+                const next_name = traceName(after.kind);
+                tw.startScene(.{ .name = next_name, .round = r.number, .demo = r.demo });
+                self.seen_serial = 0;
+                self.seen_scene = next_name;
+                self.scene_t = 0;
+                try tw.atTick(v, 0);
+                return self.sounds(turn);
+            }
             if (serial != self.seen_serial or !std.mem.eql(u8, name, self.seen_scene)) {
                 tw.startScene(.{ .name = name, .round = r.number, .demo = r.demo });
                 self.seen_serial = serial;
@@ -706,6 +718,17 @@ fn phaseName(r: *const scene.Round) []const u8 {
 }
 
 /// A scene as sor-remaster's traces name it (a load keeps the scene before it).
+/// The scene the trace names at this tick: the top one; under a load during which the sound's
+/// driver runs (the round's clear's: its set-up leaves the interrupts on), the scene it holds,
+/// begun with it (sor-remaster's trace names it from the load's first tick).
+fn tracedScene(s: *scene.Stack) struct { kind: scene.Kind, serial: u32 } {
+    switch (s.top()) {
+        .overlay => |o| if (o.* == .load and !o.load.sound_held and s.overlay_count == 1) return .{ .kind = std.meta.activeTag(s.base), .serial = s.base_serial },
+        .scene => {},
+    }
+    return .{ .kind = s.topKind(), .serial = s.topSerial() };
+}
+
 fn traceName(k: scene.Kind) []const u8 {
     return switch (k) {
         .load, .test_pattern => "",
