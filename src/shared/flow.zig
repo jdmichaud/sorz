@@ -23,7 +23,7 @@ pub const Kind = enum {
     options,
     /// The character select.
     select,
-    /// The attract demo: round 1 played by the game (PLAN items 11-13); a stand-in until then.
+    /// The attract demo: round 1 played by the game on the cartridge's pads (screens/round.zig).
     demo,
     high_scores,
     /// Play: a round, from its load to its end (round 1: PLAN item 13).
@@ -99,8 +99,7 @@ pub const original: Graph = .{
         .{ .from = .title, .exit = .done, .to = .demo, .load = 47, .driver_reloaded = true },
         .{ .from = .title, .exit = .start, .to = .menu, .load = 3 },
         // The high scores' set-up holds 5 ticks (the game over's), its last showing the table
-        // (high_scores.zig); the demo's stand-in, timed to their first picture, ends a tick late
-        // (TODO(PLAN item 13): the attract demo).
+        // (high_scores.zig), after the demo as after a game over.
         .{ .from = .demo, .exit = .done, .to = .high_scores, .load = 4, .driver_once = true },
         .{ .from = .demo, .exit = .start, .to = .sega_logo, .load = 14 },
         .{ .from = .high_scores, .exit = .done, .to = .sega_logo, .load = 14 },

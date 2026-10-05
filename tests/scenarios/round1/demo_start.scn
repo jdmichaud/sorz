@@ -1,0 +1,7 @@
+# Power-on, nothing pressed to the attract demo's play; START there ends it: its fade out, the
+# start-up, the Sega logo.
+start power-on
+until scene round within 10000
+wait 200
++start 2
+wait 400
