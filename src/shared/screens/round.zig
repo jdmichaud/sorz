@@ -496,8 +496,10 @@ pub const Round = struct {
         self.noteBars();
     }
 
-    /// A player's state as the original numbers its states: its behaviour's state, its side, and
-    /// a walk's way (across, up, down, or across and up or down); null for one not playing.
+    /// A player's state as the original numbers its states: its behaviour's state, and a walk's
+    /// way (across, up, down, or across and up or down) and side; null for one not playing.
+    /// Another state's side is not a state of its own: the original turns a blow or a jump in
+    /// place (its art not copied again).
     fn poseOf(e: *const world.Entity) ?u16 {
         const m = switch (e.mind) {
             .player => |m| m,
@@ -509,7 +511,8 @@ pub const Round = struct {
             const depth = e.velocity.depth.raw;
             way = if (depth < 0) (if (across) 1 else 2) else if (depth > 0) (if (across) 3 else 4) else 0;
         }
-        return @as(u16, @backingInt(m.state)) << 4 | way << 1 | @intFromBool(e.facingLeft());
+        const side: u16 = if (m.state == .walk) @intFromBool(e.facingLeft()) else 0;
+        return @as(u16, @backingInt(m.state)) << 4 | way << 1 | side;
     }
 
     /// Each player's health bar's partial cell is built again when its health changed.
