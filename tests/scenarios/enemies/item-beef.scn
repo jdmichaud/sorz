@@ -1,0 +1,10 @@
+# The recorded play (game.pads) to VBlank 28760 (the beef lies at (3672, 32), Antonio is near);
+# the player waits to be knocked down, then walks to the beef and presses B within 12 pixels.
+start pads ../../game.pads 28760
+until state 1 knocked_down within 900
+until state 1 ready|idle within 300
++right
+until near beef 12 within 300
+-right
+attack
+wait 40

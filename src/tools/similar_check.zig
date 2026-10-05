@@ -2,7 +2,13 @@
 //! original's (DESIGN.md V3), as sor-remaster (the original's logic, in lockstep with it) plays
 //! them in the catalogue's scenarios.
 //!
-//!   sorz-similar-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...]
+//!   sorz-similar-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [--pads FILE --enemies DIR
+//!                      [--every N] [--jobs N]] [SCENARIO...]
+//!
+//! With the recorded play of round 1 (`--pads`), the enemies and the items too: the catalogue's
+//! ai-* and item-* families in DIR (similar_enemies.zig), every N-th run of each, sor-remaster's
+//! runs N at once. The SCENARIOs name Axel's scenarios and the enemies' families to run (all by
+//! default).
 //!
 //! For each scenario of `scenarios` below (its file SCENARIOS_DIR/NAME.scn; a family, whose
 //! header says the values its `{N}` takes, is a run per value), sor-remaster's agent runs it from
@@ -30,6 +36,7 @@ const std = @import("std");
 const sorz = @import("sorz");
 const agent = @import("agent");
 const extract = @import("extract");
+const enemies = @import("similar_enemies.zig");
 
 const compare = agent.trace_compare;
 const Event = compare.Event;
@@ -1188,7 +1195,31 @@ pub fn main(init: std.process.Init) !void {
     const scenarios_dir = args.next() orelse return usage(io);
     const out_path = args.next() orelse return usage(io);
     var only: std.ArrayList([]const u8) = .empty;
-    while (args.next()) |name| try only.append(arena, name);
+    var only_families: std.ArrayList([]const u8) = .empty;
+    var names = false;
+    var pads: ?[]const u8 = null;
+    var enemies_dir: ?[]const u8 = null;
+    var every: u32 = 1;
+    var jobs: u32 = 4;
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--pads")) {
+            pads = args.next() orelse return usage(io);
+        } else if (std.mem.eql(u8, arg, "--enemies")) {
+            enemies_dir = args.next() orelse return usage(io);
+        } else if (std.mem.eql(u8, arg, "--every")) {
+            every = std.fmt.parseInt(u32, args.next() orelse return usage(io), 10) catch return usage(io);
+            if (every == 0) return usage(io);
+        } else if (std.mem.eql(u8, arg, "--jobs")) {
+            jobs = std.fmt.parseInt(u32, args.next() orelse return usage(io), 10) catch return usage(io);
+            if (jobs == 0) return usage(io);
+        } else {
+            names = true;
+            const family = for (enemies.families) |f| {
+                if (std.mem.eql(u8, f.name, arg)) break true;
+            } else false;
+            try (if (family) &only_families else &only).append(arena, arg);
+        }
+    }
 
     const rom = std.Io.Dir.cwd().readFileAlloc(io, rom_path, gpa, .limited(extract.rom.size + 1)) catch |e| {
         return fail(io, try std.fmt.allocPrint(arena, "cannot read the ROM {s}: {s}\n", .{ rom_path, @errorName(e) }));
@@ -1234,7 +1265,7 @@ pub fn main(init: std.process.Init) !void {
     var runs: usize = 0;
     var printed: usize = 0;
     for (&scenarios) |*sc| {
-        if (only.items.len != 0) {
+        if (names) {
             for (only.items) |n| {
                 if (std.mem.eql(u8, n, sc.name)) break;
             } else continue;
@@ -1279,16 +1310,44 @@ pub fn main(init: std.process.Init) !void {
         printed = text.written().len;
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fmt.allocPrint(arena, "{s}/report.txt", .{out_path}), .data = text.written() });
     }
+    // The enemies and the items.
+    var enemy_failed = false;
+    var enemy_counts: [3]usize = .{ 0, 0, 0 };
+    if (pads != null and enemies_dir != null and (!names or only_families.items.len != 0)) {
+        const ec: enemies.Config = .{
+            .gpa = gpa,
+            .io = io,
+            .arena = arena,
+            .rom_path = rom_path,
+            .remaster = remaster,
+            .assets = c.assets,
+            .sound_names = c.sound_names,
+            .scenarios_dir = enemies_dir.?,
+            .out_path = out_path,
+            .pads = pads.?,
+            .every = every,
+            .jobs = jobs,
+            .only = only_families.items,
+        };
+        const es = try enemies.check(&ec, .{ .text = &text, .out = &out.interface, .shown = &printed });
+        enemy_failed = es.failed;
+        enemy_counts = es.counts;
+        const line = try std.fmt.allocPrint(arena, "{{\"enemies\":{{\"runs\":{d},\"same\":{d},\"equal\":{d},\"within_tolerance\":{d},\"different\":{d},\"failed\":{}}}}}\n", .{ es.runs, es.same, es.counts[0], es.counts[1], es.counts[2], es.failed });
+        try w.writeAll(line);
+        try out.interface.writeAll(text.written()[printed..]);
+        try out.interface.flush();
+        printed = text.written().len;
+    }
     const summary = try std.fmt.allocPrint(arena, "{{\"runs\":{d},\"moves\":{d},\"equal\":{d},\"within_tolerance\":{d},\"different\":{d},\"failed\":{}}}\n", .{ runs, counts[0] + counts[1] + counts[2], counts[0], counts[1], counts[2], failed });
     try w.writeAll(summary);
     try out.interface.writeAll(summary);
     try out.interface.flush();
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fmt.allocPrint(arena, "{s}/report.txt", .{out_path}), .data = text.written() });
-    if (failed or counts[2] != 0) std.process.exit(1);
+    if (failed or counts[2] != 0 or enemy_failed or enemy_counts[2] != 0) std.process.exit(1);
 }
 
 fn usage(io: std.Io) !void {
-    return fail(io, "usage: sorz-similar-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...]\n");
+    return fail(io, "usage: sorz-similar-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [--pads FILE --enemies DIR [--every N] [--jobs N]] [SCENARIO...]\n");
 }
 
 fn fail(io: std.Io, message: []const u8) !void {
@@ -1297,6 +1356,10 @@ fn fail(io: std.Io, message: []const u8) !void {
     try w.interface.writeAll(message);
     try w.interface.flush();
     std.process.exit(2);
+}
+
+test {
+    _ = enemies;
 }
 
 test "a family's values come from its header" {

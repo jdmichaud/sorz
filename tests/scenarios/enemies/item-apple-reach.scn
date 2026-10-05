@@ -1,0 +1,9 @@
+# A family: {N} takes the values 40, 30, 26, 24, 22, 21, 20, 19, 18, 16, 12, 8 (12 runs); {DIR} is left.
+# the apple, from the breakable at x 2960, lying at (2960, 32): the recorded play (game.pads) to VBlank 10200, then the player walks toward it (left
+# or right as it lies) until it is within N pixels across, and presses B.
+start pads ../../game.pads 10200
++{DIR}
+until near apple {N} within 300
+-{DIR}
+attack
+wait 40

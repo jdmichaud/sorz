@@ -1,0 +1,5 @@
+# A family: {V} takes the values 6480 to 6542 (32 runs).
+# The recorded play of round 1 (game.pads, from power-on) for V = 6480 + 2N VBlanks, then
+# the player stands.
+start pads ../../game.pads {V}
+wait 900

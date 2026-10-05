@@ -152,10 +152,24 @@ catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (it
   gate of PLAN items 05 and 11: each scenario runs in sor-remaster (its checkout, whose agent the
   build builds, or that agent) and in sorz; then the traces, the probes and the catalogue's
   measurements of each move (frame data, states and their ticks, damage, pushes, arcs, speeds,
-  boxes, power) are compared, all equal but the special attack's times (its car a stand-in: 1
-  tick). It prints a verdict per move, equal, within tolerance or different, with the numbers,
-  writes it with the runs into `<prefix>/similar` (`-Dsimilar-out=DIR`), and fails when a move
-  differs. `-Dsimilar-only=NAME,...` runs some scenarios.
+  boxes, power, the special attack's times) are compared, all equal. It prints a verdict per
+  move, equal, within tolerance or different, with the numbers, writes it with the runs into
+  `<prefix>/similar` (`-Dsimilar-out=DIR`), and fails when a move differs.
+  `-Dsimilar-only=NAME,...` runs some scenarios (or families, below).
+- With `-Dpads=FILE`, round 1's recorded play (the catalogue's game.pads, which the repository
+  does not hold), similar-check compares the enemies and the items too (PLAN item 12,
+  src/tools/similar_enemies.zig): the catalogue's ai-* and item-* families (`tests/scenarios/
+  enemies`: the recorded play to a wave, then the player stands, presses B every other tick, or
+  goes for an item), sorz taken up from sor-remaster's situation. Run by run, the traces are
+  compared (the first difference and the kind of entity it is about); per enemy and thing
+  thrown, the catalogue's measures over every run (its m_ai: each state's ticks and the states
+  that follow it, an attack's place from the player at its start, its blows' tick, damage and
+  reaction, the health coming out of hiding, a thrown thing's flights and hits): equal, within
+  tolerance (as many, a tenth at least one, medians and means within a tenth, shares within 0.1,
+  the same values seen) or different. An item's family is equal when all its runs are the same.
+  `-Dsimilar-every=N` runs every N-th run of each family; sor-remaster's runs go
+  `-Dsimilar-jobs=N` at once and are kept in `<prefix>/similar/enemies` while its agent and the
+  scenario stay the same.
 - `zig build round-check -Drom=ROM -Dremaster=DIR|AGENT` (src/tools/round_check.zig), the gate of
   PLAN item 13: round 1's scenarios (`tests/scenarios/round1`: a walk to the first wall, standing
   through three time overs, the continue's YES and NO, two pauses, player 2's PRESS 2UP START

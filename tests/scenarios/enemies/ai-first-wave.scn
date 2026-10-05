@@ -1,0 +1,7 @@
+# A family: {N} takes the values 0 to 31 (32 runs).
+# Axel waits N ticks, walks right 70 ticks into the first wave, then stands.
+start axel
+until state 1 ready
+wait {N}
+right 70
+wait 900

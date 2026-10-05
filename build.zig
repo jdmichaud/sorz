@@ -462,6 +462,11 @@ pub fn build(b: *std.Build) void {
     // checkout (its agent built as screens-check builds it) or an agent already built.
     const similar_out = b.option([]const u8, "similar-out", "Where similar-check writes its runs and report (default: <prefix>/similar)");
     const similar_only = b.option([]const u8, "similar-only", "The scenarios similar-check runs, separated by commas (default: all)");
+    // With the recorded play of round 1 (the catalogue's game.pads), similar-check compares the
+    // enemies and the items too (PLAN item 12, src/tools/similar_enemies.zig).
+    const similar_pads = b.option([]const u8, "pads", "The recorded play of round 1 (game.pads): similar-check then compares the enemies and the items in tests/scenarios/enemies");
+    const similar_every = b.option(u32, "similar-every", "similar-check runs every N-th run of the enemies' families (default 1: all)");
+    const similar_jobs = b.option(u32, "similar-jobs", "similar-check runs sor-remaster this many times at once for the enemies (default 4)");
     const similar_check_step = b.step("similar-check", "Compare Axel's moves with sor-remaster's in the catalogue's scenarios (needs -Drom=ROM -Dremaster=DIR|AGENT)");
     const similar_module = b.createModule(.{
         .root_source_file = b.path("src/tools/similar_check.zig"),
@@ -492,6 +497,14 @@ pub fn build(b: *std.Build) void {
             check.addArg(dir);
         } else {
             check.addDirectoryArg2(.{ .relative = .{ .base = .install_prefix, .sub_path = "similar" } }, .{ .make_absolute = true });
+        }
+        if (similar_pads) |pads| {
+            check.addArg("--pads");
+            check.addFileArg(.{ .cwd_relative = pads });
+            check.addArg("--enemies");
+            check.addDirectoryArg(b.path("tests/scenarios/enemies"));
+            if (similar_every) |n| check.addArgs(&.{ "--every", b.fmt("{d}", .{n}) });
+            if (similar_jobs) |n| check.addArgs(&.{ "--jobs", b.fmt("{d}", .{n}) });
         }
         if (similar_only) |names| {
             var it = std.mem.tokenizeScalar(u8, names, ',');
