@@ -89,9 +89,10 @@ pub const Numbers = enemy.Numbers(enemy.merged(struct {
 
 pub const Tables = enemy.Tables(struct {});
 
+/// Shrugging a blow off it takes none: the original's shrug has no test of the blows.
 pub fn hurtable(state: State) bool {
     return switch (state) {
-        .choose, .hit, .shutter_entry => false,
+        .choose, .hit, .shrug_off, .shutter_entry => false,
         else => true,
     };
 }
