@@ -156,8 +156,8 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     var b_full = try compare.parse(arena, try cwd.readFileAlloc(c.io, z_trace, arena, .limited(1 << 30)), &diag);
     if (sc.every_tick) return everyTick(c, sc, scn, &a_full, &b_full, ref_wav, z_wav, w);
     const taken: ?TakenUp = if (sc.take_up) try takenUp(ran.stdout, &a_full) else null;
-    // A run taken up is compared to its round's clear's end (the next round's is a stand-in in
-    // sorz until PLAN item 15).
+    // A run taken up is compared to its round's clear's end: the next round, whose load the clear
+    // leads into, is its own scenarios' (its round's world is sorz's own from its load on).
     var sound_to: ?usize = null;
     if (taken) |tu| {
         a_full = untilNextRound(&a_full, tu.v);

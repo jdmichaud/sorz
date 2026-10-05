@@ -3,7 +3,8 @@
 //! counted into the scores of the players in play, 100 points a tick with its sound, its line in
 //! the counted colours (the time's counts the timer down with it); a wait between the steps.
 //! START held from the first count to the counting's end adds what is left at once. Then the
-//! screen fades out and the next round follows, the game under way keeping the scores.
+//! screen fades out and the next round follows, the game under way keeping the players' scores,
+//! lives and special attacks (a stand-in when the content does not have that round).
 //!
 //! The bonuses (the original's): the clear's for the round and for each special attack the
 //! players in play have left, the time's for each second the timer has left, the level's for
@@ -148,6 +149,8 @@ pub const RoundClear = struct {
         text: library.Text,
         music: library.Sound,
         tick: library.Sound,
+        /// The rounds the content has, the next among them or not.
+        rounds: library.Rounds,
         pub const names = .{
             .screen = "screens/round",
             .header = "round_end/header",
@@ -162,6 +165,7 @@ pub const RoundClear = struct {
             .text = "fonts/main",
             .music = "round clear music",
             .tick = "bonus tick",
+            .rounds = "rounds",
         };
     };
 
@@ -241,7 +245,7 @@ pub const RoundClear = struct {
             },
             .done => {
                 g.round += 1;
-                return .done;
+                return if (a.rounds.of(g.round) != null) .done else .missing;
             },
         }
         self.now.bar = barOf(g);

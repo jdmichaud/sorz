@@ -30,7 +30,7 @@ pub const Kind = enum {
     round,
     /// The round's clear and its bonuses.
     round_clear,
-    /// The next round: round 2 and on are PLAN item 15, a stand-in until then, which says so.
+    /// A next round the content does not have (PLAN items 15 and on): a stand-in, which says so.
     next_round,
 };
 
@@ -51,6 +51,8 @@ pub const Exit = enum {
     cleared,
     /// Every player is out of the game.
     game_over,
+    /// What follows is not in the content: the next round after a clear.
+    missing,
 };
 
 /// One edge of the graph: scene `from`, ended by `exit`, goes to `to`, after a load of `load`
@@ -86,8 +88,9 @@ pub const Graph = struct {
 /// The cartridge's flow (sor-remaster's docs/workflows.md, G1 to G9): the Sega logo, the intro
 /// and its title, the attract demo and the high scores, around again; START on the title to the
 /// game menu, the options and back, the character select, play: a round won to its clear and the
-/// next round, the game over to the high scores. The loads are the original's
-/// measured waits (in display ticks, the picture dark).
+/// next round (a stand-in for one the content does not have), the game over to the high scores.
+/// The loads are the original's measured waits (in display ticks, the picture dark); a round's
+/// is its own when its content gives one (scene.zig).
 pub const original: Graph = .{
     .first = .sega_logo,
     .power_on = 76,
@@ -113,7 +116,9 @@ pub const original: Graph = .{
         // sound's driver runs through its load.
         .{ .from = .round, .exit = .cleared, .to = .round_clear, .load = 18, .sound_held = false },
         .{ .from = .round, .exit = .game_over, .to = .high_scores, .load = 4, .driver_once = true },
-        .{ .from = .round_clear, .exit = .done, .to = .next_round },
+        // The next round loads as the first does, its load its own (scene.zig).
+        .{ .from = .round_clear, .exit = .done, .to = .round, .load = 53 },
+        .{ .from = .round_clear, .exit = .missing, .to = .next_round },
     },
 };
 
@@ -173,4 +178,12 @@ test "the variants' flows: the cartridge's menu chooses the players, network pla
     try std.testing.expectEqual(original.edges.len - 1, network.edges.len);
     try std.testing.expectEqual(Kind.options, network.next(.menu, .options).?.to);
     try std.testing.expectEqual(Kind.round_clear, network.next(.round, .cleared).?.to);
+}
+
+test "a round's clear leads into the next round, or to the stand-in when the content has none" {
+    for ([_]*const Graph{ &original, &extended, &network }) |g| {
+        const next = g.next(.round_clear, .done).?;
+        try std.testing.expect(next.to == .round and next.load == g.next(.select, .chosen).?.load);
+        try std.testing.expectEqual(Kind.next_round, g.next(.round_clear, .missing).?.to);
+    }
 }
