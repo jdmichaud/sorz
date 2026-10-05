@@ -690,7 +690,7 @@ fn feelBlow(a: Actor) void {
     if (a.other(t.by)) |by| a.faceToward(by);
     const knocked = t.reaction == .knock_down or a.entity.flags.airborne;
     if (knocked) a.sound(.hurt);
-    a.takeDamage(t.by, t.damage);
+    loses(a, t.by, t.damage);
     if (a.entity.health <= 0) return die(a, t.by);
     if (!knocked) a.sound(.hurt);
     if (a.entity.holding != null or a.entity.holder != null) a.letGo();
@@ -703,6 +703,12 @@ fn feelBlow(a: Actor) void {
     }
     change(a, .hurt);
     a.mind.timer = n.hurt;
+}
+
+/// It loses `damage` health, down to none (the original's player keeps no less): what it lost is
+/// told.
+fn loses(a: Actor, by: ?Handle, damage: i16) void {
+    a.takeDamage(by, @min(damage, @max(a.entity.health, 0)));
 }
 
 /// It dies: its cry, a hold let go, thrown back from the one who struck (facing it) and up, a
@@ -754,7 +760,7 @@ pub fn landed(a: Actor) void {
             }
             a.mind.bounces += 1;
             if (a.mind.bounces == 1 and a.mind.carried != 0) {
-                a.takeDamage(a.mind.thrower, a.mind.carried);
+                loses(a, a.mind.thrower, a.mind.carried);
                 a.mind.carried = 0;
             }
             a.sound(.thud);

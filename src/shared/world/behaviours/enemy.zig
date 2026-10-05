@@ -1335,8 +1335,10 @@ pub fn Of(comptime M: type) type {
             }
             if (a.entity.holder) |h| a.tick.letGo(h);
             a.endMove();
+            // The last whose blow or hold it took is the one the traces name.
+            const by = body(a).other;
             body(a).other = null;
-            a.takeDamage(null, a.entity.health + 1);
+            a.takeDamage(by, a.entity.health + 1);
             body(a).special_pose = @intCast(a.entity.position.x.whole() & 3);
             enter(a, .stand);
         }
