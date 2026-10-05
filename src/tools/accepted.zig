@@ -65,8 +65,8 @@ pub const list = [_]Accepted{
     },
     .{
         .name = "objects past a band's 15",
-        .reason = "the original draws at most 15 objects in a band of depths, and one past them neither shows nor steps its animation at that tick (decision D4): round 3's raindrops, about twenty in one band, blink out of step there; and its shadows are objects of their own in eight places they share with the weapons, each entity taking one at each of its turns, so that a shadow may find none (the raindrops', a crowd's: a trio of acrobats knocked down at once). sorz draws every raindrop, and a shadow under every entity in the air, one the original found no place for too (the places are kept as the original's: world/shadows.zig): more correct, the user's rule (2026-10-05)",
-        .redraws = &.{ withoutRaindrops, raindropsShown, shadowsOut },
+        .reason = "the original draws at most 15 objects in a band of depths, and one past them neither shows nor steps its animation at that tick (decision D4): round 3's raindrops, about twenty in one band, blink out of step there; and its shadows are objects of their own in eight places they share with the weapons, each entity taking one at each of its turns, so that a shadow may find none (the raindrops', a crowd's: a trio of acrobats knocked down at once). A juggler's knife or torch spinning past them misses a step of its spin, which shows a frame off from then (round 6's torch, display tick 20729). sorz draws every raindrop, and a shadow under every entity in the air, one the original found no place for too (the places are kept as the original's: world/shadows.zig): more correct, the user's rule (2026-10-05)",
+        .redraws = &.{ withoutRaindrops, raindropsShown, shadowsOut, spinsBehind, spinsAhead },
         .leaves_out = .{ .kind = raindrop_kind, .state = raindrop_state },
     },
     .{
@@ -292,6 +292,34 @@ fn shadowsOut(sprites: []const Sprite, c: Context, out: []Sprite) usize {
         n += 1;
     }
     return n;
+}
+
+/// The juggler's knives and torches, whose spin the original steps at each tick it draws them.
+const spinning_kind = "juggler_knife";
+
+/// The juggler's knives and torches a frame behind in their spin: the pixels where the
+/// reference shows one that missed a step past a band's 15.
+fn spinsBehind(sprites: []const Sprite, c: Context, out: []Sprite) usize {
+    return spinsBy(sprites, c, out, false);
+}
+
+/// The juggler's knives and torches a frame ahead in their spin (one that missed a step shows
+/// its next frame at the tick sorz's still shows the last).
+fn spinsAhead(sprites: []const Sprite, c: Context, out: []Sprite) usize {
+    return spinsBy(sprites, c, out, true);
+}
+
+fn spinsBy(sprites: []const Sprite, c: Context, out: []Sprite, ahead: bool) usize {
+    const id = c.kinds.find(spinning_kind) orelse return copy(sprites, out);
+    const k = c.kinds.get(id);
+    for (sprites, out[0..sprites.len]) |s, *o| {
+        o.* = s;
+        for (k.frames) |spin| for (spin, 0..) |f, i| {
+            if (f != s.frame) continue;
+            o.frame = spin[if (ahead) (i + 1) % spin.len else (i + spin.len - 1) % spin.len];
+        };
+    }
+    return sprites.len;
 }
 
 fn copy(sprites: []const Sprite, out: []Sprite) usize {
