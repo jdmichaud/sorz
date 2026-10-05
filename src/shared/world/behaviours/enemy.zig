@@ -422,13 +422,7 @@ pub fn Of(comptime M: type) type {
         /// stands and waits for one. Returns whether it found one.
         pub fn chooseTarget(a: A) bool {
             const w = a.tick.world;
-            var found: [2]?Handle = .{ null, null };
-            for (w.players, 0..) |p, k| {
-                const h = p.entity orelse continue;
-                const e = w.getConst(h) orelse continue;
-                if (e.flags.hidden) continue;
-                found[k] = h;
-            }
+            const found = inPlay(a);
             const first = found[0] orelse {
                 body(a).target = found[1] orelse {
                     enter(a, .stand);
@@ -446,6 +440,12 @@ pub fn Of(comptime M: type) type {
             const to_second = @abs(w.getConst(second).?.position.x.whole() - x);
             body(a).target = if (to_second > to_first) first else second;
             return true;
+        }
+
+        /// The players in play, by player: their entities, but those hidden (out of lives,
+        /// waiting to continue).
+        fn inPlay(a: A) [2]?Handle {
+            return .{ a.tick.fighting(0), a.tick.fighting(1) };
         }
 
         pub fn target(a: A) ?*Entity {
@@ -1209,7 +1209,8 @@ pub fn Of(comptime M: type) type {
             const b = body(a);
             if (!a.tick.world.special) {
                 if (b.alone) {
-                    if (a.tick.world.players[0].entity == null and a.tick.world.players[1].entity == null) return;
+                    const players = inPlay(a);
+                    if (players[0] == null and players[1] == null) return;
                     b.alone = false;
                     return enter(a, M.fights);
                 }

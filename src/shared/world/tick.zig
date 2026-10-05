@@ -450,6 +450,14 @@ pub const Tick = struct {
         return n;
     }
 
+    /// Player `k`'s entity while the enemies can go after it: in the world and shown (one out
+    /// of lives, waiting to continue, is hidden).
+    pub fn fighting(t: *const Tick, k: usize) ?Handle {
+        const h = t.world.players[k].entity orelse return null;
+        const e = t.world.getConst(h) orelse return null;
+        return if (e.flags.hidden) null else h;
+    }
+
     /// Whether every player in play plays as a fighter (none waits to continue): the round's
     /// timer runs only then.
     pub fn playersPlay(t: *const Tick) bool {

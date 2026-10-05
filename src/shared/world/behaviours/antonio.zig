@@ -302,7 +302,7 @@ pub fn begin(a: Actor) void {
     a.entity.flags.still = true;
     a.pause(false);
     // With no player in play, he stands frozen.
-    if (a.tick.playersInPlay() == 0) {
+    if (a.tick.fighting(0) == null and a.tick.fighting(1) == null) {
         if (m.state != .appear) {
             a.pause(true);
             m.ended = true;
@@ -453,8 +453,8 @@ fn chooseTarget(a: Actor) ?Handle {
     const m = a.mind;
     if (m.hold.grabbed) if (m.holder) |h| if (a.other(h) != null) return h;
     const w = a.tick.world;
-    const p1 = if (w.players[0].entity) |h| if (w.get(h) != null) h else null else null;
-    const p2 = if (w.players[1].entity) |h| if (w.get(h) != null) h else null else null;
+    const p1 = a.tick.fighting(0);
+    const p2 = a.tick.fighting(1);
     if (p1 == null) return p2;
     if (p2 == null) return p1;
     const x = a.entity.position.x.whole();
