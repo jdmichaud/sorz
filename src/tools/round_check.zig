@@ -562,7 +562,29 @@ const PictureTaker = struct {
         const own = try gpa.dupe(u8, picture.pixels[0 .. picture.stride * picture.height]);
         defer gpa.free(own);
         var by: [accepted.list.len]bool = @splat(false);
-        if (same_size) {
+        // The sprites an accepted difference covers: their pieces' pixels are its own.
+        if (same_size) for (accepted.list, &by) |a, *found| {
+            const covers = a.covers orelse continue;
+            const context: accepted.Context = .{ .shadow = drawn.shadow, .kinds = drawn.kinds };
+            for (drawn.sprites()) |s| {
+                if (!covers(s, context)) continue;
+                var rects: [80]accepted.Rect = undefined;
+                for (rects[0..accepted.pieces(s, &rects)]) |r| {
+                    const y0: usize = @intCast(std.math.clamp(r.y, 0, @as(i32, @intCast(picture.height))));
+                    const y1: usize = @intCast(std.math.clamp(r.y + r.height, 0, @as(i32, @intCast(picture.height))));
+                    const x0: usize = @intCast(std.math.clamp(r.x, 0, @as(i32, @intCast(picture.width))));
+                    const x1: usize = @intCast(std.math.clamp(r.x + r.width, 0, @as(i32, @intCast(picture.width))));
+                    for (y0..y1) |y| for (x0..x1) |x| {
+                        const d = diff[(y * picture.width + x) * 4 ..][0..4];
+                        if (!std.mem.eql(u8, d, &red)) continue;
+                        d.* = .{ 255, 255, 0, 255 };
+                        found.* = true;
+                        n -= 1;
+                    };
+                }
+            }
+        };
+        if (same_size and n != 0) {
             const len = drawn.sprites().len;
             const buffers = try gpa.alloc(sorz.render.Sprite, 2 * len);
             defer gpa.free(buffers);

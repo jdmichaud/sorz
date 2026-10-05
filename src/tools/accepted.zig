@@ -7,6 +7,8 @@
 //!   differences is reported as such; it is not a difference, and the reach goes on past it. A
 //!   difference may name the lines its sprites show on (`lines`): its redraws draw them there,
 //!   and only the pixels on those lines belong to it;
+//! - in the pictures, the sprites whose pieces' pixels belong to the difference wherever they
+//!   differ (`covers`): where the reference draws them wrong (its bug), whatever it shows there;
 //! - in the traces, the entities whose own events the comparison leaves out (`leaves_out`: by
 //!   their spawn's kind and state), so that they neither differ nor take the numbers the others
 //!   are compared by.
@@ -41,14 +43,18 @@ pub const Redraw = *const fn (sprites: []const Sprite, c: Context, out: []Sprite
 /// The entities a trace's comparison leaves out: those spawned of `kind` in `state`.
 pub const LeftOut = struct { kind: []const u8, state: []const u8 };
 
+/// Whether the pixels within sorz's sprite `s`'s pieces belong to the difference.
+pub const Covers = *const fn (s: Sprite, c: Context) bool;
+
 pub const Accepted = struct {
     name: []const u8,
     reason: []const u8,
-    redraws: []const Redraw,
+    redraws: []const Redraw = &.{},
     leaves_out: ?LeftOut = null,
     /// The lines its redraws' sprites show on, the only ones whose pixels belong to it (null
     /// from it: it has none in the picture); none: the sprites' own lines, every line.
     lines: ?*const fn (c: Context) ?Lines = null,
+    covers: ?Covers = null,
 };
 
 pub const list = [_]Accepted{
@@ -68,6 +74,11 @@ pub const list = [_]Accepted{
         .reason = "the original draws a player over the row the bosses' bars add below the status bar (round 4's new life dropping in under its boss's bar); sorz shows no sprite over the status bar, that row included: the cleaner picture, kept (2026-10-05)",
         .redraws = &.{playersOnly},
         .lines = bossesRow,
+    },
+    .{
+        .name = "round 3's boss's art past its first block",
+        .reason = "sor-remaster draws the frames of round 3's boss that his code draws at the name bases $343 and $3FE (his slam, knocked away, thrown and slammed, his hug, his part's charge and hug) from other tiles than the boss's load's second and third blocks there: scrambled, its bug (the user's note, 2026-10-05). sorz draws them from the ROM's art",
+        .covers = bossLaterBlocks,
     },
 };
 
@@ -98,6 +109,40 @@ fn ofPlayer(kinds: *const Kinds, frame: *const Frame) bool {
     }
     return false;
 }
+
+/// Round 3's boss's frames drawn from his load's second and third blocks: his set's frames
+/// from the 15th on (the extractor's runs, sprites.zig), his part's too.
+fn bossLaterBlocks(s: Sprite, c: Context) bool {
+    for ([_][]const u8{ "boss_r3", "boss_r3_part" }) |name| {
+        const id = c.kinds.find(name) orelse continue;
+        for (c.kinds.get(id).frames) |animation| for (animation) |f| {
+            if (f != s.frame) continue;
+            const index = std.fmt.parseInt(u8, f.name, 10) catch return false;
+            return index >= boss_first_later;
+        };
+    }
+    return false;
+}
+
+/// The first of round 3's boss's frames drawn from the second block of his art.
+const boss_first_later = 14;
+
+/// The pixels sprite `s` covers on the screen: its frame's pieces, mirrored about its origin
+/// when it is, into `out` (as many at most): their count.
+pub fn pieces(s: Sprite, out: []Rect) usize {
+    var n: usize = 0;
+    for (s.frame.pieces) |p| {
+        if (n == out.len) break;
+        const w: i32 = @as(i32, p.width) * 8;
+        const h: i32 = @as(i32, p.height) * 8;
+        const x: i32 = if (s.flip_x) -(@as(i32, p.x) + w) else p.x;
+        out[n] = .{ .x = s.x + x, .y = s.y + p.y, .width = w, .height = h };
+        n += 1;
+    }
+    return n;
+}
+
+pub const Rect = struct { x: i32, y: i32, width: i32, height: i32 };
 
 /// The sprites in the original's order: the shadows objects of their own in the sort, in their
 /// places (world/shadows.zig) at their entities' depths, and none for a shadow that found no

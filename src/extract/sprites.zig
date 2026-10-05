@@ -75,6 +75,18 @@ const mrx_runs = [_]Run{
     .{ .first = 27, .last = 34, .source = 0x35190 },
 };
 
+/// Round 3's boss and its part (0x34B94), by the name base each pose is drawn with, over the
+/// three blocks of the boss's load (load list 8, 0x1C378) at $25C, $343 and $3FE: standing,
+/// walking, charging, struck, thrown over at $25C (0x1573C, 0x14BCE, 0x1476C, 0x14EA2); its
+/// part's charge, its slam, knocked away, slammed and thrown at $343 (0x15794, 0x14BCE, 0x14B00,
+/// 0x1512E, 0x14F46); the hug at $3FE (0x14CF6). (sor-remaster draws the second and the third
+/// runs scrambled.)
+const round3_boss_runs = [_]Run{
+    .{ .first = 0, .last = 13, .source = 0x31DC4 },
+    .{ .first = 14, .last = 22, .source = 0x32CD6 },
+    .{ .first = 23, .last = 27, .source = 0x339EA },
+};
+
 /// The intro's and the title's pictures (0x3A300) by animation and name base: the profiles'
 /// faces ($x15D), the heroes ($x22F), "press start" ($C031), the title's words ($04E6; in Japan
 /// $04D9), the trademark ($822F).
@@ -98,7 +110,7 @@ const sets = [_]Set{
     .{ .source = 0x2556C, .dir = "juggler", .art = .{ .nemesis = .{ .source = 0x258F8 } }, .view = .play, .what = "the knife juggler and its knives, types $27 and $28" },
     .{ .source = 0x2E8B4, .dir = "antonio", .art = .{ .nemesis = .{ .source = 0x29264 } }, .view = .play, .what = "Antonio, round 1's boss, and his boomerang (types $56, ...)" },
     .{ .source = 0x2E44A, .dir = "round2_boss", .art = .{ .nemesis = .{ .source = 0x27162 } }, .view = .play, .what = "round 2's boss, type $55" },
-    .{ .source = 0x34B94, .dir = "round3_boss", .art = .{ .nemesis = .{ .source = 0x31DC4 } }, .view = .play, .what = "round 3's boss, type $30, and its part, type $31" },
+    .{ .source = 0x34B94, .dir = "round3_boss", .art = .{ .runs = &round3_boss_runs }, .view = .play, .what = "round 3's boss, type $30, and its part, type $31" },
     .{ .source = 0x2EF62, .dir = "round4_boss", .art = .{ .nemesis = .{ .source = 0x2BC48 } }, .view = .play, .what = "round 4's boss, type $57" },
     .{ .source = 0x2DD70, .dir = "twins", .art = .{ .screen = &.{.{ .first = 0, .last = 36, .layout = .twins, .base = 0 }} }, .view = .play, .what = "round 5's bosses, the twins, type $58" },
     .{ .source = 0x3468A, .dir = "mrx", .art = .{ .runs = &mrx_runs }, .view = .play, .what = "Mr. X, round 8's boss" },

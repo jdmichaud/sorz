@@ -267,7 +267,9 @@ name entry's and the continue's question's numbers and sounds), round 2's scener
 `knockable`; the `drip`s; the `flight`s across the screen, with no art, their `flier`s, and the
 posters' corners they stir, `flight_scenery`), round 3's (the `lamp`s, the `crate`s and their pieces, the `drifter`s, the `rain` and its
 raindrops, its sky's flashes the round's art set's palettes `flash_N`), round 3's acrobats of a
-trio (`acrobat_trio`); the other characters and enemies come with PLAN
+trio (`acrobat_trio`) and its boss (`boss_r3`, his part `boss_r3_part`, which shows its own
+frames by side, `stand` and `stand_left`, and the helper of a pair, `boss_r3_helper`, with no
+art); the other characters and enemies come with PLAN
 items 12 to 15. Their numbers are read from the ROM's
 tables and from the immediate values of the code that uses them, each with its place in the
 definition's provenance, but the car's times, which the original's car, camera and shells make
@@ -508,15 +510,16 @@ A record of `placed`, `wave` or `reserve` is one entity:
   `true` when it has it (`waits_for_camera`: it stays hidden until the camera has reached its
   place, not only until its place is on the screen; `slow`, `closes_in_after_lurking`, `pipe_b`,
   `slides`, `flips_away`, `drops_in`, `flips_at_close_range`, `unflinching`, `walks_off`,
-  `twin`); `offset`, where it keeps from its target (`x` away from it, `depth`);
-  `offset_nibbles`, the indices of that offset in its kind's `offsets` table (across in the high
-  nibble, in depth in the low), for a kind that counts on from them (the acrobat trio's others:
-  role 1 one on in depth); `strength`, its
+  `twin`, a boss's: round 3's boss a variant); `offset`, where it keeps from its target (`x` away
+  from it, `depth`); `offset_nibbles`, the indices of that offset in its kind's `offsets` table
+  (across in the high nibble, in depth in the low), for a kind that counts on from them (the
+  acrobat trio's others: role 1 one on in depth); `strength`, its
   row of strength and colours (0 when absent): its health, its blows' damage and its points are
   its kind's tables' `strength_health`, `strength_power` and `strength_points` at it; `colours`,
   its colours by number (`enemy_colours`); `art`, its art by number (the art slots hold it).
 - A breakable's (an oil drum's too): `holds`, the kind of the item it leaves. A boss's: `bar`,
-  its entry in the status bar's names and bars.
+  its entry in the status bar's names and bars (round 3's boss: a bar of its own, the second's,
+  which also makes the helper of a pair).
 - A reserve's boss's kind (round 5's round 3's bosses, among its enemies): `reserve_boss`, its
   art and colours a boss's rather than an enemy's `art` and `colours`: its `art`, a load by
   number, takes the boss's art slot, once no enemy shows the second's, the third's or the boss's

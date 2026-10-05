@@ -483,6 +483,13 @@ fn enemyRecord(rom: []const u8, s: *round.Spawn, t: u8, variant: u8, offsets: u8
         s.bar = offsets;
         return;
     }
+    // Round 3's boss (type $30, 0x144D2): a variant by its byte's low nibble (bit 0: no helper
+    // of its own), its bar.
+    if (t == 0x30) {
+        if (variant & 0xF != 0) s.traits.insert(.twin);
+        s.bar = offsets;
+        return;
+    }
     if (!commonEnemy(t)) return;
     // Its art, by its type (0xA4E): the art slots hold it by that number.
     s.art = rom[art_of_type + @as(u32, t - 0x20)];
