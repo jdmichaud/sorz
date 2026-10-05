@@ -16,6 +16,7 @@ const Error = entities.Error;
 const immediate = entities.immediate;
 const moveByte = entities.moveByte;
 const readAnimation = entities.readAnimation;
+const moveq = entities.moveq;
 
 /// A weapon's poses, by the original's animation number / 4 (its sets' entries in pairs, right
 /// and left); the knife has no upright pose.
@@ -64,6 +65,8 @@ const Weapon = struct {
     /// `move.b #N,(52,a0)`: its power, in its start (0x5C46, 0x620A, 0x623A).
     power_at: u32,
     what: []const u8,
+    /// Its own numbers besides the weapons' (the knife's flight).
+    own: ?*const fn (d: *Def) Error!void = null,
 };
 
 /// The weapon `w`: its poses, its power, how it lasts and falls.
@@ -79,6 +82,8 @@ fn weapon(arena: std.mem.Allocator, rom: []const u8, w: Weapon) Error!entity.Def
     try d.number("uses", try immediate(rom, 0x5C66, &.{ 0x0C, 0x28, 0x00 }, 1), "ROM 0x05C66: cmpi.b #N,(80,a0) (its pick-ups)");
     try d.number("blink", try moveByte(rom, 0x5C90, 86), "ROM 0x05C90: move.b #N,(86,a0)");
     try d.number("drop", (try immediate(rom, 0x5E4A, &.{ 0x31, 0x7C }, 2)) << 16, "ROM 0x05E4A: move.w #N,(36,a0)");
+    try d.number("left_behind", try immediate(rom, 0x6A7C, &.{ 0x04, 0x40 }, 2), "ROM 0x06A7C: subi.w #N,d0 (from the camera's place across, 0x6A66: out of a hand)");
+    if (w.own) |own| try own(&d);
     return .{
         .name = w.name,
         .provenance = try std.fmt.allocPrint(arena, "{s}: the animation set at ROM 0x{X:0>5} (its poses by entry pair), the boxes (0x1A68E, 0x1AB8E); gravity ROM 0x05CE8: addi.l #N,(36,a0){s}", .{ w.what, w.set, d.number_notes.items }),
@@ -92,8 +97,28 @@ fn weapon(arena: std.mem.Allocator, rom: []const u8, w: Weapon) Error!entity.Def
     };
 }
 
+/// The knife's flight, thrown (0x5D84: its speed across, how far ahead of its holder and below
+/// its hand it starts; 0x5D34: it flies while on the screen, wider than the screen's sides by
+/// the drawing's offset, 0x97E6), and its bounce off a wall (0x5D4E: a quarter of its speed back;
+/// 0x5DEA: its gravity; down, it is worn out).
+fn knifeFlight(d: *Def) Error!void {
+    const rom = d.rom;
+    try d.number("throw_speed", (try moveq(rom, 0x5D8C, 0)) << 16, "ROM 0x05D8C: moveq #N,d0, its speed's whole pixels");
+    try d.number("throw_ahead", try moveq(rom, 0x5D8E, 1), "ROM 0x05D8E: moveq #N,d1");
+    try d.number("throw_below", try immediate(rom, 0x5DBA, &.{ 0x06, 0x68 }, 2), "ROM 0x05DBA: addi.w #N,(24,a0)");
+    const drawn = try immediate(rom, 0xAF6E, &.{ 0x06, 0x42 }, 2);
+    try d.number("flight_from", try immediate(rom, 0x97E8, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x097E8: cmpi.w #N,(40,a0), less 0xAF6E's offset");
+    try d.number("flight_to", try immediate(rom, 0x97F0, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x097F0: cmpi.w #N,(40,a0), less 0xAF6E's offset (excluded)");
+    // asr.l #N,d0: 1110 NNN0 1000 0000.
+    const asr = u16be(rom, 0x5D5A);
+    if (asr & 0xF1FF != 0xE080) return error.BadData;
+    try d.number("bounce_shift", (asr >> 9) & 7, "ROM 0x05D5A: asr.l #N,d0 (its speed back, divided by 2^N)");
+    try d.number("bounce_gravity", try immediate(rom, 0x5DEA, &.{ 0x06, 0xA8 }, 4), "ROM 0x05DEA: addi.l #N,(36,a0)");
+}
+
 /// The definitions this module writes, appended to `out`.
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
+    try out.append(arena, try weapon(arena, rom, .{ .name = "knife", .behaviour = "knife", .set = 0x6FA06, .prefix = "knife", .power_at = 0x5C54, .what = "the knife, type $08 (handler 0x5C1E)", .own = knifeFlight }));
     try out.append(arena, try weapon(arena, rom, .{ .name = "pipe", .behaviour = "weapon", .set = 0x6FA9A, .prefix = "pipe", .power_at = 0x6214, .what = "the pipe, type $0A (handler 0x61F6)" }));
     try out.append(arena, try weapon(arena, rom, .{ .name = "pipe_b", .behaviour = "weapon", .set = 0x6FB5A, .prefix = "pipe_2", .power_at = 0x6244, .what = "the second pipe, type $0B (handler 0x6226)" }));
 }

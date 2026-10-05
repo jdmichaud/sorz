@@ -293,7 +293,7 @@ const galsia_pipe =
 /// A pipe: its poses, how long it lasts and falls.
 const pipe =
     \\{"family": "weapon", "team": "neutral", "behaviour": "weapon", "gravity": 34816,
-    \\ "numbers": {"power": 4, "uses": 3, "blink": 16, "drop": 131072},
+    \\ "numbers": {"power": 4, "uses": 3, "blink": 16, "drop": 131072, "left_behind": 96},
     \\ "animations": {
 ++ anim("lying", bare("1", "")) ++ "," ++ anim("level", bare("1", "")) ++ "," ++ anim("upright", bare("1", "")) ++ "," ++ anim("blinking", bare("1", "") ++ "," ++ bare("1", "")) ++
     \\ }}
@@ -353,6 +353,47 @@ const gold =
     \\ }}
 ;
 
+/// A knife: a pipe's poses but upright, and its flight thrown.
+const knife =
+    \\{"family": "weapon", "team": "neutral", "behaviour": "knife", "gravity": 34816,
+    \\ "numbers": {"power": 5, "uses": 3, "blink": 16, "drop": 131072, "left_behind": 96,
+    \\   "throw_speed": 1048576, "throw_ahead": 48, "throw_below": 16, "flight_from": -16,
+    \\   "flight_to": 336, "bounce_shift": 2, "bounce_gravity": 38912},
+    \\ "boxes": {"blade": {"x": [-8, 8], "depth": [-8, 8], "height": [-8, 0]}},
+    \\ "animations": {
+++ anim("lying", bare("1", "")) ++ "," ++ anim("level", "{\"frame\": \"t/f1\", \"ticks\": 1, \"body\": \"blade\", \"attack\": \"blade\"}") ++ "," ++ anim("blinking", bare("1", "") ++ "," ++ bare("1", "")) ++
+    \\ }}
+;
+
+/// A knife Galsia: its walk holds its knife, its stab strikes within its reach, its throw lets
+/// it go at its second frame.
+const galsia_knife =
+    \\{"family": "enemy", "team": "enemy", "behaviour": "galsia_knife", "health": 6, "gravity": 73728,
+    \\ "shadow": true,
+    \\ "numbers": {
+++ enemy_numbers ++ ", " ++
+    \\ "power": 10, "jump_in_speed": 327680, "jump_in_pace": 6, "jump_in_slowing": 12288,
+    \\   "close_in_speed": 147456, "close_in_first": 1, "size_up_ticks": 24, "size_up_level": 8,
+    \\   "stab_near": 96, "stab_speed": 196608, "stab_beside": 32, "stab_pace": 4, "stab_again": 2,
+    \\   "throw_frame": 1, "throw_ends": 2},
+    \\ "tables": {
+++ pacing_tables ++ "}," ++
+    \\ "sounds": {
+++ enemy_sounds ++ ", \"throw\": \"knife throw\"}," ++
+    \\ "boxes": {"body": {"x": [-9, 9], "depth": [-8, 8], "height": [-60, 0]},
+    \\   "stab_reach": {"x": [0, 40], "depth": [-8, 8], "height": [-60, -20]},
+    \\   "stab": {"x": [10, 40], "depth": [-8, 8], "height": [-56, -40]}},
+    \\ "animations": {
+++ enemyAnimations(pf("5", "")) ++ "," ++
+    anim("walk_knife", pf("5", ", \"hand\": {\"x\": -9, \"height\": -40, \"pose\": \"lying\"}") ++ "," ++ pf("5", ", \"hand\": {\"x\": -9, \"height\": -40, \"pose\": \"lying\"}")) ++ "," ++
+    anim("jump_in", pf("6", ", \"attack\": \"stab\", \"blow\": true, \"hand\": {\"x\": -9, \"height\": -40, \"pose\": \"lying\"}")) ++ "," ++
+    anim("stab", pf("4", ", \"hand\": {\"x\": 5, \"height\": -50, \"pose\": \"level\"}") ++ "," ++ pf("4", ", \"attack\": \"stab\", \"blow\": true, \"hand\": {\"x\": 20, \"height\": -50, \"pose\": \"level\"}") ++ "," ++ pf("4", "")) ++ "," ++
+    anim("throw", pf("3", ", \"hand\": {\"x\": -9, \"height\": -50, \"pose\": \"lying\"}") ++ "," ++ pf("3", ", \"hand\": {\"x\": 9, \"height\": -50, \"pose\": \"level\"}") ++ "," ++ pf("3", "")) ++
+    \\ },
+    \\ "moves": {"stab": {"animation": "stab", "damage": 10, "hit_sound": "knife stab"},
+    \\   "jump_in": {"animation": "jump_in", "damage": 10, "reaction": "knock_down"}}}
+;
+
 const car =
     \\{"family": "effect", "team": "neutral", "behaviour": "police_car",
     \\ "numbers": {"run": 1048576, "run_most": 50331648, "comes": 33554432, "siren": 29,
@@ -385,6 +426,8 @@ const Fixture = struct {
             .{ .name = "galsia", .text = punk },
             .{ .name = "galsia_pipe", .text = galsia_pipe },
             .{ .name = "pipe", .text = pipe },
+            .{ .name = "knife", .text = knife },
+            .{ .name = "galsia_knife", .text = galsia_knife },
             .{ .name = "shutter", .text = shutter },
             .{ .name = "breakable", .text = breakable },
             .{ .name = "apple", .text = apple },
@@ -1087,4 +1130,37 @@ test "an item picked up gives what it gives and goes: health up to the most, poi
     r.step(.{});
     r.step(b_pad);
     try testing.expectEqual(@as(u32, 5000), r.w.players[0].score);
+}
+
+test "a knife Galsia closes in, sizes up, stabs near; far it throws its knife, which flies and knocks the player down" {
+    var r = try Round.init();
+    defer r.deinit();
+    const g = try enemyAt(&r, "galsia_knife", 860, .left, .choose);
+    r.w.get(g).?.spawn.offset_x = 40;
+    var stabbed = false;
+    for (0..80) |_| {
+        r.step(.{});
+        const st = behaviours.stateName(&r.w.get(g).?.mind).?;
+        if (std.mem.eql(u8, st, "stab")) stabbed = true;
+        if (r.player().health < 80) break;
+    }
+    try testing.expect(stabbed);
+    try testing.expect(r.player().health < 80);
+    // Far, level with the player: it throws its knife, and takes up another.
+    var r2 = try Round.init();
+    defer r2.deinit();
+    const g2 = try enemyAt(&r2, "galsia_knife", 1000, .left, .choose);
+    r2.w.get(g2).?.spawn.offset_x = 160;
+    var flew = false;
+    for (0..120) |_| {
+        r2.step(.{});
+        for (World.weapon_places.from..World.weapon_places.to) |i| {
+            const kh = r2.w.handleAt(i) orelse continue;
+            if (std.mem.eql(u8, behaviours.stateName(&r2.w.get(kh).?.mind).?, "flying")) flew = true;
+        }
+        if (std.mem.eql(u8, r2.state(), "knocked_down")) break;
+    }
+    try testing.expect(flew);
+    try testing.expectEqualStrings("knocked_down", r2.state());
+    try testing.expectEqual(@as(i16, 75), r2.player().health);
 }

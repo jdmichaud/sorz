@@ -55,9 +55,11 @@ pub const galsia = @import("behaviours/galsia.zig");
 pub const stalker = @import("behaviours/stalker.zig");
 pub const signal = @import("behaviours/signal.zig");
 pub const galsia_pipe = @import("behaviours/galsia_pipe.zig");
+pub const galsia_knife = @import("behaviours/galsia_knife.zig");
 pub const acrobat = @import("behaviours/acrobat.zig");
 pub const shutter = @import("behaviours/shutter.zig");
 pub const weapon = @import("behaviours/weapon.zig");
+pub const knife = @import("behaviours/knife.zig");
 pub const breakable = @import("behaviours/breakable.zig");
 pub const item = @import("behaviours/item.zig");
 pub const police_car = @import("behaviours/police_car.zig");
@@ -74,9 +76,11 @@ pub const Mind = union(enum) {
     stalker: stalker.Mind,
     signal: signal.Mind,
     galsia_pipe: galsia_pipe.Mind,
+    galsia_knife: galsia_knife.Mind,
     acrobat: acrobat.Mind,
     shutter: shutter.Mind,
     weapon: weapon.Mind,
+    knife: knife.Mind,
     breakable: breakable.Mind,
     item: item.Mind,
     police_car: police_car.Mind,

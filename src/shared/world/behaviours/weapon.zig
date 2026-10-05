@@ -32,6 +32,8 @@ pub const Numbers = struct {
     blink: u8,
     /// Dropped, its speed down at first (its definition's gravity adds to it each tick).
     drop: Fixed,
+    /// Out of a hand, it goes this far behind the camera's place across.
+    left_behind: i16,
 };
 
 /// A weapon's memory (a knife's too).
@@ -46,7 +48,7 @@ pub const Body = struct {
 
 pub fn think(a: Actor) void {
     const C = Of(@This());
-    if (C.act(a)) return;
+    if (C.act(a)) _ = C.leftBehind(a);
 }
 
 pub fn follow(a: Actor) void {
@@ -88,6 +90,15 @@ pub fn Of(comptime M: type) type {
                 a.mind.body.blink -%= 1;
                 if (a.mind.body.blink == 0) a.remove();
             } else return false;
+            return true;
+        }
+
+        /// Out of a hand (none holds it) and left behind the camera, it goes: whether it went.
+        pub fn leftBehind(a: A) bool {
+            if (a.entity.holder != null or !a.entity.alive()) return false;
+            const from_camera = a.entity.position.x.whole() - a.tick.world.camera.x.whole();
+            if (from_camera > -a.numbers().left_behind) return false;
+            a.remove();
             return true;
         }
 

@@ -578,8 +578,57 @@ fn animEntry(rom: []const u8, at: u32) Error!u32 {
     return @intCast(@divExact(anim, 2));
 }
 
+// --- The knife Galsia --------------------------------------------------------------------------
+
+/// The knife Galsia (type $20, its handler 0xD606, sor-remaster's obj/galsia_armed.zig): it takes
+/// up a knife (0xD64C), closes in to its place beside its target (0xD76A) or rushes past it
+/// (0xD6C0), sizes it up (0xD7BE), then near stabs (0xD856), far throws its knife (0xD8EC) and
+/// takes up another; its walk, its rush, its stab and its throw hold the knife (the hands at
+/// 0x60A0).
+pub fn galsiaKnife(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    var d = try begin(arena, rom, 0x20, "galsia", &.{
+        .{ .name = "walk_knife", .entry = try animEntry(rom, 0xD77E) },
+        .{ .name = "jump_in", .entry = try animEntry(rom, 0xD6E2) },
+        .{ .name = "stab", .entry = try animEntry(rom, 0xD89C) },
+        .{ .name = "throw", .entry = try animEntry(rom, 0xD8FA) },
+    });
+    try weapons.enemyHands(&d, "walk_knife", @intCast(try moveq(rom, 0xD77E, 0)));
+    try weapons.enemyHands(&d, "jump_in", @intCast(try moveq(rom, 0xD6E2, 0)));
+    try weapons.enemyHands(&d, "stab", @intCast(try moveq(rom, 0xD89C, 0)));
+    try weapons.enemyHands(&d, "throw", @intCast(try moveq(rom, 0xD8FA, 0)));
+    // The stab: its frames with a box are blows, its damage the type's power; its reach.
+    blows(&d, "stab");
+    blows(&d, "jump_in");
+    const power = powerOf(&d);
+    const stab_sound = try entities.soundName(@bitCast(@as(i8, @intCast(try moveq(rom, 0xD872, 7)))));
+    try d.moves.append(arena, .{ .name = "stab", .provenance = "the stab (0xD856), its damage the type's power (0x93CE); its sound when it lands (ROM 0x0D872: moveq #N,d7)", .animation = d.animationIndex("stab").?, .damage = power, .hit_sound = stab_sound });
+    try d.moves.append(arena, .{ .name = "jump_in", .provenance = "the rush (0xD6FC: a blow that lands knocks down, reaction 1, 0xD704), its damage the type's power", .animation = d.animationIndex("jump_in").?, .damage = power, .reaction = .knock_down });
+    const reach_right: u8 = @intCast(try immediate(rom, 0xD880, &.{ 0x32, 0x3C }, 2));
+    const reach_left: u8 = @intCast(try immediate(rom, 0xD88C, &.{ 0x32, 0x3C }, 2));
+    try namedBox(&d, reach_right, reach_left, "stab", "reach");
+    try d.number_notes.print(arena, "; the stab's reach: ROM 0x0D880, 0x0D88C: move.w #N,d1", .{});
+    try d.number("jump_in_speed", try immediate(rom, 0xD6E8, &.{ 0x3C, 0x3C }, 2) << 8, "ROM 0x0D6E8: move.w #N,d6 (8.8)");
+    try d.number("jump_in_pace", (try immediate(rom, 0xD738, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0D738: move.w #N*$101,(12,a0)");
+    try d.number("jump_in_slowing", try immediate(rom, 0xD73E, &.{ 0x20, 0x3C }, 4), "ROM 0x0D73E: move.l #N,d0");
+    try d.number("close_in_speed", try immediate(rom, 0xD78A, &.{ 0x31, 0x7C }, 2) << 8, "ROM 0x0D78A: move.w #N,(100,a0) (8.8)");
+    try d.number("close_in_first", try moveByte(rom, 0xD784, 13), "ROM 0x0D784: move.b #N,(13,a0)");
+    try d.number("size_up_ticks", try moveByte(rom, 0xD7C6, 80), "ROM 0x0D7C6: move.b #N,(80,a0)");
+    if (u16be(rom, 0xD7FE) != 0x5040 or u16be(rom, 0xD800) != 0x5141) return error.BadData;
+    try d.number("size_up_level", 8, "ROM 0x0D7FE: addq.w #8,d0, 0x0D800: subq.w #8,d1");
+    try d.number("stab_near", try immediate(rom, 0xD81E, &.{ 0x0C, 0x40 }, 2), "ROM 0x0D81E: cmpi.w #N,d0");
+    try d.number("stab_speed", try immediate(rom, 0xD864, &.{ 0x31, 0x7C }, 2) << 8, "ROM 0x0D864: move.w #N,(100,a0) (8.8)");
+    try d.number("stab_beside", try moveq(rom, 0xD8D6, 1), "ROM 0x0D8D6: moveq #N,d1");
+    try d.number("stab_pace", (try immediate(rom, 0xD8A2, &.{ 0x31, 0x7C }, 2)) >> 8, "ROM 0x0D8A2: move.w #N*$101,(12,a0)");
+    try d.number("stab_again", try frameCompared(rom, 0xD8A8), "ROM 0x0D8A8: cmpi.b #N,(10,a0)");
+    try d.number("throw_frame", try frameCompared(rom, 0xD90E), "ROM 0x0D90E: cmpi.b #N,(10,a0)");
+    try d.number("throw_ends", try frameCompared(rom, 0xD938), "ROM 0x0D938: cmpi.b #N,(10,a0)");
+    try d.sound("throw", @bitCast(@as(i8, @intCast(try moveq(rom, 0xD932, 7)))));
+    return finish(&d, "galsia_knife", 0x20, "galsia_knife", "the knife Galsia (handler 0xD606)");
+}
+
 /// The definitions this module writes, appended to `out`.
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
+    try out.append(arena, try galsiaKnife(arena, rom));
     try out.append(arena, try galsia(arena, rom));
     try out.append(arena, try stalker(arena, rom));
     try out.append(arena, try signal(arena, rom));

@@ -328,6 +328,11 @@ pub const Tick = struct {
         return w;
     }
 
+    /// The holder of the weapon `w` throws it (`hurled`): it flies from its turn.
+    pub fn throwWeapon(t: *Tick, w: Handle) void {
+        dispatch(t, w, "hurled", void, {}, .{});
+    }
+
     /// The weapon `w` falls from its holder's hand (`dropped`).
     pub fn dropWeapon(t: *Tick, w: Handle) void {
         dispatch(t, w, "dropped", void, {}, .{});
