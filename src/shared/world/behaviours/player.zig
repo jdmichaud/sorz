@@ -498,24 +498,27 @@ pub fn takeUpLanded(a: Actor, ago: ?u32) void {
 }
 
 /// Taken up, B was pressed in its state of `elapsed` ticks at its ticks `presses` (the trace
-/// tells its blow's landing at its tick `landed_at`, if it landed: it knows of it from then): its
-/// frames are stepped again as its ticks went. In the first blow a press is queued unless one
-/// is, and hurries the blow when it knew of no landing; at the blow's end the queued press is
-/// taken up (the first blow again, which goes on as it was).
+/// tells its blow's landing at its tick `landed_at`, if it landed: its window opens then): its
+/// ticks are gone through again as they went, from the state's start (its window shut). Each
+/// tick the window closes a tick, the frames step, and a landing opens the window; in the first
+/// blow a press is queued unless one is, and hurries the blow while the window is shut; at the
+/// blow's end the queued press is taken up (the first blow again, which goes on as it was).
 pub fn takeUpPresses(a: Actor, elapsed: u32, presses: []const u32, landed_at: ?u32) void {
     const n = a.numbers();
     if (a.mind.state != .attack1 or presses.len == 0) return;
     const v = a.entity.velocity;
     begin(a, a.mind.state);
     a.entity.velocity = v;
+    a.mind.window = 0;
     var next: usize = 0;
     for (1..@min(elapsed, 255) + 1) |i| {
+        if (a.mind.window != 0) a.mind.window -= 1;
         _ = a.step();
+        if (landed_at == @as(u32, @intCast(i))) a.mind.window = n.combo_window;
         while (next < presses.len and presses[next] < i) next += 1;
         if (next < presses.len and presses[next] == i and !a.mind.queued) {
             a.mind.queued = true;
-            const open = if (landed_at) |l| l <= i else false;
-            if (!open) a.retime(.attack1_hurried, if (a.frame() == 1) n.hurry_first else n.hurry_later);
+            if (a.mind.window == 0) a.retime(.attack1_hurried, if (a.frame() == 1) n.hurry_first else n.hurry_later);
         }
         if (a.frame() != n.blow_ends or !a.mind.queued) continue;
         a.mind.queued = false;
