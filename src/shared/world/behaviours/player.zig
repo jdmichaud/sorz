@@ -1417,7 +1417,8 @@ fn hold(a: Actor, c: Command) void {
     if (a.mind.countered) return countered(a);
     if (a.entity.holding == null or a.other(a.entity.holding.?) == null) {
         a.entity.holding = null;
-        return change(a, .ready);
+        // Its weapon still in hand, it stands armed.
+        return change(a, if (a.mind.weapon != null) .armed_stand else .ready);
     }
     // The other player freed while it jumped over it (struck meanwhile): the hold is over.
     if (a.tick.actor(@This(), a.entity.holding.?)) |o| if (o.entity.holder == null) {
