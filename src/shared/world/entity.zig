@@ -195,9 +195,9 @@ pub const Boxes = struct {
     body: ?u8 = null,
     attack: ?u8 = null,
     mirrored: bool = false,
-    /// Where they stand, when not at the entity's place: a player's stay during the others'
-    /// turns where the player stood when they began, though a holder moves it (the original's
-    /// players set their boxes in the world at their own turn).
+    /// Where they stand, when not at the entity's place: a player's stay where the player stood
+    /// at its own turn until its next, though the camera, a holder or the other player moves it
+    /// (the original's players set their boxes in the world at their own turn).
     at: ?Vec3 = null,
 };
 

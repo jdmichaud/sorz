@@ -197,7 +197,10 @@ fn betweenPlayers(t: *Tick) void {
 /// blow); and it decides. What each draws from the random generator is thus drawn in the
 /// original's order. An entity that appears during the turns in a later place has its turn in
 /// the same tick, as in the original. Through the turns, the players' boxes stay where the
-/// players' own turn left them (`Boxes.at`, `playersMove`); their asks to grab end with them.
+/// players' own turn left them (`Boxes.at`, `playersMove`), and after them until their next turn
+/// shows them again, though the camera or the other player moved them since (the original's
+/// players keep the boxes their turn set); but one an enemy holds and placed is where its boxes
+/// are (the original's places itself in its own turn). Their asks to grab end with the turns.
 fn turns(t: *Tick) void {
     for (0..capacity) |i| {
         const h = t.world.handleAt(i) orelse continue;
@@ -212,7 +215,9 @@ fn turns(t: *Tick) void {
         const h = p.entity orelse continue;
         const e = t.world.get(h) orelse continue;
         e.flags.wants_grab = false;
-        e.boxes.at = null;
+        if (e.holder) |holder| if (!t.isPlayer(holder)) {
+            e.boxes.at = null;
+        };
     }
 }
 

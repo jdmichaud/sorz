@@ -1391,8 +1391,9 @@ pub const Run = struct {
 /// The probe (sor-remaster's docs/scenarios.md): a JSON line per fighter whose frame or boxes
 /// changed since its last line, at each tick's end: `anim` (the animation's name), `frame`,
 /// `atk` and `body` (the boxes as [x from, x to, depth from, depth to, height from, height to]
-/// from its place, facing as it faces), and `power` (a player's: the damage its blow does now;
-/// another's: the damage its blows do).
+/// from its place, facing as it faces; a player's where its turn set them, `Boxes.at`, though
+/// it moved since), and `power` (a player's: the damage its blow does now; another's: the
+/// damage its blows do).
 pub const Probe = struct {
     w: *std.Io.Writer,
     last: [world.entity.capacity]?Line = @splat(null),
@@ -1445,7 +1446,11 @@ pub const Probe = struct {
         const b = &k.definition.boxes[index orelse return null];
         const x = b.across(e.boxes.mirrored);
         const h = b.upDown(e.boxes.mirrored);
-        return .{ x.from, x.to, b.depth.from, b.depth.to, h.from, h.to };
+        const at = e.boxes.at orelse e.position;
+        const dx: i16 = @intCast(at.x.whole() - e.position.x.whole());
+        const dd: i16 = @intCast(at.depth.whole() - e.position.depth.whole());
+        const dh: i16 = @intCast(at.height.whole() - e.position.height.whole());
+        return .{ x.from + dx, x.to + dx, b.depth.from + dd, b.depth.to + dd, h.from + dh, h.to + dh };
     }
 
     /// A player's: the damage its blow does now; another's (an enemy's, as sor-remaster's
