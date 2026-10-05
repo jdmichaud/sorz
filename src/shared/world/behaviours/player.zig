@@ -1357,6 +1357,8 @@ pub fn landed(a: Actor) void {
             if (a.mind.bounces == 1 and a.mind.carried != 0) {
                 loses(a, a.mind.thrower, a.mind.carried);
                 a.mind.carried = 0;
+                // Its last health gone with the throw's damage, it dies there.
+                if (a.entity.health <= 0) return die(a, a.mind.thrower);
             }
             a.sound(.thud);
             if (a.mind.bounces < 2) {
