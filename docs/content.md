@@ -202,7 +202,8 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
   its own way: Adam's back attack that jumps, `back_attack_up`; Blaze's blows that leap,
   `last_blow_leap`, `knee_last_leap`); left out, the behaviour does without. `sounds`: the
   sounds the behaviour asks for, by their role, each a name of the sound content
-  (`docs/content-sound.md`).
+  (`docs/content-sound.md`). `colours`: the colours the behaviour shows by their role, each a
+  palette's full name in the art (the rain's sky, `round3/flash_1`).
 - `boxes`: named boxes, each a span `[from, to]` (both included) on each axis from the entity's
   place, for the entity facing right. Facing left, the span across is `x_left` if given, else `x`
   mirrored (`[-to, -from]`), and the span in height `height_left` if given, else `height` (Adam's
@@ -258,7 +259,8 @@ Galsia (`galsia`), a stand-in for the special attack's police car (`police_car`)
 a section's opening shows (`go_arrow`) and a player out of lives (`player_waiting`: no art, the
 name entry's and the continue's question's numbers and sounds), round 2's scenery (the oil drums,
 `knockable`; the `drip`s; the `flight`s across the screen, with no art, their `flier`s, and the
-posters' corners they stir, `flight_scenery`), round 3's (the `lamp`s, the `crate`s and their pieces, the `drifter`s); the other characters and enemies come with PLAN
+posters' corners they stir, `flight_scenery`), round 3's (the `lamp`s, the `crate`s and their pieces, the `drifter`s, the `rain` and its
+raindrops, its sky's flashes the round's art set's palettes `flash_N`); the other characters and enemies come with PLAN
 items 12 to 15. Their numbers are read from the ROM's
 tables and from the immediate values of the code that uses them, each with its place in the
 definition's provenance, but the car's times, which the original's car, camera and shells make

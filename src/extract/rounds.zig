@@ -30,6 +30,9 @@ pub const wave_maps = 0x65976;
 pub const wave_steps = 0x11398;
 pub const wave_palettes = 0x1139E;
 pub const palette_cycles = 0x1C400;
+/// Round 3's rain's sky: a palette list at each step of its flash (0x708A), one word each.
+pub const rain_flash = 0x70BA;
+pub const rain_flashes = 5;
 
 pub fn header(rom: []const u8, n: u32) u32 {
     return header_table + @as(u32, u16be(rom, header_table + 2 * n));
@@ -199,6 +202,16 @@ pub fn extract(b: *Builder, n: u32) !void {
             var pal = try builder_mod.paletteList(rom, at);
             pal.provenance = try std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: a palette list, round 3's waves at step {d} of 5 (0x11346), which shows frame {d}", .{ at, s + 1, rom[wave_steps + s] + 1 });
             const pname = try roundName(arena, n, "waves_{d}", .{s + 1});
+            try b.palette(pname, pal);
+            try b.origin(pname, .{ .palette = at });
+        }
+        // Round 3's rain (0x708A): the sky's colours at each of its flash's five steps, a palette
+        // list each (0x70BA, one word each).
+        for (0..rain_flashes) |s| {
+            const at: u32 = @intCast(rain_flash + 2 * s);
+            var pal = try builder_mod.paletteList(rom, at);
+            pal.provenance = try std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: a palette list, round 3's sky at its rain's flash's step {d} of 5 (0x708A)", .{ at, s + 1 });
+            const pname = try roundName(arena, n, "flash_{d}", .{s + 1});
             try b.palette(pname, pal);
             try b.origin(pname, .{ .palette = at });
         }

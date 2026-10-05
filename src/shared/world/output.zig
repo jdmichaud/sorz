@@ -64,12 +64,14 @@ pub const Pickup = struct { item: Handle, kind: entity.KindId, by: Handle };
 pub const Ranking = struct { player: u1, name: ?[3]?u8 = null };
 
 /// Colours the round loads into its palettes at the tick: an enemies' colours into one of the
-/// enemies' colours (the first, the second, the other: script.zig), the boss's, the police car's;
-/// or the colours shown kept as the special attack is called, and given back after it.
+/// enemies' colours (the first, the second, the other: script.zig), the boss's, the police car's,
+/// colours of the art a behaviour shows (the rain's sky); or the colours shown kept as the
+/// special attack is called, and given back after it.
 pub const ColourLoad = union(enum) {
     enemies: struct { colours: u8, into: u2 },
     boss,
     police,
+    palette: *const art.Palette,
     keep,
     back,
 };

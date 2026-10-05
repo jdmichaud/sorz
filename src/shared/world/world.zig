@@ -145,6 +145,9 @@ pub const World = struct {
     /// A flight passes (behaviours/flight.zig, the last to start or end one): the scenery that
     /// stirs with it moves.
     flight: bool = false,
+    /// The sky's flashes while it rains (behaviours/rain.zig): the step shown, and the ticks to
+    /// the next (below zero: due).
+    sky: struct { step: u8 = 0, ticks: i8 = 0 } = .{},
     /// Which player's blow or grab on the other is looked at last (it wins) at the next tick the
     /// two may meet: player 1's (true) or player 2's; it turns at each such tick.
     first_touches_last: bool = false,

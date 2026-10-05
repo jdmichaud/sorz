@@ -9,7 +9,8 @@
 //! - what it reads of its definition, by name, each optional: `Animation` and `Move` (enums of
 //!   the animations and moves it starts), `Numbers` (a struct of the numbers it reads: whole
 //!   numbers, or `Fixed` for speeds in 1/65536 pixel), `Sound` (an enum of the sounds it asks
-//!   for). Binding the kinds refuses a definition that lacks one (kinds.zig);
+//!   for), `Colours` (an enum of the colours of the art it shows, the definition's `colours`).
+//!   Binding the kinds refuses a definition that lacks one (kinds.zig);
 //! - its hooks, each optional, each taking its `Actor` first (tick.zig):
 //!   - `control(a, command)` for the entity a player plays, `think(a)` for the others, and
 //!     `begin(a)` for the others before the blows of the tick;
@@ -52,7 +53,7 @@
 //! scenery (PLAN item 15): the oil drums a blow knocks away (`knockable`), the `drip`s, the
 //! `flight`s across the screen, their `flier`s and the posters' corners they stir
 //! (`flight_scenery`), the `bottle` a drum holds, and round 2's `juggler` with its knives
-//! (`juggler_knife`); round 3's: the `lamp`s, the `crate`s, the `drifter`s.
+//! (`juggler_knife`); round 3's: the `lamp`s, the `crate`s, the `drifter`s, the `rain`.
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -94,6 +95,7 @@ pub const flight_scenery = @import("behaviours/flight_scenery.zig");
 pub const lamp = @import("behaviours/lamp.zig");
 pub const crate = @import("behaviours/crate.zig");
 pub const drifter = @import("behaviours/drifter.zig");
+pub const rain = @import("behaviours/rain.zig");
 
 /// An entity's behaviour and its memory: one line a behaviour module.
 pub const Mind = union(enum) {
@@ -135,6 +137,7 @@ pub const Mind = union(enum) {
     lamp: lamp.Mind,
     crate: crate.Mind,
     drifter: drifter.Mind,
+    rain: rain.Mind,
 };
 
 pub const Behaviour = std.meta.Tag(Mind);

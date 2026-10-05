@@ -28,6 +28,8 @@ pub const Kind = struct {
     move_of: []const u8 = &.{},
     numbers: []const ?i32 = &.{},
     sound_of: []const []const u8 = &.{},
+    /// The behaviour's colours (`M.Colours`), their palettes found in the art.
+    colours_of: []const *const art.Palette = &.{},
     /// The behaviour's tables and choices (`M.Tables`, `M.Choices`), bound once.
     tables: ?*const anyopaque = null,
     choices: ?*const anyopaque = null,
@@ -83,7 +85,7 @@ pub const Kinds = struct {
             }
             k.* = .{ .definition = d, .behaviour = behaviour, .frames = frames };
             switch (behaviour) {
-                inline else => |b| try bindNames(arena, behaviours.module(b), k, file, diag),
+                inline else => |b| try bindNames(arena, behaviours.module(b), k, a, file, diag),
             }
         }
         return .{ .list = list };
@@ -106,7 +108,7 @@ fn refuse(diag: *json.Diagnostic, file: []const u8, field: []const u8, message: 
 }
 
 /// The behaviour `M`'s names in `k`'s definition (behaviours.zig says what a module declares).
-fn bindNames(arena: std.mem.Allocator, comptime M: type, k: *Kind, file: []const u8, diag: *json.Diagnostic) Error!void {
+fn bindNames(arena: std.mem.Allocator, comptime M: type, k: *Kind, a: *const art.Art, file: []const u8, diag: *json.Diagnostic) Error!void {
     const d = k.definition;
     const behaviour = comptime @tagName(behaviours.tagOf(M));
     const missing = "missing: the behaviour " ++ behaviour ++ " reads it";
@@ -164,6 +166,15 @@ fn bindNames(arena: std.mem.Allocator, comptime M: type, k: *Kind, file: []const
         const out = try arena.alloc([]const u8, names.len);
         inline for (names, 0..) |n, i| out[i] = d.sound(n) orelse return refuse(diag, file, "sounds." ++ n, missing);
         k.sound_of = out;
+    }
+    if (@hasDecl(M, "Colours")) {
+        const names = comptime std.meta.fieldNames(M.Colours);
+        const out = try arena.alloc(*const art.Palette, names.len);
+        inline for (names, 0..) |n, i| {
+            const name = d.coloursNamed(n) orelse return refuse(diag, file, "colours." ++ n, missing);
+            out[i] = a.palette(name) orelse return refuse(diag, file, "colours." ++ n, "no palette of this name");
+        }
+        k.colours_of = out;
     }
 }
 

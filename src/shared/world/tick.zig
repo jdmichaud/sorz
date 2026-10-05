@@ -892,6 +892,11 @@ pub fn Actor(comptime M: type) type {
             a.tick.sound(a.kind.sound_of[@backingInt(which)], a.handle);
         }
 
+        /// Its colours `which` in the colours shown (from the next frame).
+        pub fn showColours(a: Self, which: M.Colours) void {
+            a.tick.out.colour_loads.append(.{ .palette = a.kind.colours_of[@backingInt(which)] });
+        }
+
         pub fn draw(a: Self, comptime purpose: random.Purpose) u16 {
             return a.tick.draw(purpose);
         }

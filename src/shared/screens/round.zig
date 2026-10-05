@@ -1082,6 +1082,7 @@ pub const Round = struct {
                 } else null,
                 .boss => self.stage(a).boss_colours,
                 .police => a.enemy_colours.police,
+                .palette => |pal| pal,
                 .keep => {
                     self.kept = p.shown;
                     continue;

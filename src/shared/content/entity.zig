@@ -168,6 +168,10 @@ pub const Number = struct { name: []const u8, value: i32 };
 /// A sound the behaviour asks for, by its role (`hurt`) and the sound content's name.
 pub const Sound = struct { name: []const u8, sound: []const u8 };
 
+/// Colours of the art the behaviour puts in the colours shown (the rain's sky), by its name for
+/// them: a palette's full name (`round3/flash_1`).
+pub const Colours = struct { name: []const u8, palette: []const u8 };
+
 /// A list of numbers the behaviour reads by place (a draw's low bits, the tick's), by its name.
 pub const Table = struct { name: []const u8, values: []const i32 };
 
@@ -219,6 +223,7 @@ pub const Definition = struct {
     moves: []const Move = &.{},
     partners: []const Partner = &.{},
     colour_maps: []const ColourMap = &.{},
+    colours: []const Colours = &.{},
 
     pub fn animation(d: *const Definition, name: []const u8) ?u8 {
         return indexOf(Animation, d.animations, name);
@@ -235,6 +240,10 @@ pub const Definition = struct {
     }
     pub fn sound(d: *const Definition, name: []const u8) ?[]const u8 {
         for (d.sounds) |s| if (std.mem.eql(u8, s.name, name)) return s.sound;
+        return null;
+    }
+    pub fn coloursNamed(d: *const Definition, name: []const u8) ?[]const u8 {
+        for (d.colours) |c| if (std.mem.eql(u8, c.name, name)) return c.palette;
         return null;
     }
     pub fn table(d: *const Definition, name: []const u8) ?[]const i32 {
@@ -278,7 +287,7 @@ pub const max_items = 255;
 /// Reads definition `name` from its file's parsed `root`, checking every value; the frames must
 /// be `a`'s. A refusal names the field in the diagnostic.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *const art.Art) json.Error!Definition {
-    try root.only(&.{ "provenance", "family", "team", "behaviour", "health", "palette", "gravity", "shadow", "numbers", "tables", "choices", "sounds", "boxes", "animations", "moves", "partners", "colour_maps" });
+    try root.only(&.{ "provenance", "family", "team", "behaviour", "health", "palette", "gravity", "shadow", "numbers", "tables", "choices", "sounds", "boxes", "animations", "moves", "partners", "colour_maps", "colours" });
     var d: Definition = .{
         .name = name,
         .provenance = if (try root.opt("provenance")) |p| try p.string() else "",
@@ -341,6 +350,17 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *con
             x.* = .{ .name = try checkedName(e.value, e.key), .sound = try soundName(e.value) };
         }
         d.sounds = out;
+    }
+    if (try root.opt("colours")) |node| {
+        var it = try listed(node);
+        const out = try arena.alloc(Colours, it.count());
+        for (out) |*x| {
+            const e = (try it.next()).?;
+            const palette = try e.value.string();
+            if (!art.validSetName(palette)) return e.value.fail("not a palette's full name");
+            x.* = .{ .name = try checkedName(e.value, e.key), .palette = palette };
+        }
+        d.colours = out;
     }
     if (try root.opt("boxes")) |node| {
         var it = try listed(node);
@@ -597,6 +617,11 @@ pub fn value(arena: std.mem.Allocator, d: *const Definition) error{OutOfMemory}!
         const out = try arena.alloc(json.Field, d.sounds.len);
         for (out, d.sounds) |*o, s| o.* = .{ .key = s.name, .value = .{ .str = s.sound } };
         try top.append(arena, .{ .key = "sounds", .value = .{ .object = out } });
+    }
+    if (d.colours.len != 0) {
+        const out = try arena.alloc(json.Field, d.colours.len);
+        for (out, d.colours) |*o, c| o.* = .{ .key = c.name, .value = .{ .str = c.palette } };
+        try top.append(arena, .{ .key = "colours", .value = .{ .object = out } });
     }
     if (d.boxes.len != 0) {
         const out = try arena.alloc(json.Field, d.boxes.len);

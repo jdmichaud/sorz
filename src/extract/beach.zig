@@ -7,6 +7,9 @@
 //! - The crate (type $18, 0x70C4): a stack of tyres that stands solid until a player's blow or
 //!   a thing thrown breaks it into four pieces (crates themselves), which fall, bounce once and
 //!   go; it leaves the item it holds (0x7E54).
+//! - The rain (type $17, 0x6F7C): hidden until the camera nears it, then five showers of seven
+//!   raindrops (rain themselves) falling on the screen, the sky flashing (its colours, 0x708A);
+//!   the special attack ends it.
 //! - The drifter (type $16, 0x7214): a piece of flotsam on the sea's edge that stays, drifts
 //!   away, drifts and stops in turn, or rides the waves, as its record says (round.zig's
 //!   `drift`).
@@ -17,6 +20,7 @@ const rom_mod = @import("rom.zig");
 const sprites = @import("sprites.zig");
 const entities = @import("entities.zig");
 const items = @import("items.zig");
+const rounds = @import("rounds.zig");
 
 const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
@@ -184,9 +188,70 @@ fn drifter(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
     };
 }
 
+/// The rain (type $17): its frames (entry 0: none, the drops; animated), when it comes, its
+/// showers, its raindrops (their places on the screen, 0x702C; their fall), its sky's flash and
+/// the colours of each of its steps, and the sky's colours after it.
+fn rain(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set: u32 = @bitCast(try immediate(rom, 0x6FBE, &.{ 0x43, 0xF9 }, 4));
+    var d = try def(arena, rom, "rain", set);
+    try d.animations.append(arena, .{ .name = "rain", .loop = true, .frames = try entryFrames(&d, "rain", 0, null, true) });
+    // Hidden until the camera's limit behind, plus N, reaches its place across (0x6F94).
+    if (u16be(rom, 0x6FA0) != 0x3038 or u16be(rom, 0x6FA2) != 0xE01E) return error.BadData;
+    try d.number("appears_within", try immediate(rom, 0x6FA4, &.{ 0x06, 0x40 }, 2), "ROM 0x06FA4: addi.w #N,d0 (to the camera's limit behind, $FFE01E)");
+    try d.number("showers", try moveByteAt(rom, 0x6FE4, 82), "ROM 0x06FE4: move.b #N,(82,a0)");
+    try d.number("shower_ticks", try moveWord(rom, 0x7020, 80), "ROM 0x07020: move.w #N,(80,a0) (from one shower to the next)");
+    try d.number("drops", try moveqOf(rom, 0x6FF2, 6) + 1, "ROM 0x06FF2: moveq #N,d6, a dbra's (N + 1 drops)");
+    try d.number("drop_across", (try moveWord(rom, 0x6FCA, 28)) << 16, "ROM 0x06FCA: move.w #N,(28,a0), whole pixels");
+    try d.number("drop_down", (try moveWord(rom, 0x6FD0, 36)) << 16, "ROM 0x06FD0: move.w #N,(36,a0), whole pixels");
+    try d.number("drop_end", try cmpWord(rom, 0x707C, 24), "ROM 0x0707C: cmpi.w #N,(24,a0) (from this height down, it goes)");
+    // The sky's flash (0x708A): a step every N + 1 ticks ($FFFA5F counts down below zero), of M.
+    if (u16be(rom, 0x7090) != 0x11FC or u16be(rom, 0x7094) != 0xFA5F or u16be(rom, 0x709A) != 0x0C38 or u16be(rom, 0x709E) != 0xFA5E) return error.BadData;
+    try d.number("flash_ticks", rom[0x7093], "ROM 0x07090: move.b #N,($FFFA5F) (a step every N + 1 ticks)");
+    try d.number("flash_steps", rom[0x709D], "ROM 0x0709A: cmpi.b #N,($FFFA5E)");
+    if (rom[0x709D] != rounds.rain_flashes) return error.BadData;
+    // The raindrops' places on the screen (0x702C: 7 x 3 words, across, depth, height).
+    const drops: u32 = 0x702C;
+    if (u16be(rom, 0x6FF4) != 0x43FA or 0x6FF6 + u16be(rom, 0x6FF6) != drops) return error.BadData;
+    var x: [7]i32 = undefined;
+    var depth: [7]i32 = undefined;
+    var height: [7]i32 = undefined;
+    for (0..7) |k| {
+        const at = drops + 6 * @as(u32, @intCast(k));
+        x[k] = s16be(rom, at);
+        depth[k] = s16be(rom, at + 2);
+        height[k] = s16be(rom, at + 4);
+    }
+    try d.table("drop_x", &x, "ROM 0x0702C: each drop's first word (its place across on the screen)");
+    try d.table("drop_depth", &depth, "ROM 0x0702C: each drop's second word");
+    try d.table("drop_height", &height, "ROM 0x0702C: each drop's third word");
+    // The sky's colours: each flash step's (the list at 0x70BA + 2 a step, 0x70AE), and after the
+    // rain (0x706E: lea to the list at 0x70C0).
+    if (u32be(rom, 0x70AE) != 0x4DFB000A or u16be(rom, 0x706E) != 0x4DFA) return error.BadData;
+    const after = 0x7070 + @as(u32, u16be(rom, 0x7070));
+    if (after < rounds.rain_flash or (after - rounds.rain_flash) % 2 != 0 or (after - rounds.rain_flash) / 2 >= rounds.rain_flashes) return error.BadData;
+    var colours: std.ArrayList(entity.Colours) = .empty;
+    for (0..rounds.rain_flashes) |s| try colours.append(arena, .{
+        .name = try std.fmt.allocPrint(arena, "flash_{d}", .{s + 1}),
+        .palette = try std.fmt.allocPrint(arena, "round3/flash_{d}", .{s + 1}),
+    });
+    try colours.append(arena, .{ .name = "after", .palette = try std.fmt.allocPrint(arena, "round3/flash_{d}", .{(after - rounds.rain_flash) / 2 + 1}) });
+    return .{
+        .name = "rain",
+        .provenance = try std.fmt.allocPrint(arena, "round 3's rain, type $17 (handler 0x6F7C): the animation set at ROM 0x{X:0>5}; its showers (0x6FEE), its raindrops in the pieces' places (0x7EEA) else the last free below (0x7E92), the sky's flash (0x708A), its colours after it (0x706E){s}", .{ set, d.number_notes.items }),
+        .family = .scenery,
+        .team = .neutral,
+        .behaviour = "rain",
+        .numbers = d.numbers.items,
+        .tables = d.tables.items,
+        .animations = d.animations.items,
+        .colours = colours.items,
+    };
+}
+
 /// The definitions this module writes, appended to `out`.
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
     try out.append(arena, try lamp(arena, rom));
     try out.append(arena, try crate(arena, rom));
     try out.append(arena, try drifter(arena, rom));
+    try out.append(arena, try rain(arena, rom));
 }
