@@ -478,8 +478,11 @@ pub fn Of(comptime M: type) type {
             a.entity.health = if (st == 0) a.kind.definition.health else t.strength_health[st];
             // A stronger one's blows all do its strength's damage (one at strength 0 its moves').
             if (st != 0) a.entity.power = t.strength_power[st];
+            // Its walk's first frame, held: the original's object appears not animated, and the
+            // states of its fight start its frames (with no player in play it stands, its frame's
+            // ticks as they were set, which a knock-back's first frame shows: Tick.knockBack).
             a.animate(.walk);
-            a.pause(false);
+            a.pause(true);
             if (!chooseTarget(a)) return true;
             enter(a, M.fights);
             return true;
