@@ -760,6 +760,12 @@ pub fn Actor(comptime M: type) type {
             return &a.kind.definition.animations[index];
         }
 
+        /// Whether it shows the last frame of its animation (or none).
+        pub fn atLastFrame(a: Self) bool {
+            const an = a.currentAnimation() orelse return true;
+            return a.entity.animation.frame + 1 >= an.frames.len;
+        }
+
         /// The frame it shows, as its definition gives it.
         pub fn currentFrame(a: Self) ?*const content_entity.Frame {
             return a.tick.frameOf(a.entity);

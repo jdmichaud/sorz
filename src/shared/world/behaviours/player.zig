@@ -1,6 +1,9 @@
-//! A player's fighter (Axel; Adam and Blaze with PLAN item 14): the pad's moves and how it takes
-//! the blows of others. Its states are the semantic traces' names; its numbers, animations,
-//! moves and sounds are its definition's (`entities/axel.json`, from the extractor).
+//! A player's fighter (Axel, Adam or Blaze): the pad's moves and how it takes the blows of
+//! others. Its states are the semantic traces' names; its numbers, animations, moves and sounds
+//! are its character's definition's (`entities/axel.json`, `adam.json`, `blaze.json`, from the
+//! extractor). Where a character plays a move its own way, its definition says so: a back attack
+//! that jumps (`back_attack_up`, Adam's), blows that leap (`last_blow_leap`, `knee_last_leap`,
+//! Blaze's), a throw that does not turn (`throw_turns`), and its own frames and ends.
 //!
 //! As the original's players, it advances its animation itself, one tick at a time, so that the
 //! blows of a tick strike with the frame the tick shows (`drives_animation`); and it applies its
@@ -21,14 +24,16 @@
 //!   window in which B continues the chain, and the fourth knocks down. B pressed during the
 //!   first blow, before any lands, hurries it and keeps it going: its animation runs on into
 //!   another jab. During the first three the pad turns the player.
-//! - `back_attack`: B and C together.
+//! - `back_attack`: B and C together; or, when the character's back attack jumps,
+//!   `back_attack_crouch` (the jump's crouch), `back_attack_air` (up, its frames to the last) and
+//!   a landing.
 //! - `pick_up`: B near an item or a weapon.
 //! - armed (a weapon picked up): `armed_stand`, `armed_walk` (a long weapon's own stand and
 //!   walk), its jump (`armed_jump_crouch`, `armed_jump`, `armed_land`, `armed_jump_kick`) and back
-//!   attack (`armed_back_attack`), the weapon unseen then; B swings a pipe (`armed_swing`), stabs
-//!   with a knife at a thing ahead within its reach (`armed_stab`, the traces' `armed_throw`) or
-//!   else throws it (`armed_attack`, the plain blow). The weapon strikes, not the player
-//!   (weapon.zig); a blow taken, a fall or a hold drops it.
+//!   attack (`armed_back_attack`, or its jump), the weapon unseen then; B swings a pipe
+//!   (`armed_swing`), stabs with a knife at a thing ahead within its reach (`armed_stab`, the
+//!   traces' `armed_throw`) or else throws it (`armed_attack`, the plain blow). The weapon
+//!   strikes, not the player (weapon.zig); a blow taken, a fall or a hold drops it.
 //! - `hurt`, `knocked_down` (thrown back, two bounces), `down`, `getting_up`, `recover`: the
 //!   player blinks from its getting up, and while it blinks nothing strikes it.
 //! - `dying` (thrown back and up, one bounce), `lying_dead`: a blow that takes its last health,
@@ -73,6 +78,8 @@ pub const State = enum {
     attack3,
     attack4,
     back_attack,
+    back_attack_crouch,
+    back_attack_air,
     pick_up,
     hurt,
     knocked_down,
@@ -104,6 +111,8 @@ pub const State = enum {
     armed_stab,
     armed_swing,
     armed_back_attack,
+    armed_back_attack_crouch,
+    armed_back_attack_air,
 };
 
 /// The traces' names of its states that are not theirs.
@@ -277,9 +286,11 @@ pub const Numbers = struct {
     /// its ticks.
     jab_walk_frame: u8,
     jab_walk_ticks: u8,
-    /// The frames at which states end.
+    /// The frames at which states end: the idle pose, the combo's first two blows, its third, its
+    /// last.
     idle_ends: u8,
     blow_ends: u8,
+    attack3_ends: u8,
     last_blow_ends: u8,
     back_attack_ends: u8,
     getting_up_ends: u8,
@@ -287,7 +298,20 @@ pub const Numbers = struct {
     vault_ends: u8,
     knee_last_ends: u8,
     grab_blow_ends: u8,
+    counter_ends: u8,
     throw_ends: u8,
+    /// The throw over the shoulder turns the player first (1) or not (0).
+    throw_turns: u8,
+    /// Blows that leap: from the combo's last blow's frame `last_blow_leap`, or the last knee's
+    /// `knee_last_leap` (none: the blow ends at its frame), the player leaps up (`leap_up`) and
+    /// back (`leap_back`), falls as a jump kick does, and lands.
+    leap_up: Fixed,
+    leap_back: Fixed,
+    last_blow_leap: ?u8,
+    knee_last_leap: ?u8,
+    /// A back attack that jumps: after the jump's crouch, up at this speed in the back attack's
+    /// frames, to a landing (none: the back attack is struck standing).
+    back_attack_up: ?Fixed,
     /// Where an item is picked up from: its place within these pixels across and in depth, and
     /// up to this height above the feet.
     pick_x: i16,
@@ -439,7 +463,8 @@ fn begin(a: Actor, state: State) void {
         .attack2 => a.startMove(.attack2),
         .attack3 => a.startMove(.attack3),
         .attack4 => a.startMove(.attack4),
-        .back_attack => a.startMove(.back_attack),
+        .back_attack, .back_attack_air => a.startMove(.back_attack),
+        .back_attack_crouch, .armed_back_attack_crouch => a.animate(.jump_crouch),
         .pick_up => a.animate(.pick_up),
         .hurt => a.animate(.hurt),
         .knocked_down, .dying => a.animate(.knocked_down),
@@ -471,7 +496,7 @@ fn begin(a: Actor, state: State) void {
         .armed_attack => a.animate(.armed_attack),
         .armed_stab => a.animate(.armed_stab),
         .armed_swing => a.animate(.armed_swing),
-        .armed_back_attack => a.startMove(.back_attack),
+        .armed_back_attack, .armed_back_attack_air => a.startMove(.back_attack),
     }
     // The state's speed: none but a walk's (set each tick by the walk) and a knock-down's,
     // which goes back; a jump kick keeps its speed across.
@@ -560,7 +585,18 @@ fn act(a: Actor, c: Command) void {
         },
         .jump_kick, .armed_jump_kick => {
             if (hitPause(a)) return;
-            if (a.entity.velocity.height.raw < 0) gravity(a) else a.entity.velocity.height = a.entity.velocity.height.add(n.kick_falling_gravity);
+            kickGravity(a);
+            toLastFrame(a);
+        },
+        .back_attack_crouch, .armed_back_attack_crouch => {
+            if (!a.countDown()) return;
+            change(a, if (a.mind.state == .armed_back_attack_crouch) .armed_back_attack_air else .back_attack_air);
+            a.entity.velocity.height = n.back_attack_up orelse .zero;
+            a.entity.flags.airborne = true;
+        },
+        .back_attack_air, .armed_back_attack_air => {
+            toLastFrame(a);
+            gravity(a);
         },
         .land => {
             if (!a.countDown()) return;
@@ -589,10 +625,11 @@ fn act(a: Actor, c: Command) void {
                 if (a.mind.window == 0) a.retime(.attack1_hurried, if (a.frame() == 1) n.hurry_first else n.hurry_later);
             }
             turn(a, c);
-            if (a.frame() == n.blow_ends) choose(a, c);
+            if (a.frame() == if (a.mind.state == .attack3) n.attack3_ends else n.blow_ends) choose(a, c);
         },
         .attack4 => {
             _ = a.step();
+            if (n.last_blow_leap) |from| if (a.frame() >= from) return leap(a);
             if (a.frame() == n.last_blow_ends) choose(a, c);
         },
         .back_attack => {
@@ -629,13 +666,19 @@ fn act(a: Actor, c: Command) void {
         .knee => if (a.countDown()) change(a, .grab),
         .knee_last => {
             _ = a.step();
+            if (n.knee_last_leap) |from| {
+                if (a.frame() < from) return;
+                if (a.entity.holding != null) a.letGo();
+                return leap(a);
+            }
             if (a.frame() != n.knee_last_ends) return;
             a.letGo();
             choose(a, c);
         },
         .grab_blow => {
             _ = a.step();
-            if (a.frame() == n.grab_blow_ends) choose(a, c);
+            const countering = a.entity.move == a.kind.move_of[@backingInt(Move.counter)];
+            if (a.frame() == if (countering) n.counter_ends else n.grab_blow_ends) choose(a, c);
         },
         .vault => {
             _ = a.step();
@@ -666,7 +709,7 @@ fn act(a: Actor, c: Command) void {
 fn choose(a: Actor, c: Command) void {
     if (a.mind.weapon != null) return armedChoose(a, c);
     if (caught(a)) return;
-    if ((c.held.b and c.pressed.c) or (c.held.c and c.pressed.b)) return change(a, .back_attack);
+    if ((c.held.b and c.pressed.c) or (c.held.c and c.pressed.b)) return change(a, if (a.numbers().back_attack_up != null) .back_attack_crouch else .back_attack);
     if (c.pressed.c) {
         a.sound(.jump);
         return change(a, .jump_crouch);
@@ -722,6 +765,30 @@ fn turn(a: Actor, c: Command) void {
 
 fn gravity(a: Actor) void {
     a.entity.velocity.height = a.entity.velocity.height.add(.of(a.kind.definition.gravity));
+}
+
+/// A jump kick's gravity, and a leap's: its own going up, a lighter one coming down.
+fn kickGravity(a: Actor) void {
+    if (a.entity.velocity.height.raw < 0) return gravity(a);
+    a.entity.velocity.height = a.entity.velocity.height.add(a.numbers().kick_falling_gravity);
+}
+
+/// Its animation runs on to its last frame, which then stays (a jump kick's, a jumping back
+/// attack's).
+fn toLastFrame(a: Actor) void {
+    if (!a.atLastFrame()) _ = a.step();
+}
+
+/// A blow that leaps: once, up and back from the side it faces; then it falls as a jump kick
+/// does, to a landing.
+fn leap(a: Actor) void {
+    const n = a.numbers();
+    if (a.entity.velocity.height.raw == 0) {
+        a.entity.velocity.height = n.leap_up;
+        a.entity.velocity.x = n.leap_back.times(-a.entity.facing.sign());
+        a.entity.flags.airborne = true;
+    }
+    kickGravity(a);
 }
 
 /// In the air, the pad steers the jump toward its side, up to the most.
@@ -887,11 +954,11 @@ pub fn landed(a: Actor) void {
             change(a, .lying_dead);
             a.mind.timer = n.dead;
         },
-        .fall, .jump, .jump_kick => {
+        .fall, .jump, .jump_kick, .back_attack_air, .attack4, .knee_last => {
             a.sound(.land);
             change(a, .land);
         },
-        .armed_jump, .armed_jump_kick => {
+        .armed_jump, .armed_jump_kick, .armed_back_attack_air => {
             a.sound(.land);
             change(a, if (a.mind.weapon != null) .armed_land else .land);
         },
@@ -947,7 +1014,7 @@ fn hold(a: Actor, c: Command) void {
     } else if (c.pressed.b) {
         const away = (c.held.left and a.entity.facing == .right) or (c.held.right and a.entity.facing == .left);
         if (away) {
-            a.entity.facing = a.entity.facing.turned();
+            if (a.numbers().throw_turns != 0) a.entity.facing = a.entity.facing.turned();
             return change(a, .grab_blow);
         }
         a.mind.knees += 1;
@@ -1244,7 +1311,7 @@ fn dropWeapon(a: Actor) void {
 /// no longer in its hand, it is unarmed.
 fn armedChoose(a: Actor, c: Command) void {
     if (caught(a)) return;
-    if ((c.held.b and c.pressed.c) or (c.held.c and c.pressed.b)) return change(a, .armed_back_attack);
+    if ((c.held.b and c.pressed.c) or (c.held.c and c.pressed.b)) return change(a, if (a.numbers().back_attack_up != null) .armed_back_attack_crouch else .armed_back_attack);
     if (c.pressed.c) {
         a.sound(.jump);
         return change(a, .armed_jump_crouch);

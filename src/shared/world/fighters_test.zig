@@ -75,7 +75,8 @@ const hero =
     \\   "escape_frame": 3, "escape_window": 8, "thrown_first": 5, "thrown_pace": 3,
     \\   "thrown_falls": 2, "thrown_ahead": 32, "thrown_up": -196608, "thrown_x": 229376,
     \\   "held_ahead": 16, "armed_blow_ends": 2, "armed_swing_ends": 3, "throw_frame": 1,
-    \\   "stab_reach": 144, "stab_level": 12},
+    \\   "stab_reach": 144, "stab_level": 12, "attack3_ends": 3, "counter_ends": 2, "throw_turns": 1,
+    \\   "leap_up": -458752, "leap_back": 28672},
     \\ "sounds": {"jump": "jump", "land": "landing", "hurt": "player hit", "thud": "heavy fall",
     \\   "death": "axel death cry", "armed_blow": "swing", "throw_weapon": "throw weapon",
     \\   "swing_weapon": "pipe swing"},
@@ -639,6 +640,18 @@ const boomerang_fixture =
     \\"whirr": "boomerang"}, "team": "enemy"}
 ;
 
+/// `text` with its first `old` replaced by `new`.
+fn replaced(comptime text: []const u8, comptime old: []const u8, comptime new: []const u8) []const u8 {
+    @setEvalBranchQuota(1_000_000);
+    const i = std.mem.indexOf(u8, text, old).?;
+    return text[0..i] ++ new ++ text[i + old.len ..];
+}
+
+/// The hero playing its moves as Adam and Blaze play theirs: a back attack that jumps, a last
+/// blow and a last knee that leap from their frame 1, a throw over the shoulder that does not
+/// turn.
+const leaper = replaced(replaced(hero, "\"leap_back\": 28672}", "\"leap_back\": 28672, \"back_attack_up\": -409600, \"last_blow_leap\": 1, \"knee_last_leap\": 1}"), "\"throw_turns\": 1", "\"throw_turns\": 0");
+
 const Fixture = struct {
     arena: std.heap.ArenaAllocator,
     kinds: Kinds,
@@ -649,6 +662,7 @@ const Fixture = struct {
         const arena = f.arena.allocator();
         const sources = [_]struct { name: []const u8, text: []const u8 }{
             .{ .name = "hero", .text = hero },
+            .{ .name = "leaper", .text = leaper },
             .{ .name = "punk", .text = punk },
             .{ .name = "stalker", .text = stalker },
             .{ .name = "signal", .text = signal },
@@ -701,11 +715,16 @@ const Round = struct {
     hero: Handle = undefined,
 
     fn init() !Round {
+        return initAs("hero");
+    }
+
+    /// The player of kind `name`.
+    fn initAs(name: []const u8) !Round {
         var r: Round = .{ .f = try Fixture.init() };
         r.w.ground = .pixels(160);
         r.w.camera = .{ .x = .pixels(768), .x_min = .pixels(768), .x_max = .pixels(1216), .y_max = .zero, .follows = script.cameraRules(&content_round.example) };
-        r.hero = try r.w.spawn(&r.f.kinds, r.f.kinds.find("hero").?, .pixels(800, 64, 160), .right);
-        r.w.players[0] = .{ .entity = r.hero, .character = r.f.kinds.find("hero").?, .lives = 3, .specials = 1, .continues = 3 };
+        r.hero = try r.w.spawn(&r.f.kinds, r.f.kinds.find(name).?, .pixels(800, 64, 160), .right);
+        r.w.players[0] = .{ .entity = r.hero, .character = r.f.kinds.find(name).?, .lives = 3, .specials = 1, .continues = 3 };
         const e = r.w.get(r.hero).?;
         e.mind.player.state = .ready;
         e.mind.player.started = true;
@@ -785,6 +804,55 @@ test "the jab: pressed at tick 0, its blow at ticks 1 to 5, back in control at t
     try testing.expectEqualSlices(i16, &.{ 0, 1, 1, 1, 1, 1, 0, 0 }, &power);
     try testing.expectEqualStrings("attack1", states[6]);
     try testing.expectEqualStrings("ready", states[7]);
+}
+
+test "a back attack that jumps (Adam's): the jump's crouch, up in its frames to the last, a landing" {
+    var r = try Round.initAs("leaper");
+    defer r.deinit();
+    var states: [24][]const u8 = undefined;
+    var heights: [24]i32 = undefined;
+    var power: [24]i16 = undefined;
+    for (&states, &heights, &power, 0..) |*s, *h, *p, i| {
+        r.step(if (i == 0) .{ .pad1 = .{ .b = true, .c = true } } else .{});
+        s.* = r.state();
+        h.* = r.player().position.height.raw;
+        var t = r.tick();
+        p.* = t.power(r.player());
+    }
+    // The crouch's 5 ticks (the jump crouch's), then up at -6.25, its gravity from the next.
+    try testing.expectEqualStrings("back_attack_crouch", states[4]);
+    try testing.expectEqual(Fixed.pixels(160).raw, heights[4]);
+    try testing.expectEqualStrings("back_attack_air", states[5]);
+    try testing.expectEqual(Fixed.pixels(160).raw - 409600, heights[5]);
+    // Its frames run to the last (frame 3, which has no blow), which stays, to the landing.
+    try testing.expectEqual(@as(i16, 3), power[6]);
+    const landing = std.mem.indexOfScalar(i32, heights[6..], Fixed.pixels(160).raw).? + 6;
+    try testing.expectEqualStrings("land", states[landing]);
+    try testing.expectEqualStrings("back_attack_air", states[landing - 1]);
+    try testing.expectEqual(@as(i16, 0), power[landing - 1]);
+}
+
+test "a last blow that leaps (Blaze's): from its frame, up and back, falling as a jump kick, to a landing" {
+    var r = try Round.initAs("leaper");
+    defer r.deinit();
+    const e = r.player();
+    const k = r.f.kinds.get(e.kind.?);
+    e.mind.player.state = .attack4;
+    e.facing = .left;
+    e.move = k.definition.move("attack4").?;
+    r.f.kinds.startAnimation(e, k.definition.animation("attack4").?);
+    // Its frame 0 shows a tick; as frame 1 comes it leaps: up -7 with its gravity at once, back
+    // 0.4375 (facing left: to the right).
+    r.step(.{});
+    try testing.expectEqual(@as(i32, -458752 + 59392), r.player().velocity.height.raw);
+    try testing.expectEqual(@as(i32, 28672), r.player().velocity.x.raw);
+    var ticks: u32 = 0;
+    while (!std.mem.eql(u8, r.state(), "land")) : (ticks += 1) {
+        try testing.expect(ticks < 40);
+        try testing.expectEqualStrings("attack4", r.state());
+        r.step(.{});
+    }
+    try testing.expect(Fixed.pixels(800).lessThan(r.player().position.x));
 }
 
 test "a walk after a jab gone on into another starts at the walk's second frame, for 2 ticks" {

@@ -198,7 +198,10 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
   its height's speed every logic tick in the air; `shadow`, whether a shadow follows it on the
   ground. Each is optional: 0, or false.
 - `numbers`: the behaviour's numbers by name, integers in the units the behaviour gives them.
-  `sounds`: the sounds the behaviour asks for, by their role, each a name of the sound content
+  A behaviour may read a number only when the definition gives it (a character's move played
+  its own way: Adam's back attack that jumps, `back_attack_up`; Blaze's blows that leap,
+  `last_blow_leap`, `knee_last_leap`); left out, the behaviour does without. `sounds`: the
+  sounds the behaviour asks for, by their role, each a name of the sound content
   (`docs/content-sound.md`).
 - `boxes`: named boxes, each a span `[from, to]` (both included) on each axis from the entity's
   place, for the entity facing right. Facing left, the span across is `x_left` if given, else `x`
@@ -228,7 +231,9 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
   lands.
 
 The optional fields are written only when they are not their defaults, so a file read and
-written again keeps its bytes. The extractor writes Axel (`axel`, behaviour `player`), round 1's
+written again keeps its bytes. The extractor writes the players (`axel`, `adam`, `blaze`, each
+of behaviour `player`, from the same code of the original, which tests the character where one
+plays a move its own way: each definition holds its own numbers and frames then), round 1's
 Galsia (`galsia`), a stand-in for the special attack's police car (`police_car`), the GO arrow
 a section's opening shows (`go_arrow`) and a player out of lives (`player_waiting`: no art, the
 name entry's and the continue's question's numbers and sounds); the other characters and enemies

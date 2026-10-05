@@ -86,6 +86,8 @@ const State = struct {
     pub const attack3 = 0x1C;
     pub const attack4 = 0x1E;
     pub const back_attack = 0x20;
+    pub const back_attack_crouch = 0x22;
+    pub const back_attack_air = 0x24;
     pub const pick_up = 0x28;
     pub const armed_stand = 0x30;
     pub const armed_walk = 0x32;
@@ -100,6 +102,7 @@ const State = struct {
     pub const getting_up = 0x5E;
     pub const grab = 0x60;
     pub const grab_blow = 0x62;
+    pub const grab_blow_ahead = 0x64;
     pub const grab_behind = 0x66;
     pub const vault = 0x68;
     pub const knee = 0x6A;
@@ -313,6 +316,18 @@ pub fn moveq(rom: []const u8, at: u32, register: u3) Error!i32 {
     return s8(rom, at + 1);
 }
 
+/// `cmpi.b #K,($50,a0)`, the players' code testing the character ($50: 0 Axel, 1 Adam, 2 Blaze)
+/// where one of them plays a move its own way: whether it tests `character`.
+fn tests(rom: []const u8, at: u32, character: u8) Error!bool {
+    if (u16be(rom, at) != 0x0C28 or rom[at + 2] != 0 or u16be(rom, at + 4) != 0x50) return error.BadData;
+    return rom[at + 3] == character;
+}
+
+/// The routine of player state `state` (the table at $1CE2, a word per state).
+fn stateRoutine(rom: []const u8, state: u8) u32 {
+    return u16be(rom, 0x1CE2 + 2 * @as(u32, state));
+}
+
 // --- The player ----------------------------------------------------------------------------------
 
 /// The animations a player definition holds, by the state that plays them (0x2F2C).
@@ -377,11 +392,23 @@ fn stateEntry(rom: []const u8, state: u8) Error!u32 {
 /// same frames, mirrored the other way; their durations from list `timing`, and per frame the
 /// blow's power and kind. `name` names the boxes it uses first.
 fn playerFrames(d: *Def, name: []const u8, entry: u32, timing: u8, character: u8) Error![]entity.Frame {
+    return playerFramesShown(d, name, entry, timing, character, null);
+}
+
+/// `playerFrames`, of an animation whose state ends as it reaches its frame `shown` (null: none),
+/// which is thus never shown: facing left that frame may be another picture (Blaze's counter's
+/// last), whose boxes are then the right-facing frame's own mirrored ones.
+fn playerFramesShown(d: *Def, name: []const u8, entry: u32, timing: u8, character: u8, shown: ?usize) Error![]entity.Frame {
     const right = try readAnimation(d.arena, d.rom, d.set, entry);
     const left = try readAnimation(d.arena, d.rom, d.set, entry + 1);
     if (right.frames.len != left.frames.len) return error.BadData;
     const out = try d.arena.alloc(entity.Frame, right.frames.len);
-    for (out, right.frames, left.frames, 0..) |*f, r, l, j| {
+    for (out, right.frames, left.frames, 0..) |*f, r, l_read, j| {
+        var l = l_read;
+        if (shown != null and j >= shown.? and r.address != l.address) {
+            // The right-facing frame mirrored: its record's second pair of boxes (0x3B12).
+            l = .{ .address = r.address, .mirrored = !r.mirrored, .attack = d.rom[r.address + @as(u32, if (r.mirrored) 1 else 3)], .body = d.rom[r.address + @as(u32, if (r.mirrored) 2 else 4)] };
+        }
         if (r.address != l.address or r.mirrored == l.mirrored) return error.BadData;
         const ticks = duration(d.rom, timing, j);
         if (ticks == 0) return error.BadData;
@@ -414,11 +441,30 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     const set = u32be(rom, player_sets + 4 * @as(u32, character));
     var d: Def = .{ .arena = arena, .rom = rom, .dir = name, .set = set, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
 
+    // The throw that answers a hold from behind (state $7E, 0x2606) plays the animation of its
+    // state, but the character 0x2634 tests plays its own: its set's entry of the animation word
+    // the code sets (0x2642: addi.w #N,(8,a0)), with the durations of the list it sets (0x2648).
+    // The state ends as its animation reaches the frame of its routine (0x23B4: moveq #N,d5),
+    // which is never shown: facing left, Blaze's shows another picture there.
+    var counter: ?struct { entry: u32, timing: u8 } = null;
+    const counter_ends: usize = @intCast(try moveq(rom, stateRoutine(rom, State.counter), 5));
+    if (try tests(rom, 0x2634, character)) {
+        if (u16be(rom, 0x2642) != 0x0668 or u16be(rom, 0x2646) != 8) return error.BadData;
+        counter = .{ .entry = u16be(rom, 0x2644) / 2, .timing = @intCast(try moveByte(rom, 0x2648, 12)) };
+        try d.number_notes.print(arena, "; counter: its own animation, ROM 0x02642 (addi.w #N,(8,a0): its entry * 2) and 0x02648 (move.b #N,(12,a0): its durations' list), for the character 0x02634 tests; facing left its frame where the state ends (never shown) is another picture, taken as the right-facing one mirrored", .{});
+    }
+
     // The animations, by the states that play them, and the moves of the blows and the holds.
     for (player_animations) |pa| {
-        const entry = try stateEntry(rom, pa.state);
-        const raw = try readAnimation(arena, rom, set, entry);
-        try d.animations.append(arena, .{ .name = pa.name, .loop = true, .frames = try playerFrames(&d, pa.name, entry, raw.timing, character) });
+        var entry = try stateEntry(rom, pa.state);
+        var timing = (try readAnimation(arena, rom, set, entry)).timing;
+        var shown: ?usize = null;
+        if (pa.state == State.counter) if (counter) |own| {
+            entry = own.entry;
+            timing = own.timing;
+            shown = counter_ends;
+        };
+        try d.animations.append(arena, .{ .name = pa.name, .loop = true, .frames = try playerFramesShown(&d, pa.name, entry, timing, character, shown) });
     }
     // A long weapon in hand (a pipe), the stand and the walk are the next entries (0x2E32:
     // animation +4).
@@ -483,13 +529,15 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     }
     // The one held, frame by frame, in the throw over the shoulder and in the back drop; and
     // where the enemies' hold puts it in the holds and the knees (0xA0B8, 0xA112, 0xA196: in
-    // front, from behind, struck while held).
-    try heldFrames(&d, "grab_blow", throw_poses, character);
-    try heldFrames(&d, "vault", slam_poses, character);
+    // front, from behind, struck while held). The throw over the shoulder of the character
+    // 0x2C40 tests does not turn (below): the one held, which faces it, is placed the other way.
+    const throws_ahead = try tests(rom, 0x2C40, character);
+    try heldFrames(&d, "grab_blow", throw_poses, character, if (throws_ahead) -1 else 1);
+    try heldFrames(&d, "vault", slam_poses, character, 1);
     // The throw that answers a hold from behind places the enemy as the table for its request 8
     // does (0xA240 with 0xA400); thrown by an enemy, the player is placed from it frame by frame
     // (0x4A5A).
-    try heldFrames(&d, "counter", counter_poses, character);
+    try heldFrames(&d, "counter", counter_poses, character, 1);
     try placeFrames(&d, @constCast(d.animations.items[d.animationIndex("thrown").?].frames), try stateEntry(rom, State.thrown) * 2 - 0x70, character);
     for ([_]struct { name: []const u8, at: u32 }{
         .{ .name = "grab", .at = 0xA0BC },
@@ -502,13 +550,47 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     }
     try d.number_notes.print(arena, "; the poses of the one held: ROM 0x{X:0>5} (throw), 0x{X:0>5} (back drop); the holder's places: 0x{X:0>5}", .{ throw_poses, slam_poses, holder_places });
 
-    // The swing of a blow at its frame 1 (0x4462), the last knee's sound at its hitting frame
-    // (0x35E2).
+    // The back attack of the character 0x3254 tests jumps (the state after $20, 0x325C: addq.b
+    // #2,d0): the jump's crouch (state $22, 0x2100, the jump crouch's animation), then up (0x2112)
+    // in the back attack's frames to its last (state $24, 0x211C, which sounds no swing).
+    const back_attack_jumps = try tests(rom, 0x3254, character);
+    if (back_attack_jumps) {
+        if (u16be(rom, 0x325A) != 0x6602 or u16be(rom, 0x325C) != 0x5400) return error.BadData;
+        if (stateRoutine(rom, State.back_attack_crouch) != 0x2100 or stateRoutine(rom, State.back_attack_air) != 0x211C) return error.BadData;
+        if (try stateEntry(rom, State.back_attack_crouch) != try stateEntry(rom, State.jump_crouch)) return error.BadData;
+        if (try stateEntry(rom, State.back_attack_air) != try stateEntry(rom, State.back_attack)) return error.BadData;
+        if (u16be(rom, 0x2124) != 0x4EBA or u16be(rom, 0x2128) != 0x4EFA) return error.BadData;
+        const frames = d.animations.items[d.animationIndex("back_attack").?].frames.len;
+        if (try frameCompared(rom, 0x211C) + 1 != frames) return error.BadData;
+        if (u16be(rom, 0x2118) != 0x24) return error.BadData;
+        try d.number("back_attack_up", try immediate(rom, 0x2112, &.{ 0x21, 0x7C }, 4), "ROM 0x02112: move.l #N,(36,a0) (the back attack's jump, for the character 0x03254 tests)");
+    }
+
+    // The jump kick (0x2000; armed, 0x2198) shows its frames to its last (frame 3) for the
+    // character the code tests, whose kick has four; the others' have one.
+    for ([_][2]u32{ .{ 0x200A, 0x2012 }, .{ 0x21A0, 0x21A8 } }) |at| {
+        const last = if (try tests(rom, at[0], character)) try frameCompared(rom, at[1]) else 0;
+        if (d.animations.items[d.animationIndex("jump_kick").?].frames.len != last + 1) return error.BadData;
+    }
+
+    // The swing of a blow at its frame 1 (0x4462); the last knee's sound at its hitting frame
+    // (0x35E2: frame 1, 0x35E6, or for the character 0x35E8 tests 0x35F0's).
     const swing = try soundName(@intCast(@as(u8, @bitCast(@as(i8, @intCast(try moveq(rom, 0x4470, 7)))))));
     for ([_][]const u8{ "attack1", "attack1_hurried", "attack3", "attack4", "back_attack" }) |n| {
+        if (back_attack_jumps and std.mem.eql(u8, n, "back_attack")) continue;
         @constCast(d.animations.items[d.animationIndex(n).?].frames)[1].sound = swing;
     }
-    @constCast(d.animations.items[d.animationIndex("knee_last").?].frames)[1].sound = try soundName(rom[knee_sounds + @as(u32, character)]);
+    const knee_hits: usize = @intCast(if (try tests(rom, 0x35E8, character)) try moveq(rom, 0x35F0, 2) else try moveq(rom, 0x35E6, 2));
+    @constCast(d.animations.items[d.animationIndex("knee_last").?].frames)[knee_hits].sound = try soundName(rom[knee_sounds + @as(u32, character)]);
+
+    // The throw over the shoulder (0x2BA8): the character 0x2C40 tests throws without turning
+    // (state $64, 0x2C68: moveq #100,d0, the facing kept), the others turn first (state $62,
+    // 0x2C48: moveq #98,d0, the facing turned by the table at 0x2C70); both play the animation of
+    // $62, each to the frame of its routine (0x23B4, 0x23B8: moveq #N,d5).
+    if (try moveq(rom, 0x2C48, 0) != State.grab_blow or try moveq(rom, 0x2C68, 0) != State.grab_blow_ahead) return error.BadData;
+    if (!std.mem.eql(u8, rom[0x2C70..][0..4], &.{ 1, 0, 1, 0 })) return error.BadData;
+    if (try stateEntry(rom, State.grab_blow_ahead) != try stateEntry(rom, State.grab_blow)) return error.BadData;
+    const throw_state: u8 = if (throws_ahead) State.grab_blow_ahead else State.grab_blow;
 
     // The moves: their power and kind from their frames' blows.
     const shout = try soundName(rom[attack_voices + @as(u32, character)]);
@@ -523,15 +605,29 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
         .{ .name = "jump_kick", .animation = "jump_kick", .state = State.jump_kick, .sound = shout },
         .{ .name = "knee", .animation = "knee", .state = State.knee, .hold = true },
         .{ .name = "knee_last", .animation = "knee_last", .state = State.knee_last, .hold = true },
-        .{ .name = "grab_blow", .animation = "grab_blow", .state = State.grab_blow, .sound = shout, .hold = true },
+        .{ .name = "grab_blow", .animation = "grab_blow", .state = throw_state, .sound = shout, .hold = true },
         .{ .name = "vault", .animation = "vault", .state = State.vault, .sound = shout, .hold = true },
         .{ .name = "throw", .animation = "throw", .state = State.throw },
         .{ .name = "throw_back", .animation = "throw_back", .state = State.throw },
         .{ .name = "counter", .animation = "counter", .state = State.counter, .hold = true },
     };
+    // The enemies' reel (0x9B36) takes a blow of the combo's third (state $1C) to its step the
+    // striker's character + 1 (0x9C3E: move.b (80,a1),d0; addq.b #1,d0), by the table at 0x9B80:
+    // for a character whose step is the lift (0x9C50), its third blow lifts.
+    if (u16be(rom, 0x9C3E) != 0x1029 or u16be(rom, 0x9C40) != 0x50 or u16be(rom, 0x9C42) != 0x5200) return error.BadData;
+    const reel_step: u32 = @as(u32, character) + 1;
+    const lifts = 0x9B80 + u16be(rom, 0x9B80 + 2 * reel_step) == 0x9C50;
+    // An enemy thrown off a hold (0xA240) flies off at the speeds the code sets (0xA26C,
+    // 0xA272), others when its holder is the character 0xA27C tests (0xA284, 0xA28A): the push
+    // of the moves that throw it, the throw over the shoulder and the throw of a holder.
+    if (u16be(rom, 0xA27C) != 0x0C29 or rom[0xA27E] != 0 or u16be(rom, 0xA280) != 0x50) return error.BadData;
+    const thrown_far = rom[0xA27F] == character;
+    const thrown_x = try immediate(rom, if (thrown_far) 0xA284 else 0xA26C, &.{ 0x20, 0x3C }, 4);
+    const thrown_up = try immediate(rom, if (thrown_far) 0xA28A else 0xA272, &.{ 0x22, 0x3C }, 4);
+
     for (moves) |m| {
         const index = d.animationIndex(m.animation).?;
-        const entry = try stateEntry(rom, m.state);
+        const entry = if (m.state == State.counter and counter != null) counter.?.entry else try stateEntry(rom, m.state);
         var power: u8 = 0;
         var kind: u8 = 0;
         for (d.animations.items[index].frames, 0..) |f, j| {
@@ -541,15 +637,21 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
             power = b & 0xF;
             kind = b >> 4;
         }
-        const reaction: entity.Reaction = if (m.hold) try holdReaction(rom, m.state) else if (kind & 1 != 0) .knock_down else .reel;
+        var reaction: entity.Reaction = if (m.hold) try holdReaction(rom, m.state) else if (kind & 1 != 0) .knock_down else .reel;
+        if (m.state == State.attack3 and lifts) {
+            if (reaction != .reel) return error.BadData;
+            reaction = .lift;
+        }
         try d.moves.append(arena, .{
             .name = m.name,
             .provenance = try std.fmt.allocPrint(arena, "the player's state ${X:0>2}: the power and kind of its frames' blows (ROM 0x{X:0>5}){s}", .{
-                m.state, attack_table, if (m.hold) try std.fmt.allocPrint(arena, ", the one held's reaction (0x{X:0>5})", .{hold_requests}) else "",
+                m.state, attack_table, if (m.hold) try std.fmt.allocPrint(arena, ", the one held's reaction (0x{X:0>5}){s}", .{ hold_requests, if (reaction == .thrown) (if (thrown_far) "; thrown off, its speeds ROM 0x0A284 and 0x0A28A (move.l #N,d0 and d1), for the holder 0x0A27C tests" else "; thrown off, its speeds ROM 0x0A26C and 0x0A272 (move.l #N,d0 and d1)") else "" }) else if (reaction == .lift) ", the enemies' reel's step for this character (0x09C3E, the table at 0x09B80): the lift (0x09C50)" else "",
             }),
             .animation = index,
             .damage = power,
             .reaction = reaction,
+            .push_x = if (reaction == .thrown) thrown_x else 0,
+            .push_height = if (reaction == .thrown) thrown_up else 0,
             .sound = m.sound,
         });
     }
@@ -593,15 +695,31 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     try d.number("hurry_later", try moveByte(rom, 0x206E, 13), "ROM 0x0206E: move.b #N,(13,a0)");
     try d.number("jab_walk_frame", try moveByte(rom, 0x3040, 0x5A), "ROM 0x03040: move.b #N,($5A,a0)");
     try d.number("jab_walk_ticks", try moveByte(rom, 0x3046, 0x5B), "ROM 0x03046: move.b #N,($5B,a0)");
-    try d.number("idle_ends", try moveq(rom, 0x1F96, 0), "ROM 0x01F96: moveq #N,d0");
+    try d.number("idle_ends", if (try tests(rom, 0x1F98, character)) try moveq(rom, 0x1FA0, 0) else try moveq(rom, 0x1F96, 0), "ROM 0x01F96: moveq #N,d0, or 0x01FA0's for the character 0x01F98 tests");
     try d.number("blow_ends", try moveq(rom, 0x2078, 0), "ROM 0x02078: moveq #N,d0");
+    // From the third blow (0x2082: cmpi.b #$1C,(48,a0)), the character 0x207A tests ends its
+    // blows at a later frame (0x208A).
+    if (try immediate(rom, 0x2082, &.{ 0x0C, 0x28 }, 2) != State.attack3 or u16be(rom, 0x2086) != 0x30) return error.BadData;
+    try d.number("attack3_ends", if (try tests(rom, 0x207A, character)) try moveq(rom, 0x208A, 0) else try moveq(rom, 0x2078, 0), "ROM 0x02078: moveq #N,d0, or 0x0208A's for the character 0x0207A tests");
+    // A blow that leaps (0x20BA, 0x2490): from its frame, up and back (0x20C8, 0x20D0; the same
+    // at 0x24A2, 0x24AA), falling as a jump kick does, to a landing: the combo's last blow of the
+    // character 0x209E tests, and its last knee (0x246C).
+    const leap_up = try immediate(rom, 0x20C8, &.{ 0x21, 0x7C }, 4);
+    const leap_back = try immediate(rom, 0x20D0, &.{ 0x20, 0x3C }, 4);
+    if (u16be(rom, 0x20CE) != 0x24 or leap_up != try immediate(rom, 0x24A2, &.{ 0x21, 0x7C }, 4) or leap_back != try immediate(rom, 0x24AA, &.{ 0x20, 0x3C }, 4)) return error.BadData;
+    try d.number("leap_up", leap_up, "ROM 0x020C8: move.l #N,(36,a0)");
+    try d.number("leap_back", leap_back, "ROM 0x020D0: move.l #N,d0 (backward)");
+    if (try tests(rom, 0x209E, character)) try d.number("last_blow_leap", try frameCompared(rom, 0x20BA), "ROM 0x020BA: cmpi.b #N,(10,a0) (the combo's last blow leaps from this frame, for the character 0x0209E tests)");
+    if (try tests(rom, 0x246C, character)) try d.number("knee_last_leap", try frameCompared(rom, 0x2490), "ROM 0x02490: cmpi.b #N,(10,a0) (the last knee leaps from this frame, for the character 0x0246C tests)");
     try d.number("last_blow_ends", rom[last_blow_ends + @as(u32, character)], "ROM 0x020E8, by character");
     try d.number("back_attack_ends", try frameCompared(rom, 0x20F4), "ROM 0x020F4: cmpi.b #N,(10,a0)");
     try d.number("getting_up_ends", try frameCompared(rom, 0x2B24), "ROM 0x02B24: cmpi.b #N,(10,a0)");
     try d.number("recover_ends", try frameCompared(rom, 0x242E), "ROM 0x0242E: cmpi.b #N,(10,a0)");
     try d.number("vault_ends", try frameCompared(rom, 0x23DA), "ROM 0x023DA: cmpi.b #N,(10,a0)");
     try d.number("knee_last_ends", try frameCompared(rom, 0x2474), "ROM 0x02474: cmpi.b #N,(10,a0)");
-    try d.number("grab_blow_ends", try moveq(rom, 0x23B4, 5), "ROM 0x023B4: moveq #N,d5");
+    try d.number("grab_blow_ends", try moveq(rom, stateRoutine(rom, throw_state), 5), try std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: moveq #N,d5 (state ${X:0>2}'s routine)", .{ stateRoutine(rom, throw_state), throw_state }));
+    try d.number("throw_turns", @intFromBool(!throws_ahead), "the throw over the shoulder turns (1) or not (0): ROM 0x02C40 (the character it tests does not)");
+    try d.number("counter_ends", try moveq(rom, stateRoutine(rom, State.counter), 5), try std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: moveq #N,d5 (state $7E's routine)", .{stateRoutine(rom, State.counter)}));
     try d.number("throw_ends", try frameCompared(rom, 0x2742), "ROM 0x02742: cmpi.b #N,(10,a0)");
     try d.number("pick_x", -(try immediate(rom, 0x314A, &.{ 0x06, 0x41 }, 2)), "ROM 0x0314A: addi.w #-N,d1");
     try d.number("pick_depth", -(try immediate(rom, 0x3158, &.{ 0x06, 0x43 }, 2)), "ROM 0x03158: addi.w #-N,d3");
@@ -662,17 +780,18 @@ fn placeFrames(d: *Def, frames: []entity.Frame, which: u32, character: u8) Error
 }
 
 /// The frames of animation `name` place the one held as `table` says (0xA378): X and height
-/// from the holder, which faces the same way as the one held there (the holder turned for the
-/// throw over the shoulder, or holds from behind for the back drop): its X ahead of the holder,
-/// its height up; the entry whose pose is $99 lets it go.
-fn heldFrames(d: *Def, name: []const u8, table: u32, character: u8) Error!void {
+/// from the holder, X mirrored by the facing of the one held (0xA392), its height up; the entry
+/// whose pose is $99 lets it go. The definition's X is ahead of the holder: the table's when the
+/// two face the same way there (`sign` 1: the holder turned for the throw over the shoulder, or
+/// holds from behind for the back drop), else the other way (-1).
+fn heldFrames(d: *Def, name: []const u8, table: u32, character: u8, sign: i16) Error!void {
     const rom = d.rom;
     const frames: []entity.Frame = @constCast(d.animations.items[d.animationIndex(name).?].frames);
     const t = table + rom[table + character];
     for (frames, 0..) |*f, k| {
         const at = t + 3 * @as(u32, @intCast(k));
         const pose = rom[at + 2];
-        f.held = .{ .x = s8(rom, at), .height = -@as(i16, s8(rom, at + 1)), .pose = if (pose == 0x99) null else pose, .lets_go = pose == 0x99 };
+        f.held = .{ .x = sign * s8(rom, at), .height = -@as(i16, s8(rom, at + 1)), .pose = if (pose == 0x99) null else pose, .lets_go = pose == 0x99 };
         if (pose == 0x99) return;
     }
     return error.BadData;
@@ -751,6 +870,8 @@ pub fn playerWaiting(arena: std.mem.Allocator, rom: []const u8) Error!entity.Def
 pub fn all(arena: std.mem.Allocator, rom: []const u8) Error![]const entity.Definition {
     var out: std.ArrayList(entity.Definition) = .empty;
     try out.append(arena, try player(arena, rom, "axel", 0));
+    try out.append(arena, try player(arena, rom, "adam", 1));
+    try out.append(arena, try player(arena, rom, "blaze", 2));
     try enemies.all(arena, rom, &out);
     try weapons.all(arena, rom, &out);
     try items.all(arena, rom, &out);
