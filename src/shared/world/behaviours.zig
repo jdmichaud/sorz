@@ -155,6 +155,18 @@ pub fn stateName(m: *const Mind) ?[]const u8 {
     }
 }
 
+/// The way in of an enemy that has come in already (one that came out of a shutter or waited):
+/// its module's `plain_entrance`, else closing in.
+pub fn plainEntrance(m: *const Mind) @import("entity.zig").Entrance {
+    switch (m.*) {
+        inline else => |_, tag| {
+            if (tag == .none) return .close_in;
+            const M = module(tag);
+            return if (@hasDecl(M, "plain_entrance")) M.plain_entrance else .close_in;
+        },
+    }
+}
+
 /// The name the semantic traces give the state the entity is in: its module's `trace_states`
 /// name for it, else its own.
 pub fn traceName(m: *const Mind) ?[]const u8 {

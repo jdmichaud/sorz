@@ -339,6 +339,14 @@ pub fn takeUpHeld(a: Actor) void {
     Common.takeUpHeld(a);
 }
 
+pub fn takeUpCourse(a: Actor, ago: u32, draws: []const u16) void {
+    Common.takeUpCourse(a, ago, draws);
+}
+
+pub fn takeUpFrame(a: Actor, shown: u32, ago: u32, draws: []const u16) bool {
+    return Common.takeUpFrame(a, shown, ago, draws);
+}
+
 pub fn takeUpBounces(a: Actor, times: u8) void {
     Common.takeUpBounces(a, times);
 }

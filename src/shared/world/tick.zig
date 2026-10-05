@@ -213,14 +213,33 @@ pub const Tick = struct {
         dispatch(t, h, "takeUpHeld", void, {}, .{});
     }
 
+    /// Taken up from a situation, the entity came to its state from the state named `from`.
+    pub fn takeUpCameFrom(t: *Tick, h: Handle, from: []const u8) void {
+        dispatch(t, h, "takeUpCameFrom", void, {}, .{from});
+    }
+
+    /// Taken up from a situation, the players' depths (whole pixels, by player; null: none) when
+    /// the entity's state began.
+    pub fn takeUpPlayersThen(t: *Tick, h: Handle, depths: [2]?i32) void {
+        dispatch(t, h, "takeUpPlayersThen", void, {}, .{depths});
+    }
+
+    /// Taken up from a situation, the entity shows its frame (set already) `shown` ticks, its speed
+    /// what it is since `ago` ticks, `draws` the last random draws by then: true when its
+    /// behaviour took up the frame's ticks left itself.
+    pub fn takeUpFrame(t: *Tick, h: Handle, shown: u32, ago: u32, draws: []const u16) bool {
+        return dispatch(t, h, "takeUpFrame", bool, false, .{ shown, ago, draws });
+    }
+
     /// Taken up from a situation, the entity bounced `times` times in its state.
     pub fn takeUpBounces(t: *Tick, h: Handle, times: u8) void {
         dispatch(t, h, "takeUpBounces", void, {}, .{times});
     }
 
-    /// Taken up from a situation, the entity's speed has been what it is for `ago` ticks.
-    pub fn takeUpCourse(t: *Tick, h: Handle, ago: u32) void {
-        dispatch(t, h, "takeUpCourse", void, {}, .{ago});
+    /// Taken up from a situation, the entity's speed has been what it is for `ago` ticks; the
+    /// last random draws by the tick it came (perhaps another's).
+    pub fn takeUpCourse(t: *Tick, h: Handle, ago: u32, draws: []const u16) void {
+        dispatch(t, h, "takeUpCourse", void, {}, .{ ago, draws });
     }
 
     /// Taken up from a situation, the entity's blow cost another health `ago` ticks before

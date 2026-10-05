@@ -107,7 +107,8 @@ pub fn think(a: Actor) void {
     }
 }
 
-fn walkAnimation(a: Actor) Animation {
+/// Its walk, its pipe in hand.
+pub fn walkAnimation(a: Actor) Animation {
     return if (a.entity.spawn.traits.pipe_b) .walk_pipe_b else .walk_pipe;
 }
 
@@ -256,8 +257,43 @@ pub fn takeUp(a: Actor, elapsed: u32) void {
     Common.takeUp(a, elapsed);
 }
 
+/// Taken up waiting at its place beside its target: its place in depth was the one, of the two
+/// sides of its target's depth when it came there, nearer where it stands.
+pub fn takeUpPlayersThen(a: Actor, depths: [2]?i32) void {
+    if (a.mind.state != .wait) return;
+    const th = a.mind.body.target orelse return;
+    const then = for (a.tick.world.players, depths) |p, d| {
+        if (p.entity != null and p.entity.?.eql(th)) break d orelse return;
+    } else return;
+    const here = a.entity.position.depth.whole();
+    const off: i32 = a.entity.spawn.offset_depth;
+    const near = @abs(pointDepth(a, then, off) - here);
+    const turned = @abs(pointDepth(a, then, -off) - here);
+    if (turned < near) a.entity.spawn.offset_depth = -a.entity.spawn.offset_depth;
+}
+
+/// Its place in depth `off` from its target's depth `then` (turned over beyond the depths).
+fn pointDepth(a: Actor, then: i32, off: i32) i32 {
+    const d = then + off;
+    return if (d < 0 or d >= a.numbers().walk_depth_most) d - 2 * off else d;
+}
+
 pub fn takeUpHeld(a: Actor) void {
     Common.takeUpHeld(a);
+}
+
+/// Taken up walking off from its wait: it turned its place over in depth then.
+pub fn takeUpCameFrom(a: Actor, from: []const u8) void {
+    if (a.mind.state != .walk_off or !std.mem.eql(u8, from, "wait")) return;
+    a.entity.spawn.offset_depth = -a.entity.spawn.offset_depth;
+}
+
+pub fn takeUpCourse(a: Actor, ago: u32, draws: []const u16) void {
+    Common.takeUpCourse(a, ago, draws);
+}
+
+pub fn takeUpFrame(a: Actor, shown: u32, ago: u32, draws: []const u16) bool {
+    return Common.takeUpFrame(a, shown, ago, draws);
 }
 
 pub fn takeUpBounces(a: Actor, times: u8) void {

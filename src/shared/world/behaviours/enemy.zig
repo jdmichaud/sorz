@@ -459,6 +459,11 @@ pub fn Of(comptime M: type) type {
             a.entity.facing = if (toward.position.x.whole() > a.entity.position.x.whole()) .right else .left;
         }
 
+        /// Its walk: its own (an armed one's, weapon in hand) when it has one.
+        pub fn walkOf(a: A) M.Animation {
+            return if (@hasDecl(M, "walkAnimation")) M.walkAnimation(a) else .walk;
+        }
+
         /// Faces its target.
         pub fn faceTarget(a: A) void {
             if (target(a)) |t| faceOf(a, t);
@@ -1365,7 +1370,7 @@ pub fn Of(comptime M: type) type {
                     const v = a.entity.velocity;
                     body(a).fresh = true;
                     body(a).waits = false;
-                    a.animate(.walk);
+                    a.animate(walkOf(a));
                     M.begin(a);
                     body(a).timer -|= @intCast(@min(elapsed, 255));
                     takeUpOffsets(a, v);
@@ -1404,6 +1409,9 @@ pub fn Of(comptime M: type) type {
                         b.timer = n.blink;
                     }
                 },
+                .knocked_down => if (elapsed >= 1) takeUpDown(a) else {
+                    body(a).fresh = true;
+                },
                 // Reeling since its first tick at least: the blow taken then, its frame turned and
                 // its count down at each tick since.
                 .reel => if (elapsed >= 1) {
@@ -1426,6 +1434,45 @@ pub fn Of(comptime M: type) type {
             }
         }
 
+        /// Taken up knocked down since its first tick at least: on the ground, come down from
+        /// its last bounce (it would be going back up from another), it lies; else it flies on
+        /// (its bounces taken up apart).
+        fn takeUpDown(a: A) void {
+            const n = a.numbers();
+            const b = body(a);
+            b.fresh = false;
+            b.slowing = true;
+            b.cried = a.entity.health < 0;
+            a.animate(.down);
+            if (a.atGround() and a.entity.velocity.height.raw >= 0) {
+                b.down = .lying;
+                b.bounces = 3;
+                a.entity.missile = null;
+                a.pace(n.lying, n.lying);
+                a.pause(false);
+                return;
+            }
+            b.down = .flying;
+            a.entity.flags.airborne = true;
+        }
+
+        /// Taken up showing its frame `shown` ticks, its speed what it is since `ago` ticks with
+        /// `draws` the last draws by then. Knocked down: in the air it holds its frames from its
+        /// second; lying on the frame it landed on, that frame shows the while drawn as it landed
+        /// (counted from that tick). True when it took up the frame's ticks left itself.
+        pub fn takeUpFrame(a: A, shown: u32, ago: u32, draws: []const u16) bool {
+            if (a.mind.state != .knocked_down) return false;
+            const b = body(a);
+            if (b.down == .flying) {
+                a.pause(a.frame() >= 1);
+                return false;
+            }
+            if (shown <= ago or draws.len == 0) return false;
+            const drawn: u32 = 2 * @as(u32, draws[0] & 3) + a.numbers().lying_least;
+            a.setTicksLeft(@intCast(@max(1, @min(255, drawn -| (ago + 1)))));
+            return true;
+        }
+
         /// Taken up holding the weapon `w`.
         pub fn takeUpWeapon(a: A, w: Handle) void {
             body(a).weapon = w;
@@ -1440,8 +1487,26 @@ pub fn Of(comptime M: type) type {
             b.touch_taken = striking;
         }
 
-        /// Taken up out of hiding: the one whose blow it took last, and the player it goes after
-        /// (chosen now, its state kept, when the situation did not say).
+        /// Taken up walking off at a speed across: it paces, its stretch begun when that speed
+        /// came, its length by the first of the draws then when the second gives that speed
+        /// (they were its own), on the side its speed leaves.
+        pub fn takeUpCourse(a: A, ago: u32, draws: []const u16) void {
+            if (a.mind.state != .walk_off or a.entity.velocity.x.raw == 0) return;
+            const b = body(a);
+            b.fresh = false;
+            b.pacing = true;
+            b.right_side = a.entity.velocity.x.raw < 0;
+            if (!@hasDecl(M, "walks_off_as_it_was") or !M.walks_off_as_it_was) a.animate(walkOf(a));
+            a.pause(false);
+            const t = a.tables();
+            b.timer = 1;
+            if (draws.len < 2) return;
+            const k = draws[1] & 3;
+            if (t.pacing_speed[k] != @abs(a.entity.velocity.x.raw)) return;
+            b.timer = t.pacing[draws[0] & 3] -| @as(u8, @intCast(@min(ago, 255)));
+            a.pace(t.pacing_pace[k], 1);
+        }
+
         /// Taken up held: its holder's move under way was taken already.
         pub fn takeUpHeld(a: A) void {
             const hh = a.entity.holder orelse return;
@@ -1472,6 +1537,8 @@ pub fn Of(comptime M: type) type {
             }
         }
 
+        /// Taken up out of hiding: the one whose blow it took last, and the player it goes after
+        /// (chosen now, its state kept, when the situation did not say).
         fn takeUpTarget(a: A) void {
             if (a.mind.state == .appear) return;
             body(a).other = a.entity.struck_by;

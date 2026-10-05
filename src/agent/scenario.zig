@@ -364,9 +364,12 @@ pub const Situation = struct {
         /// Where it appeared, and the kind it was before a change (an armed Galsia's).
         spawned_at: [2]i32 = .{ 0, 0 },
         was_kind: ?[]const u8 = null,
-        /// The states it has been in, joined by spaces; the scene's tick its state began at.
+        /// The states it has been in, joined by spaces; the scene's tick its state began at, the
+        /// state it came from, and the players' depths then (whole pixels, by player).
         states: []const u8 = "",
         since: u64 = 0,
+        came_from: ?[]const u8 = null,
+        players_depth: [2]?i32 = .{ null, null },
         /// The id of the last one whose blow cost it health; the tick its own blow last cost
         /// another's (up to the situation's next tick, which tells of a blow struck at its own).
         struck_by: ?u32 = null,
@@ -384,9 +387,10 @@ pub const Situation = struct {
         slot: ?u8 = null,
         /// A player's: the ticks whose thinks saw B newly pressed in its state.
         presses: []const u64 = &.{},
-        /// The tick its speed became what it is; the bounces it made in its state (its speed
-        /// down turned up).
+        /// The tick its speed became what it is, and the last random draws by then (perhaps
+        /// another's); the bounces it made in its state (its speed down turned up).
         course_since: u64 = 0,
+        course_draws: []const u16 = &.{},
         bounces: u8 = 0,
     };
 };
@@ -403,6 +407,11 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
     var last: ?struct { v: u64, t: u64 } = null;
     // The players' pads at their last read (B held), by player.
     var held_b: [2]bool = .{ false, false };
+    // The players' depths (whole pixels) as last seen, by player.
+    var players_depth: [2]?i32 = .{ null, null };
+    // The last tick's random draws.
+    var draws_t: u64 = 0;
+    var draws_values: []const u16 = &.{};
     var lines = std.mem.splitScalar(u8, trace_text, '\n');
     // The first line after the situation, which the spawns after it start from.
     var after: ?[]const u8 = null;
@@ -434,6 +443,8 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
                 for (out, vals.array.items) |*x, y| x.* = @intCast(y.integer);
                 s.last_values = out;
                 s.last_count = count;
+                draws_t = @intCast(int(o, "t") orelse 0);
+                draws_values = out;
             };
             continue;
         }
@@ -473,6 +484,8 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             const state = str(o, "state") orelse return error.BadTrace;
             if (x.state == null or !std.mem.eql(u8, x.state.?, state)) {
+                x.came_from = x.state;
+                x.players_depth = players_depth;
                 x.since = @intCast(int(o, "t") orelse 0);
                 x.presses = &.{};
                 x.bounces = 0;
@@ -483,9 +496,19 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
         } else if (std.mem.eql(u8, ev, "pos")) {
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             if (x.player != null and in_round) try players_x.append(arena, .{ .t = @intCast(int(o, "t") orelse 0), .x = @intCast((int(o, "x") orelse 0) >> 16) });
+            if (x.player) |p| if (p >= 1 and p <= 2) {
+                players_depth[p - 1] = @intCast((int(o, "d") orelse 0) >> 16);
+            };
             x.position = .{ @intCast(int(o, "x") orelse 0), @intCast(int(o, "d") orelse 0), @intCast(int(o, "h") orelse 0) };
             const speed: [3]i32 = .{ @intCast(int(o, "vx") orelse 0), @intCast(int(o, "vd") orelse 0), @intCast(int(o, "vh") orelse 0) };
-            if (!std.mem.eql(i32, &speed, &x.velocity)) x.course_since = @intCast(int(o, "t") orelse 0);
+            if (!std.mem.eql(i32, &speed, &x.velocity)) {
+                const changed_at: u64 = @intCast(int(o, "t") orelse 0);
+                x.course_since = changed_at;
+                x.course_draws = &.{};
+                // The draws of this tick or the one before, which may be this course's (its
+                // behaviour tells by the speed they give).
+                if (changed_at == draws_t or changed_at == draws_t + 1) x.course_draws = draws_values;
+            }
             if (x.velocity[2] > 0 and speed[2] < 0) x.bounces +|= 1;
             x.velocity = speed;
         } else if (std.mem.eql(u8, ev, "hit")) {
@@ -791,8 +814,10 @@ pub const Run = struct {
             if (trace) |tw| tw.assignId(h.index, h.generation, e.id);
             var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
             t.takeUp(h, @intCast(situation.t -| e.since));
+            if (e.came_from) |from| t.takeUpCameFrom(h, from);
+            t.takeUpPlayersThen(h, e.players_depth);
             if (e.taken != 0) t.takeUpTaken(h, e.taken);
-            t.takeUpCourse(h, @intCast(situation.t -| e.course_since));
+            t.takeUpCourse(h, @intCast(situation.t -| e.course_since), e.course_draws);
             if (e.bounces != 0) t.takeUpBounces(h, e.bounces);
             // Its blow that cost another health in its state: at the situation's tick (the
             // trace tells it at the next), or so many ticks before.
@@ -873,8 +898,12 @@ pub const Run = struct {
             const an = kinds.get(x.kind.?).definition.animations[index];
             if (f >= an.frames.len) continue;
             x.animation.frame = f;
+            var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
+            if (t.takeUpFrame(m.h, @intCast(situation.t -| m.e.frame_since), @intCast(situation.t -| m.e.course_since), m.e.course_draws)) continue;
             const ticks: u64 = x.animation.pace orelse an.frames[f].ticks;
-            const shown = situation.t -| m.e.frame_since;
+            // A pace its state set up counts from the state's start when that came later.
+            const since = if (x.animation.pace != null) @max(m.e.frame_since, m.e.since) else m.e.frame_since;
+            const shown = situation.t -| since;
             x.animation.left = if (ticks > shown) @intCast(ticks - shown) else 1;
         }
         // What the take-ups asked for is not the tick's.
@@ -932,9 +961,10 @@ pub const Run = struct {
         if (found) |rec| x.spawn = world.script.placing(rec);
         const state = e.state orelse "";
         if (!std.mem.eql(u8, state, "appear")) x.spawn.traits.waits_for_camera = false;
-        // A Galsia that has waited, or come out of a shutter, fights on as a plain one.
+        // A Galsia that has waited, or one come out of a shutter, fights on as a plain one.
+        const plain = world.behaviours.plainEntrance(&x.mind);
         for ([_][]const u8{ " wait", " shutter_entry", " enter" }) |s| {
-            if (std.mem.indexOf(u8, e.states, s) != null and !std.mem.eql(u8, state, s[1..])) x.spawn = .{ .entrance = .close_in, .offset_x = x.spawn.offset_x, .offset_depth = x.spawn.offset_depth };
+            if (std.mem.indexOf(u8, e.states, s) != null and !std.mem.eql(u8, state, s[1..])) x.spawn = .{ .entrance = plain, .offset_x = x.spawn.offset_x, .offset_depth = x.spawn.offset_depth };
         }
         if (e.was_kind) |was| {
             x.spawn = .{ .entrance = .close_in, .offset_x = x.spawn.offset_x, .offset_depth = x.spawn.offset_depth };
