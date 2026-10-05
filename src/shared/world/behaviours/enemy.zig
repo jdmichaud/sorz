@@ -233,6 +233,9 @@ pub const Common = struct {
     /// It comes out of hiding with its place this far from the view's left edge.
     appears_from: i16,
     appears_to: i16,
+    /// With the camera going left (round 8's), one that does not wait for the camera comes out
+    /// once its place is past the camera's plus this (behind the screen's right edge).
+    appears_behind: i16,
     /// The points the player who knocked it out scores, and the damage its blows do (its moves'
     /// too; one that loses its weapon keeps it).
     points: u32,
@@ -480,13 +483,17 @@ pub fn Of(comptime M: type) type {
         }
 
         /// Whether it comes out of hiding: its place on the screen, or for one that waits for
-        /// the camera, the camera at its place.
+        /// the camera, the camera at its place. With the camera going left (round 8's), one that
+        /// waits comes out on the screen, the others once behind the screen's right edge.
         /// TODO(PLAN item 13): the round's script's rule (`script.comesOut`).
         fn comesOut(a: A) bool {
             const n = a.numbers();
             const x = a.entity.position.x.whole();
             const camera = a.tick.world.camera.x.whole();
-            if (a.entity.spawn.traits.waits_for_camera) return camera >= x;
+            const leftward = if (a.tick.world.camera.follows) |r| r.leftward else false;
+            if (leftward) {
+                if (!a.entity.spawn.traits.waits_for_camera) return x > camera + n.appears_behind;
+            } else if (a.entity.spawn.traits.waits_for_camera) return camera >= x;
             const on_screen = x - camera;
             return on_screen >= n.appears_from and on_screen <= n.appears_to;
         }

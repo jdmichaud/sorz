@@ -732,7 +732,10 @@ fn camera(t: *Tick) void {
     const lift = if (t.plan) |p| p.round.lift else null;
     if (lift) |lf| liftSteps(t, &lf);
     if (c.follows) |rules| {
-        if (c.run == null) c.x_min = c.x;
+        // It never goes back: its limit behind follows it.
+        if (c.run == null) {
+            if (rules.leftward) c.x_max = c.x else c.x_min = c.x;
+        }
         c.x = c.x.add(.pixels(std.math.clamp(followSpeed(c, rules), -rules.most, rules.most)));
     }
     c.x = c.x.clamp(c.x_min, c.x_max);

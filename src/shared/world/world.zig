@@ -168,6 +168,9 @@ pub const Camera = struct {
         shake_by: i16,
         /// It rocks down and up by itself.
         wobble: ?Wobble = null,
+        /// It goes left (round 8's): the walls are its limits on the left, and its limit on the
+        /// right follows it; else its limit on the left follows it.
+        leftward: bool = false,
     };
 
     /// The special attack's run (behaviours/special_knockdown.zig): called, the camera follows for the

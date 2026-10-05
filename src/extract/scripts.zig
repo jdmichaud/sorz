@@ -86,7 +86,7 @@ const measured_loads = [_]u16{ 53, 49 };
 
 /// The rounds whose scripts the extractor writes (PLAN items 13 and 15: rounds 1 to 7; the others
 /// to come).
-pub const extracted = [_]u8{ 1, 2, 3, 4, 5, 6, 7 };
+pub const extracted = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
 
 /// The kinds' names of the original's object types: the traces' (sor-remaster's docs/traces.md),
 /// but the pepper's (type $0C, the traces' bottle).
@@ -100,6 +100,7 @@ fn kindName(t: u8) ?[]const u8 {
         0x11 => "breakable",
         0x13 => "flight_scenery",
         0x14 => "drip",
+        0x15 => "statue",
         0x16 => "drifter",
         0x17 => "rain",
         0x18 => "crate",
@@ -123,6 +124,7 @@ fn kindName(t: u8) ?[]const u8 {
         0x40 => "gold",
         0x41 => "shatter",
         0x42 => "press",
+        0x45 => "trolley",
         0x47 => "beef",
         0x4B => "apple",
         0x4C => "life",
@@ -491,20 +493,27 @@ fn arrivalTicks(rom: []const u8, t: u8) Error!u16 {
 /// What the enemy's code reads of an entry's three bytes (the variant, the offsets' nibbles, the
 /// palette row), in the game's terms (spawns.zig); a boss's: its twin, its bar.
 fn enemyRecord(rom: []const u8, s: *round.Spawn, t: u8, variant: u8, offsets: u8, palette: u8) Error!void {
+    // A boss's: bit 7 of its variant byte is the enemies' wait for the camera (0xA59C), which
+    // the bosses clear (0x17F2E) and never read (round 8's records set it); the rest makes it
+    // the second of twins.
     if (boss(t)) {
-        if (variant != 0) s.traits.insert(.twin);
+        if (variant & 0x7F != 0) s.traits.insert(.twin);
         s.bar = offsets;
         return;
     }
     // Round 3's boss (type $30, 0x144D2): a variant by its byte (bit 0: no helper of its own,
-    // and the low nibble a variant: 0x1527A, 0x152C0, as one), its bar; by its palette byte's
-    // high nibble, at his knockout's end (0x15444), his beating the round's end (0) or he goes
-    // as an enemy (1: round 5's reserves, $14; 2, the helper with him and more health, in no
-    // script). The palette byte's low nibble is a reserve's boss's colours (reserveBoss).
+    // and the low nibble a variant: 0x1527A, 0x152C0, as one; bit 7 as a boss's), its bar; by
+    // its palette byte's high nibble, its row: at his knockout's end (0x15444), his beating the
+    // round's end (0) or he goes as an enemy (1: round 5's reserves, $14; 2: round 8's, $24,
+    // the helper of a pair going with him, and a variant's health more, 0x1455C), its strength.
+    // The palette byte's low nibble is a reserve's boss's colours (reserveBoss).
     if (t == 0x30) {
-        if (variant > 1 or palette >> 4 > 1) return error.BadData;
-        if (variant != 0) s.traits.insert(.twin);
-        if (palette >> 4 == 1) s.traits.insert(.goes_as_enemy);
+        const v = variant & 0x7F;
+        const row = palette >> 4;
+        if (v > 1 or row > 2) return error.BadData;
+        if (v != 0) s.traits.insert(.twin);
+        if (row != 0) s.traits.insert(.goes_as_enemy);
+        s.strength = row;
         s.bar = offsets;
         return;
     }
@@ -587,9 +596,9 @@ fn entry(rom: []const u8, type_byte: u8, bytes: [3]u8, y: u8) Error!round.Spawn 
             s.place = bytes[0];
             return s;
         },
-        // A drip, the rain, a flight, a lamp, the lift's pieces: their code reads none of the
-        // bytes.
-        0x14, 0x17, 0x4D, 0x4E, 0x50...0x53 => {
+        // A drip, the rain, a flight, a lamp, the lift's pieces, the corridor's statues (a
+        // variant is Mr. X's room's): their code reads none of the bytes.
+        0x14, 0x15, 0x17, 0x4D, 0x4E, 0x50...0x53 => {
             if (!std.mem.allEqual(u8, &bytes, 0)) return error.BadData;
             return s;
         },
@@ -898,11 +907,25 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         3 => .{ 1, 1 },
         else => return error.BadData,
     };
+    // The round whose camera goes left (0x19570: cmpi.w #N,($FF02)): its walls are its limits on
+    // the left, from byte N of the walls' table (addi.w #N,d0), its first the limits' set's left
+    // one; its limit on the right follows it (0x195C0).
+    const leftward_round = try immediate(rom, 0x19586, &.{ 0x0C, 0x78 }, 2);
+    if (u16be(rom, 0x1958A) != 0xFF02 or u16be(rom, 0x195C4) != 0xFF02 or u16be(rom, 0x195C0) != 0x0C78 or u16be(rom, 0x195C2) != leftward_round) return error.BadData;
+    const leftward_walls = try immediate(rom, 0x1958E, &.{ 0x06, 0x40 }, 2);
+    const leftward = r == leftward_round;
+    // Going left, a thing it leaves behind goes once right of its place plus N (0x6A70: in the
+    // round of its compare, addi.w #N,d0).
+    if (u16be(rom, 0x6A74) != 0x0C78 or u16be(rom, 0x6A76) != leftward_round or u16be(rom, 0x6A78) != 0xFF02) return error.BadData;
+    const behind_right = try immediate(rom, 0x6A88, &.{ 0x06, 0x40 }, 2);
     const camera: round.Camera = .{
-        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down; the planes in their modes (the header's mode words): in mode 0 (0x18C4A, 0x1934A) their bands at the camera's X times their ratios, plane B at plane A's X and Y; in mode 1 plane A at the camera's X, plane B at it in round 1, a quarter of it in the others (ROM 0x19378: asr.w #2); the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282); the planes' bands, their rows and ratios, from the layout records (0x199C6, the table at ROM 0x5F788), the strips the camera brings in (0x18B3C); how the frames copy the planes' scroll by plane A's mode (0x196A4)", .{ h, limits_set / 8 }),
+        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down (round 8's camera goes left: ROM 0x19586, its first wall on the left, its limit behind on the right, 0x195C0); the planes in their modes (the header's mode words): in mode 0 (0x18C4A, 0x1934A) their bands at the camera's X times their ratios, plane B at plane A's X and Y; in mode 1 plane A at the camera's X, plane B at it in round 1, a quarter of it in the others (ROM 0x19378: asr.w #2); the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282); the planes' bands, their rows and ratios, from the layout records (0x199C6, the table at ROM 0x5F788), the strips the camera brings in (0x18B3C); how the frames copy the planes' scroll by plane A's mode (0x196A4)", .{ h, limits_set / 8 }),
         .x = u16be(rom, h + 6),
         .y = u16be(rom, h + 8),
         .x_min = u16be(rom, limits + 4),
+        .x_max = if (leftward) u16be(rom, limits + 6) else null,
+        .leftward = leftward,
+        .behind_right = if (leftward) @intCast(behind_right) else 0,
         .y_min = u16be(rom, limits),
         .y_max = u16be(rom, limits + 2),
         .plane_b = plane_b,
@@ -941,6 +964,12 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     const timer_later = try decimal(try immediate(rom, timer_at.later, &.{0x70}, 1));
     const pace = try immediate(rom, 0x10C9A, &.{ 0x31, 0xFC }, 2);
 
+    // A life starts facing left in the round of 0x1EC0's compare (its animation 2), with no
+    // special attack in the round of 0x1EFE's (its count cleared; else 1 more than the hidden
+    // option's, 0 here).
+    const left_start = try immediate(rom, 0x1EC0, &.{ 0x0C, 0x78 }, 2);
+    const no_specials = try immediate(rom, 0x1EFE, &.{ 0x0C, 0x78 }, 2);
+    if (u16be(rom, 0x1EC4) != 0xFF02 or u16be(rom, 0x1F02) != 0xFF02 or u16be(rom, 0x1EC8) != 0x7002) return error.BadData;
     // A life starts at the camera's X, at depth $40 (player 2, $20 less) and height 0 (0x1E0E).
     const second_less = try immediate(rom, 0x1EA2, &.{ 0x04, 0x68 }, 2);
     const height = try immediate(rom, 0x1E64, &.{ 0x31, 0x7C }, 2);
@@ -989,8 +1018,12 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         // first look the tick after.
         var loads: std.ArrayList(stream.Load) = .empty;
         try artLoads(arena, rom, kinds, if (k == 0) 0 else 1, &loads);
-        // The lift's camera keeps its first limit (its mode never moves it).
-        const wall: i32 = if (k == 0 or lift != null) first_wall else u16be(rom, camera_stops + 2 * @as(u32, @intCast(k)));
+        // The lift's camera keeps its first limit (its mode never moves it). A leftward camera's
+        // walls: its first the limits' set's left one, the others from their own place in the
+        // walls' table (0x19586).
+        const wall: i32 = if (leftward)
+            (if (k == 0) u16be(rom, limits + 4) else u16be(rom, camera_stops + leftward_walls + 2 * @as(u32, @intCast(k))))
+        else if (k == 0 or lift != null) first_wall else u16be(rom, camera_stops + 2 * @as(u32, @intCast(k)));
         s.* = .{
             .provenance = try std.fmt.allocPrint(arena, "section {d}: its wall {s} 0x{X:0>5}; its entry at ROM 0x{X:0>5} (0x1C1C4), its art kinds {any} loaded in {d} ticks (0xD70, the load lists at 0x8672 streamed by 0x8510){s}; its lists from byte {d} of the spawn lists (Nemesis at ROM 0x{X:0>5}){s}", .{
                 k,
@@ -1017,7 +1050,9 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         };
     }
 
-    const boss_section: ?round.Boss = if (exit != null) null else try bossSection(arena, rom, r, entryAt(rom, part, section_count), &l);
+    // Round 8's boss's section (Mr. X's room: its own state, 0x4CA) is not written yet: its
+    // script ends with its last section. TODO(PLAN item 15): Mr. X's room.
+    const boss_section: ?round.Boss = if (exit != null or leftward) null else try bossSection(arena, rom, r, entryAt(rom, part, section_count), &l);
 
     // The ground: the floor's height (0xAD2A probes the floor map) at every place the script
     // places an enemy, the same in all.
@@ -1097,6 +1132,8 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
             .x = start_x,
             .depth = .{ @intCast(depth), @as(i32, @intCast(depth)) - @as(i32, @intCast(second_less)) },
             .height = @intCast(height),
+            .left = r == left_start,
+            .specials = if (r == no_specials) 0 else 1,
         },
         .timer = .{
             .provenance = try std.fmt.allocPrint(arena, "a second every ROM 0x10C9C's ticks (0x10C88); {d} seconds at a section's start (ROM 0x{X:0>5}), {d} from section {d} (ROM 0x{X:0>5}, 0x{X:0>5}), by the round (0x195F6: ROM 0x195FC, 0x19606)", .{ timer_first, timer_at.first + 1, timer_later, later_from, timer_at.later + 1, timer_at.from + 2 }),

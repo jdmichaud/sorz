@@ -269,7 +269,7 @@ posters' corners they stir, `flight_scenery`), round 3's (the `lamp`s, the `crat
 raindrops, its sky's flashes the round's art set's palettes `flash_N`), round 3's acrobats of a
 trio (`acrobat_trio`) and its boss (`boss_r3`, his part `boss_r3_part`, which shows its own
 frames by side, `stand` and `stand_left`, and the helper of a pair, `boss_r3_helper`, with no
-art); the other characters and enemies come with PLAN
+art), round 8's corridor's gold statues (`statue`); the other characters and enemies come with PLAN
 items 12 to 15. Their numbers are read from the ROM's
 tables and from the immediate values of the code that uses them, each with its place in the
 definition's provenance, but the car's times, which the original's car, camera and shells make
@@ -425,6 +425,10 @@ play).
   lasts (each round's art takes its own time; measured, sor-remaster's); else the flow's.
 - `camera`: the view's top-left corner at the start (`at`), how far back it may go at the start
   (`x_min`; it never goes back after), its limits down (`y`), and plane B's scroll across,
+  `leftward`, optional (round 8's): true when it goes left, each section's `wall` its limit on
+  the left (the first section's at `x_min`), its limit on the right at the start `x_max` and
+  following it after, the things it leaves behind (items, scenery) going once their place is
+  right of its place plus `behind_right`;
   `plane_b` = [times, per] of the camera's; `plane_b_down`, optional: true when plane B moves
   down as plane A does (the camera's shake too), else it keeps its place down; `scroll`,
   optional: how each frame of play copies the planes' scroll, `cells` (a value a row of cells)
@@ -443,7 +447,8 @@ play).
   pixels) the game writes the column coming in (and a row as the camera crosses one): their time
   comes before the sound's driver (A4).
 - `players`: where a life starts: `x` from the camera's left edge, each player's `depth`, and the
-  `height` it drops in from.
+  `height` it drops in from; facing left when `left` (round 8's), with `specials` special attacks
+  (round 8's none).
 - `timer`: `pace`, the ticks a second of the round's timer lasts.
 - `sections`, in order: each the stretch of the level up to its `wall`, the camera's right limit
   until the section is cleared. A section starts at the previous one's clear (the first: with
@@ -543,12 +548,15 @@ A record of `placed`, `wave` or `reserve` is one entity:
   kind's `offsets` table (across in the high nibble, in depth in the low), for a kind that counts
   on from them (the acrobat trio's others: role 1 one on in depth); `strength`, its row of
   strength and colours (0 when absent): its health, its blows' damage and its points are
-  its kind's tables' `strength_health`, `strength_power` and `strength_points` at it; `colours`,
+  its kind's tables' `strength_health`, `strength_power` and `strength_points` at it (round 3's
+  boss: its palette's row, 2 round 8's, a variant with more health that takes the helper of a
+  pair with him); `colours`,
   its colours by number (`enemy_colours`); `art`, its art by number (the art slots hold it).
 - A breakable's (an oil drum's too): `holds`, the kind of the item it leaves. A boss's: `bar`,
   its entry in the status bar's names and bars (round 3's boss: a bar of its own, the second's,
   which also makes the helper of a pair).
-- A reserve's boss's kind (round 5's round 3's bosses, among its enemies): `reserve_boss`, its
+- A reserve's boss's kind (round 5's round 3's bosses, round 8's every boss, among its
+  enemies; a round's colours one palette a number): `reserve_boss`, its
   art and colours a boss's rather than an enemy's `art` and `colours`: its `art`, a load by
   number, takes the boss's art slot, once no enemy shows the second's, the third's or the boss's
   (none is streamed, and it comes the next tick, when that slot holds it already); its

@@ -228,7 +228,9 @@ pub const Writer = struct {
             try l.int("y", cam[1]);
             try l.close();
         }
-        const stop = [3]i32{ c.x_max.raw, c.y_min.raw, c.y_max.raw };
+        // The wall it stops at: its limit on the right, a leftward camera's on the left.
+        const leftward = if (c.follows) |rules| rules.leftward else false;
+        const stop = [3]i32{ if (leftward) c.x_min.raw else c.x_max.raw, c.y_min.raw, c.y_max.raw };
         if (self.first or !std.mem.eql(i32, &stop, &self.camera_stop)) {
             self.camera_stop = stop;
             var l = try self.line("camera_stop");

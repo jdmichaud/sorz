@@ -650,10 +650,17 @@ pub const Tick = struct {
 
     /// Whether a thing at `x` across is left behind by the camera: at or left of the camera's place
     /// less `by`, as the original compares their whole pixels' words, unsigned (with the camera
-    /// within `by` of the level's start, any place is).
+    /// within `by` of the level's start, any place is); with a camera going left, right of its
+    /// place plus the round's `behind_right`.
     pub fn behindCamera(t: *const Tick, x: Fixed, by: i16) bool {
-        const edge: u16 = @truncate(@as(u32, @bitCast(t.world.camera.x.whole() - by)));
         const at: u16 = @truncate(@as(u32, @bitCast(x.whole())));
+        // A camera going left (round 8's) leaves behind what is right of its place plus the
+        // round's distance.
+        if (t.plan) |p| if (p.round.camera.leftward) {
+            const ahead: u16 = @truncate(@as(u32, @bitCast(t.world.camera.x.whole() + p.round.camera.behind_right)));
+            return ahead < at;
+        };
+        const edge: u16 = @truncate(@as(u32, @bitCast(t.world.camera.x.whole() - by)));
         return edge >= at;
     }
 

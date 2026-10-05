@@ -1117,11 +1117,11 @@ pub const Round = struct {
                 continue;
             };
             const at: world.Vec3 = .{ .x = w.camera.x.add(.pixels(r.players.x)), .depth = .pixels(r.players.depth[k]), .height = .pixels(r.players.height) };
-            const h = w.spawn(a.kinds, kind, at, .right) catch continue;
+            const h = w.spawn(a.kinds, kind, at, if (r.players.left) .left else .right) catch continue;
             wp.entity = h;
             wp.character = kind;
             wp.colours = playerColours(turn, @intCast(k), character, kind, a);
-            wp.specials = 1;
+            wp.specials = r.players.specials;
             if (t.actor(world.behaviours.player, h)) |act| world.behaviours.player.startLife(act);
         }
         // The status bar shows the special attacks a new life gives; the demo's players have
@@ -1175,7 +1175,7 @@ pub const Round = struct {
                     else => set.own,
                 } else null,
                 .boss => self.stage(a).boss_colours,
-                .reserve_boss => self.stage(a).reserve_boss_colours,
+                .reserve_boss => |c| self.stage(a).reserveBoss(c),
                 .police => a.enemy_colours.police,
                 .palette => |pal| pal,
                 .keep => {

@@ -228,11 +228,19 @@ pub const Camera = struct {
     /// The view's top-left corner at the round's start, in pixels of the level.
     x: i32,
     y: i32,
-    /// How far it may go at the start: across, from `x_min` (the wall is the first section's),
-    /// and down.
+    /// How far it may go at the start: across, from `x_min` to `x_max` (none: the first section's
+    /// wall), and down.
     x_min: i32,
+    x_max: ?i32 = null,
     y_min: i32,
     y_max: i32,
+    /// It goes left (round 8's): each section's wall is its limit on the left, the first
+    /// section's at `x_min`, and its limit on the right follows it, never back; else it goes
+    /// right, the walls its limits on the right, its limit on the left following it.
+    leftward: bool = false,
+    /// Going left, the things it leaves behind (the items, the scenery, its enemies' weapons)
+    /// go once their place is right of its place plus this.
+    behind_right: i32 = 0,
     /// Plane B scrolls across by `times` / `per` of the camera's move.
     plane_b: [2]u8 = .{ 1, 1 },
     /// Plane B moves down as plane A does (the camera's shake too); else it keeps its place
@@ -340,6 +348,9 @@ pub const Players = struct {
     x: i32,
     depth: [2]i32,
     height: i32,
+    /// A life starts facing left (round 8's), with `specials` special attacks (round 8's none).
+    left: bool = false,
+    specials: u8 = 1,
 };
 
 pub const Timer = struct {
@@ -575,6 +586,9 @@ fn cameraValue(arena: std.mem.Allocator, c: *const Camera) !json.Value {
         .{ .key = "shake", .value = try pair(arena, c.shake[0], c.shake[1]) },
         .{ .key = "bands", .value = try bandsValue(arena, c.bands) },
     });
+    if (c.x_max) |m| try f.append(arena, .{ .key = "x_max", .value = json.Value.num(m) });
+    if (c.leftward) try f.append(arena, .{ .key = "leftward", .value = .{ .bool = true } });
+    if (c.leftward) try f.append(arena, .{ .key = "behind_right", .value = json.Value.num(c.behind_right) });
     if (c.water) |w| try f.append(arena, .{ .key = "water", .value = try obj(arena, &.{
         .{ .key = "from", .value = json.Value.num(w.from) },
         .{ .key = "half", .value = json.Value.num(w.half) },
@@ -711,6 +725,8 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
             .{ .key = "x", .value = json.Value.num(p.x) },
             .{ .key = "depth", .value = try pair(arena, p.depth[0], p.depth[1]) },
             .{ .key = "height", .value = json.Value.num(p.height) },
+            .{ .key = "left", .value = .{ .bool = p.left } },
+            .{ .key = "specials", .value = json.Value.num(p.specials) },
         }) },
         .{ .key = "timer", .value = try withProvenance(arena, r.timer.provenance, &.{
             .{ .key = "pace", .value = json.Value.num(r.timer.pace) },
@@ -957,7 +973,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     } else return (try root.get("art")).fail("no art set of this name");
 
     const c = try root.get("camera");
-    try c.only(&.{ "provenance", "at", "x_min", "y", "plane_b", "plane_b_down", "scroll", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "wobble", "bands", "water" });
+    try c.only(&.{ "provenance", "at", "x_min", "x_max", "leftward", "behind_right", "y", "plane_b", "plane_b_down", "scroll", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "wobble", "bands", "water" });
     const at = try readPair(try c.get("at"), i32);
     const y = try readPair(try c.get("y"), i32);
     r.camera = .{
@@ -965,6 +981,9 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         .x = at[0],
         .y = at[1],
         .x_min = try (try c.get("x_min")).int(i32),
+        .x_max = if (try c.opt("x_max")) |n| try n.int(i32) else null,
+        .leftward = if (try c.opt("leftward")) |n| try n.boolean() else false,
+        .behind_right = if (try c.opt("behind_right")) |n| try n.int(i32) else 0,
         .y_min = y[0],
         .y_max = y[1],
         .plane_b = try readPair(try c.get("plane_b"), u8),
@@ -1007,12 +1026,14 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     }
 
     const p = try root.get("players");
-    try p.only(&.{ "provenance", "x", "depth", "height" });
+    try p.only(&.{ "provenance", "x", "depth", "height", "left", "specials" });
     r.players = .{
         .provenance = try provenanceOf(p),
         .x = try (try p.get("x")).int(i32),
         .depth = try readPair(try p.get("depth"), i32),
         .height = try (try p.get("height")).int(i32),
+        .left = if (try p.opt("left")) |n| try n.boolean() else false,
+        .specials = if (try p.opt("specials")) |n| try n.int(u8) else 1,
     };
 
     const t = try root.get("timer");
@@ -1040,8 +1061,10 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
             .reserve = try readSpawns(arena, try n.get("reserve"), .reserve),
         };
         if (s.timer > 99) return (try n.get("timer")).fail("more than 99 seconds");
+        // Each wall ahead of the camera's place before it: to its right, a leftward camera's to
+        // its left.
         const before = if (i == 0) r.camera.x else sections[i - 1].wall;
-        if (s.wall < before) return (try n.get("wall")).fail("behind the camera's place before it");
+        if (if (r.camera.leftward) s.wall > before else s.wall < before) return (try n.get("wall")).fail("behind the camera's place before it");
     }
     r.sections = sections;
 

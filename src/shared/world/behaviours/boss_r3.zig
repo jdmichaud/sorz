@@ -660,6 +660,8 @@ fn appear(a: Actor) void {
     m.power = t.strength[2 * level + 1];
     if (e.spawn.traits.twin) {
         m.power += n.variant_power;
+        // Round 8's (his strength 2) has more health too.
+        if (e.spawn.strength == 2) e.health += n.variant_health;
     } else {
         // The status bar: his entry by his bar of his own.
         w.boss_bar = if (bar == 0) bar_entry else bar_entry + 1;
@@ -1509,12 +1511,14 @@ fn knockedOut(a: Actor) void {
     }
 }
 
-/// After his knockout: with a helper left he is done (the helper clears him); else his part
-/// goes, and the round is won, or (one whose beating is not the round's end) he goes as an
-/// enemy, counted off as a boss.
+/// After his knockout: with a helper left he is done (the helper clears him), but round 8's
+/// (his strength 2) takes the helper with him; then his part goes, and the round is won, or (one
+/// whose beating is not the round's end) he goes as an enemy, counted off as a boss.
 fn ended(a: Actor) void {
     const m = a.mind;
-    if (helperOf(a) != null) {
+    if (a.entity.spawn.strength == 2) {
+        if (helperOf(a)) |h| a.tick.world.remove(h.handle);
+    } else if (helperOf(a) != null) {
         m.done = true;
         return;
     }

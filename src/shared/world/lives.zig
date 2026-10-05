@@ -117,6 +117,8 @@ pub fn newLife(t: *Tick, k: u1) void {
     p.specials = 1;
     if (t.plan) |plan| {
         const r = plan.round;
+        if (r.players.left) e.facing = .left;
+        p.specials = r.players.specials;
         e.position = .{
             .x = w.camera.x.add(.pixels(r.players.x)),
             .depth = .pixels(r.players.depth[k]),

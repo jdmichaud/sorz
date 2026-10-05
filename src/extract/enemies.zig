@@ -148,6 +148,10 @@ fn commonNumbers(d: *Def, kind: u8) Error!void {
     const k: u32 = kind - 0x20;
     try d.number("appears_from", try immediate(rom, 0x97E8, &.{ 0x0C, 0x68 }, 2) - 0x80, "ROM 0x097E8: cmpi.w #N+$80,(40,a0)");
     try d.number("appears_to", try immediate(rom, 0x97F0, &.{ 0x0C, 0x68 }, 2) - 0x80 - 1, "ROM 0x097F0: cmpi.w #N+$81,(40,a0)");
+    // Round 8's (0xA5A6: cmpi.w #7,($FF02)), its camera going left: one that does not wait for
+    // the camera comes out once its place is past the camera's plus N (0xA5DC).
+    if (u16be(rom, 0xA5A6) != 0x0C78 or u16be(rom, 0xA5A8) != 7 or u16be(rom, 0xA5AA) != 0xFF02) return error.BadData;
+    try d.number("appears_behind", try immediate(rom, 0xA5E8, &.{ 0x06, 0x40 }, 2), "ROM 0x0A5E8: addi.w #N,d0 (round 8's camera going left: past the camera's place plus N)");
     try d.number("points", try points(rom, rom[score_indices + 3 * k]), "ROM 0x27010 (the score's index by type and strength, 0x93B4), the amount at ROM 0x10DDE (0x9E26)");
     try d.number("power", rom[enemy_numbers + 6 * k + 3], "ROM 0x26FCE (by type and strength, three bytes after the health, 0x93CE)");
     try d.number("reel", try moveByte(rom, 0x9B90, 80), "ROM 0x09B90: move.b #N,(80,a0)");

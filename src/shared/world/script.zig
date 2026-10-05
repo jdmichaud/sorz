@@ -272,6 +272,7 @@ pub fn cameraRules(r: *const Round) world_mod.Camera.Rules {
         .shake_ticks = @intCast(c.shake[0]),
         .shake_by = @intCast(c.shake[1]),
         .wobble = if (c.wobble) |wb| .{ .ticks = wb.ticks, .period = wb.period, .accel = .of(wb.accel) } else null,
+        .leftward = c.leftward,
     };
 }
 
@@ -283,7 +284,7 @@ pub fn start(w: anytype, plan: *const Plan) void {
     c.x = .pixels(r.camera.x);
     c.y = .pixels(r.camera.y);
     c.x_min = .pixels(r.camera.x_min);
-    c.x_max = .pixels(r.sections[0].wall);
+    c.x_max = .pixels(r.camera.x_max orelse r.sections[0].wall);
     c.y_min = .pixels(r.camera.y_min);
     c.y_max = .pixels(r.camera.y_max);
     c.follows = cameraRules(r);
@@ -385,7 +386,8 @@ pub fn opening(t: *Tick) void {
     s.stage = .wall;
     // The first section's wall and timer are the round's own.
     if (s.part == 0) return;
-    t.world.camera.x_max = .pixels(p.round.sections[s.part].wall);
+    const wall: Fixed = .pixels(p.round.sections[s.part].wall);
+    if (p.round.camera.leftward) t.world.camera.x_min = wall else t.world.camera.x_max = wall;
     ownSoundAtSection(t.world, p.round);
     restartTimer(t.world, p);
     // The GO arrow, in a free place of the effects'.
@@ -464,8 +466,8 @@ pub fn run(t: *Tick) void {
                 // The arriving enemy's colours, at its arrival's first tick.
                 if (s.arriving == arrivalTicks(s, rec)) {
                     t.out.colours = true;
-                    if (rec.reserve_boss != null) {
-                        t.out.colour_loads.append(.reserve_boss);
+                    if (rec.reserve_boss) |b| {
+                        t.out.colour_loads.append(.{ .reserve_boss = b.colours });
                     } else if (rec.colours) |c| if (s.taking) |into| t.out.colour_loads.append(.{ .enemies = .{ .colours = c, .into = into } });
                 }
                 s.arriving -= 1;

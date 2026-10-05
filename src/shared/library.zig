@@ -88,9 +88,9 @@ pub const RoundAssets = struct {
     number: *const art.Frame,
     /// The boss's colours, when the round has a boss.
     boss_colours: ?*const art.Palette = null,
-    /// The colours of the boss's kind its reserves bring as an enemy (`ReserveBoss.palette`; one
-    /// at most), when they bring one.
-    reserve_boss_colours: ?*const art.Palette = null,
+    /// The colours of the bosses' kinds its reserves bring as enemies (`ReserveBoss.palette`), by
+    /// their numbers (`ReserveBoss.colours`; round 8 brings five).
+    reserve_bosses: [most_reserve_bosses]?ReserveBossColours = @splat(null),
     /// Its animation's steps (the script's `animation`), their maps and colours found.
     animation: [Rounds.most_steps]AnimationStep = undefined,
     animation_steps: u8 = 0,
@@ -99,6 +99,14 @@ pub const RoundAssets = struct {
     lamp_off: ?*const art.TileMap = null,
 
     pub const AnimationStep = struct { map: *const art.TileMap, colours: *const art.Palette };
+    pub const most_reserve_bosses = 8;
+    pub const ReserveBossColours = struct { colours: u8, palette: *const art.Palette };
+
+    /// The colours of number `colours` a reserve's boss takes, when the round's reserves have it.
+    pub fn reserveBoss(self: *const RoundAssets, colours: u8) ?*const art.Palette {
+        for (self.reserve_bosses) |b| if (b) |x| if (x.colours == colours) return x.palette;
+        return null;
+    }
 
     /// Its animation's steps.
     pub fn steps(self: *const RoundAssets) []const AnimationStep {
@@ -204,12 +212,20 @@ fn findRounds(c: *const Content, diag: *json.Diagnostic) LoadError!Rounds {
     return out;
 }
 
-/// A reserve's record's boss's colours (`ReserveBoss.palette`) found, the round's one.
+/// A reserve's record's boss's colours (`ReserveBoss.palette`) found, by their number: one
+/// palette a number.
 fn reserveBossColours(a: *const art.Art, rec: *const content.round.Spawn, out: *RoundAssets, diag: *json.Diagnostic) LoadError!void {
     const b = rec.reserve_boss orelse return;
     const pal = a.palette(b.palette) orelse return refuse(diag, b.palette, "a reserve's boss's colours, not in the art");
-    if (out.reserve_boss_colours) |other| if (other != pal) return refuse(diag, b.palette, "a round's reserves with two bosses' colours");
-    out.reserve_boss_colours = pal;
+    if (out.reserveBoss(b.colours)) |other| {
+        if (other != pal) return refuse(diag, b.palette, "a round's reserves' bosses with two colours of one number");
+        return;
+    }
+    for (&out.reserve_bosses) |*slot| if (slot.* == null) {
+        slot.* = .{ .colours = b.colours, .palette = pal };
+        return;
+    };
+    return refuse(diag, b.palette, "a round's reserves with more bosses' colours than the round keeps");
 }
 
 /// The content tree in memory, owned by its arena.
