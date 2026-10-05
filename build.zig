@@ -20,7 +20,8 @@
 //! -Dremaster=DIR`), `screens-check` the screens' pictures and sound, tick by tick from
 //! power-on (the same options), `similar-check` Axel's moves in the catalogue's scenarios and
 //! `round-check` round 1's scenes from power-on (`-Drom=ROM -Dremaster=DIR|AGENT`);
-//! `variants-check` plays each variant's flow from power-on on the ROM's content (`-Drom=ROM`).
+//! `variants-check` plays each variant's flow from power-on on the ROM's content (`-Drom=ROM`), and
+//! `netplay-check` network play's session on it (two agent hosts into round 1, a difference named).
 const std = @import("std");
 
 /// The SDL2 release that the Linux host is built and tested against.
@@ -584,6 +585,21 @@ pub fn build(b: *std.Build) void {
     settings_check.expectExitCode(0);
     settings_check.has_side_effects = true;
     smoke_step.dependOn(&settings_check.step);
+
+    // Network play on the real game (PLAN item 18, tools/check_netplay.sh), from the user's ROM:
+    // two agent hosts over WebSockets from power-on into round 1, the same state; the pair in one
+    // process against one game with their pads; a difference planted in the round, named.
+    const netplay_check_step = b.step("netplay-check", "Play network play's session on the content of -Drom=ROM: two agent hosts into round 1, and a planted difference named");
+    if (rom_path) |rom| {
+        const netplay_check = b.addSystemCommand(&.{ "sh", "tools/check_netplay.sh" });
+        netplay_check.addArtifactArg(agent_exe);
+        netplay_check.addArg(rom);
+        netplay_check.expectExitCode(0);
+        netplay_check.has_side_effects = true;
+        netplay_check_step.dependOn(&netplay_check.step);
+    } else {
+        netplay_check_step.dependOn(&b.addFail("netplay-check needs the user's ROM: -Drom=PATH").step);
+    }
 
     // The browser build in Chromium against the agent host (src/web/browser_check.mjs), the pages
     // served by native programs with the game's files of a game directory that the check makes:

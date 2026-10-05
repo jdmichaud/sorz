@@ -3,7 +3,7 @@
 //
 //   node browser_check.mjs --web DIR --agent SORZ_AGENT --server SORZ_SERVER [--content DIR]
 //                          [--chromium PATH] [--ticks N] [--seconds S] [--keep DIR]
-//                          [--only relay | --only page]
+//                          [--only relay | --only page | --only netplay]
 //
 // Every page is served by a native program, which sends it the game's files of a game directory
 // (DESIGN.md 5.3); nothing else feeds the page game data. The directory is a small tree made here
@@ -47,6 +47,10 @@
 //      power-on, the host pressing Enter on pad 1 and the page on pad 2. One tick per update, the
 //      two games' states must be the same at the last tick; then in real time, paced by the page's
 //      sound, the session's own checks (every 30 ticks) must find no difference.
+//   netplay_round (with --content): the same with the whole content tree, the real game: the agent
+//      host's START on the intro, the title and the network variant's menu (the host's variant is
+//      the page's), each player's character chosen, round 1 played; the two states the same at
+//      tick 2400, both in the round.
 //   relay: two pages of the relay (`sorz-server DIR --server`), in two Chromiums with their own
 //      profiles, each choosing 2 PLAYERS, play through it from power-on: the first to choose hosts
 //      (player 1), the second joins (player 2). One tick per update, the two states must be the
@@ -61,7 +65,8 @@
 // one tick. The report is one JSON line per part, and the exit status says whether every part
 // passed. Everything made here stays in a temporary directory that is removed at the end (with
 // --keep, the pictures and screenshots are copied there). `--only relay` runs the relay's parts
-// alone, `--only page` the page's look.
+// alone, `--only page` the page's look (and with --content its flow), `--only netplay` network
+// play with the agent host (and with --content the real game's).
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -81,7 +86,7 @@ for (let i = 2; i < process.argv.length; i += 2) {
 if (!options.web || !options.agent || !options.server) usage();
 
 function usage() {
-  console.error('usage: node browser_check.mjs --web DIR --agent SORZ_AGENT --server SORZ_SERVER [--content DIR] [--chromium PATH] [--ticks N] [--seconds S] [--keep DIR] [--only relay|page]');
+  console.error('usage: node browser_check.mjs --web DIR --agent SORZ_AGENT --server SORZ_SERVER [--content DIR] [--chromium PATH] [--ticks N] [--seconds S] [--keep DIR] [--only relay|page|netplay]');
   process.exit(2);
 }
 
@@ -255,6 +260,7 @@ const keyEvents = {
   f1: { code: 'F1', key: 'F1', windowsVirtualKeyCode: 112 },
   f2: { code: 'F2', key: 'F2', windowsVirtualKeyCode: 113 },
   p: { code: 'KeyP', key: 'p', windowsVirtualKeyCode: 80 },
+  z: { code: 'KeyZ', key: 'z', windowsVirtualKeyCode: 90 },
 };
 
 async function tap(page, key) {
@@ -280,12 +286,19 @@ function freePort() {
 // One session: the agent host (player 1, Enter at tick 700) serves the page and its files at its
 // port, and a new tab opens it and joins (player 2, Enter at tick 1000). One tick per update, the
 // page stops at the host's last tick and the states are compared; in real time, the page plays as
-// the player does and the session's checks decide.
-async function netplaySession(browser, realtime) {
-  const ticks = realtime ? 1800 : 1500;
+// the player does and the session's checks decide. With `game` (the whole content tree), the real
+// game from power-on to round 1: the host's START on the intro, the title and the network
+// variant's menu, Axel chosen; the page's player chooses too, and the host walks.
+async function netplaySession(browser, realtime, game = null) {
+  const ticks = game ? 2400 : realtime ? 1800 : 1500;
+  const hostKeys = game
+    ? ['500:enter:3', '560:enter:3', '640:enter:3', '860:right:3', '880:z:3', '1500:right:60', '1700:x:3']
+    : ['700:enter:5'];
+  // The page's keys, by tick: [tick, key, ticks held].
+  const guestKeys = game ? [[900, keyEvents.z, 3], [1600, keyEvents.up, 30]] : [[1000, keyEvents.enter, 5]];
   const port = await freePort();
-  const host = spawn(options.agent, [options.data, '--netplay', `127.0.0.1:${port}`, '--delay', '3',
-    '--frames', String(ticks), '--key', '700:enter:5'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const host = spawn(options.agent, [game || options.data, '--netplay', `127.0.0.1:${port}`, '--delay', '3',
+    '--frames', String(ticks), ...hostKeys.flatMap((k) => ['--key', k])], { stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   let log = '';
   host.stdout.on('data', (d) => { out += d; });
@@ -309,22 +322,23 @@ async function netplaySession(browser, realtime) {
     let state = null;
     if (!realtime) {
       await page.evaluate('sorz.setPacing(true)');
-      // Enter goes down at tick 1000 and up five ticks later (a tick runs only when both pads are
-      // in, so the key is held for ticks, not for updates).
-      let pressedAt = null;
-      let released = false;
+      // Each key goes down at its tick and up the ticks it is held later (a tick runs only when
+      // both pads are in, so the key is held for ticks, not for updates).
+      const keys = guestKeys.map(([at, key, held]) => ({ at, key, held, down: null, up: false }));
       for (let t = 0; t < ticks;) {
         if (Date.now() - began > 300000) throw new Error('the session did not reach tick ' + ticks);
-        if (pressedAt === null && t >= 1000) {
-          pressedAt = t;
-          await page.send('Input.dispatchKeyEvent', { type: 'keyDown', ...keyEvents.enter });
-        } else if (pressedAt !== null && !released && t >= pressedAt + 5) {
-          released = true;
-          await page.send('Input.dispatchKeyEvent', { type: 'keyUp', ...keyEvents.enter });
+        for (const k of keys) {
+          if (k.down === null && t >= k.at) {
+            k.down = t;
+            await page.send('Input.dispatchKeyEvent', { type: 'keyDown', ...k.key });
+          } else if (k.down !== null && !k.up && t >= k.down + k.held) {
+            k.up = true;
+            await page.send('Input.dispatchKeyEvent', { type: 'keyUp', ...k.key });
+          }
         }
         // At most the ticks left, and a few at a time, so the page's socket delivers the host's pads
         // between the steps; the page never passes the host's last tick.
-        const step = pressedAt !== null && !released ? 1 : 20;
+        const step = keys.some((k) => k.down !== null && !k.up) || keys.some((k) => k.down === null && k.at - t < 20) ? 1 : 20;
         state = await page.evaluate(`(() => { sorz.step(Math.min(${ticks} - sorz.inspect().ticks, ${step})); return sorz.inspect(); })()`);
         t = state.ticks;
         await sleep(1);
@@ -352,9 +366,11 @@ async function netplaySession(browser, realtime) {
     const inStep = realtime
       ? !guest.net.difference && !log.includes('differ')
       : state.state_hash === hostGame.state_hash && state.ticks === hostGame.ticks && state.net.phase === 'playing';
+    // With the game's content: the host's variant, network play's, on both, and round 1 reached.
+    const inRound = !game || (hostGame.variant === 'network' && hostGame.scene === 'round' && guest.variant === 'network' && guest.scene === 'round');
     return {
-      pass: code === 0 && result.verdict === 'ok' && mode === 'native' && invitation === '1 PLAYER (not here)\n▶ 2 PLAYERS\nSETTINGS (not here)' && inStep &&
-        errors.length === 0,
+      pass: code === 0 && result.verdict === 'ok' && mode === 'native' && invitation === '1 PLAYER (not here)\n▶ 2 PLAYERS\nSETTINGS' + (game ? '' : ' (not here)') &&
+        inStep && inRound && errors.length === 0,
       fields: {
         mode,
         invitation,
@@ -364,7 +380,7 @@ async function netplaySession(browser, realtime) {
         host_verdict: result.verdict,
         guest: realtime
           ? { ticks: guest.ticks, net: guest.net, ticks_per_second: Math.round(guest.ticks / seconds * 100) / 100, audio_underruns: stats.audio_underruns }
-          : { ticks: state.ticks, state_hash: state.state_hash, net: state.net },
+          : { ticks: state.ticks, state_hash: state.state_hash, net: state.net, variant: guest.variant, scene: guest.scene },
         host_log: log.trim().split('\n').filter((line) => line.includes('netplay')).slice(-6),
         errors: errors.slice(0, 5),
       },
@@ -866,6 +882,18 @@ async function main() {
       return;
     }
     if (options.content) makeScreensTree(path.join(scratch, 'game-screens'));
+    if (options.only === 'netplay') {
+      browser = await launch(chromium, path.join(scratch, 'profile'));
+      for (const realtime of [false, true]) {
+        const result = await netplaySession(browser, realtime);
+        report(realtime ? 'netplay_realtime' : 'netplay', result.pass, result.fields);
+      }
+      if (options.content) {
+        const result = await netplaySession(browser, false, options.content);
+        report('netplay_round', result.pass, result.fields);
+      }
+      return;
+    }
     if (options.only === 'page') {
       browser = await launch(chromium, path.join(scratch, 'profile'));
       report('page', ...await pageCheck(browser, bareUrl));
@@ -1070,6 +1098,11 @@ async function main() {
     for (const realtime of [false, true]) {
       const result = await netplaySession(browser, realtime);
       report(realtime ? 'netplay_realtime' : 'netplay', result.pass, result.fields);
+    }
+    // With the game's content, the real game: the front end and round 1.
+    if (options.content) {
+      const result = await netplaySession(browser, false, options.content);
+      report('netplay_round', result.pass, result.fields);
     }
 
     // Server mode: two pages through the relay.

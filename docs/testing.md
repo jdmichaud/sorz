@@ -184,6 +184,22 @@ own default, which is the cartridge's too (its options without the port's VOLUME
 - `sorz-agent --page` runs the game as a browser's page does alone (the network variant, one
   player, the page's own volume), `--original` the original.
 
+## Network play
+
+The session's protocol and its lockstep have their unit tests (src/shared/net, the agent's
+netplay_test.zig, a stand-in state); on the real game, from the user's ROM:
+
+- `zig build netplay-check -Drom=ROM` (tools/check_netplay.sh), the gate of PLAN item 18: two
+  agent hosts, two processes over WebSockets (`--netplay`, `--join`), from power-on through the
+  network variant's front end into round 1, end in the same state; the two games in one process
+  (`--pair`) equal one game with their merged pads; a bit of the guest's state flipped in the round
+  (`--corrupt`) is found at the next state check and its field named on both sides.
+- `browser-check` with `-Drom=ROM` adds the part `netplay_round`: the agent host serves the whole
+  content tree and its page, a Chromium page joins as player 2, and the two play from power-on
+  into round 1, the same state at the last tick. Its parts `netplay` and `relay` (a native host's
+  page, two pages through the relay) run on the small tree.
+- Not checked here: two machines with `netem`'s latency and loss, and the user's play (PLAN A1).
+
 ## Comparing behaviours with statistics
 
 When the outcome is random (a computer player, a shuffled deck, a random start), compare rates,
