@@ -1,6 +1,6 @@
-//! Round 2's scenery (docs/content.md, `entities/NAME.json`): each a definition read from its
+//! The rounds' scenery (docs/content.md, `entities/NAME.json`): each a definition read from its
 //! animation set and from the immediate values of the code that runs it, with the place of each
-//! in its provenance.
+//! in its provenance. Round 2's:
 //!
 //! - The oil drum (type $19, its handler 0x6C84, sor-remaster's obj/knockable.zig): it stands
 //!   solid until a player's blow or a thing thrown knocks it away; it leaves the item it holds
@@ -10,6 +10,12 @@
 //! - The flight (type $4D, 0x6E9E, obj/flight.zig): unseen, it waits for the camera to pass each
 //!   of its marks, then sends its waves of fliers (type $12, 0x6E2A) across the screen; while a
 //!   flight passes, the posters' corners (type $13, 0x6DDC) that stir with it flap.
+//!
+//! Round 5's:
+//!
+//! - The obstacle (type $1F, its handler 0x7CBC, sor-remaster's obj/obstacle.zig): it stands
+//!   solid until a player's blow or a thing thrown knocks it away; it leaves the item it holds
+//!   (0x7E54), flies off to the side the one that struck it faces, bouncing (0x7104), and goes.
 const std = @import("std");
 const sorz = @import("sorz");
 const entity = sorz.content.entity;
@@ -37,9 +43,14 @@ fn moveWord(rom: []const u8, at: u32, displacement: u16) Error!i32 {
     return immediate(rom, at, &.{ 0x31, 0x7C }, 2);
 }
 
-/// A definition of the round's art set at `set` (`round2/PREFIX_NN`).
+/// A definition of round 2's art set at `set` (`round2/PREFIX_NN`).
 fn def(arena: std.mem.Allocator, rom: []const u8, prefix: []const u8, set: u32) Error!Def {
-    return .{ .arena = arena, .rom = rom, .dir = "round2", .prefix = prefix, .set = set, .box_table = entities.object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
+    return defIn(arena, rom, "round2", prefix, set);
+}
+
+/// A definition of the art set at `set` (`DIR/PREFIX_NN`).
+fn defIn(arena: std.mem.Allocator, rom: []const u8, dir: []const u8, prefix: []const u8, set: u32) Error!Def {
+    return .{ .arena = arena, .rom = rom, .dir = dir, .prefix = prefix, .set = set, .box_table = entities.object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
 }
 
 /// The oil drum (type $19): its stand (entry 0, its body), its flight (entry 2, animation 4,
@@ -81,6 +92,50 @@ fn knockable(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition 
         .family = .scenery,
         .team = .neutral,
         .behaviour = "knockable",
+        .numbers = d.numbers.items,
+        .sounds = d.sounds.items,
+        .boxes = d.boxes.items,
+        .animations = d.animations.items,
+    };
+}
+
+/// Round 5's obstacle (type $1F): its stand (entry 0, its body), its flight (entry 1, the
+/// animation 2 whichever way it flies; flying, it meets nothing), its solid box, its flight's
+/// numbers.
+fn obstacle(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set: u32 = @bitCast(try immediate(rom, 0x7CDA, &.{ 0x43, 0xF9 }, 4));
+    var d = try defIn(arena, rom, "round5", "obstacle", set);
+    try d.animations.append(arena, .{ .name = "stand", .loop = true, .frames = try entryFrames(&d, "stand", 0, null, false) });
+    // 0x7D12: moveq #2,d0 for SetAnim, to either side.
+    if (try moveq(rom, 0x7D12, 0) != 2) return error.BadData;
+    try d.animations.append(arena, .{ .name = "fly", .loop = true, .frames = try entryFrames(&d, "fly", 1, null, true) });
+    // The solid box: type $1F's entry of 0x3C6A (0x3BEA: moveq #N,d4, then cmpi.b #$1F,(0,a1)).
+    if (u16be(rom, 0x3BEC) != 0x0C29 or rom[0x3BEF] != 0x1F) return error.BadData;
+    try items.solidBoxAt(&d, @intCast(try moveq(rom, 0x3BEA, 4)));
+
+    try d.number("height", try moveWord(rom, 0x7CD4, 24), "ROM 0x07CD4: move.w #N,(24,a0)");
+    // The speeds across by side (0x7D0C: move.w (0x7D46,pc,d6.w),(28,a0)): to the left, then the
+    // right, the same speed.
+    const speed = s16be(rom, 0x7D48);
+    if (s16be(rom, 0x7D46) != -speed or u16be(rom, 0x7D0C) != 0x317B or u16be(rom, 0x7D10) != 28) return error.BadData;
+    try d.number("speed", @as(i32, speed) << 16, "ROM 0x07D46: the second word, whole pixels (the first, to the left, its opposite)");
+    try d.number("up", (try moveWord(rom, 0x7D1C, 36)) << 16, "ROM 0x07D1C: move.w #N,(36,a0), whole pixels");
+    if (u16be(rom, 0x710A) != 36) return error.BadData;
+    try d.number("falling", try immediate(rom, 0x7104, &.{ 0x06, 0xA8 }, 4), "ROM 0x07104: addi.l #N,(36,a0)");
+    if (u16be(rom, 0x7128) != 80) return error.BadData;
+    try d.number("bounces", try immediate(rom, 0x7124, &.{ 0x0C, 0x28, 0x00 }, 1), "ROM 0x07124: cmpi.b #N,(80,a0) (its meetings with the ground, 0xAD2A)");
+    try d.number("left_behind", try immediate(rom, 0x6A7C, &.{ 0x04, 0x40 }, 2), "ROM 0x06A7C: subi.w #N,d0 (from the camera's place across, 0x6A70)");
+    const drawn = try items.drawnOffset(rom);
+    try d.number("screen_from", try immediate(rom, 0xAABA, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x0AABA: cmpi.w #N,(40,a0), less 0xAF6E's offset (a blow lands on the screen)");
+    try d.number("screen_to", try immediate(rom, 0xAAC2, &.{ 0x0C, 0x68 }, 2) - drawn, "ROM 0x0AAC2: cmpi.w #N,(40,a0), less 0xAF6E's offset (excluded)");
+    try d.sound("knocked", @bitCast(@as(i8, @intCast(try moveq(rom, 0x7D34, 7)))));
+    try d.sound("bounce", @bitCast(@as(i8, @intCast(try moveq(rom, 0x713A, 7)))));
+    return .{
+        .name = "obstacle_1f",
+        .provenance = try std.fmt.allocPrint(arena, "round 5's obstacles, type $1F (handler 0x7CBC): the animation set at ROM 0x{X:0>5}{s}", .{ set, d.number_notes.items }),
+        .family = .scenery,
+        .team = .neutral,
+        .behaviour = "obstacle",
         .numbers = d.numbers.items,
         .sounds = d.sounds.items,
         .boxes = d.boxes.items,
@@ -206,6 +261,7 @@ fn flight(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
 /// The definitions this module writes, appended to `out`.
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
     try out.append(arena, try knockable(arena, rom));
+    try out.append(arena, try obstacle(arena, rom));
     try out.append(arena, try drip(arena, rom));
     try out.append(arena, try corner(arena, rom));
     try out.append(arena, try flier(arena, rom));

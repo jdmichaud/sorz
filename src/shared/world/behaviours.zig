@@ -54,7 +54,8 @@
 //! `flight`s across the screen, their `flier`s and the posters' corners they stir
 //! (`flight_scenery`), the `pepper` a drum holds, and round 2's `juggler` with its knives
 //! (`juggler_knife`), round 2's boss `boss_r2` with his claws (`boss_r2_claws`) and his trail
-//! (`boss_r2_trail`); round 3's: the `lamp`s, the `crate`s, the `drifter`s, the `rain`.
+//! (`boss_r2_trail`); round 3's: the `lamp`s, the `crate`s, the `drifter`s, the `rain`; round
+//! 5's: the things on the deck a blow knocks away (`obstacle`).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -100,6 +101,7 @@ pub const lamp = @import("behaviours/lamp.zig");
 pub const crate = @import("behaviours/crate.zig");
 pub const drifter = @import("behaviours/drifter.zig");
 pub const rain = @import("behaviours/rain.zig");
+pub const obstacle = @import("behaviours/obstacle.zig");
 
 /// An entity's behaviour and its memory: one line a behaviour module.
 pub const Mind = union(enum) {
@@ -145,6 +147,7 @@ pub const Mind = union(enum) {
     crate: crate.Mind,
     drifter: drifter.Mind,
     rain: rain.Mind,
+    obstacle: obstacle.Mind,
 };
 
 pub const Behaviour = std.meta.Tag(Mind);

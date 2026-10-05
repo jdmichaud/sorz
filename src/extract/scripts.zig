@@ -103,6 +103,7 @@ fn kindName(t: u8) ?[]const u8 {
         0x17 => "rain",
         0x18 => "crate",
         0x19 => "knockable",
+        0x1F => "obstacle_1f",
         0x20 => "galsia_knife",
         0x21 => "galsia_stalker",
         0x22 => "galsia",
@@ -424,9 +425,9 @@ fn entry(rom: []const u8, type_byte: u8, bytes: [3]u8, y: u8) Error!round.Spawn 
         .two_players = type_byte & 0x80 != 0,
     };
     switch (t) {
-        0x11, 0x18, 0x19 => {
-            // A breakable, a crate, an oil drum: the item it holds (its byte $41, which 0x7E54
-            // reads), an index from 1 (0 for none).
+        0x11, 0x18, 0x19, 0x1F => {
+            // A breakable, a crate, an oil drum, round 5's obstacle: the item it holds (its byte
+            // $41, which 0x7E54 reads), an index from 1 (0 for none).
             if (bytes[1] != 0) {
                 if (bytes[1] > 11) return error.BadData;
                 s.holds = kindName(rom[breakable_items + @as(u32, bytes[1])]) orelse return error.BadData;
