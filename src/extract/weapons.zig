@@ -32,11 +32,12 @@ fn poseName(anim: u8) Error![]const u8 {
 /// each shown for the animation's timing byte (a static pose's, 0, as one tick that stays).
 fn weaponFrames(d: *Def, name: []const u8, entry: u32) Error![]entity.Frame {
     const right = try readAnimation(d.arena, d.rom, d.set, entry);
-    // Blinking out it shows one way only (its entry has no mirror image after it).
-    if (std.mem.eql(u8, name, "blinking")) {
+    // Blinking out it shows one way only (its entry has no mirror image after it), and is
+    // neither taken nor strikes: its frames' boxes (the bat's lying one has some) are left out.
+    if (std.mem.endsWith(u8, name, "blinking")) {
         const out = try d.arena.alloc(entity.Frame, right.frames.len);
         for (out, right.frames) |*f, r| {
-            if (r.mirrored or r.body != 0 or r.attack != 0) return error.BadData;
+            if (r.mirrored) return error.BadData;
             f.* = .{ .frame = try d.frameName(r.address), .ticks = @max(right.timing, 1) };
         }
         return out;
@@ -104,7 +105,73 @@ fn weapon(arena: std.mem.Allocator, rom: []const u8, w: Weapon) Error!entity.Def
         .behaviour = w.behaviour,
         .gravity = try immediate(rom, 0x5CE8, &.{ 0x06, 0xA8 }, 4),
         .numbers = d.numbers.items,
+        .tables = d.tables.items,
+        .sounds = d.sounds.items,
         .boxes = d.boxes.items,
+        .animations = d.animations.items,
+    };
+}
+
+/// The bat's splintering (0x614E): held, at its first blow struck, its poses become the
+/// splintered bat's (the set at 0x6FCAE, `broken_` and the pose), with a sound and three splinters
+/// at its place (0x7EEA's pool), flying up and back from the side it faces (0x61B2: their speeds
+/// up, 0x61B8: across, words; the other way unless it faces left, 0x619C).
+fn batSplinters(d: *Def) Error!void {
+    const rom = d.rom;
+    const broken: u32 = @bitCast(try immediate(rom, 0x6160, &.{ 0x21, 0x7C }, 4));
+    const own_set = d.set;
+    const own_prefix = d.prefix;
+    const own_frames = d.frame_addresses;
+    d.set = broken;
+    d.prefix = "bat_broken";
+    d.frame_addresses = try sprites.frameAddresses(d.arena, rom, broken);
+    for (poses, 0..) |pose, k| {
+        const entry: u32 = 2 * @as(u32, @intCast(k));
+        if (rom_mod.s16be(rom, broken + 2 * entry) == 0) continue;
+        const name = try std.fmt.allocPrint(d.arena, "broken_{s}", .{pose});
+        try d.animations.append(d.arena, .{ .name = name, .loop = true, .frames = try weaponFrames(d, name, entry) });
+    }
+    d.set = own_set;
+    d.prefix = own_prefix;
+    d.frame_addresses = own_frames;
+    try d.number_notes.print(d.arena, "; broken_*: the splintered bat's set at ROM 0x{X:0>5} (0x6160: move.l #N,(4,a0))", .{broken});
+    try d.sound("splinter", @bitCast(@as(i8, @intCast(try moveq(rom, 0x6168, 7)))));
+    try d.number("splinters", try moveq(rom, 0x616E, 6) + 1, "ROM 0x0616E: moveq #N,d6 (dbf: N + 1 splinters)");
+    var up: [3]i32 = undefined;
+    var across: [3]i32 = undefined;
+    for (0..3) |k| {
+        up[k] = rom_mod.s16be(rom, 0x61B2 + 2 * @as(u32, @intCast(k)));
+        across[k] = rom_mod.s16be(rom, 0x61B8 + 2 * @as(u32, @intCast(k)));
+    }
+    try d.table("splinter_up", &up, "ROM 0x061B2 (words, whole pixels a tick)");
+    try d.table("splinter_across", &across, "ROM 0x061B8 (words, whole pixels a tick; facing right, the other way)");
+}
+
+/// The bat's splinter (type $1E, 0x61BE): no shadow, the animation at entry 2 of the set at
+/// 0x6FD42 (0x61D4, animation 4); it falls (0x61E0: its gravity) and goes out of the screen as
+/// the drawing deletes an object (0xAF46: past 0x500 across or below 0x200 down, its drawn place
+/// less the drawing's offsets, 0xAF6E and 0xAF72; above 0x10).
+fn splinter(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const set: u32 = @bitCast(try immediate(rom, 0x61D4, &.{ 0x22, 0x7C }, 4));
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "weapons", .prefix = "splinters", .set = set, .box_table = entities.object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
+    const raw = try readAnimation(arena, rom, set, 2);
+    const frames = try arena.alloc(entity.Frame, raw.frames.len);
+    for (frames, raw.frames) |*f, r| f.* = .{ .frame = try d.frameName(r.address), .ticks = @max(raw.timing, 1), .flip = r.mirrored };
+    try d.animations.append(arena, .{ .name = "falling", .loop = true, .frames = frames });
+    const dx = try immediate(rom, 0xAF6E, &.{ 0x06, 0x42 }, 2);
+    const dy = try immediate(rom, 0xAF72, &.{ 0x06, 0x43 }, 2);
+    try d.number("gone_right", try immediate(rom, 0xAFA4, &.{ 0x0C, 0x42 }, 2) - dx, "ROM 0x0AFA4: cmpi.w #N,d2, less 0xAF6E's offset");
+    try d.number("gone_below", try immediate(rom, 0xAFB2, &.{ 0x0C, 0x43 }, 2) - dy, "ROM 0x0AFB2: cmpi.w #N,d3, less 0xAF72's offset");
+    try d.number("gone_above", try immediate(rom, 0xAFBA, &.{ 0x0C, 0x43 }, 2) - dy, "ROM 0x0AFBA: cmpi.w #N,d3, less 0xAF72's offset");
+    try d.number("gone_left", try immediate(rom, 0xAFA0, &.{ 0x30, 0x3C }, 2) - dx, "ROM 0x0AFA0: move.w #N,d0, less 0xAF6E's offset");
+    return .{
+        .name = "bat_splinter",
+        .provenance = try std.fmt.allocPrint(arena, "the bat's splinter, type $1E (handler 0x61BE): the animation set at ROM 0x{X:0>5} (entry 2); gravity ROM 0x061E0: addi.l #N,(36,a0){s}", .{ set, d.number_notes.items }),
+        .family = .effect,
+        .team = .neutral,
+        .behaviour = "bat_splinter",
+        .gravity = try immediate(rom, 0x61E0, &.{ 0x06, 0xA8 }, 4),
+        .numbers = d.numbers.items,
         .animations = d.animations.items,
     };
 }
@@ -133,6 +200,8 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity
     try out.append(arena, try weapon(arena, rom, .{ .name = "knife", .behaviour = "knife", .set = 0x6FA06, .prefix = "knife", .power_at = 0x5C54, .what = "the knife, type $08 (handler 0x5C1E)", .kind = 8, .own = knifeFlight }));
     try out.append(arena, try weapon(arena, rom, .{ .name = "pipe", .behaviour = "weapon", .set = 0x6FA9A, .prefix = "pipe", .power_at = 0x6214, .what = "the pipe, type $0A (handler 0x61F6)", .kind = 0x0A }));
     try out.append(arena, try weapon(arena, rom, .{ .name = "pipe_b", .behaviour = "weapon", .set = 0x6FB5A, .prefix = "pipe_2", .power_at = 0x6244, .what = "the second pipe, type $0B (handler 0x6226)", .kind = 0x0B }));
+    try out.append(arena, try weapon(arena, rom, .{ .name = "bat", .behaviour = "bat", .set = 0x6FC1A, .prefix = "bat", .power_at = 0x613C, .what = "the baseball bat, type $09 (handler 0x6114)", .kind = 0x09, .own = batSplinters }));
+    try out.append(arena, try splinter(arena, rom));
 }
 
 // --- The hands --------------------------------------------------------------------------------------

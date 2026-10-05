@@ -46,8 +46,9 @@
 //! `special_blast` or player 2's `special_fire`; `go_arrow` the arrow a section's opening shows,
 //! `player_waiting` a player out of lives (PLAN item 13); round 1's other enemies, `stalker`,
 //! `signal`, `galsia_pipe`, `galsia_knife`, `acrobat`, `brawler`, their weapons (`weapon`,
-//! `knife`), the rolling `shutter`, `breakable` and `item` the street's breakables and what they
-//! leave, round 1's boss `antonio` and his `boomerang` (PLAN item 12).
+//! `knife`, and the `bat` a breakable holds, with its `bat_splinter`s), the rolling `shutter`,
+//! `breakable` and `item` the street's breakables and what they leave, round 1's boss `antonio`
+//! and his `boomerang` (PLAN item 12).
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -65,6 +66,8 @@ pub const brawler = @import("behaviours/brawler.zig");
 pub const shutter = @import("behaviours/shutter.zig");
 pub const weapon = @import("behaviours/weapon.zig");
 pub const knife = @import("behaviours/knife.zig");
+pub const bat = @import("behaviours/bat.zig");
+pub const bat_splinter = @import("behaviours/bat_splinter.zig");
 pub const breakable = @import("behaviours/breakable.zig");
 pub const item = @import("behaviours/item.zig");
 pub const antonio = @import("behaviours/antonio.zig");
@@ -92,6 +95,8 @@ pub const Mind = union(enum) {
     shutter: shutter.Mind,
     weapon: weapon.Mind,
     knife: knife.Mind,
+    bat: bat.Mind,
+    bat_splinter: bat_splinter.Mind,
     breakable: breakable.Mind,
     item: item.Mind,
     antonio: antonio.Mind,

@@ -13,6 +13,7 @@
 //! it was last seen; its blow is its own: at each tick of a frame whose hand strikes it joins the
 //! things whose blows land (a thing thrown, its power its damage), and leaves them a tick at a
 //! time after.
+const std = @import("std");
 const tick = @import("../tick.zig");
 const fixed = @import("../fixed.zig");
 const entity = @import("../entity.zig");
@@ -248,11 +249,20 @@ pub fn Of(comptime M: type) type {
             if (s == .blinking_out) pose(a, "blinking");
         }
 
-        /// It shows its animation `name` (a pose), unless it shows it already.
+        /// It shows its animation `name` (a pose; with the prefix its module gives, if any: the
+        /// splintered bat's), unless it shows it already.
         pub fn pose(a: A, name: []const u8) void {
-            const index = a.kind.definition.animation(name) orelse return;
+            var buf: [48]u8 = undefined;
+            const index = a.kind.definition.animation(prefixed(a, &buf, name)) orelse return;
             if (a.entity.animation.index == index) return;
             a.tick.startAnimation(a.handle, a.entity, index);
+        }
+
+        /// The pose `name` with its module's prefix, if it gives one.
+        fn prefixed(a: A, buf: []u8, name: []const u8) []const u8 {
+            if (!@hasDecl(M, "prefixed")) return name;
+            const p = M.prefixed(a) orelse return name;
+            return std.fmt.bufPrint(buf, "{s}{s}", .{ p, name }) catch name;
         }
     };
 }
