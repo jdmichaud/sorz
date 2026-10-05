@@ -735,6 +735,9 @@ pub fn Of(comptime M: type) type {
             if (!blow.missile) {
                 const sx = a.entity.position.x.whole() - a.tick.world.camera.x.whole();
                 if (sx < n.struck_from or sx >= n.struck_to) return false;
+                // Its set-up at this tick left its state for another (a punch off the screen
+                // walks off): its tick ended there, before the original's test of the blows.
+                if (b.left and b.fresh) return false;
             }
             if (a.mind.state == .reel) return struckReeling(a, blow);
             if (!hurtable(a)) return false;
