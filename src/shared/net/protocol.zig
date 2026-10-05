@@ -33,9 +33,9 @@ pub const magic = "SZNP";
 
 /// The longest run of pads in one message.
 pub const max_pads = 64;
-/// The longest canonical state a session compares (seven chunks: the session notes the chunks
-/// come in a byte's bits), and the chunk of it a `state` message carries.
-pub const max_state_len = 112 * 1024;
+/// The longest canonical state a session compares (at most seven chunks: the session notes the
+/// chunks come in a byte's bits), and the chunk of it a `state` message carries.
+pub const max_state_len = 64 * 1024;
 pub const chunk_size = 16 * 1024;
 /// The longest message of the protocol.
 pub const max_len = 13 + chunk_size;

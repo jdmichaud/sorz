@@ -346,7 +346,7 @@ test "two games in a session run the session's ticks in step, with both players'
     try std.testing.expect(h > 290);
     try std.testing.expect(h >= guest.game.state.tick -| 2 and h <= guest.game.state.tick + 2);
     try std.testing.expectEqual(@as(u32, 1), host.game.net_epoch);
-    const markers = host.game.state.scenes.top().test_pattern.markers;
+    const markers = host.game.state.scenes.base.test_pattern.markers;
     try std.testing.expect(markers[0].x > 96 + 200 and markers[1].x > 216);
     // At one tick, both games have one state.
     while (guest.game.state.tick < host.game.state.tick) _ = try guest.update();
@@ -387,14 +387,14 @@ test "a game whose state was corrupted stops at the next check, and both name th
         _ = try host.update();
         _ = try guest.update();
         if (!corrupted and guest.game.state.tick >= 47) {
-            guest.game.state.scenes.top().test_pattern.markers[1].y ^= 1;
+            guest.game.state.scenes.base.test_pattern.markers[1].y ^= 1;
             corrupted = true;
         }
     }
     for ([_]*GamePeer{ host, guest }) |g| {
         const np = g.game.netplay.?;
         try std.testing.expectEqual(net.session.Phase.desynced, np.phase());
-        try std.testing.expectEqualStrings("scenes.items[0].test_pattern.markers[1].y", np.difference.?.name());
+        try std.testing.expectEqualStrings("scenes.base.test_pattern.markers[1].y", np.difference.?.name());
         try std.testing.expect(g.game.state.tick <= 70);
     }
 }

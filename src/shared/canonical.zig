@@ -131,7 +131,7 @@ pub fn diffFn(comptime T: type) DiffFn {
 }
 
 /// The first field of `T` whose bytes differ between `ours` and `theirs`, two canonical forms of
-/// `T`, by its path (`scenes.items[0].test_pattern.markers[1].x`); null when they are the same.
+/// `T`, by its path (`scenes.base.test_pattern.markers[1].x`); null when they are the same.
 /// Forms of different lengths differ at the shorter one's end, named `(the length)`; bytes that no
 /// field names (a union's padding, a tag of no field: a form that is not `T`'s) by their place,
 /// `(byte N)`.

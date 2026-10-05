@@ -89,11 +89,20 @@ pub const Run = struct {
         return true;
     }
 
-    /// The round scene, when it is the game's scene.
+    /// The round scene, when it is the game's scene (no overlay over it).
     fn round(self: *Run) ?*scene.Round {
-        return switch (self.state.scenes.top().*) {
+        const s = self.topScene() orelse return null;
+        return switch (s.*) {
             .round => |*r| r,
             else => null,
+        };
+    }
+
+    /// The scene on top, when it is the flow's (no overlay over it).
+    fn topScene(self: *Run) ?*scene.Scene {
+        return switch (self.state.scenes.top()) {
+            .scene => |s| s,
+            .overlay => null,
         };
     }
 
@@ -138,21 +147,22 @@ pub const Run = struct {
     fn startStep(self: *Run) ?input.Pads {
         const players = self.script.start.players;
         defer self.in_stage += 1;
-        const top = self.state.scenes.top();
+        const top = self.state.scenes.topKind();
         switch (self.stage) {
             .to_menu => {
-                if (top.* == .menu) {
+                if (top == .menu) {
                     self.enter(.menu);
                     return .{};
                 }
                 return self.tapping(0, .start);
             },
             .menu => {
-                if (top.* == .select) {
+                if (top == .select) {
                     self.enter(.select_wait);
                     return .{};
                 }
-                const m = switch (top.*) {
+                const s = self.topScene() orelse return .{};
+                const m = switch (s.*) {
                     .menu => |*m| m,
                     else => return .{},
                 };
@@ -167,8 +177,9 @@ pub const Run = struct {
                 return .{};
             },
             .select => {
-                const sel = switch (top.*) {
-                    .select => |*s| s,
+                const s = self.topScene() orelse return self.fail("the character select ended before the choice");
+                const sel = switch (s.*) {
+                    .select => |*x| x,
                     else => return self.fail("the character select ended before the choice"),
                 };
                 const k: usize = self.chooser;
@@ -217,7 +228,7 @@ pub const Run = struct {
     /// The trace of the display tick just run.
     fn observe(self: *Run, turn: *const scene.Turn) !void {
         const v: u64 = self.state.tick;
-        const top = self.state.scenes.top();
+        const top = self.state.scenes.topKind();
         const serial = self.state.scenes.topSerial();
         if (self.round()) |r| {
             const name: []const u8 = @tagName(r.trace_scene);
@@ -249,7 +260,7 @@ pub const Run = struct {
             return;
         }
         const tw = self.trace orelse return;
-        const name = traceName(top.*);
+        const name = traceName(top);
         // A load goes on with the scene before it, its ticks not counted.
         if (name.len == 0) return self.holdSounds(turn);
         if (serial != self.seen_serial and !std.mem.eql(u8, name, self.seen_scene)) {
@@ -311,7 +322,7 @@ pub const Run = struct {
 
     fn holds(self: *Run, c: scenario.Condition) bool {
         const r = self.round() orelse return switch (c) {
-            .scene => |name| std.mem.eql(u8, name, traceName(self.state.scenes.top().*)),
+            .scene => |name| std.mem.eql(u8, name, traceName(self.state.scenes.topKind())),
             else => false,
         };
         const w = &r.play.world;
@@ -365,9 +376,9 @@ fn phaseName(r: *const scene.Round) []const u8 {
 }
 
 /// A scene as sor-remaster's traces name it (a load keeps the scene before it).
-fn traceName(s: scene.Scene) []const u8 {
-    return switch (s) {
+fn traceName(k: scene.Kind) []const u8 {
+    return switch (k) {
         .load, .test_pattern => "",
-        else => @tagName(std.meta.activeTag(s)),
+        else => @tagName(k),
     };
 }

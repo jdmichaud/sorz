@@ -503,14 +503,12 @@ pub const Game = struct {
     fn present(self: *Game, p: *platform.Platform) !void {
         if (self.redraw) {
             self.redraw = false;
-            const top = self.state.scenes.top();
-            switch (top.*) {
-                .test_pattern => |*t| t.draw(self.state.tick, &self.pic, &self.pattern_drawn),
-                else => {
-                    const v = &self.view.?;
-                    try scene.draw(&self.state.scenes, &self.drawn, v, &self.scene_assets.?);
-                    _ = try v.compose();
-                },
+            if (self.state.scenes.topKind() == .test_pattern) {
+                self.state.scenes.base.test_pattern.draw(self.state.tick, &self.pic, &self.pattern_drawn);
+            } else {
+                const v = &self.view.?;
+                try scene.draw(&self.state.scenes, &self.drawn, v, &self.scene_assets.?);
+                _ = try v.compose();
             }
         }
         try p.present(self.frame());
