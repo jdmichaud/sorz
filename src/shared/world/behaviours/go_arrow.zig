@@ -74,8 +74,8 @@ pub fn think(a: Actor) void {
         .waiting => {
             a.mind.ticks -|= 1;
             if (a.mind.ticks != 0) return;
-            a.mind.blinks = n.blinks;
-            show(a);
+            // Its row of blinks starts again at its next tick.
+            a.mind.state = .ready;
         },
     }
 }
