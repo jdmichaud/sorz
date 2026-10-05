@@ -37,6 +37,7 @@ const palettes = @import("palettes.zig");
 const rounds = @import("rounds.zig");
 const stream = @import("stream.zig");
 const scenery = @import("scenery.zig");
+const entities = @import("entities.zig");
 
 const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
@@ -128,6 +129,10 @@ fn kindName(t: u8) ?[]const u8 {
         0x4D => "flight",
         0x4E => "lamp",
         0x4F => "special_item",
+        0x50 => "lift_wall",
+        0x51 => "lift_rails",
+        0x52 => "lift_floor",
+        0x53 => "lift_opener",
         0x55 => "boss_r2",
         0x56 => "antonio",
         0x57 => "boss_r4",
@@ -582,8 +587,9 @@ fn entry(rom: []const u8, type_byte: u8, bytes: [3]u8, y: u8) Error!round.Spawn 
             s.place = bytes[0];
             return s;
         },
-        // A drip, the rain, a flight, a lamp: their code reads none of the bytes.
-        0x14, 0x17, 0x4D, 0x4E => {
+        // A drip, the rain, a flight, a lamp, the lift's pieces: their code reads none of the
+        // bytes.
+        0x14, 0x17, 0x4D, 0x4E, 0x50...0x53 => {
             if (!std.mem.allEqual(u8, &bytes, 0)) return error.BadData;
             return s;
         },
@@ -737,6 +743,15 @@ fn artFrom(rom: []const u8, r: u32) Error!u8 {
 /// place across of its `move.b` and `move.w`, its depth 0): round 3's two lamps.
 fn ownPlaced(arena: std.mem.Allocator, rom: []const u8, r: u32, out: *std.ArrayList(round.Spawn)) Error!void {
     if (u16be(rom, 0xEF0) != 0x0C78 or u16be(rom, 0xEF4) != 0xFF02 or u16be(rom, 0xEF6) & 0xFF00 != 0x6600) return error.BadData;
+    // Round 7's lift (0xF18, for the round of its `cmpi.w`): moveq #N,d7 pieces and one more,
+    // types from moveq #N,d0 down, each in the next of the enemies' places from the first
+    // (`lea ($B900).w,a1`, then 128 bytes on); their own code sets their places.
+    if (u16be(rom, 0xF18) != 0x0C78 or u16be(rom, 0xF1C) != 0xFF02 or u16be(rom, 0xF24) != 0x43F8 or u16be(rom, 0xF26) != 0xB900 or u16be(rom, 0xF2C) != 0x5300) return error.BadData;
+    if (u16be(rom, 0xF1A) == r) {
+        const count = try moveqAt(rom, 0xF20, 7) + 1;
+        const first = try moveqAt(rom, 0xF22, 0);
+        for (0..count) |k| try out.append(arena, try entry(rom, @intCast(first - k), .{ 0, 0, 0 }, 0));
+    }
     if (u16be(rom, 0xEF2) != r) return;
     for ([_]u32{ 0xEF8, 0xF08 }) |at| {
         if (u16be(rom, at) != 0x4EBA or u16be(rom, at + 4) != 0x137C or u16be(rom, at + 8) != 0 or u16be(rom, at + 10) != 0x337C or u16be(rom, at + 14) != 16) return error.BadData;
@@ -744,6 +759,13 @@ fn ownPlaced(arena: std.mem.Allocator, rom: []const u8, r: u32, out: *std.ArrayL
         s.x = u16be(rom, at + 12);
         try out.append(arena, s);
     }
+}
+
+/// `moveq #N,dR` at `at`: N, not below 0.
+fn moveqAt(rom: []const u8, at: u32, register: u3) Error!u8 {
+    const v = try entities.moveq(rom, at, register);
+    if (v < 0) return error.BadData;
+    return @intCast(v);
 }
 
 /// The timed wave (0x784): an entry after each delay, up to the delay $0099.

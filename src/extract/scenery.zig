@@ -22,6 +22,13 @@
 //! - The press (type $42, its handler 0x7A6C, sor-remaster's obj/press.zig): it hangs until a
 //!   player comes near, shakes, drops striking what is under it, bounces on the floor, and rises
 //!   back; its links (type $43, 0x7C70) are left behind as it drops, and go as it rises.
+//!
+//! Round 7's:
+//!
+//! - The lift's pieces (types $50 to $53, sor-remaster's obj/lift.zig), which the round's load
+//!   places (0xF18): its far wall ($50, 0x7D4A), its rails ($51, 0x7D7A), which run down while the
+//!   lift rides, its floor ($52, 0x7DF0), and the hidden piece that opens the first section ($53,
+//!   0x7E20).
 const std = @import("std");
 const sorz = @import("sorz");
 const entity = sorz.content.entity;
@@ -150,6 +157,105 @@ fn obstacle(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
         .family = .scenery,
         .team = .neutral,
         .behaviour = "obstacle",
+        .numbers = d.numbers.items,
+        .sounds = d.sounds.items,
+        .boxes = d.boxes.items,
+        .animations = d.animations.items,
+    };
+}
+
+/// A piece of round 7's lift: its first state at `start` sets its flags (`ori.b #N,(1,a0)`: bit
+/// 4 in front, bit 0 hidden; bit 3, drawn off the screen too, is all sorz does), its place
+/// (`move.w #N` into $10, $14, $18: across, depth, height; none for the opener) and its animation
+/// set (`lea`, then 0x6ABC); its frame entry 0's, held.
+const LiftPiece = struct {
+    name: []const u8,
+    prefix: []const u8,
+    behaviour: []const u8,
+    handler: u32,
+    start: u32,
+    placed: bool,
+};
+
+fn liftPiece(arena: std.mem.Allocator, rom: []const u8, p: LiftPiece, set_at: u32, flags_at: u32) Error!Def {
+    const set: u32 = @bitCast(try immediate(rom, set_at, &.{ 0x43, 0xF9 }, 4));
+    var d = try defIn(arena, rom, "round7", p.prefix, set);
+    try d.animations.append(arena, .{ .name = "lift", .loop = true, .frames = try entryFrames(&d, "lift", 0, null, false) });
+    if (u16be(rom, flags_at) != 0x0028 or u16be(rom, flags_at + 4) != 1) return error.BadData;
+    const flags = u16be(rom, flags_at + 2);
+    if (flags & ~@as(u16, 0x19) != 0) return error.BadData;
+    if (p.placed) {
+        try d.number("x", try moveWord(rom, p.start + 6, 16), "move.w #N,(16,a0) in its first state");
+        try d.number("depth", try moveWord(rom, p.start + 12, 20), "move.w #N,(20,a0) in its first state");
+        try d.number("height", try moveWord(rom, p.start + 18, 24), "move.w #N,(24,a0) in its first state");
+    }
+    return d;
+}
+
+/// The lift's far wall (type $50): in front of the planes' cells in front, at its place.
+fn liftWall(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const p: LiftPiece = .{ .name = "lift_wall", .prefix = "lift_wall", .behaviour = "lift", .handler = 0x7D4A, .start = 0x7D56, .placed = true };
+    var d = try liftPiece(arena, rom, p, 0x7D6E, 0x7D56);
+    if (u16be(rom, 0x7D58) != 0x18) return error.BadData;
+    try d.number("in_front", 1, "ROM 0x07D58: ori.b #$18,(1,a0), bit 4");
+    try d.number("hidden", 0, "ROM 0x07D58: bit 0 clear");
+    return liftDefinition(arena, p, &d);
+}
+
+/// The lift's floor (type $52): at its place.
+fn liftFloor(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const p: LiftPiece = .{ .name = "lift_floor", .prefix = "lift_floor", .behaviour = "lift", .handler = 0x7DF0, .start = 0x7DFC, .placed = true };
+    var d = try liftPiece(arena, rom, p, 0x7E14, 0x7DFC);
+    if (u16be(rom, 0x7DFE) != 0x08) return error.BadData;
+    try d.number("in_front", 0, "ROM 0x07DFE: ori.b #8,(1,a0), bit 4 clear");
+    try d.number("hidden", 0, "ROM 0x07DFE: bit 0 clear");
+    return liftDefinition(arena, p, &d);
+}
+
+/// The lift's opener (type $53): hidden; `move.b #N,(96,a0)` its ticks, then it opens the first
+/// section ($FA0D, as a section's art does: 0x7E48) and goes. Its animation set is the floor's.
+fn liftOpener(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const p: LiftPiece = .{ .name = "lift_opener", .prefix = "lift_floor", .behaviour = "lift", .handler = 0x7E20, .start = 0x7E2C, .placed = false };
+    var d = try liftPiece(arena, rom, p, 0x7E38, 0x7E32);
+    if (u16be(rom, 0x7E34) != 0x01 or u32be(rom, 0x7E48) != 0x11FC0001 or u16be(rom, 0x7E4C) != 0xFA0D or u16be(rom, 0x7E30) != 96) return error.BadData;
+    try d.number("x", 0, "none set");
+    try d.number("depth", 0, "none set");
+    try d.number("height", 0, "none set");
+    try d.number("in_front", 0, "ROM 0x07E34: ori.b #1,(1,a0), bit 4 clear");
+    try d.number("hidden", 1, "ROM 0x07E34: bit 0");
+    try d.number("opens_after", try immediate(rom, 0x7E2C, &.{ 0x11, 0x7C, 0x00 }, 1), "ROM 0x07E2C: move.b #N,(96,a0), counted down by 0x7E42");
+    return liftDefinition(arena, p, &d);
+}
+
+/// The lift's rails (type $51): at their place; while the lift rides ($FA15), down by `move.l
+/// #N,(36,a0)` a tick (0x7DB4, moved by 0x7DCA), from 0 again at `cmpi.w #N,(24,a0)` (0x7DCE);
+/// stopped, back at their height (0x7DE4); the lift's sounds as they begin and stop (moveq #N,d7
+/// at 0x7DBC and 0x7DEA, for 0x6ACA).
+fn liftRails(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    const p: LiftPiece = .{ .name = "lift_rails", .prefix = "lift_rails", .behaviour = "lift_rails", .handler = 0x7D7A, .start = 0x7D88, .placed = true };
+    var d = try liftPiece(arena, rom, p, 0x7DA0, 0x7D88);
+    if (u16be(rom, 0x7D8A) != 0x08) return error.BadData;
+    if (u16be(rom, 0x7DAC) != 0xFA15 or u16be(rom, 0x7DC6) != 0xFA15 or u16be(rom, 0x7DBA) != 36) return error.BadData;
+    try d.number("speed", try immediate(rom, 0x7DB4, &.{ 0x21, 0x7C }, 4), "ROM 0x07DB4: move.l #N,(36,a0)");
+    if (u16be(rom, 0x7DD2) != 24 or try moveWord(rom, 0x7DE4, 24) != try moveWord(rom, 0x7D9A, 24)) return error.BadData;
+    try d.number("wrap", try immediate(rom, 0x7DCE, &.{ 0x0C, 0x68 }, 2), "ROM 0x07DCE: cmpi.w #N,(24,a0)");
+    try d.sound("start", @bitCast(@as(i8, @intCast(try moveq(rom, 0x7DBC, 7)))));
+    try d.sound("stop", @bitCast(@as(i8, @intCast(try moveq(rom, 0x7DEA, 7)))));
+    return liftDefinition(arena, p, &d);
+}
+
+fn liftDefinition(arena: std.mem.Allocator, p: LiftPiece, d: *Def) Error!entity.Definition {
+    return .{
+        .name = p.name,
+        .provenance = try std.fmt.allocPrint(arena, "round 7's lift, type ${X:0>2} (handler 0x{X:0>5}, its first state at 0x{X:0>5}), placed by the round's load (0xF18): the animation set of round7/{s}{s}", .{ @as(u8, switch (p.handler) {
+            0x7D4A => 0x50,
+            0x7D7A => 0x51,
+            0x7DF0 => 0x52,
+            else => 0x53,
+        }), p.handler, p.start, p.prefix, d.number_notes.items }),
+        .family = .scenery,
+        .team = .neutral,
+        .behaviour = p.behaviour,
         .numbers = d.numbers.items,
         .sounds = d.sounds.items,
         .boxes = d.boxes.items,
@@ -403,4 +509,8 @@ pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity
     try out.append(arena, try flight(arena, rom));
     try out.append(arena, try press(arena, rom));
     try out.append(arena, try pressLink(arena, rom));
+    try out.append(arena, try liftWall(arena, rom));
+    try out.append(arena, try liftRails(arena, rom));
+    try out.append(arena, try liftFloor(arena, rom));
+    try out.append(arena, try liftOpener(arena, rom));
 }
