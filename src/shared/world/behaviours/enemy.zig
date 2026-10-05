@@ -251,6 +251,10 @@ pub const Common = struct {
     /// or farther, it is drawn in front of the planes; fallen this far, it is out of the fight.
     hole_deep: ?i16 = null,
     fall_out: ?i16 = null,
+    /// Walking, it looks this far ahead of its way for a floor (across, in depth): none there,
+    /// it walks off.
+    floor_ahead_x: ?i16 = null,
+    floor_ahead_depth: ?i16 = null,
     /// Lying: each frame's ticks, the least of the drawn wait, the frame it is up at.
     lying: u8,
     lying_least: u8,
@@ -606,10 +610,15 @@ pub fn Of(comptime M: type) type {
 
         /// It walks by its speed, across and in depth, each refused at the street's limits; a
         /// solid thing in its way stops it (`Tick.keptOut`), and it walks off (anew when it
-        /// walked off already). Returns false when it changed state.
+        /// walked off already). On a floor by cells (round 4's holes), no floor a step ahead of
+        /// its way, it walks off where it stands. Returns false when it changed state.
         pub fn walk(a: A) bool {
             const n = a.numbers();
             const e = a.entity;
+            if (holeAhead(a)) {
+                enter(a, .walk_off);
+                return false;
+            }
             const x = e.position.x.add(e.velocity.x);
             if (!x.lessThan(.zero) and x.lessThan(.pixels(n.walk_x_most))) e.position.x = x;
             const d = e.position.depth.add(e.velocity.depth);
@@ -617,6 +626,24 @@ pub fn Of(comptime M: type) type {
             if (!a.tick.keptOut(a.handle)) return true;
             enter(a, .walk_off);
             return false;
+        }
+
+        /// Whether, on a floor under it, it has none a step ahead of its way: `floor_ahead_x`
+        /// across and `floor_ahead_depth` in depth, each the way its speed goes (none: there).
+        fn holeAhead(a: A) bool {
+            const n = a.numbers();
+            const ax = n.floor_ahead_x orelse return false;
+            const ad = n.floor_ahead_depth orelse return false;
+            const e = a.entity;
+            if (a.tick.floorUnder(e.position) == null) return false;
+            const sx: i32 = std.math.sign(e.velocity.x.raw);
+            const sd: i32 = std.math.sign(e.velocity.depth.raw);
+            const ahead: fixed.Vec3 = .{
+                .x = .pixels(e.position.x.whole() + sx * ax),
+                .depth = .pixels(e.position.depth.whole() + sd * ad),
+                .height = e.position.height,
+            };
+            return a.tick.floorUnder(ahead) == null;
         }
 
         /// It walks by its speed in depth alone (a circle's, a line up's), refused at the
