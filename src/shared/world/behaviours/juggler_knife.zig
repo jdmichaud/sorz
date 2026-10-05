@@ -518,13 +518,16 @@ fn atOtherPlayer(a: Actor, by: ?Handle) void {
 
 /// A blow meets it: in its arc, the first tick of a touch makes a copy fall away and ends its
 /// tick; in flight, the first turns it back (a weapon a player swings sends it off). The blow
-/// lands; a player's not, drawn off the screen's middle at its last tick.
+/// lands; a player's not, drawn off the screen's middle at its last tick, nor a thing thrown on
+/// it in its arc.
 pub fn struck(a: Actor, blow: tick.Blow) bool {
     const m = a.mind;
     const n = a.numbers();
     if (!blow.missile and (m.drawn < n.struck_from or m.drawn >= n.struck_to)) return false;
     switch (m.state) {
-        .juggled => {},
+        // In its arc a thing thrown, or a weapon swung, does not strike it (the original's knife
+        // takes a player's blow only, and its touch ends).
+        .juggled => if (blow.missile) return false,
         .flying => if (!m.back) return false,
         else => return false,
     }
