@@ -335,8 +335,8 @@ pub fn takeUp(a: Actor, elapsed: u32) void {
     Common.takeUp(a, elapsed);
 }
 
-pub fn takeUpHeld(a: Actor) void {
-    Common.takeUpHeld(a);
+pub fn takeUpHeld(a: Actor, elapsed: u32) void {
+    Common.takeUpHeld(a, elapsed);
 }
 
 pub fn takeUpCourse(a: Actor, ago: u32, draws: []const u16) void {

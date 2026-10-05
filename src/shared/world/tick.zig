@@ -207,10 +207,10 @@ pub const Tick = struct {
         dispatch(t, h, "takeUp", void, {}, .{elapsed});
     }
 
-    /// Taken up from a situation, the entity is held already: the blow under way of its holder's
-    /// move was taken.
-    pub fn takeUpHeld(t: *Tick, h: Handle) void {
-        dispatch(t, h, "takeUpHeld", void, {}, .{});
+    /// Taken up from a situation, the entity is held already, `elapsed` ticks since its hold
+    /// began: the blow under way of its holder's move was taken.
+    pub fn takeUpHeld(t: *Tick, h: Handle, elapsed: u32) void {
+        dispatch(t, h, "takeUpHeld", void, {}, .{elapsed});
     }
 
     /// Taken up from a situation, the entity came to its state from the state named `from`.

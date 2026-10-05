@@ -527,8 +527,8 @@ pub fn takeUpCourse(a: Actor, ago: u32, draws: []const u16) void {
     a.mind.body.timer = n.dash_back_ticks -| @as(u8, @intCast(@min(ago, 255)));
 }
 
-pub fn takeUpHeld(a: Actor) void {
-    Common.takeUpHeld(a);
+pub fn takeUpHeld(a: Actor, elapsed: u32) void {
+    Common.takeUpHeld(a, elapsed);
 }
 
 pub fn takeUpFrame(a: Actor, shown: u32, ago: u32, draws: []const u16) bool {

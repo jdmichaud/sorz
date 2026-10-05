@@ -191,9 +191,21 @@ fn move(a: Actor) void {
 pub fn takeUp(a: Actor, elapsed: u32) void {
     const n = a.numbers();
     const m = a.mind;
+    const e = a.entity;
     const ago: u8 = @intCast(@min(elapsed, 255));
-    m.right = a.entity.facing == .right;
-    m.drawn = @intCast(a.entity.position.x.whole() - a.tick.world.camera.x.whole());
+    m.drawn = @intCast(e.position.x.whole() - a.tick.world.camera.x.whole());
+    // Thrown his way: flying out it goes that way, coming back the other; at its turn, still, it
+    // is on that side of him.
+    const vx = e.velocity.x.raw;
+    m.right = switch (m.state) {
+        .out => vx > 0,
+        .back => if (vx != 0) vx < 0 else if (thrower(a)) |him| e.position.x.whole() > him.position.x.whole() else true,
+        else => e.facing == .right,
+    };
+    if (m.state == .out or m.state == .back) {
+        e.facing = if (m.right) .right else .left;
+        a.animate(.spin);
+    }
     switch (m.state) {
         .out => m.ticks = n.flight_ticks -| ago,
         .back => m.above = a.entity.position.depth.whole() > 0,

@@ -278,8 +278,8 @@ fn pointDepth(a: Actor, then: i32, off: i32) i32 {
     return if (d < 0 or d >= a.numbers().walk_depth_most) d - 2 * off else d;
 }
 
-pub fn takeUpHeld(a: Actor) void {
-    Common.takeUpHeld(a);
+pub fn takeUpHeld(a: Actor, elapsed: u32) void {
+    Common.takeUpHeld(a, elapsed);
 }
 
 /// Taken up walking off from its wait: it turned its place over in depth then.

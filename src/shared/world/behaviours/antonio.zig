@@ -1524,7 +1524,8 @@ pub fn takeUpMet(a: Actor, by: Handle, damage: i16) void {
 }
 
 /// Taken up held: in front of his holder when he faces it, else from behind.
-pub fn takeUpHeld(a: Actor) void {
+pub fn takeUpHeld(a: Actor, elapsed: u32) void {
+    _ = elapsed;
     const m = a.mind;
     const hh = a.entity.holder orelse return;
     const holder = a.other(hh) orelse return;

@@ -1429,7 +1429,11 @@ pub fn Of(comptime M: type) type {
                 },
                 else => {
                     body(a).fresh = true;
-                    if (a.entity.animation.index == null) a.animate(.walk);
+                    // One that walks off as it was shows its walk then (an armed one's).
+                    const as_it_was = @hasDecl(M, "walks_off_as_it_was") and M.walks_off_as_it_was;
+                    if (@hasField(M.State, "walk_off") and as_it_was and a.mind.state == .walk_off) {
+                        a.animate(walkOf(a));
+                    } else if (a.entity.animation.index == null) a.animate(.walk);
                 },
             }
         }
@@ -1507,11 +1511,16 @@ pub fn Of(comptime M: type) type {
             a.pace(t.pacing_pace[k], 1);
         }
 
-        /// Taken up held: its holder's move under way was taken already.
-        pub fn takeUpHeld(a: A) void {
+        /// Taken up held: its holder's move under way was taken already; held since a tick at
+        /// least, its hold's set-up was done then.
+        pub fn takeUpHeld(a: A, elapsed: u32) void {
             const hh = a.entity.holder orelse return;
             const holder = a.other(hh) orelse return;
             body(a).hold_move = holder.move;
+            if (elapsed == 0) return;
+            body(a).fresh = false;
+            body(a).waits = false;
+            if (holder.move == null) holdLook(a, holder);
         }
 
         /// Taken up, it bounced `times` times in its fall.

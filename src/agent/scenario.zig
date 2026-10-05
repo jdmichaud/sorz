@@ -616,7 +616,9 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
         }
         if (!std.mem.eql(u8, ev, "spawn")) continue;
         const kind = str(o, "kind") orelse return error.BadTrace;
-        if (!scripted(kind)) {
+        // A breakable's pieces (its kind's, not in its first state) are its own, not the script's.
+        const piece = std.mem.eql(u8, kind, "breakable") and !std.mem.eql(u8, str(o, "state") orelse "", "s0");
+        if (!scripted(kind) or piece) {
             try others.append(arena, .{ .t = @intCast(int(o, "t") orelse 0), .id = @intCast(int(o, "e") orelse continue), .kind = try arena.dupe(u8, kind) });
             continue;
         }
@@ -952,7 +954,7 @@ pub const Run = struct {
             x.holder = hh;
             var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
             t.grabbed(hh, m.h);
-            t.takeUpHeld(m.h);
+            t.takeUpHeld(m.h, @intCast(situation.t -| m.e.since));
         }
         // A shutter waiting opened when its player first came near it since it was put up.
         if (kinds.find(world.tick.Tick.shutter_kind)) |sk| {
