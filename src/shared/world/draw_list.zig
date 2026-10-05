@@ -119,9 +119,23 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
             .flip_x = shown.mirrored,
             .palette = shown.frame.palette +% e.palette,
             .priority = shown.frame.priority or e.flags.in_front,
+            .colours = coloursOf(t, i, e),
         });
         e.flags.behind = false;
     }
+}
+
+/// The colour map a player's fighter (at place `i`) is drawn with (`Player.colours`), when its
+/// character's definition has it.
+fn coloursOf(t: *const Tick, i: usize, e: *const Entity) ?*const render.screen.ColourMap {
+    for (&t.world.players) |*p| {
+        const m = p.colours orelse continue;
+        const h = p.entity orelse continue;
+        if (h.index != i or e.kind != p.character) continue;
+        const maps = t.kindOf(e).definition.colour_maps;
+        return if (m < maps.len) &maps[m].map else null;
+    }
+    return null;
 }
 
 /// The original's order of `places` (in the world's order) into `front`, the first in front.

@@ -89,15 +89,16 @@ pub fn continueGame(t: *Tick, k: u1) void {
 
 /// Player `k` joins the game under way (the original's second player pressing START while
 /// player 1 plays): its fighter, of `kind`, in its own place in the world (else the first free),
-/// with `lives` (the one it plays counted), its first life dropping in as a new life does (the
-/// timer starts again, the enemies on the screen are knocked back). False when the world has no
-/// room for it.
-pub fn join(t: *Tick, k: u1, kind: entity.KindId, lives: u8) bool {
+/// with `lives` (the one it plays counted), drawn with its definition's colour map `colours`
+/// (none: its own colours), its first life dropping in as a new life does (the timer starts
+/// again, the enemies on the screen are knocked back). False when the world has no room for it.
+pub fn join(t: *Tick, k: u1, kind: entity.KindId, lives: u8, colours: ?u8) bool {
     const w = t.world;
     const h = w.spawnIn(t.kinds, kind, k, .zero, .right) catch w.spawn(t.kinds, kind, .zero, .right) catch return false;
     const p = &w.players[k];
     p.entity = h;
     p.character = kind;
+    p.colours = colours;
     p.lives = lives;
     p.out = false;
     newLife(t, k);

@@ -54,6 +54,9 @@ pub const Player = struct {
     entity: ?Handle = null,
     /// The kind of its fighter (its character's).
     character: ?KindId = null,
+    /// The colour map of its character's definition its fighter is drawn with
+    /// (`Definition.colour_maps`), as the round's rules give it; none: its frames' own colours.
+    colours: ?u8 = null,
     lives: u8 = 0,
     specials: u8 = 0,
     /// The continues left; out of the game (it answered no, or had none left).

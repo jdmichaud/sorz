@@ -119,7 +119,7 @@ pub fn runRound(world: *World, kinds: *const Kinds, rng: *random.Random, in: Inp
 /// its view and the enemies it knocks back move away at this tick.
 fn joining(t: *Tick) void {
     const j = t.input.join orelse return;
-    _ = lives.join(t, j.player, j.kind, j.lives);
+    _ = lives.join(t, j.player, j.kind, j.lives, j.colours);
 }
 
 // Input to commands -------------------------------------------------------------------------------

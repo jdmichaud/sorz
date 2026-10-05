@@ -66,6 +66,10 @@ pub const Window = struct {
 /// origin (column c of the frame to -1 - c), drawn with a palette and a priority. A frame the game
 /// makes (a tile shown as a sprite) keeps its pixels while it is shown: a new picture is a new
 /// frame.
+/// Other colours for a sprite's pixels: each colour index of its frame (`map[i]`) drawn as
+/// another of its palette, 0 (transparent) kept so.
+pub const ColourMap = [art.palette_size]u8;
+
 pub const Sprite = struct {
     frame: *const art.Frame,
     x: i32,
@@ -74,6 +78,8 @@ pub const Sprite = struct {
     flip_y: bool = false,
     palette: u2 = 0,
     priority: bool = false,
+    /// Its frame's colours read through this map, when given.
+    colours: ?*const ColourMap = null,
 
     /// The frame drawn with its own palette and priority.
     pub fn of(frame: *const art.Frame, x: i32, y: i32) Sprite {

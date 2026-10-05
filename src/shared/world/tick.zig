@@ -47,7 +47,7 @@ pub const Input = struct {
 
 /// A player joining the game under way: who, as which kind, with how many lives (the one it
 /// plays counted).
-pub const Join = struct { player: u1, kind: entity.KindId, lives: u8 };
+pub const Join = struct { player: u1, kind: entity.KindId, lives: u8, colours: ?u8 = null };
 
 /// A blow that meets an entity's body (at the struck one's turn, systems.zig).
 pub const Blow = struct {

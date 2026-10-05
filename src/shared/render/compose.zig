@@ -121,12 +121,23 @@ fn drawSprite(s: *const Sprite, lines: Lines, rows: *[height]Row) void {
                 w = load(&part);
             }
             if (w != 0) {
+                if (s.colours) |m| w = recolour(w, m);
                 if (s.flip_x) w = @byteSwap(w);
                 const dst = out[at..][0..8];
                 store(dst, choose(spread(opaqueBits(w)), w | attr, load(dst)));
             }
             if (s.flip_x) at -%= 8 else at += 8;
         }
+    }
+}
+
+/// Eight pixels' colours (the first in the low byte) each read through `map`.
+fn recolour(w: u64, map: *const screen.ColourMap) u64 {
+    var out: u64 = 0;
+    var k: u6 = 0;
+    while (true) : (k += 8) {
+        out |= @as(u64, map[@as(u8, @truncate(w >> k)) & 0xF]) << k;
+        if (k == 56) return out;
     }
 }
 
@@ -318,7 +329,8 @@ fn spritePixel(p: *const Screen, x: usize, line: usize) Px {
         const ry: usize = @intCast(if (s.flip_y) f.height - 1 - r else r);
         const v = f.pixels[ry * f.width + @as(usize, @intCast(c))];
         if (v == 0) continue;
-        return .{ .index = @as(u8, s.palette) * palettes.size + v, .priority = s.priority };
+        const shown = if (s.colours) |m| m[v] else v;
+        return .{ .index = @as(u8, s.palette) * palettes.size + shown, .priority = s.priority };
     }
     return .{};
 }
@@ -439,6 +451,27 @@ test "sprites: a later one covers an earlier one whatever their priorities" {
     try testing.expectEqual(@as(u8, 19), pixel(c, 2, 0));
     try testing.expectEqual(@as(u8, 34), pixel(c, 4, 0));
     try testing.expectEqual(@as(u8, 51), pixel(c, 9, 0));
+}
+
+test "a sprite's colour map: its pixels' colours read through it, transparent kept, mirrored too" {
+    // A frame 9 wide: a colour per column, 0 in the last.
+    var px: [9]u8 = .{ 1, 2, 3, 4, 5, 6, 7, 8, 0 };
+    const f: art.Frame = .{ .name = "f", .file = "f.png", .width = 9, .height = 1, .origin_x = 0, .origin_y = 0, .pixels = &px };
+    var map: screen.ColourMap = undefined;
+    for (&map, 0..) |*m, i| m.* = @intCast(if (i == 0) 0 else 16 - i);
+    const list = [_]Sprite{
+        .{ .frame = &f, .x = 0, .y = 0, .palette = 1, .colours = &map },
+        .{ .frame = &f, .x = 100, .y = 0, .palette = 1, .colours = &map, .flip_x = true },
+    };
+    const p: Screen = .{ .sprites = &list, .backdrop = .{ .palette = 0, .colour = 0 } };
+    const c = try composeOnce(&p);
+    defer c.destroy();
+    for (0..8) |k| {
+        try testing.expectEqual(@as(u8, 16 + 15 - @as(u8, @intCast(k))), pixel(c, k, 0));
+        try testing.expectEqual(@as(u8, 16 + 15 - @as(u8, @intCast(k))), pixel(c, 99 - k, 0));
+        try testing.expectEqual(reference(&p, k, 0), pixel(c, k, 0));
+    }
+    try testing.expectEqual(@as(u8, 0), pixel(c, 8, 0));
 }
 
 test "flips: cells and sprites, a sprite mirrored about its origin" {
