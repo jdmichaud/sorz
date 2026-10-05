@@ -525,13 +525,13 @@ fn leapSetUp(a: Actor) void {
     _ = Common.headForPoint(a);
 }
 
-/// In the air it walks and falls; down, it lands a few ticks in its second pose (no body), then
-/// by its place across it crouches, throws knives or leaps again.
+/// In the air it walks (nothing looked for there) and falls; down, it lands a few ticks in its
+/// second pose (no body), then by its place across it crouches, throws knives or leaps again.
 fn leap(a: Actor) void {
     const n = a.numbers();
     const m = &a.mind.juggler;
     if (!m.landed) {
-        if (!Common.walk(a)) return;
+        Common.walkInAir(a);
         if (!Common.falls(a)) return;
         m.landed = true;
         a.mind.body.timer = n.leap_land_ticks;
@@ -553,6 +553,8 @@ fn crouchSetUp(a: Actor) void {
     if (m.turns) m.turn_ticks = n.crouch_flip;
 }
 
+/// Crouching it stays where it landed, its speeds as they were (no gravity), unless the floor
+/// gives way under it or carries it (round 6's holes and conveyors).
 fn crouch(a: Actor) void {
     const m = &a.mind.juggler;
     if (!Common.falls(a)) return;

@@ -722,6 +722,16 @@ pub fn Of(comptime M: type) type {
             return false;
         }
 
+        /// Its walk in the air (above its floor): across and in depth by its speed, each refused
+        /// at the street's limits, nothing else looked for (no wall, no solid thing).
+        pub fn walkInAir(a: A) void {
+            const n = a.numbers();
+            const e = a.entity;
+            flyAcross(a);
+            const d = e.position.depth.add(e.velocity.depth);
+            if (!d.lessThan(.pixels(n.walk_depth_least)) and d.lessThan(.pixels(n.walk_depth_most))) e.position.depth = d;
+        }
+
         /// In the air (a leap): across by its speed, refused at the street's ends.
         pub fn flyAcross(a: A) void {
             const n = a.numbers();
