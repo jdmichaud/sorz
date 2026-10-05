@@ -40,6 +40,10 @@ pub const Options = struct {
     by_vblank: bool = false,
     /// Every difference is written, not only the first (up to `max_written`).
     all: bool = false,
+    /// The entities are renumbered in each trace by the order they appear (their spawns, the
+    /// ignored kinds left out; the players keep 1 and 2): two runs from power-on whose front
+    /// ends make other entities (sor-remaster's screen objects) number the round's alike.
+    renumber: bool = false,
     max_written: usize = 50,
 };
 
@@ -133,9 +137,16 @@ pub fn restrict(arena: std.mem.Allocator, trace: *const Trace, options: Options,
         if (keep_scene == null) return error.BadTrace;
     }
     var events: std.ArrayList(Event) = .empty;
+    var numbers: std.AutoHashMapUnmanaged(i64, i64) = .empty;
+    var next_number: i64 = 3;
     for (trace.events) |e| {
         if (std.mem.eql(u8, e.ev, "spawn")) if (int(e.object, "e")) |id| {
-            try kinds.put(arena, id, str(e.object, "kind") orelse "");
+            const kind = str(e.object, "kind") orelse "";
+            try kinds.put(arena, id, kind);
+            if (options.renumber and !listed(options.ignore_kinds, kind) and id > 2) {
+                try numbers.put(arena, id, next_number);
+                next_number += 1;
+            }
         };
         if (keep_scene) |k| {
             if (e.scene != k) continue;
@@ -145,6 +156,7 @@ pub fn restrict(arena: std.mem.Allocator, trace: *const Trace, options: Options,
         if (str(e.object, "kind")) |kind| if (listed(options.ignore_kinds, kind)) continue;
         var x = e;
         if (keep_scene != null) x.scene = 1;
+        if (options.renumber) x = try renumbered(arena, x, &numbers);
         if (rename and std.mem.eql(u8, e.ev, "sound")) if (str(e.object, "sound")) |name| {
             for (options.sound_names) |r| if (std.mem.eql(u8, r.from, name)) {
                 var o = try e.object.clone(arena);
@@ -156,14 +168,32 @@ pub fn restrict(arena: std.mem.Allocator, trace: *const Trace, options: Options,
         try events.append(arena, x);
     }
     var end = trace.end;
-    if (keep_scene != null) if (end) |*x| {
-        x.scene = 1;
+    // The scene kept is whole when the trace went on past it: no end within it.
+    if (keep_scene) |k| if (end) |*x| {
+        if (x.scene > k) end = null else x.scene = 1;
     };
     return .{
         .events = events.items,
         .end = end,
         .scenes = if (keep_scene) |k| try arena.dupe([]const u8, trace.scenes[k - 1 .. k]) else trace.scenes,
     };
+}
+
+/// `e` with its entities (`e`, `by`) numbered as `numbers` says.
+fn renumbered(arena: std.mem.Allocator, e: Event, numbers: *const std.AutoHashMapUnmanaged(i64, i64)) !Event {
+    var x = e;
+    var o: ?json.ObjectMap = null;
+    for ([_][]const u8{ "e", "by" }) |field| {
+        const id = int(e.object, field) orelse continue;
+        const number = numbers.get(id) orelse continue;
+        if (o == null) o = try e.object.clone(arena);
+        try o.?.put(arena, field, .{ .integer = number });
+    }
+    if (o) |obj| {
+        x.object = obj;
+        x.key = keyOf(x.ev, obj);
+    }
+    return x;
 }
 
 /// The translations of sor-remaster's sound names into the sound content's (sounds.json's

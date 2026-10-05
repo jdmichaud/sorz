@@ -57,9 +57,12 @@ pub const Pickup = struct { item: Handle, kind: entity.KindId, by: Handle };
 pub const Shown = struct { frame: *const art.Frame, mirrored: bool };
 
 pub const Output = struct {
+    /// The most sounds a tick asks for.
+    pub const sound_most = 32;
+
     /// The random generator's draws.
     draws: random.Draws = .{},
-    sounds: List(SoundRequest, 32) = .{},
+    sounds: List(SoundRequest, sound_most) = .{},
     hits: List(Hit, 32) = .{},
     pickups: List(Pickup, 16) = .{},
     /// By the entities' places in the pool: the frame each showed (the animation system).

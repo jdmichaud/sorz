@@ -396,7 +396,6 @@ fn camera(t: *Tick) void {
     if (!c.follows) return;
     for (t.world.players) |p| {
         const e = t.world.get(p.entity orelse continue) orelse continue;
-        if (e.flags.hidden) continue;
         if (e.holding == null and e.holder == null) {
             const left = c.x.add(.pixels(following.margin));
             const right = left.add(.pixels(following.width - 2 * following.margin));

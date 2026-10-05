@@ -1,0 +1,8 @@
+# round 1: three time overs, three deaths; the continue's YES, the next life; then a while.
+start axel
+until state 1 ready
+until state 1 continue_choose within 20000
+wait 10
+attack
+until state 1 ready within 400
+wait 3000

@@ -1,0 +1,6 @@
+# round 1: Axel stands still; the timer and the time overs take his lives; at the continue's
+# question nothing is answered.
+start axel
+until state 1 ready
+until state 1 continue_choose within 20000
+wait 400

@@ -18,8 +18,8 @@
 //! screens drawn from the ROM's content (it needs Node.js and a Chromium);
 //! `sound-check` compares the sound with sor-remaster's, from the user's ROM (`-Drom=ROM
 //! -Dremaster=DIR`), `screens-check` the screens' pictures and sound, tick by tick from
-//! power-on (the same options), and `similar-check` Axel's moves in the catalogue's scenarios
-//! (`-Drom=ROM -Dremaster=DIR|AGENT`).
+//! power-on (the same options), `similar-check` Axel's moves in the catalogue's scenarios and
+//! `round-check` round 1's scenes from power-on (`-Drom=ROM -Dremaster=DIR|AGENT`).
 const std = @import("std");
 
 /// The SDL2 release that the Linux host is built and tested against.
@@ -475,9 +475,55 @@ pub fn build(b: *std.Build) void {
         similar_check_step.dependOn(&b.addFail("similar-check needs -Drom=ROM and -Dremaster=DIR|AGENT").step);
     }
 
+    // `round-check`, the gate of round 1's scene (PLAN item 13, src/tools/round_check.zig): round
+    // 1's scenarios (tests/scenarios/round1) run from power-on in sor-remaster and in sorz, their
+    // round scenes' traces compared. -Dremaster as for similar-check.
+    const round_out = b.option([]const u8, "round-out", "Where round-check writes its runs and report (default: <prefix>/round)");
+    const round_only = b.option([]const u8, "round-only", "The scenarios round-check runs, separated by commas (default: all)");
+    const round_check_step = b.step("round-check", "Compare round 1's scenes with sor-remaster's from power-on (needs -Drom=ROM -Dremaster=DIR|AGENT)");
+    const round_module = b.createModule(.{
+        .root_source_file = b.path("src/tools/round_check.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "sorz", .module = shared },
+            .{ .name = "agent", .module = agent },
+            .{ .name = "extract", .module = extract },
+        },
+    });
+    if (rom_path != null and remaster != null) {
+        const round_exe = b.addExecutable(.{ .name = "sorz-round-check", .root_module = round_module });
+        const check = b.addRunArtifact(round_exe);
+        check.addArg(rom_path.?);
+        if (std.Io.Dir.cwd().openDir(b.graph.io, remaster.?, .{})) |dir| {
+            dir.close(b.graph.io);
+            const reference = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "agent", "-Doptimize=ReleaseFast", "--prefix" });
+            const reference_prefix = reference.addOutputDirectoryArg("remaster");
+            reference.addArg("--cache-dir");
+            reference.addDirectoryArg2(.{ .relative = .{ .base = .local_cache } }, .{ .make_absolute = true });
+            reference.setCwd(.{ .cwd_relative = remaster.? });
+            reference.has_side_effects = true;
+            check.addFileArg(reference_prefix.path(b, "bin/sorz-agent"));
+        } else |_| check.addArg(remaster.?);
+        check.addDirectoryArg(b.path("tests/scenarios/round1"));
+        if (round_out) |dir| {
+            check.addArg(dir);
+        } else {
+            check.addDirectoryArg2(.{ .relative = .{ .base = .install_prefix, .sub_path = "round" } }, .{ .make_absolute = true });
+        }
+        if (round_only) |names| {
+            var it = std.mem.tokenizeScalar(u8, names, ',');
+            while (it.next()) |n| check.addArg(n);
+        }
+        check.has_side_effects = true;
+        round_check_step.dependOn(&check.step);
+    } else {
+        round_check_step.dependOn(&b.addFail("round-check needs -Drom=ROM and -Dremaster=DIR|AGENT").step);
+    }
+
     // Unit tests of every module. The tests of the SDL module link SDL2 as the host does.
     const test_step = b.step("test", "Run the unit tests of every module");
-    const unit_modules = [_]*std.Build.Module{ shared, agent, native, sdl, web_parts, extract, similar_module };
+    const unit_modules = [_]*std.Build.Module{ shared, agent, native, sdl, web_parts, extract, similar_module, round_module };
     for (unit_modules) |m| {
         const t = b.addTest(.{ .root_module = m });
         test_step.dependOn(&b.addRunArtifact(t).step);

@@ -39,7 +39,10 @@ pub fn lifeOver(t: *Tick, h: Handle) void {
         return;
     };
     t.world.morph(t.kinds, h, kind);
+    // The original clears its record: at the level's corner, which the camera's keeping the
+    // players in view then moves (it stays hidden there).
     const e = t.world.get(h).?;
+    e.position = .zero;
     e.flags.hidden = true;
     e.flags.stays = true;
 }
@@ -75,4 +78,6 @@ pub fn newLife(t: *Tick, k: u1) void {
     }
     t.knockBack();
     if (t.actor(player, h)) |a| player.startLife(a);
+    // It starts where it was put: it moves from the next tick.
+    e.flags.still = true;
 }

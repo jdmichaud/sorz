@@ -91,6 +91,10 @@ pub const Writer = struct {
     phase: ?[]const u8 = null,
     phase_told: bool = false,
     pads: [2]input.Pad = .{ .{}, .{} },
+    /// The pads as read at the display tick observed, when the observer knows them (a run of
+    /// the whole game): the pad events tell them, as sor-remaster's observer does; else the
+    /// pads the world last read.
+    held: ?[2]input.Pad = null,
     lives: [2][2]u8 = .{ .{ 0, 0 }, .{ 0, 0 } },
     scores: [2]u32 = .{ 0, 0 },
     camera: [2]i32 = .{ 0, 0 },
@@ -162,33 +166,22 @@ pub const Writer = struct {
 
     /// One observation at the end of a logic tick, at display tick `v`: the tick's events.
     pub fn observe(self: *Writer, v: u64, world: *const World, kinds: *const Kinds, out: *const Output) std.Io.Writer.Error!void {
-        self.v = v;
-        if (self.scene) |s| {
-            self.t = self.scene_tick;
-            var l = try self.line("scene");
-            try l.str("scene", s.name);
-            if (s.round) |r| {
-                try l.int("round", r);
-                try l.boolean("demo", s.demo);
-            }
-            try l.close();
-            self.scene = null;
-        } else if (!self.first) self.t += 1;
+        const t = if (self.scene != null) self.scene_tick else if (self.first) self.t else self.t + 1;
+        return self.observeAt(v, t, world, kinds, out);
+    }
 
-        if (self.phase_told) {
-            self.phase_told = false;
-            var l = try self.line("phase");
-            try l.str("phase", self.phase.?);
-            try l.close();
-        }
+    /// `observe` at the scene's tick `t` (a scene whose ticks the scene counts: a round's).
+    pub fn observeAt(self: *Writer, v: u64, t: u64, world: *const World, kinds: *const Kinds, out: *const Output) std.Io.Writer.Error!void {
+        try self.atTick(v, t);
 
         for (world.players, 0..) |p, k| {
-            if (!self.first and p.last == self.pads[k]) continue;
-            self.pads[k] = p.last;
+            const pad = if (self.held) |h| h[k] else p.last;
+            if (!self.first and pad == self.pads[k]) continue;
+            self.pads[k] = pad;
             var l = try self.line("pad");
             try l.int("pad", k + 1);
             var buf: [8]u8 = undefined;
-            try l.str("held", letters(p.last, &buf));
+            try l.str("held", letters(pad, &buf));
             try l.close();
         }
 
@@ -253,6 +246,46 @@ pub const Writer = struct {
             try l.close();
         }
         self.first = false;
+    }
+
+    /// A tick of a scene with no world to observe (a screen of the front end), at display tick
+    /// `v` and the scene's tick `t`: the scene, when it begins.
+    pub fn atTick(self: *Writer, v: u64, t: u64) std.Io.Writer.Error!void {
+        self.v = v;
+        self.t = t;
+        if (self.scene) |s| {
+            var l = try self.line("scene");
+            try l.str("scene", s.name);
+            if (s.round) |r| {
+                try l.int("round", r);
+                try l.boolean("demo", s.demo);
+            }
+            try l.close();
+            self.scene = null;
+        }
+        if (self.phase_told) {
+            self.phase_told = false;
+            var l = try self.line("phase");
+            try l.str("phase", self.phase.?);
+            try l.close();
+        }
+    }
+
+    /// The round's own scene begins: its camera, the camera's stop, its section and its timer
+    /// are written again at the next observation, as sor-remaster's observer begins observing
+    /// them there.
+    pub fn forgetRound(self: *Writer) void {
+        self.timer = 0;
+        self.camera = .{ std.math.minInt(i32), 0 };
+        self.camera_stop = .{ std.math.minInt(i32), 0, 0 };
+        self.section = std.math.maxInt(u8);
+    }
+
+    /// A sound a scene asked for (its music, the pause's), by its name, at the last tick.
+    pub fn sceneSound(self: *Writer, name: []const u8) std.Io.Writer.Error!void {
+        var l = try self.line("sound");
+        try l.str("sound", name);
+        try l.close();
     }
 
     /// The generator's draws of the tick: their count, the first values, and their names.

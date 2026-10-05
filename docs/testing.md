@@ -123,15 +123,22 @@ sor-remaster's format: a start (`start axel`), then pad events and conditions by
 catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (its header says
 "{N} takes the values A to B") is a run per value.
 
-- `sorz-agent DIR|ROM --scenario FILE --situation TRACE [--trace-events OUT] [--probe OUT]` runs
-  one in sorz. Until round 1's content (PLAN item 13) sorz cannot reach play from power-on, so
-  the run takes up its start from sor-remaster's trace of the same scenario (`--situation`): the
-  round scene's first `phase play`, its entities with their ids, states, places and health, the
-  camera, the players' lives. It writes the semantic trace and the probe (each fighter's frame,
-  boxes and power per tick) in sor-remaster's formats.
+- `sorz-agent DIR|ROM --scenario FILE [--trace-events OUT]` runs one in sorz from power-on, the
+  whole game as the hosts run it (src/agent/game_run.zig): the start passes the screens as
+  sor-remaster's runner does (START tapped, the menu's arrow, the select's cursor), or replays a
+  recorded play's pads (`start pads FILE VBLANKS`); the script's tick 0 is play's first logic
+  tick. The trace has the scenes, play's phases, the round's world at its ticks and the scenes'
+  sounds.
+- With `--situation TRACE [--probe OUT]`, the run takes up its start from sor-remaster's trace
+  of the same scenario: the round scene's first `phase play`, its entities with their ids,
+  states, places and health, the camera, the players' lives; it runs the round's world alone and
+  writes the probe (each fighter's frame, boxes and power per tick) too, in sor-remaster's
+  formats.
 - `sorz-agent trace-compare FIRST SECOND` compares two traces (the first difference, the counts
   per kind of event), from a scene on (`--scene round --after TICK`), with kinds of entity,
-  events and fields left out and sor-remaster's sound names translated (`--sounds`).
+  events and fields left out and sor-remaster's sound names translated (`--sounds`); with
+  `--renumber`, the entities numbered by their order of appearance (two runs from power-on whose
+  front ends make other objects).
 - `zig build similar-check -Drom=ROM -Dremaster=DIR|AGENT` (src/tools/similar_check.zig), the
   gate of PLAN items 05 and 11: each scenario runs in sor-remaster (its checkout, whose agent the
   build builds, or that agent) and in sorz; then the traces, the probes and the catalogue's
@@ -140,6 +147,13 @@ catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (it
   tick). It prints a verdict per move, equal, within tolerance or different, with the numbers,
   writes it with the runs into `<prefix>/similar` (`-Dsimilar-out=DIR`), and fails when a move
   differs. `-Dsimilar-only=NAME,...` runs some scenarios.
+- `zig build round-check -Drom=ROM -Dremaster=DIR|AGENT` (src/tools/round_check.zig), the gate of
+  PLAN item 13: round 1's scenarios (`tests/scenarios/round1`: a walk to the first wall, standing
+  through three time overs, the continue's YES and NO) run from power-on in both programs, and
+  their round scenes' traces are compared event by event (the camera and its stops, the timer,
+  play's phases, the players' places, states, health, lives and deaths, the continue, the game
+  over, the placed enemies coming out, the sounds), the hit sparks left out; all equal. It writes
+  the runs and the report into `<prefix>/round` (`-Dround-out=DIR`); `-Dround-only=NAME,...`.
 
 ## Comparing behaviours with statistics
 

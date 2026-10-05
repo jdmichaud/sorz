@@ -23,10 +23,10 @@ const usage =
     \\       sorz-agent [DIR|ROM] --pair [--delay N] [--frames N] [--key ...]... [--guest-key ...]...
     \\                  [--corrupt TICK]
     \\       sorz-agent DIR|ROM --server [ADDRESS:]PORT
-    \\       sorz-agent DIR|ROM --scenario FILE --situation TRACE [--trace-events OUT] [--probe OUT]
+    \\       sorz-agent DIR|ROM --scenario FILE [--situation TRACE] [--trace-events OUT] [--probe OUT]
     \\       sorz-agent trace-compare FIRST SECOND [--ticks M] [--pos PIXELS] [--tol FIELD=N]...
     \\                  [--ignore EV[,EV...]] [--scene NAME] [--after TICK] [--ignore-kind K[,K...]]
-    \\                  [--ignore-field F[,F...]] [--sounds SOUNDS_JSON] [--all]
+    \\                  [--ignore-field F[,F...]] [--sounds SOUNDS_JSON] [--renumber] [--all]
     \\  --frames N       run N frames, a display tick each (default 120)
     \\  --key FRAME:NAME[:HOLD]  press the key NAME (a platform.Key, as `enter` or `left`) at
     \\                   frame FRAME, release it HOLD frames later (default 1); repeats
@@ -48,11 +48,13 @@ const usage =
     \\                   negative control: both games stop and name the field)
     \\  --server         server mode, as sorz-server: serve the page and the game's files of
     \\                   DIR|ROM, and relay network play between two browsers, with no game
-    \\  --scenario FILE  run a scenario (sor-remaster's format) from the situation of round 1's
-    \\                   play in TRACE (another program's trace of it): its script of pad events
-    \\                   to its end; --trace-events writes its semantic trace, --probe the
-    \\                   fighters' frames, boxes and power; a condition that does not come in
-    \\                   time ends the run with status 1
+    \\  --scenario FILE  run a scenario (sor-remaster's format): from power-on, the whole game
+    \\                   (its start through the screens, or a recorded play's pads), or with
+    \\                   --situation from round 1's play in TRACE (another program's trace of
+    \\                   it); its script of pad events to its end; --trace-events writes its
+    \\                   semantic trace, --probe (with a situation) the fighters' frames, boxes
+    \\                   and power; a condition that does not come in time ends the run with
+    \\                   status 1
     \\  trace-compare    compare two semantic traces (sor-remaster's docs/traces.md): the first
     \\                   difference and the counts per kind of event; events match within
     \\                   --ticks M ticks, positions and speeds within --pos PIXELS, a field
@@ -61,7 +63,9 @@ const usage =
     \\                   fields; --scene compares the last scene of that name in each, after
     \\                   tick --after; --sounds names the first trace's sounds (sor-remaster's
     \\                   `sfx_b2`) as the sound content's sounds.json does (\"enemy hit\");
-    \\                   --all writes every difference; exits 1 when they differ
+    \\                   --renumber numbers the entities by their order of appearance (the
+    \\                   ignored kinds left out); --all writes every difference; exits 1 when
+    \\                   they differ
     \\
 ;
 
@@ -337,6 +341,8 @@ fn traceCompare(init: std.process.Init, args: anytype, out: *std.Io.Writer) !boo
             sounds = args.next() orelse return failed(io);
         } else if (std.mem.eql(u8, arg, "--all")) {
             options.all = true;
+        } else if (std.mem.eql(u8, arg, "--renumber")) {
+            options.renumber = true;
         } else if (n < 2 and arg.len != 0 and arg[0] != '-') {
             paths[n] = arg;
             n += 1;

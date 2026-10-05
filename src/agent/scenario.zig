@@ -44,7 +44,28 @@ comptime {
 pub const Start = union(enum) {
     /// One player (or two) of these characters, from the start of play in round 1.
     players: struct { first: []const u8, second: ?[]const u8 },
+    /// A recorded play's pads (a line per display tick from power-on: pad 1's and pad 2's
+    /// buttons in hexadecimal, sor-remaster's `--pads` format), for its first `vblanks` display
+    /// ticks; the file is named from the scenario's directory.
+    pads: struct { path: []const u8, vblanks: u64 },
 };
+
+/// The pads of a recorded play's file (`start pads`); null for a malformed line.
+pub fn parsePads(gpa: std.mem.Allocator, text: []const u8) !?[]input.Pads {
+    var out: std.ArrayList(input.Pads) = .empty;
+    errdefer out.deinit(gpa);
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \r\t");
+        if (line.len == 0) continue;
+        var it = std.mem.tokenizeScalar(u8, line, ' ');
+        const p1 = std.fmt.parseInt(u16, it.next() orelse return null, 16) catch return null;
+        const p2 = std.fmt.parseInt(u16, it.next() orelse return null, 16) catch return null;
+        if (it.next() != null) return null;
+        try out.append(gpa, .{ .pad1 = @bitCast(@as(u8, @truncate(p1))), .pad2 = @bitCast(@as(u8, @truncate(p2))) });
+    }
+    return try out.toOwnedSlice(gpa);
+}
 
 /// Who a condition is about: an entity of the trace by its id, or any entity of a kind.
 pub const Who = union(enum) {
@@ -119,7 +140,11 @@ pub fn parse(gpa: std.mem.Allocator, text: []const u8, diag: *Diagnostic) !Scrip
         const w = words[0..count];
         if (std.mem.eql(u8, w[0], "start")) {
             if (start != null or commands.items.len != 0) return refuse(diag, n, "the start comes first, once");
-            if (w.len < 2 or w.len > 3) return refuse(diag, n, "a start is `start CHARACTER [CHARACTER]`");
+            if (w.len == 4 and std.mem.eql(u8, w[1], "pads")) {
+                start = .{ .pads = .{ .path = w[2], .vblanks = number(w[3]) orelse return refuse(diag, n, "`start pads FILE VBLANKS`") } };
+                continue;
+            }
+            if (w.len < 2 or w.len > 3) return refuse(diag, n, "a start is `start CHARACTER [CHARACTER]` or `start pads FILE VBLANKS`");
             start = .{ .players = .{ .first = w[1], .second = if (w.len == 3) w[2] else null } };
             continue;
         }
@@ -440,6 +465,7 @@ pub const Run = struct {
             .y_max = .of(situation.camera_stop[2]),
             .follows = true,
         };
+        if (script.start != .players) return error.NoPlayers;
         const players = script.start.players;
         for (situation.entities) |e| {
             var kind_name = e.kind;
@@ -678,4 +704,18 @@ test "the body: a press holds a tick and releases one; a hold lasts until releas
     for (&held) |*h| h.* = @bitCast((b.tick({}, never) orelse input.Pads{}).pad1);
     // B at tick 0, released at 1; right from 2 to 3, released at 4.
     try std.testing.expectEqualSlices(u8, &.{ 0b10_0000, 0, 0b1000, 0b1000, 0, 0 }, &held);
+}
+
+test "a recorded play's start: its pads by display tick, a malformed line refused" {
+    const gpa = std.testing.allocator;
+    var diag: Diagnostic = .{};
+    var s = try parse(gpa, "start pads game.pads 31400\nwait 1\n", &diag);
+    defer s.deinit(gpa);
+    try std.testing.expectEqualStrings("game.pads", s.start.pads.path);
+    try std.testing.expectEqual(@as(u64, 31400), s.start.pads.vblanks);
+    const pads = (try parsePads(gpa, "000 000\n088 001\n\n")).?;
+    defer gpa.free(pads);
+    try std.testing.expectEqual(@as(usize, 2), pads.len);
+    try std.testing.expect(pads[1].pad1.start and pads[1].pad1.right and pads[1].pad2.up);
+    try std.testing.expectEqual(@as(?[]input.Pads, null), try parsePads(gpa, "000\n"));
 }

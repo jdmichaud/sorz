@@ -1,0 +1,10 @@
+# round 1: three time overs, three deaths; the continue's NO: the game over, its count, the
+# fade out, the high scores.
+start axel
+until state 1 ready
+until state 1 continue_choose within 20000
+wait 10
+down
+wait 4
+attack
+wait 1000

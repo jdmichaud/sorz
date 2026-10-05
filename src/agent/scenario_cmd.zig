@@ -1,12 +1,15 @@
-//! `sorz-agent DIR --scenario FILE --situation TRACE [--trace-events OUT] [--probe OUT]`: a
-//! scenario's run (scenario.zig), its trace and its probe written, and one JSON line: the
-//! scenario's end (`done`, or what stopped it, with the `line` of a condition that did not come
-//! in time), the display tick of the script's tick 0 and the kinds the situation had that the
-//! content does not define. A scenario that stops early exits with status 1, its trace written up
-//! to there.
+//! `sorz-agent DIR --scenario FILE [--situation TRACE] [--trace-events OUT] [--probe OUT]`: a
+//! scenario's run, its trace and its probe written, and one JSON line: the scenario's end
+//! (`done`, or what stopped it, with the `line` of a condition that did not come in time), the
+//! display tick of the script's tick 0 and the kinds the situation had that the content does not
+//! define. Without a situation, the whole game runs from power-on (game_run.zig: no probe);
+//! with one, the round's world alone from that situation (scenario.zig). A scenario that stops
+//! early exits with status 1, its trace written up to there.
 const std = @import("std");
 const sorz = @import("sorz");
 const scenario = @import("scenario.zig");
+const game_run = @import("game_run.zig");
+const input = sorz.input;
 
 pub const Options = struct {
     scenario: []const u8,
@@ -34,10 +37,11 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
         else => return e,
     };
     defer script.deinit(gpa);
-    const situation_path = options.situation orelse {
-        std.log.err("a scenario's start takes up round 1 from another program's trace: --situation TRACE (until the round's content, PLAN item 13)", .{});
-        return error.NoSituation;
-    };
+    const situation_path = options.situation orelse return runFromPowerOn(gpa, io, assets, options, &script, out);
+    if (script.start != .players) {
+        std.log.err("a situation is taken up by a start of characters (`start CHARACTER`)", .{});
+        return error.BadScenario;
+    }
     const situation_text = try cwd.readFileAlloc(io, situation_path, arena, .limited(1 << 30));
     const situation = scenario.situationOf(arena, situation_text) catch |e| {
         std.log.err("{s}: no situation in the trace ({s}): a round scene's `phase play` is needed", .{ situation_path, @errorName(e) });
@@ -95,5 +99,66 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
     try out.print(",\"script_vblank\":{d},\"ticks\":{d},\"skipped\":[", .{ r.script_v, ticks });
     for (r.skipped.items, 0..) |k, i| try out.print("{s}\"{s}\"", .{ if (i == 0) "" else ",", k });
     try out.writeAll("]}\n");
+    return r.failure == null;
+}
+
+/// The scenario from power-on: the whole game, its start through the screens (game_run.zig).
+fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, options: Options, script: *const scenario.Script, out: *std.Io.Writer) !bool {
+    if (options.probe != null) {
+        std.log.err("a run from power-on writes no probe (--probe needs --situation)", .{});
+        return error.BadOptions;
+    }
+    var diag: sorz.formats.json.Diagnostic = .{};
+    const c = sorz.library.load(gpa, assets, &diag) catch |e| {
+        std.log.err("the content does not load: {f}", .{&diag});
+        return e;
+    };
+    defer {
+        c.destroy();
+        gpa.destroy(c);
+    }
+    const assets_found = sorz.scene.Assets.find(c, &diag) catch |e| {
+        std.log.err("the scenes' assets are not in the content: {f}", .{&diag});
+        return e;
+    };
+    const cwd = std.Io.Dir.cwd();
+    var trace_file: ?std.Io.File = null;
+    defer if (trace_file) |f| f.close(io);
+    var trace_buf: [1 << 16]u8 = undefined;
+    var trace_writer: std.Io.File.Writer = undefined;
+    var tw: sorz.world.trace.Writer = undefined;
+    if (options.trace) |path| {
+        trace_file = try cwd.createFile(io, path, .{});
+        trace_writer = trace_file.?.writerStreaming(io, &trace_buf);
+        tw = .init(&trace_writer.interface);
+        try tw.begin("power-on");
+    }
+    var pads: []input.Pads = &.{};
+    defer gpa.free(pads);
+    if (script.start == .pads) {
+        const name = script.start.pads.path;
+        const dir = std.fs.path.dirname(options.scenario) orelse ".";
+        const full = if (std.fs.path.isAbsolute(name)) try gpa.dupe(u8, name) else try std.fs.path.join(gpa, &.{ dir, name });
+        defer gpa.free(full);
+        const text = try cwd.readFileAlloc(io, full, gpa, .limited(1 << 26));
+        defer gpa.free(text);
+        pads = try scenario.parsePads(gpa, text) orelse {
+            std.log.err("the pads file {s} has a malformed line", .{full});
+            return error.BadScenario;
+        };
+    }
+    var r: game_run.Run = .init(c, &assets_found, script, pads, if (options.trace != null) &tw else null);
+    // The start's display ticks, then two a logic tick of the script's.
+    var ticks: u64 = 0;
+    while (ticks < 2 * options.ticks + 10_000) : (ticks += 1) {
+        if (!try r.step()) break;
+    } else r.failure = "the run reached its most ticks";
+    if (options.trace != null) {
+        try tw.end();
+        try trace_writer.interface.flush();
+    }
+    try out.print("{{\"scenario\":\"{s}\"", .{r.failure orelse "done"});
+    if (r.body.timed_out) |line| try out.print(",\"line\":{d}", .{line});
+    try out.print(",\"script_vblank\":{d},\"ticks\":{d}}}\n", .{ r.body_v orelse 0, ticks });
     return r.failure == null;
 }

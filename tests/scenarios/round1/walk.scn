@@ -1,0 +1,6 @@
+# round 1: Axel walks right 120 ticks from the round's start: the camera follows to the
+# first wall; the Galsias placed come out.
+start axel
+until state 1 ready
+right 120
+wait 10
