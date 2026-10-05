@@ -53,7 +53,8 @@
 //! scenery (PLAN item 15): the oil drums a blow knocks away (`knockable`), the `drip`s, the
 //! `flight`s across the screen, their `flier`s and the posters' corners they stir
 //! (`flight_scenery`), the `pepper` a drum holds, and round 2's `juggler` with its knives
-//! (`juggler_knife`); round 3's: the `lamp`s, the `crate`s, the `drifter`s, the `rain`.
+//! (`juggler_knife`), round 2's boss `boss_r2` with his claws (`boss_r2_claws`) and his trail
+//! (`boss_r2_trail`); round 3's: the `lamp`s, the `crate`s, the `drifter`s, the `rain`.
 const std = @import("std");
 
 /// No behaviour: the entity does nothing of its own (a prop, an effect that only animates).
@@ -81,6 +82,9 @@ pub const breakable = @import("behaviours/breakable.zig");
 pub const item = @import("behaviours/item.zig");
 pub const antonio = @import("behaviours/antonio.zig");
 pub const boomerang = @import("behaviours/boomerang.zig");
+pub const boss_r2 = @import("behaviours/boss_r2.zig");
+pub const boss_r2_claws = @import("behaviours/boss_r2_claws.zig");
+pub const boss_r2_trail = @import("behaviours/boss_r2_trail.zig");
 pub const police_car = @import("behaviours/police_car.zig");
 pub const special_knockdown = @import("behaviours/special_knockdown.zig");
 pub const special_blast = @import("behaviours/special_blast.zig");
@@ -123,6 +127,9 @@ pub const Mind = union(enum) {
     item: item.Mind,
     antonio: antonio.Mind,
     boomerang: boomerang.Mind,
+    boss_r2: boss_r2.Mind,
+    boss_r2_claws: boss_r2_claws.Mind,
+    boss_r2_trail: boss_r2_trail.Mind,
     police_car: police_car.Mind,
     special_knockdown: special_knockdown.Mind,
     special_blast: special_blast.Mind,

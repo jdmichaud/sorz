@@ -45,6 +45,9 @@ pub fn Of(comptime M: type) type {
         const State = M.State;
         const Animation = M.Animation;
 
+        /// The original's null object, as a boss reads it: its place 0 across and in depth.
+        const nobody: Entity = .{};
+
         /// The rest of the tick is not his.
         pub fn end(a: A) void {
             a.mind.ended = true;
@@ -290,7 +293,11 @@ pub fn Of(comptime M: type) type {
             const n = a.numbers();
             const m = a.mind;
             const e = a.entity;
-            if (m.attacker) |h| if (a.other(h)) |o| measure(a, o, false);
+            // Knocked back by no one who struck him (a player's new life): the original measures
+            // him against its null object, whose place reads 0 across and in depth.
+            if (m.attacker) |h| {
+                if (a.other(h)) |o| measure(a, o, false);
+            } else measure(a, &nobody, false);
             if (m.bounces != 0) {
                 if (!e.position.height.eql(m.ground)) {
                     e.velocity.height = e.velocity.height.add(n.knocked_gravity);
