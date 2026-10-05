@@ -70,6 +70,9 @@ pub const Output = struct {
     /// The entities whose frame started at this tick (the game copies a player's art for its new
     /// frame).
     new_frames: [capacity]bool = @splat(false),
+    /// The round's script set its enemies' colours at this tick (a section's, an arriving
+    /// enemy's, the boss's): the picture copies the colours.
+    colours: bool = false,
     /// The draw list, back to front: what the renderer's `Screen.sprites` takes. It stays until
     /// the next logic tick, so the display ticks in between draw it again.
     sprites: List(render.Sprite, 2 * capacity) = .{},
@@ -92,6 +95,7 @@ pub const Output = struct {
         self.pickups.clear();
         @memset(&self.shown, null);
         @memset(&self.new_frames, false);
+        self.colours = false;
     }
 };
 

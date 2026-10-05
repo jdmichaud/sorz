@@ -178,6 +178,8 @@ pub const Round = struct {
     /// new frame (its copies' tiles), its health bar's partial cell built (`health` the health
     /// it shows, null before its first), the planes' columns the camera brought in.
     art_due: [2][2]u16 = @splat(.{ 0, 0 }),
+    /// Each player's state as the original numbers it, at the last tick (`poseOf`).
+    pose: [2]?u16 = .{ null, null },
     colours_due: bool = false,
     bar_due: [2]bool = .{ false, false },
     health: [2]?i16 = .{ null, null },
@@ -481,12 +483,33 @@ pub const Round = struct {
         for (w.players, 0..) |p, k| {
             const h = p.entity orelse continue;
             const e = w.getConst(h) orelse continue;
-            if (out.new_frames[h.index]) if (e.animation.index) |index| {
+            // The original copies a player's art at each new frame, and at each of its states it
+            // enters, a side and a walk's way each a state of its own (the frame may stay).
+            const pose = poseOf(e);
+            const entered = pose != null and (self.pose[k] == null or self.pose[k].? != pose.?);
+            self.pose[k] = pose;
+            if (out.new_frames[h.index] or entered) if (e.animation.index) |index| {
                 const c = kinds.get(e.kind.?).frames[index][e.animation.frame].copied;
                 self.art_due[k] = .{ if (c.len > 0) c[0] else 0, if (c.len > 1) c[1] else 0 };
             };
         }
         self.noteBars();
+    }
+
+    /// A player's state as the original numbers its states: its behaviour's state, its side, and
+    /// a walk's way (across, up, down, or across and up or down); null for one not playing.
+    fn poseOf(e: *const world.Entity) ?u16 {
+        const m = switch (e.mind) {
+            .player => |m| m,
+            else => return null,
+        };
+        var way: u16 = 0;
+        if (m.state == .walk) {
+            const across = e.velocity.x.raw != 0;
+            const depth = e.velocity.depth.raw;
+            way = if (depth < 0) (if (across) 1 else 2) else if (depth > 0) (if (across) 3 else 4) else 0;
+        }
+        return @as(u16, @intFromEnum(m.state)) << 4 | way << 1 | @intFromBool(e.facingLeft());
     }
 
     /// Each player's health bar's partial cell is built again when its health changed.
@@ -535,6 +558,7 @@ pub const Round = struct {
         self.logic_ran = true;
         self.trace_t += 1;
         self.noteTransfers(a.kinds, out);
+        if (out.colours) self.colours_due = true;
         self.noteStrips(self.stage(a).script, camera_before, self.play.world.camera);
         // The players' sounds are the logic tick's first half's (the original updates its players
         // before the wait in its middle), the others' its second's.

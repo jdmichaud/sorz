@@ -220,6 +220,8 @@ pub fn run(t: *Tick) void {
             s.calls +|= went;
             const list = reserveOf(r, s.part);
             if (s.arriving != 0) {
+                // The arriving enemy's colours, at its arrival's first tick.
+                if (s.arriving == @max(list[s.next].arrives_after, 1)) t.out.colours = true;
                 s.arriving -= 1;
                 if (s.arriving != 0) return;
                 bring(t, p, &list[s.next]);
@@ -241,6 +243,8 @@ pub fn run(t: *Tick) void {
             c.x_min = c.x;
             c.x_max = c.x;
             t.sound(b.fade, null);
+            // The boss's colours.
+            t.out.colours = true;
             s.stage = .boss_music;
             s.ticks = @max(b.music_after -| 1, 1);
         },
@@ -297,6 +301,8 @@ fn clearIfDone(t: *Tick, p: *const Plan) void {
     const k = s.part + 1;
     if (k < r.sections.len) return beginSection(t, p, k);
     if (r.boss == null) return;
+    // The boss's section opens as a section does: its colours.
+    t.out.colours = true;
     s.part = k;
     s.stage = .boss_opening;
     s.ticks = 1;
@@ -306,6 +312,8 @@ fn clearIfDone(t: *Tick, p: *const Plan) void {
 fn beginSection(t: *Tick, p: *const Plan, k: u8) void {
     const s = &t.world.script;
     const sec = &p.round.sections[k];
+    // A section's art's colours are set as it begins.
+    t.out.colours = true;
     s.part = k;
     s.stage = .opening;
     s.ticks = @max(sec.opens_after, 1);
