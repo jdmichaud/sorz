@@ -1214,7 +1214,17 @@ pub fn Of(comptime M: type) type {
         /// the fraction of its height kept; its gravity is applied before its move. Over a hole
         /// it falls on: a deep one draws it in front of the planes, and fallen far enough it is
         /// knocked out, crying out.
+        /// Whether its place across may be `x`: within the street's ends.
+        fn acrossAllowed(a: A, x: Fixed) bool {
+            return !x.lessThan(.zero) and x.lessThan(.pixels(a.numbers().walk_x_most));
+        }
+
         pub fn fall(a: A) void {
+            // Knocked down, its flight across stops at the street's ends (the move
+            // refused, its speed kept).
+            if (a.mind.state == .knocked_down and body(a).down == .flying and !acrossAllowed(a, a.entity.position.x)) {
+                a.entity.position.x = a.entity.position.x.sub(a.entity.velocity.x);
+            }
             if (a.atGround()) return a.land(.fraction_kept);
             const n = a.numbers();
             if (a.tick.floorUnder(a.entity.position) != null) return;
