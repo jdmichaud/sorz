@@ -234,8 +234,9 @@ pub const Def = struct {
         for (d.box_keys.items, 0..) |k, i| if (std.mem.eql(u8, &k, &key)) return @intCast(i);
         const r = tableBox(d.rom, d.box_table, right);
         const l = tableBox(d.rom, d.box_table, left);
-        // Facing left, only the span across may differ from the mirror image.
-        if (!std.meta.eql(r.depth, l.depth) or !std.meta.eql(r.height, l.height)) return error.BadData;
+        // Facing left, the spans across and in height may differ from the mirror image (Adam's
+        // back attack reaches less high facing left), never the depth's.
+        if (!std.meta.eql(r.depth, l.depth)) return error.BadData;
         var name = try std.fmt.allocPrint(d.arena, "{s}_{s}", .{ animation, role_name });
         var k: usize = 2;
         while (d.boxIndex(name) != null) : (k += 1) name = try std.fmt.allocPrint(d.arena, "{s}_{s}_{d}", .{ animation, role_name, k });
@@ -245,6 +246,7 @@ pub const Def = struct {
             .x_left = if (std.meta.eql(l.x, r.x.mirrored())) null else l.x,
             .depth = r.depth,
             .height = r.height,
+            .height_left = if (std.meta.eql(l.height, r.height)) null else l.height,
         });
         try d.box_keys.append(d.arena, key);
         return @intCast(d.boxes.items.len - 1);

@@ -37,17 +37,23 @@ pub const Span = struct {
 
 /// A box of the world: a span across, on the depth and in height (downward), from the entity's
 /// place, for the entity facing right. Facing left, the span across is `x_left`, or `x`
-/// mirrored about the place.
+/// mirrored about the place, and the span in height `height_left`, or `height`.
 pub const Box = struct {
     name: []const u8,
     x: Span,
     x_left: ?Span = null,
     depth: Span,
     height: Span,
+    height_left: ?Span = null,
 
     pub fn across(b: *const Box, facing_left: bool) Span {
         if (!facing_left) return b.x;
         return b.x_left orelse b.x.mirrored();
+    }
+
+    pub fn upDown(b: *const Box, facing_left: bool) Span {
+        if (!facing_left) return b.height;
+        return b.height_left orelse b.height;
     }
 };
 
@@ -293,13 +299,14 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: *con
         const out = try arena.alloc(Box, it.count());
         for (out) |*b| {
             const e = (try it.next()).?;
-            try e.value.only(&.{ "x", "x_left", "depth", "height" });
+            try e.value.only(&.{ "x", "x_left", "depth", "height", "height_left" });
             b.* = .{
                 .name = try checkedName(e.value, e.key),
                 .x = try span(try e.value.get("x")),
                 .x_left = if (try e.value.opt("x_left")) |n| try span(n) else null,
                 .depth = try span(try e.value.get("depth")),
                 .height = try span(try e.value.get("height")),
+                .height_left = if (try e.value.opt("height_left")) |n| try span(n) else null,
             };
         }
         d.boxes = out;
@@ -493,6 +500,7 @@ pub fn value(arena: std.mem.Allocator, d: *const Definition) error{OutOfMemory}!
             if (b.x_left) |l| try fs.append(arena, .{ .key = "x_left", .value = try spanValue(arena, l) });
             try fs.append(arena, .{ .key = "depth", .value = try spanValue(arena, b.depth) });
             try fs.append(arena, .{ .key = "height", .value = try spanValue(arena, b.height) });
+            if (b.height_left) |l| try fs.append(arena, .{ .key = "height_left", .value = try spanValue(arena, l) });
             o.* = .{ .key = b.name, .value = .{ .object = fs.items } };
         }
         try top.append(arena, .{ .key = "boxes", .value = .{ .object = out } });
@@ -651,6 +659,7 @@ const sample =
     \\    "fist": {
     \\      "depth": [-3, 3],
     \\      "height": [-48, -40],
+    \\      "height_left": [-48, -44],
     \\      "x": [10, 30],
     \\      "x_left": [-31, -11]
     \\    }
@@ -721,6 +730,8 @@ test "a definition reads, names its parts, and writes the same bytes again" {
     try testing.expectEqual(Place{ .x = -28 }, frames[2].place.?);
     const fist = d.boxes[d.box("fist").?];
     try testing.expectEqual(Span{ .from = -31, .to = -11 }, fist.across(true));
+    try testing.expectEqual(Span{ .from = -48, .to = -44 }, fist.upDown(true));
+    try testing.expectEqual(Span{ .from = -48, .to = -40 }, fist.upDown(false));
     const body = d.boxes[d.box("body").?];
     try testing.expectEqual(Span{ .from = -8, .to = 8 }, body.across(true));
     try testing.expect(d.animations[d.animation("stand").?].loop);

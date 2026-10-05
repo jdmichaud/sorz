@@ -1444,7 +1444,8 @@ pub const Probe = struct {
     fn box(k: *const world.kinds.Kind, e: *const world.Entity, index: ?u8) ?[6]i16 {
         const b = &k.definition.boxes[index orelse return null];
         const x = b.across(e.boxes.mirrored);
-        return .{ x.from, x.to, b.depth.from, b.depth.to, b.height.from, b.height.to };
+        const h = b.upDown(e.boxes.mirrored);
+        return .{ x.from, x.to, b.depth.from, b.depth.to, h.from, h.to };
     }
 
     /// A player's: the damage its blow does now; another's (an enemy's, as sor-remaster's

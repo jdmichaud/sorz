@@ -202,7 +202,9 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
   (`docs/content-sound.md`).
 - `boxes`: named boxes, each a span `[from, to]` (both included) on each axis from the entity's
   place, for the entity facing right. Facing left, the span across is `x_left` if given, else `x`
-  mirrored (`[-to, -from]`). Two boxes meet when their spans overlap or touch on all three axes.
+  mirrored (`[-to, -from]`), and the span in height `height_left` if given, else `height` (Adam's
+  back attack reaches less high facing left, as the original's table has it). Two boxes meet
+  when their spans overlap or touch on all three axes.
   A box named `solid` stops the fighters' walks while its behaviour holds it solid (a
   breakable's): a fighter whose place comes within it across and in depth goes back.
 - `animations`: each a list of `frames`, at least one: `frame`, a sprite frame by its full name;

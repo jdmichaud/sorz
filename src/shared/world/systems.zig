@@ -383,7 +383,7 @@ pub fn meet(a: *const Entity, ab: *const content_entity.Box, b: *const Entity, b
     const pb = b.boxes.at orelse b.position;
     return spansMeet(pa.x.whole(), ab.across(a.boxes.mirrored), pb.x.whole(), bb.across(b.boxes.mirrored)) and
         spansMeet(pa.depth.whole(), ab.depth, pb.depth.whole(), bb.depth) and
-        spansMeet(pa.height.whole(), ab.height, pb.height.whole(), bb.height);
+        spansMeet(pa.height.whole(), ab.upDown(a.boxes.mirrored), pb.height.whole(), bb.upDown(b.boxes.mirrored));
 }
 
 fn spansMeet(pa: i32, sa: content_entity.Span, pb: i32, sb: content_entity.Span) bool {
