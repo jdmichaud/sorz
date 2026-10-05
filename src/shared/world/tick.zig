@@ -174,6 +174,12 @@ pub const Tick = struct {
         dispatch(t, h, "blowLanded", void, {}, .{target});
     }
 
+    /// The blows the entity landed at this tick are forgotten (a breakable it broke cleared
+    /// them).
+    pub fn landingCleared(t: *Tick, h: Handle) void {
+        dispatch(t, h, "landingCleared", void, {}, .{});
+    }
+
     /// The entity is in the air after its move. Its behaviour's `fall` decides whether it lands
     /// (`land`) and how it falls; by default it lands when it has come down to the ground, and
     /// otherwise its definition's gravity adds to its speed in height.

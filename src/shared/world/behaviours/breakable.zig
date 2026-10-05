@@ -133,11 +133,13 @@ fn fly(a: Actor) bool {
 
 /// A blow or a thing thrown that meets it, standing on the screen, breaks it. The blow lands
 /// (a player's opens its combo's window) unless a piece found no place: the original's
-/// breakable then forgets the one that struck it.
+/// breakable then clears what its striker landed, the blows of this tick on others
+/// before it too, so that a jab that broke it as it struck an enemy opens no window.
 pub fn struck(a: Actor, blow: tick.Blow) bool {
-    _ = blow;
     if (a.mind.state != .stand or !a.mind.shown) return false;
-    return breaks(a);
+    if (breaks(a)) return true;
+    a.tick.landingCleared(blow.attacker);
+    return false;
 }
 
 /// It breaks: no longer solid, it sounds, leaves its item where it stood, blinks, and its

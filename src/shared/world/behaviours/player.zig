@@ -1036,6 +1036,11 @@ pub fn blowLanded(a: Actor, target: Handle) void {
     a.mind.landed_blow = true;
 }
 
+/// Its blows' landing at this tick is forgotten: no combo window, no hit pause from them.
+pub fn landingCleared(a: Actor) void {
+    a.mind.landed_blow = false;
+}
+
 /// In the air after its move: it lands once it comes down to the ground, on its whole pixels;
 /// its gravity is its state's, applied before its move (`act`).
 pub fn fall(a: Actor) void {
