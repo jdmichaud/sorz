@@ -218,6 +218,8 @@ pub const Round = struct {
     /// The art play streams in (a section's, the boss's, an arriving enemy's, the special
     /// attack's): its list, and the display tick of it that comes next.
     art: world.script.ArtQueue = .{},
+    /// The players' scores as the status bar draws them (those the last logic tick began with).
+    drawn_scores: [2]u32 = .{ 0, 0 },
     /// The colours shown as the special attack was called, which it gives back.
     kept: render.palettes.Colours = render.palettes.black,
     /// The round ended (its last tick).
@@ -775,6 +777,11 @@ pub const Round = struct {
         // original's does (it sees the players as the tick before left them), and a player joins
         // in that turn.
         const join = if (self.play.logicNext()) self.joinTick(turn, a) else null;
+        // The players' turn draws their scores as the tick begins: points scored later in the
+        // tick (an enemy's turn) show at the next.
+        if (self.play.logicNext()) for (&self.drawn_scores, self.play.world.players) |*d, pl| {
+            d.* = pl.score;
+        };
         if (!self.play.roundTickJoined(a.kinds, turn.random.?, turn.pads, out, &p, join)) {
             self.split = true;
             return null;
@@ -881,6 +888,7 @@ pub const Round = struct {
         const r = s.script;
         for (&w.players, g.players, 0..) |*wp, gp, k| {
             wp.* = .{ .lives = gp.lives, .specials = gp.specials, .score = gp.score, .continues = gp.continues };
+            self.drawn_scores[k] = gp.score;
             if (!gp.in_play) continue;
             const character = setup.characters[k] orelse continue;
             const kind = a.kinds.find(@tagName(character)) orelse {
@@ -961,7 +969,7 @@ pub const Round = struct {
         const w = &self.play.world;
         var out: Bar = .{ .time = w.timer.shown, .join = self.join.shown };
         for (w.players, &out.players, self.out_blinks, 0..) |p, *o, ob, k| {
-            const playing: PlayerBar = .{ .playing = .{ .score = p.score, .lives = p.lives, .specials = p.specials, .health = 0 } };
+            const playing: PlayerBar = .{ .playing = .{ .score = self.drawn_scores[k], .lives = p.lives, .specials = p.specials, .health = 0 } };
             const gone: PlayerBar = .{ .out = .{ .name = true, .score = p.score, .game_over = ob.shown } };
             const h = p.entity orelse {
                 if (p.out) o.* = gone;
@@ -970,7 +978,7 @@ pub const Round = struct {
             const e = w.getConst(h) orelse continue;
             const new_game = k == 0 and w.players[1].entity == null and !w.players[1].out;
             o.* = switch (e.mind) {
-                .player => .{ .playing = .{ .score = p.score, .lives = p.lives, .specials = p.specials, .health = healthOf(a, e) } },
+                .player => .{ .playing = .{ .score = self.drawn_scores[k], .lives = p.lives, .specials = p.specials, .health = healthOf(a, e) } },
                 .player_waiting => |m| switch (m.state) {
                     // Its first tick: the bar as it was (the question still, after a NO; the name,
                     // the tick it was entered).
