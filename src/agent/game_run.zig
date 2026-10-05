@@ -271,7 +271,8 @@ pub const Run = struct {
         const r = self.round() orelse return error.NotInARound;
         if (r.phase != .play) return error.NotInPlay;
         const round_script = (self.assets.round.rounds.of(r.number) orelse return error.NoRound).script;
-        var taken = try scenario.Run.init(tu.gpa, &self.content.kinds, self.script, tu.situation, .{ .round = round_script }, null, null);
+        const ec = &self.assets.round.enemy_colours;
+        var taken = try scenario.Run.init(tu.gpa, &self.content.kinds, self.script, tu.situation, .{ .round = round_script, .colour_lines = ec.lines, .own_colours = ec.ownBits() }, null, null);
         defer taken.deinit();
         if (!taken.scripted) return error.ScriptNotReplayed;
         if (taken.skipped.items.len != 0) return error.KindsMissing;
@@ -297,6 +298,8 @@ pub const Run = struct {
             if (e.health > 0) standing = true else beaten = true;
         }
         if (beaten and !standing) w.timer.stopped = true;
+        // The colours the script loaded before the take-up, as the round shows them.
+        r.showHeldColours(&self.assets.round);
         if (scenario.generatorOf(tu.situation)) |g| self.state.random = g;
         for (&r.drawn_scores, &r.bar_specials, &r.seen_specials, w.players) |*d, *shown, *seen, p| {
             d.* = p.score;

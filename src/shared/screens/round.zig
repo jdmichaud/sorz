@@ -380,7 +380,7 @@ pub const Round = struct {
             .last_score = .{ .score = last.score, .level = last.level, .round = last.round },
             .art_loading = self.art.loading(self.stage(a).script),
             .colour_lines = a.enemy_colours.lines,
-            .own_colours = ownColours(&a.enemy_colours),
+            .own_colours = a.enemy_colours.ownBits(),
         };
     }
 
@@ -1121,6 +1121,26 @@ pub const Round = struct {
         }
     }
 
+    /// The colours the round's script holds now (`script.Held`: the enemies' other, first and
+    /// second, as a section loads them; the boss's over the first in the boss's fight) put in the
+    /// colours shown: a world taken up from another program's trace (agent/game_run.zig) shows
+    /// the colours its script loaded there.
+    pub fn showHeldColours(self: *Round, a: *const Assets) void {
+        const w = &self.play.world;
+        const h = &w.script.held;
+        var loads: [4]world.output.ColourLoad = undefined;
+        var n: usize = 0;
+        for ([_]u2{ world.script.Held.other, world.script.Held.first, world.script.Held.second }) |into| if (h.colours[into]) |c| {
+            loads[n] = .{ .enemies = .{ .colours = c, .into = into } };
+            n += 1;
+        };
+        if (w.script.part >= self.stage(a).script.sections.len) {
+            loads[n] = .boss;
+            n += 1;
+        }
+        self.loadColours(a, loads[0..n], .shown);
+    }
+
     /// The round's animation: a new step's colours in the colours shown, its map drawn at the
     /// next picture (written on the plane's 64 cells across, its map's width at a time).
     fn animate(self: *Round, a: *const Assets) void {
@@ -1268,14 +1288,6 @@ test "a plane's lines at their bands' ratios" {
 }
 
 /// Which enemies' colours (by number, a bit each) are a kind's own.
-fn ownColours(ec: *const library.EnemyColours) u16 {
-    var bits: u16 = 0;
-    for (ec.sets[0..ec.len], 0..) |set, n| {
-        if (set.own != null) bits |= @as(u16, 1) << @intCast(n);
-    }
-    return bits;
-}
-
 /// A player entering its name, as its part of the bar shows it.
 fn naming(p: world.Player, m: *const world.behaviours.player_waiting.Mind) PlayerBar {
     var x: PlayerBar.Naming = .{ .score = p.score, .places = undefined };

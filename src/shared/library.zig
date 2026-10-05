@@ -115,6 +115,15 @@ pub const EnemyColours = struct {
     pub fn of(self: *const EnemyColours, n: u8) ?*const Set {
         return if (n < self.len) &self.sets[n] else null;
     }
+
+    /// Which of them (by number, a bit each) are a kind's own.
+    pub fn ownBits(self: *const EnemyColours) u16 {
+        var bits: u16 = 0;
+        for (self.sets[0..self.len], 0..) |set, n| {
+            if (set.own != null) bits |= @as(u16, 1) << @intCast(n);
+        }
+        return bits;
+    }
 };
 
 /// The rounds of the content (`rounds`), by their numbers from 1; round 1 is needed.

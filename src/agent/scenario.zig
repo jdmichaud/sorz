@@ -414,7 +414,10 @@ pub const Situation = struct {
             special: bool,
             section: u8,
             spawn: struct { id: u32, kind: []const u8, x: i32, depth: i32 },
-            remove: u32,
+            /// An enemy came out of hiding (its state left `appear`).
+            appear: u32,
+            /// It went, knocked out or not.
+            remove: struct { id: u32, knocked_out: bool },
         },
     };
     pub const Other = struct { t: u64, id: u32, kind: []const u8 };
@@ -574,8 +577,9 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             if ((in_round or intro) and own) try history.append(arena, .{ .t = if (intro) 0 else ev_t, .what = .{ .spawn = .{ .id = e, .kind = seen.get(e).?.kind, .x = x >> 16, .depth = d >> 16 } } });
         } else if (std.mem.eql(u8, ev, "remove")) {
             const e: u32 = @intCast(int(o, "e") orelse return error.BadTrace);
+            const knocked_out = if (seen.get(e)) |x| std.mem.eql(u8, x.state orelse "", "knocked_out") else false;
             _ = seen.orderedRemove(e);
-            if (in_round) try history.append(arena, .{ .t = ev_t, .what = .{ .remove = e } });
+            if (in_round) try history.append(arena, .{ .t = ev_t, .what = .{ .remove = .{ .id = e, .knocked_out = knocked_out } } });
         } else if (std.mem.eql(u8, ev, "morph")) {
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             x.was_kind = x.kind;
@@ -583,6 +587,9 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
         } else if (std.mem.eql(u8, ev, "state")) {
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             const state = str(o, "state") orelse return error.BadTrace;
+            if (in_round and x.player == null and std.mem.eql(u8, x.state orelse "", "appear") and !std.mem.eql(u8, state, "appear")) {
+                try history.append(arena, .{ .t = @intCast(int(o, "t") orelse 0), .what = .{ .appear = @intCast(int(o, "e") orelse 0) } });
+            }
             if (x.state == null or !std.mem.eql(u8, x.state.?, state)) {
                 x.came_from = x.state;
                 x.players_depth = players_depth;
@@ -883,7 +890,16 @@ fn replayScript(gpa: std.mem.Allocator, kinds: *const world.Kinds, plan: *const 
         while (to < steps.len and steps[to].t <= tick) to += 1;
         // What the trace says before the script's turn: the removals, the phase.
         for (steps[k..to]) |st| switch (st.what) {
-            .remove => |id| if (r.ids.fetchRemove(id)) |kv| w.remove(kv.value),
+            // An enemy out of hiding shows on the line of its colours as they are held then;
+            // one knocked out is counted off the script's tallies.
+            .appear => |id| if (r.ids.get(id)) |h| if (w.get(h)) |e| {
+                e.flags.hidden = false;
+                if (e.spawn.colours) |c| e.palette = world.script.lineOf(&t, c);
+            },
+            .remove => |rm| if (r.ids.fetchRemove(rm.id)) |kv| {
+                if (rm.knocked_out) if (w.get(kv.value)) |e| world.script.countOff(&t, e);
+                w.remove(kv.value);
+            },
             .special => |on| w.special = on,
             else => {},
         };
@@ -1023,6 +1039,9 @@ pub const Run = struct {
         round: ?*const sorz.content.round.Round = null,
         /// The high-score table's last entry, which a score must beat for its name to be entered.
         last_score: ?world.script.Ranked = null,
+        /// The lines of the enemies' colours, and which are a kind's own (the round's plan's).
+        colour_lines: [3]u2 = .{ 1, 2, 1 },
+        own_colours: u16 = 0,
     };
 
     pub fn init(gpa: std.mem.Allocator, kinds: *const world.Kinds, script: *const Script, situation: *const Situation, extras: Extras, trace: ?*world.trace.Writer, probe: ?*Probe) !Run {
@@ -1057,7 +1076,7 @@ pub const Run = struct {
         r.join = situation.join;
         r.others = situation.others;
         r.round = extras.round;
-        try takeUpScript(&r, round, situation, extras.last_score);
+        try takeUpScript(&r, round, situation, extras);
         var made: [world.entity.capacity]?struct { h: world.Handle, e: *const Situation.Seen } = @splat(null);
         // A game of two players: the script's records for two players are its.
         const two = for (situation.entities) |*e| {
@@ -1283,9 +1302,9 @@ pub const Run = struct {
 
     /// The round's script, its records left to the stand-in: the section the camera stops at
     /// the wall of, and the timer as it last counted (the ticks of its second since).
-    fn takeUpScript(r: *Run, round: *const sorz.content.round.Round, situation: *const Situation, last_score: ?world.script.Ranked) !void {
+    fn takeUpScript(r: *Run, round: *const sorz.content.round.Round, situation: *const Situation, extras: Extras) !void {
         const w = &r.play.world;
-        r.plan = .{ .round = round, .last_score = last_score };
+        r.plan = .{ .round = round, .last_score = extras.last_score, .colour_lines = extras.colour_lines, .own_colours = extras.own_colours };
         w.script.stage = .stand_in;
         const two = for (situation.entities) |*e| {
             if (e.player == 2) break true;
