@@ -188,8 +188,25 @@ pub fn restrict(arena: std.mem.Allocator, trace: *const Trace, options: Options,
     };
 }
 
+/// The entities' numbers by the order they appear, as `renumber` gives them (`restrict`): from 3
+/// by their spawns, the kinds `ignore_kinds` left out; the players keep 1 and 2.
+pub const Numbers = std.AutoHashMapUnmanaged(i64, i64);
+
+pub fn numbering(arena: std.mem.Allocator, trace: *const Trace, ignore_kinds: []const []const u8) Error!Numbers {
+    var numbers: Numbers = .empty;
+    var next: i64 = 3;
+    for (trace.events) |e| {
+        if (!std.mem.eql(u8, e.ev, "spawn")) continue;
+        const id = int(e.object, "e") orelse continue;
+        if (id <= 2 or listed(ignore_kinds, str(e.object, "kind") orelse "") or numbers.contains(id)) continue;
+        try numbers.put(arena, id, next);
+        next += 1;
+    }
+    return numbers;
+}
+
 /// `e` with its entities (`e`, `by`) numbered as `numbers` says.
-fn renumbered(arena: std.mem.Allocator, e: Event, numbers: *const std.AutoHashMapUnmanaged(i64, i64)) !Event {
+fn renumbered(arena: std.mem.Allocator, e: Event, numbers: *const Numbers) !Event {
     var x = e;
     var o: ?json.ObjectMap = null;
     for ([_][]const u8{ "e", "by" }) |field| {

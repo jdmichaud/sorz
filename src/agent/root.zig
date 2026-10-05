@@ -15,6 +15,8 @@ pub const wav = @import("wav.zig");
 pub const game_run = @import("game_run.zig");
 /// The comparison of two semantic traces, carried over from sor-remaster.
 pub const trace_compare = @import("trace_compare.zig");
+/// The comparison of two runs' probes: the fighters' frames.
+pub const probe_compare = @import("probe_compare.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

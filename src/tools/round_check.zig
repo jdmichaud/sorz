@@ -4,9 +4,14 @@
 //! round's tick at which each comes, the camera and the stop it follows to, the timer, play's
 //! phases (the intro, play, the time overs, the end), the players' places, states, health, lives
 //! and deaths, the continue's question and the game over, the entities the script places and
-//! their first moves, the sounds.
+//! their first moves, the sounds; the fighters' frames (the probes: where each frame starts,
+//! agent/probe_compare.zig).
 //!
-//!   sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...]
+//!   sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...] [--reach FILE...]
+//!
+//! A scenario given with `--reach` (a recorded play, `start pads FILE V`, kept out of the
+//! repository) is not a gate: its line says how far each comparison stays equal (the trace's
+//! and the frames' first difference by the round's tick, the sound's by display tick).
 //!
 //! For each scenario (`scenarios` below, the file SCENARIOS_DIR/NAME.scn), sor-remaster's agent
 //! runs it and writes its trace into OUT_DIR; sorz runs it in this process, on the content
@@ -25,11 +30,15 @@ const agent = @import("agent");
 const extract = @import("extract");
 
 const compare = agent.trace_compare;
+const probes = agent.probe_compare;
 
 pub const Scenario = struct {
     name: []const u8,
     /// What it shows, for the reader.
     what: []const u8,
+    /// Its file, when not SCENARIOS_DIR/NAME.scn; and whether it is a reach's report, not a gate.
+    path: ?[]const u8 = null,
+    reach: bool = false,
 };
 
 /// Round 1's scenarios (tests/scenarios/round1).
@@ -62,13 +71,15 @@ const Context = struct {
 fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     const arena = c.arena;
     const cwd = std.Io.Dir.cwd();
-    const scn = try std.fmt.allocPrint(arena, "{s}/{s}.scn", .{ c.scenarios_dir, sc.name });
+    const scn = sc.path orelse try std.fmt.allocPrint(arena, "{s}/{s}.scn", .{ c.scenarios_dir, sc.name });
     const ref_trace = try std.fmt.allocPrint(arena, "{s}/ref-{s}.jsonl", .{ c.out_path, sc.name });
     const z_trace = try std.fmt.allocPrint(arena, "{s}/z-{s}.jsonl", .{ c.out_path, sc.name });
     const ref_wav = try std.fmt.allocPrint(arena, "{s}/ref-{s}.wav", .{ c.out_path, sc.name });
     const z_wav = try std.fmt.allocPrint(arena, "{s}/z-{s}.wav", .{ c.out_path, sc.name });
+    const ref_probe = try std.fmt.allocPrint(arena, "{s}/ref-{s}.probe", .{ c.out_path, sc.name });
+    const z_probe = try std.fmt.allocPrint(arena, "{s}/z-{s}.probe", .{ c.out_path, sc.name });
 
-    const ran = try std.process.run(c.gpa, c.io, .{ .argv = &.{ c.remaster, c.rom_path, "--scenario", scn, "--trace-events", ref_trace, "--wav", ref_wav, "--frames", "200000" } });
+    const ran = try std.process.run(c.gpa, c.io, .{ .argv = &.{ c.remaster, c.rom_path, "--scenario", scn, "--trace-events", ref_trace, "--probe", ref_probe, "--wav", ref_wav, "--frames", "200000" } });
     defer c.gpa.free(ran.stdout);
     defer c.gpa.free(ran.stderr);
     if (ran.term != .exited or ran.term.exited != 0 or std.mem.indexOf(u8, ran.stdout, "\"scenario\":\"done\"") == null) {
@@ -76,7 +87,7 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
         return false;
     }
     var said: std.Io.Writer.Allocating = .init(arena);
-    const done = try agent.scenario_cmd.run(c.gpa, c.io, c.assets, .{ .scenario = scn, .trace = z_trace, .wav = z_wav }, &said.writer);
+    const done = try agent.scenario_cmd.run(c.gpa, c.io, c.assets, .{ .scenario = scn, .trace = z_trace, .probe = z_probe, .wav = z_wav }, &said.writer);
     if (!done) {
         try w.print("{s}: sorz's run did not end as the scenario does: {s}", .{ sc.name, said.written() });
         return false;
@@ -85,7 +96,8 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     // The game's clock as the script begins, which the enemies' choices read: the same.
     const ref_clock = numberAfter(ran.stdout, "\"script_game_tick\":");
     const z_clock = numberAfter(said.written(), "\"script_game_tick\":");
-    if (ref_clock == null or z_clock == null or ref_clock.? != z_clock.?) {
+    // (A recorded play's script begins past its pads, where the reach's runs need not agree.)
+    if (!sc.reach and (ref_clock == null or z_clock == null or ref_clock.? != z_clock.?)) {
         try w.print("{s}: the game's clock as the script begins differs: {?d} against {?d}\n", .{ sc.name, ref_clock, z_clock });
         return false;
     }
@@ -106,22 +118,66 @@ fn runOne(c: *const Context, sc: *const Scenario, w: *std.Io.Writer) !bool {
     const result = try compare.compare(arena, &a, &b, options, &written.writer);
     var events: usize = 0;
     for (result.counts) |n| events += n.a;
+    const frames = try framesOf(c, &a_full, &b_full, ref_probe, z_probe);
     const sound = try soundOf(c, ref_wav, z_wav);
     // The runs end a few ticks apart past the round (the runners count the start-up's ticks
     // differently: the original's is a scene of its own): the sound is compared where both are.
     const sound_same = sound.first == null;
     const common = @min(sound.frames, sound.reference_frames);
-    if (result.differences == 0 and sound_same) {
-        try w.print("{s}: equal, {d} events, the sound's {d} display ticks ({s})\n", .{ sc.name, events, ticksOf(common), sc.what });
+    if (sc.reach) {
+        try w.print("{s}: ({s})\n  the trace: ", .{ sc.name, sc.what });
+        if (result.first) |d| try w.print("equal before the round's tick {d}, {d} differences in {d} events\n", .{ firstTick(d), result.differences, events }) else try w.print("equal, {d} events\n", .{events});
+        try w.writeAll("  the frames: ");
+        if (frames.first) |d| try w.print("equal before the round's tick {d} (entity {d}: {f} against {f}), {d} of {d} entities differ\n", .{ d.t, d.e, startOf(d.a), startOf(d.b), frames.differing, frames.entities }) else try w.print("equal, {d} entities\n", .{frames.entities});
+        try w.writeAll("  the sound: ");
+        if (sound.first) |f| try w.print("equal before display tick {d} of {d}\n", .{ ticksOf(f), ticksOf(common) }) else try w.print("equal, {d} display ticks\n", .{ticksOf(common)});
+        return true;
+    }
+    if (result.differences == 0 and frames.first == null and sound_same) {
+        try w.print("{s}: equal, {d} events, {d} entities' frames, the sound's {d} display ticks ({s})\n", .{ sc.name, events, frames.entities, ticksOf(common), sc.what });
         return true;
     }
     if (result.differences != 0) try w.print("{s}: {d} differences in {d} events ({s})\n{s}\n", .{ sc.name, result.differences, events, sc.what, written.written() });
+    if (frames.first) |d| try w.print("{s}: the frames differ: entity {d} at the round's tick {d}, {f} against {f}; {d} of {d} entities differ\n", .{ sc.name, d.e, d.t, startOf(d.a), startOf(d.b), frames.differing, frames.entities });
     if (!sound_same) {
         try w.print("{s}: the sound differs ({d} frames, sor-remaster's {d})", .{ sc.name, sound.frames, sound.reference_frames });
         if (sound.first) |f| try w.print("; from frame {d} (display tick {d}), {d} frames differ, by {d} at most", .{ f, ticksOf(f), sound.differing, sound.largest });
         try w.writeAll("\n");
     }
     return false;
+}
+
+/// The tick of a trace's difference: its earlier event's.
+fn firstTick(d: compare.Difference) i64 {
+    const a = if (d.a) |e| e.t else std.math.maxInt(i64);
+    const b = if (d.b) |e| e.t else std.math.maxInt(i64);
+    return @min(a, b);
+}
+
+/// The two runs' frames in their round scenes (the last of each), the entities numbered as the
+/// traces' comparison numbers them.
+fn framesOf(c: *const Context, a: *const compare.Trace, b: *const compare.Trace, ref_probe: []const u8, z_probe: []const u8) !probes.Result {
+    const cwd = std.Io.Dir.cwd();
+    const na = try compare.numbering(c.arena, a, &ignored_kinds);
+    const nb = try compare.numbering(c.arena, b, &ignored_kinds);
+    const ta = probes.sceneTicks(a, "round") orelse return error.BadTrace;
+    const tb = probes.sceneTicks(b, "round") orelse return error.BadTrace;
+    const la = try probes.parse(c.arena, try cwd.readFileAlloc(c.io, ref_probe, c.arena, .limited(1 << 30)));
+    const lb = try probes.parse(c.arena, try cwd.readFileAlloc(c.io, z_probe, c.arena, .limited(1 << 30)));
+    return probes.compare(c.arena, .{ .lines = la, .numbers = &na, .v0 = ta[0], .v1 = ta[1] }, .{ .lines = lb, .numbers = &nb, .v0 = tb[0], .v1 = tb[1] });
+}
+
+/// A frame's start as the report writes it: "frame F at T", or "none".
+const StartText = struct {
+    s: ?probes.Start,
+    pub fn format(self: StartText, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        const s = self.s orelse return w.writeAll("none");
+        try w.print("frame {d} at {d}", .{ s.frame, s.t });
+    }
+};
+
+fn startOf(s: ?probes.Start) StartText {
+    return .{ .s = s };
 }
 
 const Sound = struct { frames: usize, reference_frames: usize, first: ?usize = null, differing: usize = 0, largest: u32 = 0 };
@@ -172,7 +228,15 @@ pub fn main(init: std.process.Init) !void {
     const scenarios_dir = args.next() orelse return usage(io);
     const out_path = args.next() orelse return usage(io);
     var only: std.ArrayList([]const u8) = .empty;
-    while (args.next()) |name| try only.append(arena, name);
+    var reach: std.ArrayList(Scenario) = .empty;
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--reach")) {
+            const path = args.next() orelse return usage(io);
+            const base = std.fs.path.basename(path);
+            const name = if (std.mem.endsWith(u8, base, ".scn")) base[0 .. base.len - 4] else base;
+            try reach.append(arena, .{ .name = name, .what = "a recorded play: how far it stays equal", .path = path, .reach = true });
+        } else try only.append(arena, arg);
+    }
 
     const rom = std.Io.Dir.cwd().readFileAlloc(io, rom_path, gpa, .limited(extract.rom.size + 1)) catch |e| {
         return fail(io, try std.fmt.allocPrint(arena, "cannot read the ROM {s}: {s}\n", .{ rom_path, @errorName(e) }));
@@ -194,8 +258,9 @@ pub fn main(init: std.process.Init) !void {
     try text.writer.writeAll("round-check: round 1's scenes in sorz against sor-remaster's, from power-on (PLAN item 13).\n\n");
     var failed = false;
     var printed: usize = 0;
-    for (&scenarios) |*sc| {
-        if (only.items.len != 0) {
+    const all = try std.mem.concat(arena, Scenario, &.{ &scenarios, reach.items });
+    for (all) |*sc| {
+        if (only.items.len != 0 and !sc.reach) {
             for (only.items) |n| {
                 if (std.mem.eql(u8, n, sc.name)) break;
             } else continue;
@@ -227,7 +292,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn usage(io: std.Io) !void {
-    return fail(io, "usage: sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...]\n");
+    return fail(io, "usage: sorz-round-check ROM REMASTER_AGENT SCENARIOS_DIR OUT_DIR [SCENARIO...] [--reach FILE...]\n");
 }
 
 fn fail(io: std.Io, message: []const u8) !void {

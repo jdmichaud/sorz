@@ -980,23 +980,15 @@ fn compareProbes(arena: std.mem.Allocator, ref: *const Run, z: *const Run, t0: i
     try m.add("probe: entities sorz lacks", missing.list.items, .exact);
 }
 
-/// sorz's animations composed of another's frames in another order, by the extractor
-/// (extract/entities.zig): their frames as that other animation's, as the original shows them.
-const composed = [_]struct { name: []const u8, of: []const u8, frames: []const i64 }{
-    // The back drop's landing: the vault's frames 3, 2 and 1, backward.
-    .{ .name = "vault_land", .of = "vault", .frames = &.{ 3, 2, 1 } },
-};
-
+/// sorz's animations composed of another's frames (agent/probe_compare.zig): their frames as
+/// that other animation's, as the original shows them.
 fn canonical(a: At) At {
     const frame = a.frame orelse return a;
-    for (composed) |c| {
-        if (!std.mem.eql(u8, a.anim, c.name) or frame < 0 or frame >= c.frames.len) continue;
-        var out = a;
-        out.anim = c.of;
-        out.frame = c.frames[@intCast(frame)];
-        return out;
-    }
-    return a;
+    const c = agent.probe_compare.canonical(a.anim, frame);
+    var out = a;
+    out.anim = c.anim;
+    out.frame = c.frame;
+    return out;
 }
 
 /// "entity E at T T T" (the first ticks), or with their count.

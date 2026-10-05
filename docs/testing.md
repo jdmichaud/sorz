@@ -123,12 +123,12 @@ sor-remaster's format: a start (`start axel`), then pad events and conditions by
 catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (its header says
 "{N} takes the values A to B") is a run per value.
 
-- `sorz-agent DIR|ROM --scenario FILE [--trace-events OUT]` runs one in sorz from power-on, the
-  whole game as the hosts run it (src/agent/game_run.zig): the start passes the screens as
-  sor-remaster's runner does (START tapped, the menu's arrow, the select's cursor), or replays a
-  recorded play's pads (`start pads FILE VBLANKS`); the script's tick 0 is play's first logic
-  tick. The trace has the scenes, play's phases, the round's world at its ticks and the scenes'
-  sounds.
+- `sorz-agent DIR|ROM --scenario FILE [--trace-events OUT [--probe OUT]]` runs one in sorz from
+  power-on, the whole game as the hosts run it (src/agent/game_run.zig): the start passes the
+  screens as sor-remaster's runner does (START tapped, the menu's arrow, the select's cursor), or
+  replays a recorded play's pads (`start pads FILE VBLANKS`); the script's tick 0 is play's first
+  logic tick. The trace has the scenes, play's phases, the round's world at its ticks and the
+  scenes' sounds; the probe, the fighters' frames, boxes and power as the trace sees the round.
 - With `--situation TRACE [--game-tick N] [--probe OUT]`, the run takes up its start from
   sor-remaster's trace of the same scenario: the round scene's first `phase play`, its entities
   with their ids, states, places and health, the camera, the players' lives; it runs the round's
@@ -162,10 +162,13 @@ catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (it
   programs, and their round scenes' traces are compared event by event (the camera and its stops,
   the timer, play's phases, the players' places, states, health, lives and deaths, the continue,
   the game over, the placed enemies coming out, the sounds asked for), the hit sparks left out;
-  all equal; the game's clock as each script begins is the same; and the sound of the whole
-  run, from power-on, sample by sample (both programs' 48 kHz output, `--wav`): equal at every
-  display tick. It writes
-  the runs and the report into `<prefix>/round` (`-Dround-out=DIR`); `-Dround-only=NAME,...`.
+  all equal; the fighters' frames (the probes, agent/probe_compare.zig: each frame's start and
+  index, entity by entity) equal; the game's clock as each script begins is the same; and the
+  sound of the whole run, from power-on, sample by sample (both programs' 48 kHz output,
+  `--wav`): equal at every display tick. It writes the runs and the report into `<prefix>/round`
+  (`-Dround-out=DIR`); `-Dround-only=NAME,...`. `-Dround-reach=FILE,...` also runs scenario
+  files kept outside the repository (a recorded play's, `start pads`), not as a gate: their
+  lines say where the trace, the frames and the sound first differ.
 
 ## The variants
 
