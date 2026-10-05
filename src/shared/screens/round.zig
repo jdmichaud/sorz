@@ -55,6 +55,18 @@ const Score = setup_mod.Score;
 /// written on all of them.
 const plane_cells = 64;
 
+/// The presses' lamps a picture keeps: each its cells' place on plane A, and lit or not.
+const Lamps = struct {
+    items: [8]?Lamp = @splat(null),
+
+    const Lamp = struct { x: i32, y: i32, lit: bool };
+
+    fn find(self: *const Lamps, x: i32, y: i32) ?Lamp {
+        for (self.items) |item| if (item) |l| if (l.x == x and l.y == y) return l;
+        return null;
+    }
+};
+
 /// The palette cycles of a round's colours at most.
 const max_cycles = library.Rounds.most_cycles;
 
@@ -229,6 +241,10 @@ pub const Round = struct {
     animation_rows_due: u8 = 0,
     /// The step the picture shows: the one before the tick (`animation_shown` as it began).
     shown_animation: ?u8 = null,
+    /// The presses' lamps (round 6's) as the last logic tick left them, and those the picture
+    /// shows (as the display tick began).
+    lamps: Lamps = .{},
+    shown_lamps: Lamps = .{},
     /// The art play streams in (a section's, the boss's, an arriving enemy's, the special
     /// attack's): its list, and the display tick of it that comes next.
     art: world.script.ArtQueue = .{},
@@ -448,6 +464,7 @@ pub const Round = struct {
         self.shown_bar = self.bar(a);
         self.shown_game_over = self.gameOver() != null;
         self.shown_animation = self.animation_shown;
+        self.shown_lamps = self.lamps;
         self.shown_drifted = self.drifted;
         if (turn.world_out) |o| o.latch();
         self.logic_ran = false;
@@ -944,6 +961,7 @@ pub const Round = struct {
         };
         self.cycle(a);
         self.animate(a);
+        self.noteLamps(a);
         const w = &self.play.world;
         if (join != null) self.joined(turn);
         for (&self.out_blinks, w.players) |*b, pl| b.blink(pl.out, !self.answeredNo(pl), a.screen.status_bar.join.blink);
@@ -1202,6 +1220,22 @@ pub const Round = struct {
         self.animation_rows_due = @intCast(@as(u32, m.height) * (plane_cells / m.width));
     }
 
+    /// The presses' lamps as the world left them: each press's cells of the plane (the
+    /// original's video memory's column nearest the press across the round), lit or not.
+    fn noteLamps(self: *Round, a: *const Assets) void {
+        self.lamps = .{};
+        var n: usize = 0;
+        for (&self.play.world.entities) |*e| {
+            const kind = e.kind orelse continue;
+            const l = world.behaviours.press.lampOf(a.kinds.get(kind), e) orelse continue;
+            if (n == self.lamps.items.len) break;
+            const at = @divFloor(e.position.x.whole(), art.tile_side);
+            const x = at + @mod(@as(i32, l.x) - at + plane_cells / 2, plane_cells) - plane_cells / 2;
+            self.lamps.items[n] = .{ .x = x, .y = l.y, .lit = l.lit };
+            n += 1;
+        }
+    }
+
     /// What the status bar shows.
     fn bar(self: *const Round, a: *const Assets) Bar {
         const w = &self.play.world;
@@ -1271,6 +1305,13 @@ pub const Round = struct {
             });
             var x: i32 = place.x;
             while (x < board.width) : (x += m.width) try board.drawMap(m, x, place.y);
+        };
+        // The presses' lamps whose look changed.
+        if (s.lamp_on) |on| if (s.lamp_off) |off| for (self.shown_lamps.items) |lamp| {
+            const l = lamp orelse continue;
+            const was = if (prev) |p| p.shown_lamps.find(l.x, l.y) else null;
+            if (was != null and was.?.lit == l.lit) continue;
+            try v.board(.a).drawMap(if (l.lit) on else off, l.x, l.y);
         };
         try drawBosses(v, a, now.bosses, if (prev) |p| p.shown_bar.bosses else null);
         const c = self.shown_camera;

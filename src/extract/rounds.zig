@@ -97,6 +97,9 @@ fn roundName(arena: std.mem.Allocator, n: u32, comptime fmt: []const u8, args: a
     return std.fmt.allocPrint(arena, "round{d}/" ++ fmt, .{n + 1} ++ args);
 }
 
+/// Round 6's presses' lamps' two looks (0x7ADE: two words each, the first look shown first).
+const press_lamp_looks = 0x7B40;
+
 /// Extracts round `n` (0 to 7) into the builder.
 pub fn extract(b: *Builder, n: u32) !void {
     const arena = b.arena;
@@ -186,6 +189,18 @@ pub fn extract(b: *Builder, n: u32) !void {
             .steps = out,
         });
         try b.origin(name, .{ .cycle = c });
+    }
+
+    if (n == 5) {
+        // Round 6's presses' lamps (0x7ADE): as a press shakes, its two cells of plane A take
+        // the first look, then the second, a tick each (0x7B40: two words a look); the second is
+        // the plane's own.
+        for ([_][]const u8{ "press_lamp_on", "press_lamp_off" }, 0..) |what, k| {
+            const at: u32 = press_lamp_looks + 4 * @as(u32, @intCast(k));
+            const words = [2]u16{ u16be(rom, at), u16be(rom, at + 2) };
+            const why = try std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: a press's lamp's two cells, look {d} of 2 (written by 0x7ADE as it shakes, at its place's cells of plane A, 0x7B28)", .{ at, k + 1 });
+            try run.mapAt(try roundName(arena, n, "{s}", .{what}), &words, 2, 1, null, why, .code);
+        }
     }
 
     if (n == 2) {

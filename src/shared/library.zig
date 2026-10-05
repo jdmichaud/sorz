@@ -94,6 +94,9 @@ pub const RoundAssets = struct {
     /// Its animation's steps (the script's `animation`), their maps and colours found.
     animation: [Rounds.most_steps]AnimationStep = undefined,
     animation_steps: u8 = 0,
+    /// The looks of its presses' lamps, lit and not (round 6's), when its art set has them.
+    lamp_on: ?*const art.TileMap = null,
+    lamp_off: ?*const art.TileMap = null,
 
     pub const AnimationStep = struct { map: *const art.TileMap, colours: *const art.Palette };
 
@@ -190,6 +193,11 @@ fn findRounds(c: *const Content, diag: *json.Diagnostic) LoadError!Rounds {
             }
             round_assets.animation_steps = @intCast(an.steps.len);
         }
+        var lamp_names: [2][64]u8 = undefined;
+        const on = std.fmt.bufPrint(&lamp_names[0], "{s}/press_lamp_on", .{r.art}) catch return refuse(diag, r.art, "an art set's name too long");
+        const off = std.fmt.bufPrint(&lamp_names[1], "{s}/press_lamp_off", .{r.art}) catch return refuse(diag, r.art, "an art set's name too long");
+        round_assets.lamp_on = a.map(on);
+        round_assets.lamp_off = a.map(off);
         out.items[r.number - 1] = round_assets;
     }
     if (out.items[0] == null) return refuse(diag, "rounds/round1", "no round 1");

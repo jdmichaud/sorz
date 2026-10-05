@@ -803,6 +803,7 @@ pub fn placing(rec: *const Spawn) entity.Spawn {
         inline else => |x| @field(entity.Drift, @tagName(x)),
     };
     sp.art = rec.art;
+    sp.place = rec.place;
     return sp;
 }
 

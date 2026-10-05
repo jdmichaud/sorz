@@ -276,6 +276,12 @@ fn flight(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
 /// the floor, never passed).
 const link_heights = 0x7BC4;
 
+/// The presses' lamps' cells by place (0x7B28: write commands), in plane A of play (at $C000 in
+/// video memory, 64 cells by 32: the rounds' layout).
+const lamp_cells = 0x7B28;
+const plane_a = 0xC000;
+const plane_bytes = 64 * 32 * 2;
+
 /// The press (type $42): its look (entry 0, its frame's attack box what the others meet as it
 /// drops), the two boxes it strikes with at its own turn (0x7B48: $F4, then $EA, written as its
 /// frame's attack box), its heights, speeds and waits, its bounce's sound, the shake's thud.
@@ -328,6 +334,23 @@ fn press(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
     // across less the camera's plus 0xAF6E's offset).
     try d.number("drawn_left", try immediate(rom, 0xAFA0, &.{ 0x30, 0x3C }, 2), "ROM 0x0AFA0: move.w #N,d0 (signed)");
     try d.number("drawn_offset", try items.drawnOffset(rom), "ROM 0x0AF6E: addi.w #N,d2");
+    // Its lamp: the two cells of plane A it writes as it shakes, by its place (0x7B28: a write
+    // command each, to plane A at $C000, 64 cells across, 0x7AEC: lea (58,pc,d0.w)), on one row.
+    if (u16be(rom, 0x7AEC) != 0x43FB or rom[0x7AEF] != lamp_cells - 0x7AEE) return error.BadData;
+    var lamp_x: [6]i32 = undefined;
+    var lamp_y: ?i32 = null;
+    for (&lamp_x, 0..) |*x, k| {
+        const cmd = u32be(rom, lamp_cells + 4 * @as(u32, @intCast(k)));
+        if (cmd & 0xC000_FFFC != 0x4000_0000) return error.BadData;
+        const address: u32 = ((cmd >> 16) & 0x3FFF) | ((cmd & 3) << 14);
+        if (address < plane_a or address >= plane_a + plane_bytes) return error.BadData;
+        x.* = @intCast(((address - plane_a) % 128) / 2);
+        const y: i32 = @intCast((address - plane_a) / 128);
+        if (lamp_y != null and lamp_y.? != y) return error.BadData;
+        lamp_y = y;
+    }
+    try d.table("lamp_x", &lamp_x, "ROM 0x07B28: a write command by its place, its cell's column of plane A's 64");
+    try d.number("lamp_y", lamp_y.?, "ROM 0x07B28: the commands' row of plane A");
     try d.sound("bounce", @bitCast(@as(i8, @intCast(try moveq(rom, 0x7C14, 7)))));
     try d.sound("thud", @bitCast(@as(i8, @intCast(try moveq(rom, 0x4D58, 7)))));
     return .{

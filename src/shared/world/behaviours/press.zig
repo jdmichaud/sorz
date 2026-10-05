@@ -14,6 +14,7 @@
 const tick = @import("../tick.zig");
 const fixed = @import("../fixed.zig");
 const entity = @import("../entity.zig");
+const kinds_mod = @import("../kinds.zig");
 const press_link = @import("press_link.zig");
 
 const Fixed = fixed.Fixed;
@@ -41,7 +42,7 @@ pub const Mind = struct {
     bounces: u8 = 0,
     /// The next height of its table that leaves a link.
     link: u8 = 0,
-    /// Which of their two looks its cells of the plane show as it shakes (the second: true).
+    /// Its lamp is lit (its cells of the plane in their first look), as it shakes.
     shaken: bool = false,
 };
 
@@ -77,12 +78,34 @@ pub const Numbers = struct {
     /// `drawn_left`.
     drawn_left: i16,
     drawn_offset: i16,
+    /// Its lamp's cells' row of the round's plane.
+    lamp_y: u8,
 };
 
 pub const Tables = struct {
     /// The heights it passes as it drops, each leaving a link (the last past the floor).
     link_heights: [5]i16,
+    /// Its lamp's two cells of the round's plane, by its place: their column of the plane's
+    /// cells as the original's video memory holds them (the nearest to it of those across the
+    /// round), and their row (`Numbers.lamp_y`).
+    lamp_x: [6]u8,
 };
+
+/// A press's lamp: its cells' column (of the plane's cells as the original's video memory holds
+/// them) and row, and whether it is lit.
+pub const Lamp = struct { x: u8, y: u8, lit: bool };
+
+/// The lamp of entity `e`, a press of kind `k`, by its place (none: no lamp; not a press).
+pub fn lampOf(k: *const kinds_mod.Kind, e: *const entity.Entity) ?Lamp {
+    const m = switch (e.mind) {
+        .press => |m| m,
+        else => return null,
+    };
+    const p = e.spawn.place orelse return null;
+    const t: *const Tables = @ptrCast(@alignCast(k.tables orelse return null));
+    if (p >= t.lamp_x.len) return null;
+    return .{ .x = t.lamp_x[p], .y = kinds_mod.numbersOf(@This(), k).lamp_y, .lit = m.shaken };
+}
 
 pub fn think(a: Actor) void {
     const e = a.entity;
