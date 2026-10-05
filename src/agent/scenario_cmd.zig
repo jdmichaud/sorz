@@ -177,7 +177,16 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
     const round: ?*const sorz.content.round.Round = for (c.rounds) |*x| {
         if (x.number == situation.round) break x;
     } else if (c.rounds.len != 0) &c.rounds[0] else null;
-    var r = try scenario.Run.init(gpa, &kinds, &script, &situation, .{ .game_tick = options.game_tick, .round = round, .last_score = last_score }, if (options.trace != null) &tw else null, if (options.probe != null) &probe else null);
+    // The enemies' colours' lines, and which are a kind's own (play's record), as the round's.
+    var extras: scenario.Run.Extras = .{ .game_tick = options.game_tick, .round = round, .last_score = last_score };
+    if (c.screens.round) |*play| {
+        const ec = &play.enemy_colours;
+        extras.colour_lines = ec.lines;
+        for (ec.sets[0..@min(ec.sets.len, 16)], 0..) |set, n| {
+            if (set.own != null) extras.own_colours |= @as(u16, 1) << @intCast(n);
+        }
+    }
+    var r = try scenario.Run.init(gpa, &kinds, &script, &situation, extras, if (options.trace != null) &tw else null, if (options.probe != null) &probe else null);
     defer r.deinit();
     // The world's canonical form at each logic tick: the round's world alone runs here.
     var sizes_file: ?std.Io.File = null;
