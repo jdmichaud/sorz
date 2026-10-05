@@ -136,8 +136,10 @@ catalogue's scenarios of Axel are copied in `tests/scenarios/axel`; a family (it
   sor-remaster's formats. A scenario that starts from a recorded play (`start pads FILE V`) is
   taken up mid-round, at the end of the logic tick that holds display tick V: every entity in its
   state, each enemy with the record the round's script placed it by (`rounds/round1.json`,
-  matched by where it appeared), the random generator as the trace's draws left it, and the
-  round's clock as sor-remaster counts it (`--game-tick`, its `script_game_tick`).
+  matched by where it appeared), the random generator as the trace's draws left it, the
+  round's clock as sor-remaster counts it (`--game-tick`, its `script_game_tick`), and the
+  round's script where it was: replayed from the round's start over the trace's script
+  entities, camera and phases (a stand-in brings what the trace brought should they part).
 - With `--reload`, a run from power-on reads the game's state back from its canonical form
   (canonical.zig) at every display tick and goes on from the state read: the state read must be
   the one written, and the run's trace and sound must equal those of the run without it (a game
