@@ -170,15 +170,17 @@ events and conditions by logic tick. The catalogue's scenarios of each character
   for an item; with sorz's item-knife: the knife picked up, stabbed and thrown; item-bat: the bat
   out of its breakable, swung until it splinters; and ai-boss-script and ai-boss-script-mash: taken
   up before Antonio comes, so that the round's script brings him, the player standing or pressing B
-  to his end), sorz taken up from sor-remaster's situation. Run by run, the traces are compared (the
-  first difference and the kind of entity it is about); per enemy and thing thrown, the catalogue's
-  measures over every run (its m_ai: each state's ticks and the states that follow it, an attack's
-  place from the player at its start, its blows' tick, damage and reaction, the health coming out of
-  hiding, a thrown thing's flights and hits): equal, within tolerance (as many, a tenth at least
-  one, medians and means within a tenth, shares within 0.1, the same values seen) or different. An
-  item's family is equal when all its runs are the same. `-Dsimilar-every=N` runs every N-th run of
-  each family; sor-remaster's runs go `-Dsimilar-jobs=N` at once and are kept in
-  `<prefix>/similar/enemies` while its agent and the scenario stay the same.
+  to his end; and ai-acrobat-adam-lift and ai-acrobat-axel-combo: the acrobat under Adam's uppercut,
+  player 2 joining, and under the end of Axel's combo, played from power-on in sorz too), sorz taken
+  up from sor-remaster's situation. Run by run, the traces are compared (the first difference and
+  the kind of entity it is about); per enemy and thing thrown, the catalogue's measures over every
+  run (its m_ai: each state's ticks and the states that follow it, an attack's place from the player
+  at its start, its blows' tick, damage and reaction, the health coming out of hiding, a thrown
+  thing's flights and hits): equal, within tolerance (as many, a tenth at least one, medians and
+  means within a tenth, shares within 0.1, the same values seen) or different. An item's family is
+  equal when all its runs are the same. `-Dsimilar-every=N` runs every N-th run of each family;
+  sor-remaster's runs go `-Dsimilar-jobs=N` at once and are kept in `<prefix>/similar/enemies` while
+  its agent and the scenario stay the same.
 - `zig build round-check -Drom=ROM -Dremaster=DIR|AGENT` (src/tools/round_check.zig), the gate of
   PLAN item 13: round 1's scenarios (`tests/scenarios/round1`: a walk to the first wall, standing
   through three time overs, the continue's YES and NO, two pauses, player 2's PRESS 2UP START

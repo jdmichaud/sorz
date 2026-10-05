@@ -34,6 +34,10 @@ pub const Family = struct {
     what: []const u8,
     /// An item's family, judged run by run.
     item: bool = false,
+    /// sorz plays it from power-on too, as sor-remaster does, not taken up at the script's
+    /// start: a second player's join is the round screen's, and the run is the game's own
+    /// (compared from the script's start all the same).
+    power_on: bool = false,
 };
 
 /// The catalogue's families of the enemies and the items.
@@ -62,6 +66,10 @@ pub const families = [_]Family{
     // Not the catalogue's: taken up before Antonio comes, so that the round's script brings him.
     .{ .name = "ai-boss-script", .what = "Antonio brought by the round's script, the player standing" },
     .{ .name = "ai-boss-script-mash", .what = "Antonio brought by the round's script, B pressed to his end" },
+    // Not the catalogue's: the acrobat under each character's lifting or launching blows, the
+    // characters a recorded play of Axel brings to it (Adam joining as player 2).
+    .{ .name = "ai-acrobat-adam-lift", .what = "the acrobat lifted by Adam's uppercut, knocked off by his fourth blow", .power_on = true },
+    .{ .name = "ai-acrobat-axel-combo", .what = "the acrobat knocked down by the end of Axel's combo", .power_on = true },
     .{ .name = "item-apple-reach", .what = "the apple: taken from across", .item = true },
     .{ .name = "item-beef", .what = "the beef: taken after a knock-down", .item = true },
     .{ .name = "item-pipe", .what = "the pipe: dropped by its Galsia, picked up and swung", .item = true },
@@ -79,6 +87,10 @@ const attacks = [_][]const u8{ "punch", "slide", "hold", "stab", "throw", "swing
 /// Left out of the traces, as the moves' comparison leaves them: none.
 const ignored_kinds = [_][]const u8{};
 const ignored_events = [_][]const u8{"timer"};
+/// A run from power-on: the front end's objects (sor-remaster's) and sorz's own section events
+/// left out as round-check leaves them, the entities numbered by their order of appearance.
+const front_end_kinds = [_][]const u8{ "screen_object", "select_cursor", "select_portrait" };
+const power_on_ignored_events = [_][]const u8{ "timer", "section" };
 const ignored_fields = [_][]const u8{"vh"};
 
 pub const Config = struct {
@@ -433,7 +445,8 @@ fn ended(c: *const Config, dir: []const u8, name: []const u8) bool {
 
 // A run ----------------------------------------------------------------------------------------
 
-/// sorz's run of `s` from the reference's situation; both traces compared and measured.
+/// sorz's run of `s` from the reference's situation (or from power-on, a `power_on` family's);
+/// both traces compared and measured.
 fn runOne(c: *const Config, arena: std.mem.Allocator, dir: []const u8, s: Spec, ref_acc: *Acc, z_acc: *Acc) !Outcome {
     const cwd = std.Io.Dir.cwd();
     const io = c.io;
@@ -454,7 +467,10 @@ fn runOne(c: *const Config, arena: std.mem.Allocator, dir: []const u8, s: Spec, 
         break :blk if (g == .integer) @intCast(g.integer) else null;
     };
     var said: std.Io.Writer.Allocating = .init(arena);
-    const done = try agent.scenario_cmd.run(c.gpa, io, c.assets, .{ .scenario = scn, .situation = ref_trace, .situation_probe = ref_probe, .game_tick = game_tick, .trace = z_trace }, &said.writer);
+    const done = if (families[s.family].power_on)
+        try agent.scenario_cmd.run(c.gpa, io, c.assets, .{ .scenario = scn, .trace = z_trace }, &said.writer)
+    else
+        try agent.scenario_cmd.run(c.gpa, io, c.assets, .{ .scenario = scn, .situation = ref_trace, .situation_probe = ref_probe, .game_tick = game_tick, .trace = z_trace }, &said.writer);
     if (!done) return .{ .same = false, .failed = true, .first = try c.arena.dupe(u8, std.mem.trim(u8, said.written(), " \r\n")) };
 
     const ref_text = try cwd.readFileAlloc(io, ref_trace, arena, .limited(1 << 30));
@@ -462,13 +478,15 @@ fn runOne(c: *const Config, arena: std.mem.Allocator, dir: []const u8, s: Spec, 
     // The situation sorz took up: at play's start, or after the recorded play's last display tick.
     const at: ?u64 = if (padsStart(s.text)) |v| v + 1 else null;
     const t0: i64 = @intCast((try agent.scenario.situationOf(arena, ref_text, at)).t);
+    const power_on = families[s.family].power_on;
     const options: compare.Options = .{
         .from_scene = "round",
         .after = t0,
-        .ignore_kinds = &ignored_kinds,
-        .ignore = &ignored_events,
+        .ignore_kinds = if (power_on) &front_end_kinds else &ignored_kinds,
+        .ignore = if (power_on) &power_on_ignored_events else &ignored_events,
         .ignore_fields = &ignored_fields,
         .sound_names = c.sound_names,
+        .renumber = power_on,
     };
     var diag: compare.Diagnostic = .{};
     const a_full = try compare.parse(arena, ref_text, &diag);

@@ -1,0 +1,36 @@
+# The recorded play (game.pads) to VBlank 5901, near round 1's acrobat; player 2 joins as Adam,
+# walks to the acrobat and presses B: his combo, the uppercut lifting it into the air, the fourth
+# blow knocking it off. Played from power-on in both programs. (Written for sorz's similar-check,
+# PLAN item 12: the user saw the acrobats stay on the ground.)
+start pads ../../game.pads 5901
+pad 2
++start 12
+wait 100
++right
+until near acrobat 40 8 within 400
+-right
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+attack
+wait 120
