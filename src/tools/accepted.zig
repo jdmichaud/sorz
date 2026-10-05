@@ -40,8 +40,8 @@ pub const Accepted = struct {
 pub const list = [_]Accepted{
     .{
         .name = "shadows over sprites",
-        .reason = "sorz draws a shadow just behind its entity; the original's shadow is an object of its own, drawn at its entity's depth in its place's order, so it may cover another entity (a thrown Galsia's hand and feet on the ground). sorz's way is the user's choice (2026-10-05)",
-        .redraws = &.{shadowsInFront},
+        .reason = "sorz draws a shadow just behind its entity; the original's shadow is an object of its own, drawn at its entity's depth in its place's order, so it may cover another entity (a thrown Galsia's hand and feet on the ground), or go behind one its entity is in front of (an acrobat's foot beside another's shadow). sorz's way is the user's choice (2026-10-05)",
+        .redraws = &.{ shadowsInFront, shadowsBehind },
     },
     .{
         .name = "objects past a band's 15",
@@ -54,8 +54,19 @@ pub const list = [_]Accepted{
 /// The shadows in front of every other sprite: the pixels where sorz shows a sprite and the
 /// reference shows a shadow over it.
 fn shadowsInFront(sprites: []const Sprite, c: Context, out: []Sprite) usize {
+    return shadowsFirst(sprites, c, out, false);
+}
+
+/// The shadows behind every other sprite: the pixels where sorz shows a shadow over a sprite the
+/// reference shows in front of it.
+fn shadowsBehind(sprites: []const Sprite, c: Context, out: []Sprite) usize {
+    return shadowsFirst(sprites, c, out, true);
+}
+
+/// The shadows drawn first (behind) or last, the other sprites in their order.
+fn shadowsFirst(sprites: []const Sprite, c: Context, out: []Sprite, first: bool) usize {
     var n: usize = 0;
-    for ([_]bool{ false, true }) |shadows| for (sprites) |s| {
+    for ([_]bool{ first, !first }) |shadows| for (sprites) |s| {
         const is_shadow = if (c.shadow) |f| s.frame == f else false;
         if (is_shadow != shadows) continue;
         out[n] = s;
