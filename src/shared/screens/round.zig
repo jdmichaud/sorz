@@ -922,9 +922,10 @@ pub const Round = struct {
             if (!self.fighting(k)) continue;
             const h = pl.entity orelse continue;
             const e = w.get(h) orelse continue;
-            e.health -|= t.health;
-            if (e.health < 0) e.health = 0;
-            if (turn.world_out) |out| out.hits.append(.{ .attacker = null, .target = h, .damage = t.health });
+            // What it had left, at most the time over's (its health holds at none).
+            const lost = @min(t.health, @max(e.health, 0));
+            e.health -= lost;
+            if (turn.world_out) |out| out.hits.append(.{ .attacker = null, .target = h, .damage = lost });
         }
         self.noteBars();
         self.phase = .play;
