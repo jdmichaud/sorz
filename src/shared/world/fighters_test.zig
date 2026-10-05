@@ -379,7 +379,7 @@ const Round = struct {
     fn init() !Round {
         var r: Round = .{ .f = try Fixture.init() };
         r.w.ground = .pixels(160);
-        r.w.camera = .{ .x = .pixels(768), .x_min = .pixels(768), .x_max = .pixels(1216), .y_max = .zero, .follows = true };
+        r.w.camera = .{ .x = .pixels(768), .x_min = .pixels(768), .x_max = .pixels(1216), .y_max = .zero, .follows = script.cameraRules(&content_round.example) };
         r.hero = try r.w.spawn(&r.f.kinds, r.f.kinds.find("hero").?, .pixels(800, 64, 160), .right);
         r.w.players[0] = .{ .entity = r.hero, .character = r.f.kinds.find("hero").?, .lives = 3, .specials = 1, .continues = 3 };
         const e = r.w.get(r.hero).?;

@@ -133,6 +133,14 @@ fn immediate(rom: []const u8, at: u32, opcode: []const u8, width: u8) Error!u32 
     };
 }
 
+/// The pixels of a long immediate's whole part (its high word), after `opcode` at `at`; its low
+/// word, the fraction, is none.
+fn longPixels(rom: []const u8, at: u32, opcode: []const u8) Error!u32 {
+    const whole = try immediate(rom, at, opcode, 2);
+    if (u16be(rom, at + @as(u32, @intCast(opcode.len)) + 2) != 0) return error.BadData;
+    return whole;
+}
+
 /// A packed decimal byte as a number.
 fn decimal(b: u32) Error!u8 {
     if (b > 0x99 or b & 0xF > 9) return error.BadData;
@@ -368,8 +376,29 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     const behind_depth = try immediate(rom, 0x706, &.{0x74}, 1);
     const right_edge = try immediate(rom, 0xCAE, &.{ 0x06, 0x40 }, 2);
     _ = try immediate(rom, 0xCB8, &.{0x51}, 1);
+    // How the camera follows the players (0x18F5C): a player's place on the screen as its object
+    // keeps it, the sprites' origin 128 more, past $110 or from $130 (subi.l #N,d0 and d1) moves
+    // it by as much, at most move.l #N,d1's pixels a tick. The players kept on the screen (0x43AA:
+    // moveq #N,d2 from the camera's X, then move.w #N,d3 more) and on the depths (moveq #N,d1 up
+    // to moveq #N,d1, round 7's move.w #N,d1 on the cmpi.w's round). A heavy fall's shake
+    // (0x4D40: move.b #N,($FA45), its ticks; 0x19282: moveq #N,d0, its pixels).
+    const origin = 128;
+    const band_from = try longPixels(rom, 0x18F7E, &.{ 0x04, 0x80 });
+    const band_to = try longPixels(rom, 0x18F86, &.{ 0x04, 0x81 });
+    const follow_most = try longPixels(rom, 0x18FD6, &.{ 0x22, 0x3C });
+    if (try longPixels(rom, 0x18FCC, &.{ 0x22, 0x3C }) != 0x10000 - follow_most) return error.BadData;
+    const kept_left = try immediate(rom, 0x43F4, &.{0x74}, 1);
+    const kept_width = try immediate(rom, 0x43F6, &.{ 0x36, 0x3C }, 2);
+    const depth_from = try immediate(rom, 0x440A, &.{0x72}, 1);
+    const depth_to_common = try immediate(rom, 0x4414, &.{0x72}, 1);
+    const own_round = try immediate(rom, 0x4416, &.{ 0x0C, 0x78 }, 2);
+    if (u16be(rom, 0x441A) != 0xFF02) return error.BadData;
+    const depth_to_own = try immediate(rom, 0x441E, &.{ 0x32, 0x3C }, 2);
+    const shake_ticks = try immediate(rom, 0x4D52, &.{ 0x11, 0xFC }, 2);
+    if (u16be(rom, 0x4D56) != 0xFA45) return error.BadData;
+    const shake_by = try immediate(rom, 0x19292, &.{0x70}, 1);
     const camera: round.Camera = .{
-        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down; plane B in its mode 1 (0x19368): the camera's X in round 1; the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60)", .{ h, limits_set / 8 }),
+        .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down; plane B in its mode 1 (0x19368): the camera's X in round 1; the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282)", .{ h, limits_set / 8 }),
         .x = u16be(rom, h + 6),
         .y = u16be(rom, h + 8),
         .x_min = u16be(rom, limits + 4),
@@ -379,6 +408,11 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .wall_within = @intCast(wall_within),
         .edges = .{ -8, @intCast(right_edge) },
         .left_behind = .{ -@as(i32, @intCast(behind_x)), @intCast(behind_depth) },
+        .follow = .{ @intCast(@as(i32, @intCast(band_from)) - origin), @intCast(@as(i32, @intCast(band_to)) - origin) },
+        .follow_most = @intCast(follow_most),
+        .kept_x = .{ @intCast(kept_left), @intCast(kept_left + kept_width) },
+        .kept_depth = .{ @intCast(depth_from), @intCast(if (r == own_round) depth_to_own else depth_to_common) },
+        .shake = .{ @intCast(shake_ticks), @intCast(shake_by) },
     };
     const first_wall: i32 = u16be(rom, limits + 6);
 

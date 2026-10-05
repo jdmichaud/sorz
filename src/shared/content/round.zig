@@ -130,6 +130,16 @@ pub const Camera = struct {
     /// Where the enemies left behind come back to when the camera reaches the wall: across from
     /// the camera's left edge (those at or behind it come), and the depth.
     left_behind: [2]i32 = .{ -32, 96 },
+    /// A player drawn left of `follow[0]` or from `follow[1]` on, across the screen, moves the
+    /// camera by as much, at most `follow_most` pixels a tick.
+    follow: [2]i16,
+    follow_most: i16,
+    /// The players are kept within `kept_x` across from the camera's left edge (but in a hold),
+    /// and within the depths `kept_depth`.
+    kept_x: [2]i16,
+    kept_depth: [2]i16,
+    /// A heavy fall shakes the camera `shake[0]` ticks, `shake[1]` pixels down and up in turn.
+    shake: [2]i16,
 };
 
 pub const Players = struct {
@@ -253,6 +263,11 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
             .{ .key = "wall_within", .value = json.Value.num(c.wall_within) },
             .{ .key = "edges", .value = try pair(arena, c.edges[0], c.edges[1]) },
             .{ .key = "left_behind", .value = try pair(arena, c.left_behind[0], c.left_behind[1]) },
+            .{ .key = "follow", .value = try pair(arena, c.follow[0], c.follow[1]) },
+            .{ .key = "follow_most", .value = json.Value.num(c.follow_most) },
+            .{ .key = "kept_x", .value = try pair(arena, c.kept_x[0], c.kept_x[1]) },
+            .{ .key = "kept_depth", .value = try pair(arena, c.kept_depth[0], c.kept_depth[1]) },
+            .{ .key = "shake", .value = try pair(arena, c.shake[0], c.shake[1]) },
         }) },
         .{ .key = "players", .value = try withProvenance(arena, p.provenance, &.{
             .{ .key = "x", .value = json.Value.num(p.x) },
@@ -359,7 +374,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     } else return (try root.get("art")).fail("no art set of this name");
 
     const c = try root.get("camera");
-    try c.only(&.{ "provenance", "at", "x_min", "y", "plane_b", "wall_within", "edges", "left_behind" });
+    try c.only(&.{ "provenance", "at", "x_min", "y", "plane_b", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake" });
     const at = try readPair(try c.get("at"), i32);
     const y = try readPair(try c.get("y"), i32);
     r.camera = .{
@@ -373,7 +388,17 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         .wall_within = try (try c.get("wall_within")).int(i32),
         .edges = try readPair(try c.get("edges"), i32),
         .left_behind = try readPair(try c.get("left_behind"), i32),
+        .follow = try readPair(try c.get("follow"), i16),
+        .follow_most = try (try c.get("follow_most")).int(i16),
+        .kept_x = try readPair(try c.get("kept_x"), i16),
+        .kept_depth = try readPair(try c.get("kept_depth"), i16),
+        .shake = try readPair(try c.get("shake"), i16),
     };
+    if (r.camera.shake[0] <= 0 or r.camera.shake[0] > 255) return (try c.get("shake")).fail("not 1 to 255 ticks");
+    if (r.camera.follow[0] > r.camera.follow[1]) return (try c.get("follow")).fail("its first after its second");
+    if (r.camera.follow_most <= 0) return (try c.get("follow_most")).fail("not 1 or more");
+    if (r.camera.kept_x[0] > r.camera.kept_x[1]) return (try c.get("kept_x")).fail("its first after its second");
+    if (r.camera.kept_depth[0] > r.camera.kept_depth[1]) return (try c.get("kept_depth")).fail("its first after its second");
     if (r.camera.plane_b[1] == 0) return (try c.get("plane_b")).fail("a ratio of 0 per");
     if (r.camera.y_min > r.camera.y_max) return (try c.get("y")).fail("its first above its second");
 
@@ -436,7 +461,7 @@ pub const example: Round = .{
     .art = "round1",
     .music = "round 1 music",
     .ground = 160,
-    .camera = .{ .x = 768, .y = 0, .x_min = 768, .y_min = 0, .y_max = 0 },
+    .camera = .{ .x = 768, .y = 0, .x_min = 768, .y_min = 0, .y_max = 0, .follow = .{ 144, 176 }, .follow_most = 3, .kept_x = .{ 32, 288 }, .kept_depth = .{ 2, 112 }, .shake = .{ 8, 3 } },
     .players = .{ .x = 0, .depth = .{ 64, 32 }, .height = 0 },
     .timer = .{ .pace = 90 },
     .sections = &.{

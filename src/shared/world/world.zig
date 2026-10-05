@@ -62,14 +62,28 @@ pub const Camera = struct {
     x_max: Fixed = .of(std.math.maxInt(i32)),
     y_min: Fixed = .zero,
     y_max: Fixed = .of(std.math.maxInt(i32)),
-    /// It follows the players across (in play), from where the last tick drew them, and never
-    /// goes back: its limit on the left follows it.
-    follows: bool = false,
+    /// It follows the players across (in play), by the round's camera's rules, from where the
+    /// last tick drew them, and never goes back: its limit on the left follows it.
+    follows: ?Rules = null,
     drawn: [2]?Fixed = .{ null, null },
     /// The special attack's run, while it lasts: the camera neither follows nor holds the players.
     run: ?Run = null,
     /// A shake under way (`Tick.shake`): its ticks left.
     shake: u8 = 0,
+
+    /// How it follows the players (the round's camera's, script.zig `cameraRules`): a player
+    /// drawn left of `band[0]` or from `band[1]` on, across the screen, moves it by as much, at
+    /// most `most` pixels a tick; the players are kept within `kept_x` across from its left edge
+    /// (but in a hold) and on the depths `kept_depth`; a heavy fall shakes it `shake_ticks`
+    /// ticks, `shake_by` pixels down and up in turn.
+    pub const Rules = struct {
+        band: [2]i16,
+        most: i16,
+        kept_x: [2]i16,
+        kept_depth: [2]i16,
+        shake_ticks: u8,
+        shake_by: i16,
+    };
 
     /// The special attack's run (behaviours/police_car.zig): called, the camera follows for the
     /// tick of the call; then it runs back across at `speed` to `limit`; then (its effect over) it

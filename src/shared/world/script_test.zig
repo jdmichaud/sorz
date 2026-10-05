@@ -57,7 +57,7 @@ const round: content_round.Round = .{
     .art = "t",
     .music = "music",
     .ground = 0,
-    .camera = .{ .x = 0, .y = 0, .x_min = 0, .y_min = 0, .y_max = 0 },
+    .camera = .{ .x = 0, .y = 0, .x_min = 0, .y_min = 0, .y_max = 0, .follow = .{ 144, 176 }, .follow_most = 3, .kept_x = .{ 32, 288 }, .kept_depth = .{ 2, 112 }, .shake = .{ 8, 3 } },
     .players = .{ .x = 0, .depth = .{ 64, 32 }, .height = 0 },
     .timer = .{ .pace = 10 },
     .sections = &.{

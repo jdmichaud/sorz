@@ -346,7 +346,8 @@ pub const Tick = struct {
     pub fn shake(t: *Tick) void {
         const c = &t.world.camera;
         if (t.world.special or c.shake != 0) return;
-        c.shake = systems.shaking.ticks;
+        const rules = c.follows orelse return;
+        c.shake = rules.shake_ticks;
     }
 
     /// The player whose entity is `h` scores `points` (nothing when `h` is no player's).

@@ -26,7 +26,8 @@ const tick_mod = @import("tick.zig");
 
 const Fixed = fixed.Fixed;
 const Tick = tick_mod.Tick;
-const World = @import("world.zig").World;
+const world_mod = @import("world.zig");
+const World = world_mod.World;
 const Round = content_round.Round;
 const Spawn = content_round.Spawn;
 
@@ -95,6 +96,19 @@ pub const Timer = struct {
     up: bool = false,
 };
 
+/// How round `r`'s camera follows the players.
+pub fn cameraRules(r: *const Round) world_mod.Camera.Rules {
+    const c = &r.camera;
+    return .{
+        .band = .{ @intCast(c.follow[0]), @intCast(c.follow[1]) },
+        .most = @intCast(c.follow_most),
+        .kept_x = .{ @intCast(c.kept_x[0]), @intCast(c.kept_x[1]) },
+        .kept_depth = .{ @intCast(c.kept_depth[0]), @intCast(c.kept_depth[1]) },
+        .shake_ticks = @intCast(c.shake[0]),
+        .shake_by = @intCast(c.shake[1]),
+    };
+}
+
 /// The world at the round's start: the camera at its place and limits, the first section
 /// started (its placed come with `placeFirst`), the timer at the first section's.
 pub fn start(w: anytype, plan: *const Plan) void {
@@ -106,7 +120,7 @@ pub fn start(w: anytype, plan: *const Plan) void {
     c.x_max = .pixels(r.sections[0].wall);
     c.y_min = .pixels(r.camera.y_min);
     c.y_max = .pixels(r.camera.y_max);
-    c.follows = true;
+    c.follows = cameraRules(r);
     w.script = .{};
     w.timer = .{ .seconds = r.sections[0].timer, .shown = r.sections[0].timer, .ticks = r.timer.pace };
 }

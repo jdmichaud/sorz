@@ -402,32 +402,11 @@ fn pickups(t: *Tick) void {
 
 // The camera --------------------------------------------------------------------------------------
 
-/// How the camera follows the players (the original's, measured in sor-remaster; TODO(PLAN item
-/// 13): the round's camera from its content): a player drawn past the view's middle band moves
-/// it by as much, at most `follow_most` a tick; the players are kept `margin` pixels inside the
-/// view's sides (but in a hold) and on the walkable depths.
-pub const following = struct {
-    pub const band_from = 144;
-    pub const band_to = 176;
-    pub const follow_most = 3;
-    pub const margin = 32;
-    pub const width = 320;
-    pub const depth_from = 2;
-    pub const depth_to = 112;
-};
-
-/// How the camera shakes (`Tick.shake`; the original's, measured in sor-remaster; TODO(PLAN item
-/// 13): from the round's camera's content): for `ticks` ticks it moves `by` pixels down at an odd
-/// tick left and back up at an even one.
-pub const shaking = struct {
-    pub const ticks = 8;
-    pub const by = 3;
-};
-
-/// The camera follows the players across (when it `follows`), from where the last tick drew
-/// them, never going back (its limit on the left follows it), and stays within its limits (but
-/// while it shakes); then the players are kept inside its view. While the special attack runs
-/// it (`Camera.run`), it neither follows nor holds the players. Its limit on the right is the
+/// The camera follows the players across (when it `follows`, by its rules: `Camera.Rules`),
+/// from where the last tick drew them, never going back (its limit on the left follows it), and
+/// stays within its limits (but while it shakes: `shake_by` pixels down at an odd tick left and
+/// back up at an even one); then the players are kept inside its view. While the special attack
+/// runs it (`Camera.run`), it neither follows nor holds the players. Its limit on the right is the
 /// round's script's wall (script.zig).
 fn camera(t: *Tick) void {
     const c = &t.world.camera;
@@ -447,35 +426,35 @@ fn camera(t: *Tick) void {
             return noteDrawn(t);
         },
     };
-    if (c.follows) {
+    if (c.follows) |rules| {
         if (c.run == null) c.x_min = c.x;
         // Where a player was drawn, in whole pixels on the screen.
         var speed: i32 = 0;
         for (c.drawn) |d| {
             const x = d orelse continue;
             const on_screen = x.whole() - c.x.whole();
-            if (on_screen < following.band_from) {
-                speed = on_screen - following.band_from;
-            } else if (on_screen >= following.band_to) {
-                speed = on_screen - following.band_to;
+            if (on_screen < rules.band[0]) {
+                speed = on_screen - rules.band[0];
+            } else if (on_screen >= rules.band[1]) {
+                speed = on_screen - rules.band[1];
             }
         }
-        const most = following.follow_most;
-        c.x = c.x.add(.pixels(std.math.clamp(speed, -most, most)));
+        c.x = c.x.add(.pixels(std.math.clamp(speed, -rules.most, rules.most)));
     }
     c.x = c.x.clamp(c.x_min, c.x_max);
     if (c.shake != 0) {
         c.shake -= 1;
-        c.y = c.y.add(.pixels(if (c.shake & 1 != 0) shaking.by else -shaking.by));
+        const by: i32 = if (c.follows) |rules| rules.shake_by else 0;
+        c.y = c.y.add(.pixels(if (c.shake & 1 != 0) by else -by));
     } else c.y = c.y.clamp(c.y_min, c.y_max);
-    if (!c.follows) return;
+    const rules = c.follows orelse return;
     for (t.world.players) |p| {
         const e = t.world.get(p.entity orelse continue) orelse continue;
         if (e.holding == null and e.holder == null) {
-            const left = c.x.whole() + following.margin;
-            e.position.x = keptWithin(e.position.x, left, left + following.width - 2 * following.margin);
+            const left = c.x.whole();
+            e.position.x = keptWithin(e.position.x, left + rules.kept_x[0], left + rules.kept_x[1]);
         }
-        e.position.depth = keptWithin(e.position.depth, following.depth_from, following.depth_to);
+        e.position.depth = keptWithin(e.position.depth, rules.kept_depth[0], rules.kept_depth[1]);
     }
     noteDrawn(t);
 }

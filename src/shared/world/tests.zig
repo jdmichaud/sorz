@@ -17,6 +17,8 @@ const tick_mod = @import("tick.zig");
 const draw_list = @import("draw_list.zig");
 const schedule = @import("schedule.zig");
 const trace = @import("trace.zig");
+const script_mod = @import("script.zig");
+const content_round = @import("../content/round.zig");
 
 const Fixed = fixed.Fixed;
 const Vec3 = fixed.Vec3;
@@ -697,7 +699,8 @@ test "the camera follows a player drawn past the view's middle band, and keeps t
     var w: World = undefined;
     const hero = try withHero(&f, &w);
     w.get(hero).?.position = .pixels(200, 100, 0);
-    w.camera = .{ .x_max = .pixels(1000), .follows = true };
+    const rules = script_mod.cameraRules(&content_round.example);
+    w.camera = .{ .x_max = .pixels(1000), .follows = rules };
     var rng: random.Random = .{};
     var out: Output = .{};
     // The first tick has no drawing to follow; then 3 a tick until the player is at 176 on the
@@ -712,7 +715,7 @@ test "the camera follows a player drawn past the view's middle band, and keeps t
     w.get(hero).?.position = .pixels(10, 300, 0);
     step(&w, &f, &rng, &out, .{});
     try testing.expectEqual(@as(i32, 24 + 32), w.get(hero).?.position.x.whole());
-    try testing.expectEqual(@as(i32, systems.following.depth_to), w.get(hero).?.position.depth.whole());
+    try testing.expectEqual(@as(i32, rules.kept_depth[1]), w.get(hero).?.position.depth.whole());
 }
 
 test "an entity held still keeps its speed; a hidden one has no boxes and its frame stays; a blinked one keeps them, not drawn" {

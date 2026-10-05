@@ -309,7 +309,9 @@ editing it.
   "art": "round1",
   "music": "round 1 music", "ground": 160,
   "camera": {"provenance": "…", "at": [768, 0], "x_min": 768, "y": [0, 0], "plane_b": [1, 1],
-             "wall_within": 4, "edges": [-8, 328], "left_behind": [-32, 96]},
+             "wall_within": 4, "edges": [-8, 328], "left_behind": [-32, 96],
+             "follow": [144, 176], "follow_most": 3, "kept_x": [32, 288], "kept_depth": [2, 112],
+             "shake": [8, 3]},
   "players": {"provenance": "…", "x": 0, "depth": [64, 32], "height": 0},
   "timer": {"provenance": "…", "pace": 90},
   "sections": [
@@ -340,7 +342,11 @@ play).
   `plane_b` = [times, per] of the camera's. It has reached a wall when it is less than
   `wall_within` pixels from it. A wave's records come in at `edges`, across from its left edge on
   the left and on the right; when it reaches a wall, the section's enemies at or behind
-  `left_behind`'s first (across from its left edge) come back there, at its second's depth.
+  `left_behind`'s first (across from its left edge) come back there, at its second's depth. In
+  play it follows the players: one drawn before `follow`'s first pixel across the screen, or from
+  its second on, moves it by as much, at most `follow_most` pixels a tick; the players are kept
+  within `kept_x` across from its left edge (but in a hold) and on the depths `kept_depth`; a
+  heavy fall shakes it `shake`'s first ticks, its second's pixels down and up in turn.
 - `players`: where a life starts: `x` from the camera's left edge, each player's `depth`, and the
   `height` it drops in from.
 - `timer`: `pace`, the ticks a second of the round's timer lasts.

@@ -622,10 +622,6 @@ fn int(o: std.json.ObjectMap, name: []const u8) ?i64 {
 
 // The run ----------------------------------------------------------------------------------------
 
-/// The ground's height in round 1 (the trace's h of a fighter standing), until the round's floor
-/// comes from its content (PLAN item 13).
-const round_ground = 160;
-
 /// A scenario's run: the world taken up from the situation, its ticks with the script's pads,
 /// the trace and the probe written at each tick's end.
 pub const Run = struct {
@@ -679,7 +675,8 @@ pub const Run = struct {
         if (extras.game_tick) |g| w.tick = g + 1;
         if (generatorOf(situation)) |g| r.random = g;
         w.special = situation.special;
-        w.ground = .pixels(round_ground);
+        const round = extras.round orelse return error.NoRound;
+        w.ground = .pixels(round.ground);
         w.camera = .{
             .x = .of(situation.camera[0]),
             .y = .of(situation.camera[1]),
@@ -687,7 +684,7 @@ pub const Run = struct {
             .x_max = .of(situation.camera_stop[0]),
             .y_min = .of(situation.camera_stop[1]),
             .y_max = .of(situation.camera_stop[2]),
-            .follows = true,
+            .follows = world.script.cameraRules(round),
         };
         r.later = situation.later;
         r.round = extras.round;
