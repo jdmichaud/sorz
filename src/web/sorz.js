@@ -1024,10 +1024,61 @@ function sorzTransport(Socket, events, limits = {}) {
     if (!checks.manual) requestAnimationFrame(frame);
   }
 
+  // A request whose answer stops coming (nothing for `stallMs`) is asked again, three times at
+  // most: a connection that the server never answers must not stop the load for good.
+  const stallMs = 10000;
+
   async function fetchBytes(url) {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(url + ': ' + response.status + ' ' + response.statusText);
-    return response.arrayBuffer();
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await fetchOnce(url);
+      } catch (e) {
+        if (attempt === 3 || e.stalled !== true) throw e;
+        console.warn('[sorz] ' + url + ': no answer for ' + stallMs / 1000 + ' s, asked again');
+      }
+    }
+  }
+
+  async function fetchOnce(url) {
+    const abort = new AbortController();
+    let stalled = false;
+    let timer = 0;
+    const rearm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        stalled = true;
+        abort.abort();
+      }, stallMs);
+    };
+    rearm();
+    try {
+      const response = await fetch(url, { signal: abort.signal });
+      if (!response.ok) throw new Error(url + ': ' + response.status + ' ' + response.statusText);
+      const reader = response.body.getReader();
+      const chunks = [];
+      let size = 0;
+      for (;;) {
+        rearm();
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        size += value.length;
+      }
+      const bytes = new Uint8Array(size);
+      let at = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, at);
+        at += chunk.length;
+      }
+      return bytes.buffer;
+    } catch (e) {
+      if (!stalled) throw e;
+      const late = new Error(url + ': no answer for ' + stallMs / 1000 + ' s');
+      late.stalled = true;
+      throw late;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // Bytes into memory that `gp_alloc` gives.

@@ -55,7 +55,9 @@ pub const Options = struct {
     assets: ?*const served.Assets = null,
     /// The open WebSocket connections at most; a handshake beyond gets 503.
     max_connections: usize = 4,
-    /// The HTTP requests being read or served at once at most; more are closed at once.
+    /// The HTTP requests being read or served at once at most (at most `max_waiting`). When all are
+    /// taken, the oldest connection still waiting for its request gives its place up; with none
+    /// waiting, a new connection is closed at once.
     max_requests: usize = 16,
     /// The bytes of a connection's messages waiting to be sent.
     send_queue_bytes: usize = 1024 * 1024,
@@ -91,6 +93,12 @@ pub const WebSocketTransport = struct {
     conns: std.ArrayList(*Conn) = .empty,
     next_id: u32 = 1,
     requests: usize = 0,
+    /// The accepted connections still waiting for their request, by the order they came in. A
+    /// browser opens connections ahead that may send nothing for long (Firefox's speculative
+    /// ones); when every request's place is taken, the oldest of them gives its place up, so
+    /// that they never keep the page's files from being served.
+    waiting: [max_waiting]?Waiting = @splat(null),
+    next_waiting: u64 = 0,
     listening: bool = false,
     /// The port the listener got (the one asked for, or the system's choice for port 0).
     port: u16 = 0,
@@ -99,6 +107,51 @@ pub const WebSocketTransport = struct {
 
     /// How long `deinit` waits for the peers to answer the close frames.
     pub const shutdown_grace_ms = 250;
+
+    /// The connections waiting for their request that can give their place up, at most.
+    pub const max_waiting = 64;
+
+    const Waiting = struct { stream: Io.net.Stream, order: u64 };
+    const Place = struct { index: usize, order: u64 };
+
+    /// Notes an accepted connection as waiting for its request; its place among `waiting`, or
+    /// null when they are all taken (it then cannot be asked to give its place up).
+    fn startWaiting(self: *WebSocketTransport, stream: Io.net.Stream) ?Place {
+        self.lock();
+        defer self.unlock();
+        for (&self.waiting, 0..) |*w, i| if (w.* == null) {
+            const order = self.next_waiting;
+            self.next_waiting += 1;
+            w.* = .{ .stream = stream, .order = order };
+            return .{ .index = i, .order = order };
+        };
+        return null;
+    }
+
+    /// The connection at `place` has its request (or has failed): it no longer waits. Before its
+    /// stream is closed, so that `giveUpOldest` never shuts a closed one down.
+    fn stopWaiting(self: *WebSocketTransport, place: ?Place) void {
+        const p = place orelse return;
+        self.lock();
+        defer self.unlock();
+        if (self.waiting[p.index]) |w| if (w.order == p.order) {
+            self.waiting[p.index] = null;
+        };
+    }
+
+    /// The oldest connection still waiting for its request gives its place up: its stream is
+    /// shut down, so that its reader ends and its task frees the place. Under the mutex. False
+    /// when none waits.
+    fn giveUpOldest(self: *WebSocketTransport) bool {
+        var oldest: ?usize = null;
+        for (self.waiting, 0..) |w, i| if (w) |x| {
+            if (oldest == null or x.order < self.waiting[oldest.?].?.order) oldest = i;
+        };
+        const i = oldest orelse return false;
+        self.waiting[i].?.stream.shutdown(self.io, .both) catch {};
+        self.waiting[i] = null;
+        return true;
+    }
 
     pub fn init(gpa: std.mem.Allocator, io: Io, options: Options) WebSocketTransport {
         return .{ .gpa = gpa, .io = io, .options = options };
@@ -546,7 +599,9 @@ fn acceptLoop(t: *WebSocketTransport, server_value: Io.net.Server) Io.Cancelable
             },
         };
         t.lock();
-        const room = t.requests < t.options.max_requests;
+        // A place freed by a connection that waited the longest for its request counts at once:
+        // its task leaves soon, the count over its most until then.
+        const room = t.requests < @min(t.options.max_requests, WebSocketTransport.max_waiting) or t.giveUpOldest();
         if (room) t.requests += 1;
         t.unlock();
         if (!room) {
@@ -577,10 +632,13 @@ fn serveRequest(t: *WebSocketTransport, stream: Io.net.Stream) Io.Cancelable!voi
     var wbuf: [4096]u8 = undefined;
     var writer = stream.writer(io, &wbuf);
     const w = &writer.interface;
+    const place = t.startWaiting(stream);
     const head_len = readHead(&reader.interface) catch {
+        t.stopWaiting(place);
         stream.close(io);
         return;
     };
+    t.stopWaiting(place);
     const head = reader.interface.buffered()[0..head_len];
     const req = ws.parseRequest(head) catch {
         ws.writeStatus(w, "400 Bad Request", "", "bad request\n") catch {};
