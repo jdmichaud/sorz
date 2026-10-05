@@ -1,0 +1,13 @@
+# The recorded play (game.pads) to VBlank 5901, near round 1's acrobat; player 2 joins as Adam,
+# walks to the acrobat and calls the special attack as it somersaults: it falls from the air to
+# its pose, the camera runs back past the drums, the police car comes and the blast knocks it
+# down. Played from power-on in both programs. (Written for sorz's similar-check, PLAN item 12.)
+start pads ../../game.pads 5901
+pad 2
++start 12
+wait 100
++right
+until near acrobat 70 8 within 400
+-right
+special
+wait 1000

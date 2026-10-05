@@ -70,6 +70,7 @@ pub const families = [_]Family{
     // characters a recorded play of Axel brings to it (Adam joining as player 2).
     .{ .name = "ai-acrobat-adam-lift", .what = "the acrobat lifted by Adam's uppercut, knocked off by his fourth blow", .power_on = true },
     .{ .name = "ai-acrobat-axel-combo", .what = "the acrobat knocked down by the end of Axel's combo", .power_on = true },
+    .{ .name = "ai-acrobat-adam-special", .what = "the acrobat caught in the air by Adam's special attack, then knocked down by it", .power_on = true },
     .{ .name = "item-apple-reach", .what = "the apple: taken from across", .item = true },
     .{ .name = "item-beef", .what = "the beef: taken after a knock-down", .item = true },
     .{ .name = "item-pipe", .what = "the pipe: dropped by its Galsia, picked up and swung", .item = true },
