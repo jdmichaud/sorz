@@ -653,6 +653,10 @@ pub const Round = struct {
         };
         const p = self.plan(turn.setup, a);
         const camera_before = self.play.world.camera;
+        // Player 2's invitation blinks before the world's tick, as the original's does: it sees the
+        // players as the tick before left them.
+        const join_out = self.play.world.players[1].entity == null;
+        const join_held = self.waiting(0);
         if (!self.play.roundTick(a.kinds, turn.random.?, turn.pads, out, &p)) {
             self.split = true;
             return null;
@@ -676,7 +680,7 @@ pub const Round = struct {
         };
         self.cycle(a);
         const w = &self.play.world;
-        self.join.blink(w.players[1].entity == null, self.waiting(0), a.screen.status_bar.join.blink);
+        self.join.blink(join_out, join_held, a.screen.status_bar.join.blink);
         for (&self.out_blinks, w.players) |*b, pl| b.blink(pl.out, !self.answeredNo(pl), a.screen.status_bar.join.blink);
         if (w.timer.up) {
             // The timer is the logic tick's first half's: its sound with the players'.
