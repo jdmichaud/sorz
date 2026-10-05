@@ -1354,14 +1354,16 @@ pub fn Of(comptime M: type) type {
         /// Taken up in its state from a situation another program recorded, `elapsed` ticks
         /// after it entered it (its set-up at the tick after): knocked out, its blinks counted
         /// down by then; reeling, its blow taken and its reel gone on since; in a state its
-        /// module says counts down every tick (`countdowns`), set up now and its count gone down
-        /// by the ticks since; another, set up at its next tick.
+        /// module says counts down every tick (`countdowns`), set up now (from its walk, which a
+        /// set-up that pauses keeps) and its count gone down by the ticks since; another, set up
+        /// at its next tick.
         pub fn takeUp(a: A, elapsed: u32) void {
             if (elapsed >= 1 and @hasDecl(M, "countdowns")) {
                 for (M.countdowns) |st| if (a.mind.state == st) {
                     takeUpTarget(a);
                     body(a).fresh = true;
                     body(a).waits = false;
+                    a.animate(.walk);
                     M.begin(a);
                     body(a).timer -|= @intCast(@min(elapsed, 255));
                     return;

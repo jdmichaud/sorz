@@ -212,6 +212,13 @@ pub const Tick = struct {
         dispatch(t, h, "takeUpLanded", void, {}, .{ago});
     }
 
+    /// Taken up from a situation, the player pressed B in its state of `elapsed` ticks, at its
+    /// ticks `presses` (counted from the state's first, 0); the trace tells its blow's landing
+    /// at its tick `landed_at`, if it landed.
+    pub fn takeUpPresses(t: *Tick, h: Handle, elapsed: u32, presses: []const u32, landed_at: ?u32) void {
+        dispatch(t, h, "takeUpPresses", void, {}, .{ elapsed, presses, landed_at });
+    }
+
     /// Taken up from a situation, a blow cost the entity health `ago` ticks before, in its state;
     /// `striking`: its striker is still in the state it struck in.
     pub fn takeUpStruck(t: *Tick, h: Handle, ago: u32, striking: bool) void {

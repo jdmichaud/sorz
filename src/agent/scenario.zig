@@ -337,6 +337,9 @@ pub const Situation = struct {
     last_values: []const u16 = &.{},
     last_count: u32 = 0,
     special: bool = false,
+    /// The round's timer as it last counted or started before the situation: its seconds and
+    /// the scene's tick of that count.
+    timer: ?Count = null,
     entities: []const Seen,
     /// The players' places across (whole pixels) from the round scene's start, by tick: when a
     /// shutter opened (it opens as its player comes near) is read from them.
@@ -346,6 +349,7 @@ pub const Situation = struct {
     later: []const Later = &.{},
 
     pub const Later = struct { t: u64, seen: Seen };
+    pub const Count = struct { seconds: u8, t: u64 };
     pub const PlayerX = struct { t: u64, x: i32 };
 
     pub const Seen = struct {
@@ -378,6 +382,8 @@ pub const Situation = struct {
         /// The other program's place for it (its object slot), which the order of updates
         /// follows.
         slot: ?u8 = null,
+        /// A player's: the ticks whose thinks saw B newly pressed in its state.
+        presses: []const u64 = &.{},
     };
 };
 
@@ -391,6 +397,8 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
     var in_round = false;
     var playing = false;
     var last: ?struct { v: u64, t: u64 } = null;
+    // The players' pads at their last read (B held), by player.
+    var held_b: [2]bool = .{ false, false };
     var lines = std.mem.splitScalar(u8, trace_text, '\n');
     // The first line after the situation, which the spawns after it start from.
     var after: ?[]const u8 = null;
@@ -429,6 +437,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             in_round = std.mem.eql(u8, str(o, "scene") orelse "", "round");
             if (in_round) s.round = @intCast(int(o, "round") orelse 1);
             playing = false;
+            s.timer = null;
         } else if (std.mem.eql(u8, ev, "spawn")) {
             const e: u32 = @intCast(int(o, "e") orelse return error.BadTrace);
             const x: i32 = @intCast(int(o, "x") orelse 0);
@@ -458,7 +467,10 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
         } else if (std.mem.eql(u8, ev, "state")) {
             const x = seen.getPtr(@intCast(int(o, "e") orelse return error.BadTrace)) orelse continue;
             const state = str(o, "state") orelse return error.BadTrace;
-            if (x.state == null or !std.mem.eql(u8, x.state.?, state)) x.since = @intCast(int(o, "t") orelse 0);
+            if (x.state == null or !std.mem.eql(u8, x.state.?, state)) {
+                x.since = @intCast(int(o, "t") orelse 0);
+                x.presses = &.{};
+            }
             x.state = try arena.dupe(u8, state);
             if (str(o, "facing")) |f| x.left = std.mem.eql(u8, f, "left");
             if (std.mem.indexOf(u8, x.states, state) == null) x.states = try std.fmt.allocPrint(arena, "{s} {s}", .{ x.states, state });
@@ -486,6 +498,18 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             s.camera = .{ @intCast(int(o, "x") orelse 0), @intCast(int(o, "y") orelse 0) };
         } else if (std.mem.eql(u8, ev, "camera_stop")) {
             s.camera_stop = .{ @intCast(int(o, "x") orelse 0), @intCast(int(o, "y_min") orelse 0), @intCast(int(o, "y_max") orelse 0) };
+        } else if (std.mem.eql(u8, ev, "pad")) {
+            // A press read at a tick is seen by its player's think at the next.
+            const p: usize = @intCast((int(o, "pad") orelse 1) - 1);
+            if (p >= 2) continue;
+            const b = std.mem.indexOfScalar(u8, str(o, "held") orelse "", 'B') != null;
+            if (b and !held_b[p]) for (seen.values()) |*x| if (x.player != null and x.player.? == p + 1) {
+                const seen_at = @as(u64, @intCast(int(o, "t") orelse 0)) + 1;
+                x.presses = try std.mem.concat(arena, u64, &.{ x.presses, &.{seen_at} });
+            };
+            held_b[p] = b;
+        } else if (std.mem.eql(u8, ev, "timer")) {
+            if (in_round) s.timer = .{ .seconds = @intCast(int(o, "time") orelse 0), .t = @intCast(int(o, "t") orelse 0) };
         } else if (std.mem.eql(u8, ev, "lives")) {
             const p: usize = @intCast((int(o, "player") orelse 1) - 1);
             if (p < 2) s.lives[p] = .{ @intCast(int(o, "lives") orelse 0), @intCast(int(o, "specials") orelse 0) };
@@ -649,6 +673,9 @@ pub const Run = struct {
     next_later: usize = 0,
     round: ?*const sorz.content.round.Round = null,
     used: [256]bool = @splat(false),
+    /// The round's plan, its records left to the stand-in: the timer and the new lives follow
+    /// it.
+    plan: ?world.script.Plan = null,
 
     /// What the run takes up besides the situation: the round's clock (the other program's tick
     /// counter at the script's start, when known) and the round's spawn records.
@@ -688,6 +715,7 @@ pub const Run = struct {
         };
         r.later = situation.later;
         r.round = extras.round;
+        takeUpScript(&r, round, situation);
         var made: [world.entity.capacity]?struct { h: world.Handle, e: *const Situation.Seen } = @splat(null);
         for (situation.entities) |*e| {
             var kind_name = e.kind;
@@ -707,7 +735,7 @@ pub const Run = struct {
             if (e.health) |hp| x.health = @intCast(hp);
             if (e.state) |st| _ = world.behaviours.setState(&x.mind, st);
             if (e.player) |p| {
-                w.players[p - 1] = .{ .entity = h, .lives = situation.lives[p - 1][0], .specials = situation.lives[p - 1][1], .score = situation.scores[p - 1] };
+                w.players[p - 1] = .{ .entity = h, .character = kind, .lives = situation.lives[p - 1][0], .specials = situation.lives[p - 1][1], .score = situation.scores[p - 1] };
                 // The camera follows from where the situation's tick drew the player.
                 w.camera.drawn[p - 1] = x.position.x;
             }
@@ -748,6 +776,17 @@ pub const Run = struct {
             // Its blow that cost another health in its state: at the situation's tick (the
             // trace tells it at the next), or so many ticks before.
             if (e.landed) |at| if (at > e.since) t.takeUpLanded(h, if (at > situation.t) null else @intCast(situation.t - at));
+            // A player's presses of B in its state, seen by then.
+            if (e.presses.len != 0) {
+                var ticks: [16]u32 = undefined;
+                var k: usize = 0;
+                for (e.presses) |at| if (at > e.since and at <= situation.t and k < ticks.len) {
+                    ticks[k] = @intCast(at - e.since);
+                    k += 1;
+                };
+                const landed: ?u32 = if (e.landed) |l| (if (l > e.since and l <= situation.t) @as(u32, @intCast(l - e.since)) else null) else null;
+                t.takeUpPresses(h, @intCast(situation.t - e.since), ticks[0..k], landed);
+            }
             // A blow that cost it health in its state, so many ticks before, its striker still in
             // the state it struck in (its blow may still touch).
             if (e.struck_at) |at| if (at > e.since) {
@@ -856,6 +895,23 @@ pub const Run = struct {
         }
     }
 
+    /// The round's script, its records left to the stand-in: the section the camera stops at
+    /// the wall of, and the timer as it last counted (the ticks of its second since).
+    fn takeUpScript(r: *Run, round: *const sorz.content.round.Round, situation: *const Situation) void {
+        const w = &r.play.world;
+        r.plan = .{ .round = round };
+        w.script.stage = .stand_in;
+        for (round.sections, 0..) |sec, k| if (sec.wall == situation.camera_stop[0] >> 16) {
+            w.script.section = @intCast(k);
+        };
+        world.script.restartTimer(w, &r.plan.?);
+        const count = situation.timer orelse return;
+        const pace = round.timer.pace;
+        w.timer.seconds = count.seconds;
+        w.timer.shown = count.seconds;
+        w.timer.ticks = @intCast(pace - @min(situation.t - count.t, pace - 1));
+    }
+
     /// An entity the other program had, in its place there when it is free (so that the order
     /// of updates is the other program's), else in the first free place.
     fn spawnSeen(w: *world.World, kinds: *const world.Kinds, kind: world.entity.KindId, e: *const Situation.Seen) !world.Handle {
@@ -873,8 +929,9 @@ pub const Run = struct {
             return false;
         };
         // The pads are held over both display ticks of the logic tick.
-        _ = self.play.displayTick(self.kinds, &self.random, pads, &self.out);
-        _ = self.play.displayTick(self.kinds, &self.random, pads, &self.out);
+        const plan = if (self.plan) |*p| p else null;
+        _ = self.play.roundTick(self.kinds, &self.random, pads, &self.out, plan);
+        _ = self.play.roundTick(self.kinds, &self.random, pads, &self.out, plan);
         self.v += 2;
         self.t += 1;
         try self.bringLater();

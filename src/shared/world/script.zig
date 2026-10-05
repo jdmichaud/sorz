@@ -59,6 +59,9 @@ pub const Stage = enum {
     boss_wave,
     /// A beaten boss has ended the round.
     won,
+    /// Its records come from elsewhere: an agent's situation brings them as the other program's
+    /// trace has them; the timer and the lives still follow the round.
+    stand_in,
 };
 
 /// The script's place in the round, part of the world.
@@ -186,7 +189,7 @@ pub fn run(t: *Tick) void {
     s.enemies = now;
     const r = p.round;
     switch (s.stage) {
-        .opening, .won => {},
+        .opening, .won, .stand_in => {},
         .wall => {
             const c = &t.world.camera;
             if (c.x_max.sub(c.x_min).whole() >= r.camera.wall_within) return;
