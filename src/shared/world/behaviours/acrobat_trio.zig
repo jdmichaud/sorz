@@ -457,7 +457,8 @@ fn leapSetUp(a: Actor) void {
         if (l.left) vx = -vx;
     }
     a.mind.at_target = false;
-    a.entity.velocity.x = .pixels(@intCast(vx));
+    // Its speed's whole pixels are set, its fraction kept (the original writes the word alone).
+    a.entity.velocity.x = .parts(@intCast(vx), a.entity.velocity.x.frac());
 }
 
 fn leap(a: Actor) void {

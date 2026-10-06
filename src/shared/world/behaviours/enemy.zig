@@ -56,6 +56,9 @@ pub const Body = struct {
     /// It entered its state at this tick's blows or grabs (or another's tick), before its own
     /// tick: its first tick is the next.
     waits: bool = false,
+    /// It was knocked down flipped over its holder (the original's sub-state bit 0):
+    /// its knock-down's first tick looks at nothing (an acrobat's flip away).
+    flipped: bool = false,
     /// Its state's set-up left it for another: the rest of the tick is skipped.
     left: bool = false,
     /// The world's tick of its last tick.
@@ -1495,6 +1498,7 @@ pub fn Of(comptime M: type) type {
                 stays = false;
                 a.mind.state = .knocked_down;
                 b.fresh = false;
+                b.flipped = true;
                 a.sound(.hurt);
                 a.takeDamage(hh, a.tick.power(holder));
                 a.tick.letGo(hh);

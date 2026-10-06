@@ -222,7 +222,7 @@ pub fn think(a: Actor) void {
 /// Knocked down (by a blow, a throw, a new life's knock-back), its first tick it only looks
 /// whether to flip away: it falls from the next, a tick behind the others; but placed to flip
 /// away, with health left, on an odd tick it falls at once, on an even one it flips away from
-/// the next.
+/// the next. Flipped over its holder, it looks at no flip away.
 fn looks(a: Actor) bool {
     if (a.mind.state != .knocked_down) {
         a.mind.looked = false;
@@ -230,7 +230,9 @@ fn looks(a: Actor) bool {
     }
     if (a.mind.looked or a.mind.body.waits) return false;
     a.mind.looked = true;
-    if (a.entity.health >= 0 and a.entity.spawn.traits.flips_away) {
+    const flipped = a.mind.body.flipped;
+    a.mind.body.flipped = false;
+    if (!flipped and a.entity.health >= 0 and a.entity.spawn.traits.flips_away) {
         if (a.tick.world.tick & 1 != 0) return false;
         go(a, .flip_away, .{});
     }
