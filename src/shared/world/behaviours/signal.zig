@@ -389,6 +389,11 @@ pub fn letGoBy(a: Actor, holder: Handle) void {
     Common.letGoBy(a, holder);
 }
 
+/// Brought back at a wall (enemy.zig's `leftBehind`).
+pub fn leftBehind(a: Actor) void {
+    Common.leftBehind(a);
+}
+
 pub fn knockedBack(a: Actor) void {
     Common.knockedBack(a);
 }

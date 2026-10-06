@@ -431,7 +431,8 @@ play).
   `leftward`, optional (round 8's): true when it goes left, each section's `wall` its limit on
   the left (the first section's at `x_min`), its limit on the right at the start `x_max` and
   following it after, the things it leaves behind (items, scenery) going once their place is
-  right of its place plus `behind_right`;
+  right of its place plus `behind_right`, and at a wall the enemies at or right of its place
+  plus `left_behind_right` coming back there;
   `plane_b` = [times, per] of the camera's; `plane_b_down`, optional: true when plane B moves
   down as plane A does (the camera's shake too), else it keeps its place down; `scroll`,
   optional: how each frame of play copies the planes' scroll, `cells` (a value a row of cells)

@@ -929,11 +929,13 @@ fn countEnemies(t: *Tick) u8 {
 /// the depth the round gives, and their behaviours are told. Only their whole pixels move: the
 /// fractions stay, as the original writes its places' whole words.
 fn bringBack(t: *Tick, r: *const Round) void {
-    const back = t.world.camera.x.whole() + r.camera.left_behind[0];
+    // Going left, those at or right of the camera's place plus `left_behind_right` come there.
+    const leftward = r.camera.leftward;
+    const back = t.world.camera.x.whole() + if (leftward) r.camera.left_behind_right else r.camera.left_behind[0];
     for (&t.world.entities, 0..) |*e, i| {
         const kind = e.kind orelse continue;
         if (t.kinds.get(kind).family() != .enemy) continue;
-        if (e.position.x.whole() > back) continue;
+        if (if (leftward) e.position.x.whole() < back else e.position.x.whole() > back) continue;
         e.position.x = .parts(@intCast(back), e.position.x.frac());
         e.position.depth = .parts(@intCast(r.camera.left_behind[1]), e.position.depth.frac());
         t.leftBehind(t.world.handleAt(i).?);

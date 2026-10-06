@@ -526,6 +526,11 @@ pub fn letGoBy(a: Actor, holder: Handle) void {
 }
 
 /// A new life's knock-back knocks it down anew, also when it was down: it looks again.
+/// Brought back at a wall (enemy.zig's `leftBehind`).
+pub fn leftBehind(a: Actor) void {
+    Common.leftBehind(a);
+}
+
 pub fn knockedBack(a: Actor) void {
     Common.knockedBack(a);
     if (a.mind.state == .knocked_down) a.mind.looked = false;

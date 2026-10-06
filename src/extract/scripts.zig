@@ -923,6 +923,11 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
     // round of its compare, addi.w #N,d0).
     if (u16be(rom, 0x6A74) != 0x0C78 or u16be(rom, 0x6A76) != leftward_round or u16be(rom, 0x6A78) != 0xFF02) return error.BadData;
     const behind_right = try immediate(rom, 0x6A88, &.{ 0x06, 0x40 }, 2);
+    // Reaching a wall, the enemies left behind come back to the camera's place less 0x6CC's
+    // pixels, going left plus 0x6D8's (addi.w #N,d1 in the round of 0x6D0's compare), those at or
+    // right of it.
+    if (u16be(rom, 0x6D0) != 0x0C78 or u16be(rom, 0x6D2) != leftward_round or u16be(rom, 0x6D4) != 0xFF02) return error.BadData;
+    const behind_right_back = try immediate(rom, 0x6D8, &.{ 0x06, 0x41 }, 2);
     const camera: round.Camera = .{
         .provenance = try std.fmt.allocPrint(arena, "the round header's plane A (ROM 0x{X:0>5}): its X and Y; its limits' set {d} (0x1998A): the first section's wall, the limit behind, the limits down (round 8's camera goes left: ROM 0x19586, its first wall on the left, its limit behind on the right, 0x195C0); the planes in their modes (the header's mode words): in mode 0 (0x18C4A, 0x1934A) their bands at the camera's X times their ratios, plane B at plane A's X and Y; in mode 1 plane A at the camera's X, plane B at it in round 1, a quarter of it in the others (ROM 0x19378: asr.w #2); the wall reached within ROM 0x006B0's pixels (0x6A6); the left behind brought to the camera's X less ROM 0x006CE, at depth ROM 0x00707; the edges: the camera's X less 8 (ROM 0x00CB8: subq.w #8,d0) and plus ROM 0x00CB0 (0xC60); it follows a player whose place on the screen (its object's, the sprites' origin 128 more) is before ROM 0x18F80's or from ROM 0x18F88's (subi.l), by at most ROM 0x18FD8's pixels a tick (0x18F5C); the players kept from ROM 0x043F5's pixels across, for ROM 0x043F8's more, and on the depths from ROM 0x0440B's to ROM 0x04415's (round 7, ROM 0x04419's from 0, to ROM 0x04420's) (0x43AA); a heavy fall's shake ROM 0x04D55's ticks (0x4D40), ROM 0x19293's pixels (0x19282); the planes' bands, their rows and ratios, from the layout records (0x199C6, the table at ROM 0x5F788), the strips the camera brings in (0x18B3C); how the frames copy the planes' scroll by plane A's mode (0x196A4)", .{ h, limits_set / 8 }),
         .x = u16be(rom, h + 6),
@@ -931,6 +936,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .x_max = if (leftward) u16be(rom, limits + 6) else null,
         .leftward = leftward,
         .behind_right = if (leftward) @intCast(behind_right) else 0,
+        .left_behind_right = if (leftward) @as(i32, @intCast(behind_right_back)) - @as(i32, @intCast(behind_x)) else 0,
         .y_min = u16be(rom, limits),
         .y_max = u16be(rom, limits + 2),
         .plane_b = plane_b,

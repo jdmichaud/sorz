@@ -242,8 +242,11 @@ pub const Camera = struct {
     /// right, the walls its limits on the right, its limit on the left following it.
     leftward: bool = false,
     /// Going left, the things it leaves behind (the items, the scenery, its enemies' weapons)
-    /// go once their place is right of its place plus this.
+    /// go once their place is right of its place plus this; and when it reaches a wall, the
+    /// enemies at or right of its place plus `left_behind_right` come back there (at
+    /// `left_behind`'s depth).
     behind_right: i32 = 0,
+    left_behind_right: i32 = 0,
     /// Plane B scrolls across by `times` / `per` of the camera's move.
     plane_b: [2]u8 = .{ 1, 1 },
     /// Plane B moves down as plane A does (the camera's shake too); else it keeps its place
@@ -592,6 +595,7 @@ fn cameraValue(arena: std.mem.Allocator, c: *const Camera) !json.Value {
     if (c.x_max) |m| try f.append(arena, .{ .key = "x_max", .value = json.Value.num(m) });
     if (c.leftward) try f.append(arena, .{ .key = "leftward", .value = .{ .bool = true } });
     if (c.leftward) try f.append(arena, .{ .key = "behind_right", .value = json.Value.num(c.behind_right) });
+    if (c.leftward) try f.append(arena, .{ .key = "left_behind_right", .value = json.Value.num(c.left_behind_right) });
     if (c.water) |w| try f.append(arena, .{ .key = "water", .value = try obj(arena, &.{
         .{ .key = "from", .value = json.Value.num(w.from) },
         .{ .key = "half", .value = json.Value.num(w.half) },
@@ -981,7 +985,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     } else return (try root.get("art")).fail("no art set of this name");
 
     const c = try root.get("camera");
-    try c.only(&.{ "provenance", "at", "x_min", "x_max", "leftward", "behind_right", "y", "plane_b", "plane_b_down", "scroll", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "wobble", "bands", "water" });
+    try c.only(&.{ "provenance", "at", "x_min", "x_max", "leftward", "behind_right", "left_behind_right", "y", "plane_b", "plane_b_down", "scroll", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "wobble", "bands", "water" });
     const at = try readPair(try c.get("at"), i32);
     const y = try readPair(try c.get("y"), i32);
     r.camera = .{
@@ -992,6 +996,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         .x_max = if (try c.opt("x_max")) |n| try n.int(i32) else null,
         .leftward = if (try c.opt("leftward")) |n| try n.boolean() else false,
         .behind_right = if (try c.opt("behind_right")) |n| try n.int(i32) else 0,
+        .left_behind_right = if (try c.opt("left_behind_right")) |n| try n.int(i32) else 0,
         .y_min = y[0],
         .y_max = y[1],
         .plane_b = try readPair(try c.get("plane_b"), u8),
