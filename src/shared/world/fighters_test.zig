@@ -683,7 +683,7 @@ const antonio_fixture =
     \\"knocked_bounces": 2, "knocked_gravity": 65536, "knocked_up": -327680,
     \\"knocked_x": -327680, "last_knee_damage": 3, "level_far": 32, "level_mid": 16,
     \\"level_near": 8, "missile_damage": 1, "near": 120, "on_screen_from": 0, "pepper_ticks": 30,
-    \\"on_screen_to": 320, "outside_power": 2, "points": 3000, "points_at": 90, "power": 20,
+    \\"on_screen_to": 320, "outside_power": 2, "outside_health_round": 8, "outside_health": 2, "points": 3000, "points_at": 90, "power": 20,
     \\"push_from": -32, "push_to": 352, "screen_middle": 160, "shake": 2, "special_damage": 10,
     \\"special_grounded": 20, "special_ticks": 300, "special_ticks_second": 390,
     \\"stand_far_level": 144, "stand_far_speed": 98304, "stand_near": 20, "steer": 131072,
@@ -2058,9 +2058,10 @@ test "Antonio placed by the round's script: shown and on the status bar from his
     try testing.expectEqualStrings("walk", behaviours.stateName(&e.mind).?);
     r.step(.{});
     // Drawn off the screen's right side: in at 4 pixels a tick across, and in depth by the
-    // player's (from the depths' lower half, up).
+    // player's, but at the tick his boomerang is given him by the new boomerang's (none yet:
+    // down).
     try testing.expectEqual(@as(i32, -4 << 16), e.velocity.x.raw);
-    try testing.expectEqual(@as(i32, -4 << 16), e.velocity.depth.raw);
+    try testing.expectEqual(@as(i32, 4 << 16), e.velocity.depth.raw);
     try testing.expectEqual(entity.Facing.left, e.facing);
     // His boomerang in his hand: behind him, up.
     const b = r.w.get(r.w.handleAt(h.index + 1).?).?;

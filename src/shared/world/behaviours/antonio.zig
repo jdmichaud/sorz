@@ -138,6 +138,10 @@ pub const Numbers = struct {
     power: u8,
     hardest_health: u8,
     outside_power: u8,
+    /// Out of his section, in the round numbered `outside_health_round`, his health is more
+    /// (round 8's boss rush).
+    outside_health_round: u8,
+    outside_health: i16,
     /// Where he was drawn across the screen: on it, its middle; walking in, his speed (across and
     /// in depth), the depth of his target from which he walks in upward, and the ticks he walks
     /// on once on the screen (the second of twins').
@@ -420,11 +424,14 @@ fn walk(a: Actor) void {
     const n = a.numbers();
     const m = a.mind;
     const t = a.other(m.target orelse return) orelse return;
-    if (@backingInt(m.walk) < @backingInt(Walk.throw)) supplyBoomerang(a);
-    // Off the screen he walks in, across toward its middle and in depth toward his target's side.
+    const supplied = @backingInt(m.walk) < @backingInt(Walk.throw) and supplyBoomerang(a);
+    // Off the screen he walks in, across toward its middle and in depth toward his target's side;
+    // at a tick he was given a boomerang, the original looks at the new boomerang's place instead
+    // (its record cleared: depth 0), and he walks in down.
     if (m.drawn < n.on_screen_from or m.drawn >= n.on_screen_to) {
         a.entity.velocity.x = if (m.drawn >= n.screen_middle) n.walk_in_speed.neg() else n.walk_in_speed;
-        a.entity.velocity.depth = if (t.position.depth.whole() >= n.walk_in_low) n.walk_in_speed.neg() else n.walk_in_speed;
+        const depth = if (supplied) 0 else t.position.depth.whole();
+        a.entity.velocity.depth = if (depth >= n.walk_in_low) n.walk_in_speed.neg() else n.walk_in_speed;
         m.walk_in = if (m.twin == 2) n.walk_in_ticks_second else n.walk_in_ticks;
         m.walk = .walk_in;
         if (!a.plays(.walk)) C.faceAndShow(a, .walk);
@@ -706,16 +713,17 @@ fn boomerangIn(a: Actor) ?Handle {
 
 /// Without his boomerang in hand he gets another (the one flying flies on): the place he knows
 /// is empty, or what is there has left its first state.
-fn supplyBoomerang(a: Actor) void {
+fn supplyBoomerang(a: Actor) bool {
     const m = a.mind;
     if (m.boomerang) |at| {
         const there = &a.tick.world.entities[at];
-        if (there.alive() and behaviours.stateIndex(&there.mind) == 0) return;
+        if (there.alive() and behaviours.stateIndex(&there.mind) == 0) return false;
     }
-    const kind = a.tick.kinds.find(boomerang_kind) orelse return;
-    const h = a.tick.world.spawnWithin(a.tick.kinds, kind, a.handle.index + 1, 51, .zero, .right) catch return;
+    const kind = a.tick.kinds.find(boomerang_kind) orelse return false;
+    const h = a.tick.world.spawnWithin(a.tick.kinds, kind, a.handle.index + 1, 51, .zero, .right) catch return false;
     m.boomerang = @intCast(h.index);
     if (a.tick.actor(@import("boomerang.zig"), h)) |b| b.mind.* = .{ .thrower = @intCast(a.handle.index), .power = m.power, .ground = m.ground };
+    return true;
 }
 
 // The swing ----------------------------------------------------------------------------------

@@ -902,6 +902,11 @@ fn bossBody(d: *Def, kind: u8) Error!void {
     try d.number("power", power, "ROM 0x17F27 (by type from $55, 0x17EDC)");
     try d.number("hardest_health", try quick(rom, 0x17EFC, 0x5042), "ROM 0x17EFC: addq.w #N,d2 (the hardest level's)");
     try d.number("outside_power", try quick(rom, 0x17F1A, 0x5001), "ROM 0x17F1A: addq.b #N,d1 (out of the boss's section, 0x17F08)");
+    // Out of the boss's section, in the round of 0x17F10's compare (round 8's boss rush), his
+    // health is more.
+    if (u16be(rom, 0x17F10) != 0x0C78 or u16be(rom, 0x17F14) != 0xFF02) return error.BadData;
+    try d.number("outside_health_round", 1 + try immediate(rom, 0x17F10, &.{ 0x0C, 0x78 }, 2), "ROM 0x17F10: cmpi.w #N,($FF02) (the round's number, N + 1)");
+    try d.number("outside_health", try quick(rom, 0x17F18, 0x5042), "ROM 0x17F18: addq.w #N,d2");
     try d.number("struck_from", try comparedWord(rom, 0xAABA) - 0x80, "ROM 0x0AABA: cmpi.w #N+$80,(40,a0) (drawn across: the meeting check's, 0xAA22)");
     try d.number("struck_to", try comparedWord(rom, 0xAAC2) - 0x80, "ROM 0x0AAC2: cmpi.w #N+$80,(40,a0)");
     try d.number("grab_height", try comparedWord(rom, 0xAAF6), "ROM 0x0AAF6: cmpi.w #N,d2 (a grab's reach in height, 0xAA22)");
@@ -1504,7 +1509,9 @@ pub fn bossR5(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition
     if (u32be(rom, 0x15D44) != 0x137C0001 or u16be(rom, 0x15D48) != 125) return error.BadData;
     blows(&d, "stand");
     blows(&d, "walk");
-    blows(&d, "kick");
+    // The kick's frames all strike: his power stands through state 2 whatever his frame, and
+    // his box is the frame drawn last (a kick frame's after the kick's look starts over).
+    for (@constCast(d.animations.items[d.animationIndex("kick").?].frames)) |*f| f.blow = true;
     const power = bossByte(rom, boss_power, kind);
     try d.moves.append(arena, .{ .name = "pounce", .provenance = "the pounce (state 2, 0x15D0C): a blow that lands knocks the player down (0x15D44: move.b #1,(125,a1)), its damage his power (0x15D12)", .animation = d.animationIndex("kick").?, .damage = power, .reaction = .knock_down });
     try bossBody(&d, kind);

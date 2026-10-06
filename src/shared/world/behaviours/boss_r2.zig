@@ -192,6 +192,10 @@ pub const Numbers = struct {
     power: u8,
     hardest_health: u8,
     outside_power: u8,
+    /// Out of his section, in the round numbered `outside_health_round`, his health is more
+    /// (round 8's boss rush).
+    outside_health_round: u8,
+    outside_health: i16,
     struck_from: i16,
     struck_to: i16,
     grab_height: i16,

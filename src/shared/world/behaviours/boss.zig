@@ -76,7 +76,8 @@ pub fn Of(comptime M: type) type {
         }
 
         /// His power and health by the level: the easiest halves his power, the harder ones double it,
-        /// the hardest adds to his health; out of his boss's section, his power is more.
+        /// the hardest adds to his health; out of his boss's section, his power is more, and in
+        /// the round `outside_health_round` (round 8's boss rush) his health too.
         pub fn strength(a: A) struct { power: u8, health: i16 } {
             const n = a.numbers();
             var power: u8 = n.power;
@@ -91,7 +92,12 @@ pub fn Of(comptime M: type) type {
                     power *%= 2;
                 },
             }
-            if (!inFight(a)) power +%= n.outside_power;
+            if (!inFight(a)) {
+                power +%= n.outside_power;
+                if (a.tick.plan) |p| if (p.round.number == n.outside_health_round) {
+                    health += n.outside_health;
+                };
+            }
             return .{ .power = power, .health = health };
         }
 
@@ -881,7 +887,11 @@ pub fn Of(comptime M: type) type {
                 .walk, .swing, .special_still => {},
                 else => return false,
             }
-            a.entity.facing = .left;
+            // Facing left, knocked to the right (his speed turned as he faces left); but in a
+            // round whose new lives knock back to the left (round 8's: the original leaves his
+            // facing bit clear there), facing right, knocked to the left.
+            const left = if (a.tick.plan) |p| p.round.knocked_back_left else false;
+            a.entity.facing = if (left) .right else .left;
             a.entity.velocity.x = n.blast_x;
             a.entity.velocity.height = n.blast_up;
             knockedFlat(a);
