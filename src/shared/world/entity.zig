@@ -189,6 +189,9 @@ pub const Traits = packed struct(u16) {
 pub const Missile = struct {
     by: Handle,
     damage: u8,
+    /// What it does to a player, when other than `damage` (round 8's trolley: its power to a
+    /// player, the original's 2 to an enemy from a thing below the weapons' places).
+    player_damage: ?u8 = null,
     on_players: bool = false,
     /// It lands on the enemies whoever let it go (round 6's press, which lets itself drop).
     on_enemies: bool = false,
@@ -217,6 +220,8 @@ pub const Spawn = struct {
     drift: Drift = .still,
     /// Its place among the round's things of its kind (a press: its lamp's cells).
     place: ?u8 = null,
+    /// How a trolley rolls (content/round.zig's `rolls`).
+    rolls: u8 = 0,
     /// An enemy's art, by its number (script.zig's art slots).
     art: ?u8 = null,
 };

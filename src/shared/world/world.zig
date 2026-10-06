@@ -226,6 +226,9 @@ pub const World = struct {
     /// (the second of twins in the second).
     boss_bar: ?u8 = null,
     bosses: [2]?Handle = .{ null, null },
+    /// The player a rolling trolley rolls at next (behaviours/trolley.zig): the second when
+    /// set (turned at each).
+    trolley_second: bool = false,
     /// The shadows in the weapons' places (shadows.zig): a place a shadow holds is not free.
     shadows: [shadows_mod.count]?shadows_mod.Shadow = @splat(null),
     /// Round 8's last room's script (room.zig).

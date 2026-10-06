@@ -564,11 +564,16 @@ fn entry(rom: []const u8, type_byte: u8, bytes: [3]u8, y: u8) Error!round.Spawn 
         .two_players = type_byte & 0x80 != 0,
     };
     switch (t) {
-        0x11, 0x18, 0x19, 0x1B, 0x1C, 0x1D, 0x1F, 0x41 => {
+        0x11, 0x18, 0x19, 0x1B, 0x1C, 0x1D, 0x1F, 0x41, 0x45 => {
             // A breakable, a crate, an oil drum, round 4's and 5's obstacles, round 6's crates
-            // that shatter: the item it holds (its byte $41, which 0x7E54 reads), an index from 1
-            // (0 for none).
+            // that shatter, round 8's trolleys: the item it holds (its byte $41, which 0x7E54
+            // reads), an index from 1 (0 for none). A trolley rolls by its byte $40 (0x7546: 0
+            // to 4).
             if (((t >= 0x1B and t <= 0x1D) or t == 0x41) and (bytes[0] != 0 or bytes[2] != 0)) return error.BadData;
+            if (t == 0x45) {
+                if (bytes[0] > 4 or bytes[2] != 0) return error.BadData;
+                s.rolls = bytes[0];
+            }
             if (bytes[1] != 0) {
                 if (bytes[1] > 11) return error.BadData;
                 s.holds = kindName(rom[breakable_items + @as(u32, bytes[1])]) orelse return error.BadData;

@@ -908,6 +908,7 @@ pub fn placing(rec: *const Spawn) entity.Spawn {
     };
     sp.art = rec.art;
     sp.place = rec.place;
+    sp.rolls = rec.rolls;
     return sp;
 }
 

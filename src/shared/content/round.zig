@@ -152,6 +152,9 @@ pub const Spawn = struct {
     /// Placed: its place among the round's things of its kind (a press: the cells of the plane
     /// it shakes).
     place: ?u8 = null,
+    /// Placed: how a trolley rolls (round 8's): 0, it stands; 1 or 2 to the right, 3 or 4 from
+    /// behind to the left, its kind's `roll_N` speed.
+    rolls: u8 = 0,
     /// A boss's: its entry in the status bar's names and bars.
     bar: ?u8 = null,
     /// A reserve's: its kind's art streamed in from its call.
@@ -623,6 +626,7 @@ fn spawnValue(arena: std.mem.Allocator, s: *const Spawn, where: Where) !json.Val
     if (s.height) |h| try f.append(arena, .{ .key = "height", .value = json.Value.num(h) });
     if (s.drift) |d| try f.append(arena, .{ .key = "drift", .value = .{ .str = @tagName(d) } });
     if (s.place) |p| try f.append(arena, .{ .key = "place", .value = json.Value.num(p) });
+    if (s.rolls != 0) try f.append(arena, .{ .key = "rolls", .value = json.Value.num(s.rolls) });
     if (where == .wave) try f.append(arena, .{ .key = "after", .value = json.Value.num(s.after) });
     if (where == .reserve) try f.append(arena, .{ .key = "arrives_after", .value = json.Value.num(s.arrives_after) });
     if (s.level != 0) try f.append(arena, .{ .key = "level", .value = json.Value.num(s.level) });
@@ -872,7 +876,7 @@ fn readPair(n: json.Node, comptime T: type) Error![2]T {
 fn spawnFields(comptime where: Where) []const []const u8 {
     const common = [_][]const u8{ "kind", "depth", "level", "two_players", "entrance", "offset", "offset_nibbles", "strength", "holds", "bar", "colours", "art" };
     const own: []const []const u8 = switch (where) {
-        .placed => &.{ "x", "height", "drift", "place" },
+        .placed => &.{ "x", "height", "drift", "place", "rolls" },
         .wave => &.{ "side", "after" },
         .reserve => &.{ "side", "arrives_after", "streamed", "reserve_boss" },
     };
@@ -901,6 +905,10 @@ fn readSpawn(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Erro
             if (try n.opt("height")) |h| s.height = try h.int(i16);
             if (try n.opt("drift")) |d| s.drift = std.meta.stringToEnum(Drift, try d.string()) orelse return d.fail("not still, drifts, stops or waves");
             if (try n.opt("place")) |p| s.place = try p.int(u8);
+            if (try n.opt("rolls")) |r| {
+                s.rolls = try r.int(u8);
+                if (s.rolls > 4) return r.fail("not 0 to 4");
+            }
         },
         .wave, .reserve => {
             const side = try n.get("side");

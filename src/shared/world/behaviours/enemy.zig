@@ -557,7 +557,12 @@ pub fn Of(comptime M: type) type {
             const h = body(a).other orelse return null;
             const o = a.other(h) orelse return null;
             if (o.holder) |by| return a.other(by) orelse o;
-            if (o.missile) |m| return a.other(m.by) orelse o;
+            if (o.missile) |m| {
+                // A thing that strikes of itself (round 8's rolling trolley): the original reads
+                // the one it met last, none here (the level's left end: left).
+                if (m.by.eql(h)) return null;
+                return a.other(m.by) orelse o;
+            }
             return o;
         }
 

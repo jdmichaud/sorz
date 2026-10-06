@@ -269,10 +269,10 @@ posters' corners they stir, `flight_scenery`), round 3's (the `lamp`s, the `crat
 raindrops, its sky's flashes the round's art set's palettes `flash_N`), round 3's acrobats of a
 trio (`acrobat_trio`) and its boss (`boss_r3`, his part `boss_r3_part`, which shows its own
 frames by side, `stand` and `stand_left`, and the helper of a pair, `boss_r3_helper`, with no
-art), round 8's corridor's gold statues (`statue`) and its boss Mr. X standing (`mr_x`: his
-struck pose its first frame alone, the second of its pair being none), with his gun's shots
-(`mr_x_shot`) and their cartridges (`mr_x_cartridge`, which shows its own frames whatever its way);
-the other characters and enemies come with PLAN
+art), round 8's corridor's gold statues (`statue`) and its trolleys (`trolley`), and its boss Mr. X
+standing (`mr_x`: his struck pose its first frame alone, the second of its pair being none), with
+his gun's shots (`mr_x_shot`) and their cartridges (`mr_x_cartridge`, which shows its own frames
+whatever its way); the other characters and enemies come with PLAN
 items 12 to 15. Their numbers are read from the ROM's
 tables and from the immediate values of the code that uses them, each with its place in the
 definition's provenance, but the car's times, which the original's car, camera and shells make
@@ -573,7 +573,8 @@ A record of `placed`, `wave` or `reserve` is one entity:
   on the ground, as the original places it); the trait `stirs`: it moves while a flight passes
   (round 2's posters' corners); `drift`, how a drifting piece moves (round 3's): `still`,
   `drifts` away, drifts and `stops` in turn, or rides the `waves`. A crate holds an item as a
-  breakable does. The first section's placed end with the pieces the round's start places itself
+  breakable does, and so does a trolley (round 8's), which `rolls` too: 0 (or none) it stands,
+  1 or 2 it rolls to the right, 3 or 4 from behind to the left, at its kind's `roll_N` speed. The first section's placed end with the pieces the round's start places itself
   (round 3's first two lamps).
 
 The extractor writes the scripts of rounds 1 to 3 (PLAN items 13 and 15; the other rounds, whose

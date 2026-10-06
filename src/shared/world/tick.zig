@@ -713,8 +713,12 @@ pub const Tick = struct {
     fn solidThere(t: *const Tick, h: Handle, place: Vec3) ?*const Entity {
         const x = place.x.whole();
         const d = place.depth.whole();
+        const player = t.isPlayer(h);
         for (&t.world.entities, 0..) |*o, i| {
             if (!o.alive() or !o.flags.solid or i == h.index) continue;
+            // A player's look ends at a solid thing that moves (round 8's rolling trolley, which
+            // strikes instead), wherever it is.
+            if (player and o.velocity.x.raw != 0) return null;
             const def = t.kindOf(o).definition;
             const b = def.boxes[def.box("solid") orelse continue];
             const ox = o.position.x.whole();

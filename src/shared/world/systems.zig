@@ -612,7 +612,8 @@ fn missileOn(t: *Tick, ah: Handle, th: Handle) void {
     };
     if (!lands) return;
     if (!meet(a, &t.kindOf(a).definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return;
-    const b: tick_mod.Blow = .{ .attacker = ah, .damage = m.damage, .reaction = m.reaction, .push = .zero, .missile = true };
+    const damage = if (target.team == .player) m.player_damage orelse m.damage else m.damage;
+    const b: tick_mod.Blow = .{ .attacker = ah, .damage = damage, .reaction = m.reaction, .push = .zero, .missile = true };
     if (!t.struck(th, b)) return;
     t.blowLanded(ah, th);
 }
