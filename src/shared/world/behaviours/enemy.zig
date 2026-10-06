@@ -1832,8 +1832,12 @@ pub fn Of(comptime M: type) type {
         pub fn walkOff(a: A) void {
             const n = a.numbers();
             const b = body(a);
-            const t = target(a) orelse return enter(a, M.fights);
-            faceOf(a, t);
+            const th = b.target orelse return enter(a, M.fights);
+            // Its target gone (out of the game), it reads the place its target held, whatever
+            // holds it now (an emptied place's across is 0), as the original's.
+            const o = &a.tick.world.entities[th.index];
+            const tx: i32 = if (o.alive()) o.position.x.whole() else 0;
+            a.entity.facing = if (tx > a.entity.position.x.whole()) .right else .left;
             if (!b.pacing) {
                 const d = a.entity.position.depth.whole();
                 const away = if (a.entity.velocity.depth.raw >= 0) d > n.walk_off_down_to else d < n.walk_off_up_to;
@@ -1847,9 +1851,9 @@ pub fn Of(comptime M: type) type {
             if (b.timer == 0) return pace(a);
             b.timer -= 1;
             const near = if (a.entity.velocity.x.raw >= 0)
-                t.position.x.whole() + n.walk_off_near > a.entity.position.x.whole()
+                tx + n.walk_off_near > a.entity.position.x.whole()
             else
-                !(t.position.x.whole() - n.walk_off_near > a.entity.position.x.whole());
+                !(tx - n.walk_off_near > a.entity.position.x.whole());
             if (!near) return enter(a, M.fights);
             _ = walkAcross(a);
         }
