@@ -26,12 +26,15 @@ pub const Mind = struct {
     camera_x: Fixed = .zero,
 };
 
-pub const Animation = enum { arrow };
+/// Pointing right; pointing left (a round whose camera goes left: round 8's).
+pub const Animation = enum { arrow, arrow_left };
 pub const Sound = enum { blink };
 
 pub const Numbers = struct {
-    /// Its place on the screen: across, and the depth that puts it at its line.
+    /// Its place on the screen: across (`x_left` with the camera going left), and the depth
+    /// that puts it at its line.
     x: i16,
+    x_left: i16,
     depth: i16,
     /// The blinks in a row, the ticks each is shown and hidden, the wait before the next row.
     blinks: u8,
@@ -48,7 +51,9 @@ pub fn think(a: Actor) void {
             e.flags.on_screen = true;
             e.flags.in_front = true;
             e.flags.stays = true;
-            e.position = .pixels(n.x, n.depth, 0);
+            const leftward = if (a.tick.world.camera.follows) |r| r.leftward else false;
+            e.position = .pixels(if (leftward) n.x_left else n.x, n.depth, 0);
+            if (leftward) a.animate(.arrow_left);
             a.mind.camera_x = a.tick.world.camera.x;
             a.mind.state = .ready;
         },

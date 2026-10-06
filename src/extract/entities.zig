@@ -1067,7 +1067,16 @@ pub fn goArrow(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definitio
     const frames = try arena.alloc(entity.Frame, 1);
     frames[0] = .{ .frame = try std.fmt.allocPrint(arena, "play/arrow_{d:0>2}", .{index}), .ticks = 1 };
     try d.animations.append(arena, .{ .name = "arrow", .loop = true, .frames = frames });
+    // Round 8's (0x67D0: cmpi.w #7,($FF02)), its camera going left: its animation 2 (the set's
+    // entry 1, 0x67D8: moveq #2,d0), pointing left, at the left (0x67DA).
+    if (u16be(rom, 0x67D0) != 0x0C78 or u16be(rom, 0x67D2) != 7 or u16be(rom, 0x67D4) != 0xFF02 or u16be(rom, 0x67D8) != 0x7002) return error.BadData;
+    const left = try readAnimation(arena, rom, set, 1);
+    const left_index = std.mem.indexOfScalar(u32, d.frame_addresses, left.frames[0].address) orelse return error.BadData;
+    const left_frames = try arena.alloc(entity.Frame, 1);
+    left_frames[0] = .{ .frame = try std.fmt.allocPrint(arena, "play/arrow_{d:0>2}", .{left_index}), .ticks = 1 };
+    try d.animations.append(arena, .{ .name = "arrow_left", .loop = true, .frames = left_frames });
     try d.number("x", try immediate(rom, 0x67CC, &.{ 0x34, 0x3C }, 2), "ROM 0x067CC (move.w #N,d2)");
+    try d.number("x_left", try immediate(rom, 0x67DA, &.{ 0x34, 0x3C }, 2), "ROM 0x067DA (move.w #N,d2: round 8's)");
     try d.number("depth", try immediate(rom, 0x67E2, &.{ 0x31, 0x7C }, 2), "ROM 0x067E2 (move.w #N,($14,a0))");
     try d.number("blinks", 1 + try immediate(rom, 0x67F2, &.{ 0x11, 0x7C }, 2), "ROM 0x067F2 (move.b #N,($50,a0): the blinks after the first)");
     try d.number("shown", try immediate(rom, 0x67FE, &.{ 0x11, 0x7C }, 2), "ROM 0x067FE (move.b #N,($0D,a0))");

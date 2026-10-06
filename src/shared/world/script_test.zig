@@ -44,9 +44,10 @@ const definitions = [_]struct { name: []const u8, text: []const u8 }{
     },
     .{ .name = "go_arrow", .text =
     \\{"family": "effect", "team": "neutral", "behaviour": "go_arrow",
-    \\ "numbers": {"x": 240, "depth": 113, "blinks": 5, "shown": 12, "hidden": 6, "wait": 48},
+    \\ "numbers": {"x": 240, "x_left": 40, "depth": 113, "blinks": 5, "shown": 12, "hidden": 6, "wait": 48},
     \\ "sounds": {"blink": "go arrow"},
-    \\ "animations": {"arrow": {"loop": true, "frames": [{"frame": "t/f", "ticks": 1}]}}}
+    \\ "animations": {"arrow": {"loop": true, "frames": [{"frame": "t/f", "ticks": 1}]},
+    \\   "arrow_left": {"loop": true, "frames": [{"frame": "t/f", "ticks": 1}]}}}
     },
 };
 
