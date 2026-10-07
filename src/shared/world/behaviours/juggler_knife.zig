@@ -266,7 +266,8 @@ fn juggled(a: Actor) bool {
     const n = a.numbers();
     const m = a.mind;
     const e = a.entity;
-    if (a.tick.playersInPlay() == 0) {
+    // No player in play (the last one's life over, its wait begun): it falls away.
+    if (a.tick.fighting(0) == null and a.tick.fighting(1) == null) {
         enter(a, .caught);
         return false;
     }
