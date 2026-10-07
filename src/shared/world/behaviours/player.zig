@@ -170,6 +170,10 @@ pub const Mind = struct {
     throw_ticks: u8 = 0,
     carried: i16 = 0,
     thrower: ?Handle = null,
+    /// Held by an enemy, the other enemy whose blow its holder's ask took the place of: its hold
+    /// places it from that one from then (the original's held player takes the last that touched
+    /// it as its partner then), while the same holder holds it.
+    placed_from: ?struct { holder: Handle, by: Handle } = null,
     may_recover: bool = false,
     recovers: bool = false,
     /// Tossed: it took its step ahead and down.
@@ -1620,12 +1624,21 @@ fn feelCatch(a: Actor) void {
     const got = a.mind.caught_by orelse return;
     a.mind.caught_by = null;
     if (a.entity.holder == null) return;
+    // In its own hold of an enemy still (the one it holds or held there marked), it is held and
+    // freed at once: its catcher holds no one, and it stands from its hold's tick (the original's
+    // player then reads the catch as its own partner's release).
+    const freed = a.mind.marked != null;
     if (a.entity.holding != null) a.letGo();
     dropWeapon(a);
     a.mind.thrower = got.by;
+    a.mind.placed_from = null;
     a.mind.counter_window = 0;
     change(a, if (got.behind) .held_behind else .held);
     a.entity.velocity = .zero;
+    if (freed) {
+        a.mind.marked = null;
+        a.letGo();
+    }
 }
 
 /// It takes one blow or catch a tick, the first (the original's players take one hit a tick),
@@ -1764,14 +1777,18 @@ fn slammedBy(a: Actor) void {
 /// from behind (4), or shake it in a hug (11), the throw's landing costing it `damage` (taken
 /// once, as the throw begins: its holder goes on asking); it answers at its next tick. The ask
 /// takes the place of a blow another dealt it at this tick (the original's holder writes the
-/// hit's kind over the blow's: its twin's kick on one it slams is lost, though the twin is the
-/// last that touched it, whom its throw's damage counts as dealt by).
+/// hit's kind over the blow's: its twin's kick on one it holds is lost, though the twin is the
+/// last that touched it, whom its throw's damage counts as dealt by, at this tick or a later one
+/// of the hold, and whom the hold places it from: `placed_from`).
 pub fn askedBy(a: Actor, holder: Handle, what: u8, damage: i16) void {
-    var toucher = holder;
     if (a.entity.holder) |h| if (h.eql(holder)) if (a.mind.taken) |t| {
         a.mind.taken = null;
-        toucher = t.by;
-        a.mind.thrower = toucher;
+        a.mind.thrower = t.by;
+        a.mind.placed_from = .{ .holder = holder, .by = t.by };
+    };
+    var toucher = holder;
+    if (a.mind.placed_from) |p| if (p.holder.eql(holder)) {
+        toucher = p.by;
     };
     if (a.mind.state != .held and a.mind.state != .held_behind) return;
     a.mind.request = switch (what) {
@@ -1818,13 +1835,14 @@ fn shaken(a: Actor) void {
 }
 
 /// Tossed over by an enemy holding it from the front: its first frame a while, then a step
-/// ahead and down, which its holder's places undo at once (the original places the one held from
-/// its holder at every tick of the hold); its next frame, then it falls ahead, knocked down, the
-/// throw's damage at its landing. At each frame it is placed from its holder by its holder's kind
-/// (`placeByHolderKind`).
+/// ahead and down, which its holder's places undo at once; its next frame, then it falls ahead,
+/// knocked down, the throw's damage at its landing. At every tick of the toss it is placed from
+/// its holder by its holder's kind (`placeByHolderKind`): the original places the one an enemy
+/// holds at every tick, so that it follows the one it is placed from as that one moves.
 fn tossed(a: Actor) void {
     const n = a.numbers();
     const e = a.entity;
+    defer _ = placeByHolderKind(a, "thrown");
     a.mind.throw_ticks -%= 1;
     if (a.mind.throw_ticks != 0) return;
     if (a.frame() == 0 and !a.mind.tossed_on) {
@@ -1832,25 +1850,19 @@ fn tossed(a: Actor) void {
         e.position.x = e.position.x.add(Fixed.pixels(n.tossed_step).times(e.facing.sign()));
         e.position.height = e.position.height.add(.pixels(n.tossed_drop));
         a.mind.throw_ticks = n.tossed_pace;
-        a.mind.placed_frame = null;
-        _ = placeByHolderKind(a, "thrown");
         return;
     }
     if (a.frame() == n.tossed_falls) return throwFall(a);
     a.showFrame(a.frame() + 1, null);
     a.mind.throw_ticks = n.tossed_pace;
-    _ = placeByHolderKind(a, "thrown");
 }
 
-/// At a new frame of what its holder does to it, placed from its holder by the places its
-/// definition gives for the holder's kind (`partners`, `name`): across toward the side it faces,
-/// its height from the holder's, at its depth (whole pixels, its fractions kept). False when it
-/// has none for that kind.
+/// Placed from its holder by its frame's place among those its definition gives for the holder's
+/// kind (`partners`, `name`): across toward the side it faces, its height from the holder's, at
+/// its depth (whole pixels, its fractions kept). False when it has none for that kind.
 fn placeByHolderKind(a: Actor, name: []const u8) bool {
-    const h = a.entity.holder orelse return false;
-    const holder = a.other(h) orelse return false;
+    const holder = placer(a) orelse return false;
     const pp = a.kind.definition.partnerPlaces(name, a.tick.kindOf(holder).definition.name) orelse return false;
-    if (a.mind.placed_frame == a.frame()) return true;
     a.mind.placed_frame = a.frame();
     const p = pp.places[@min(a.frame(), pp.places.len - 1)];
     const e = a.entity;
@@ -1881,16 +1893,24 @@ fn thrown(a: Actor) void {
 /// whole pixels the holder's and the place's, its own fractions kept (the original places it so
 /// at each tick, before a conveyor carries it: it stays where the throw puts it).
 fn placeFromHolder(a: Actor) void {
-    const h = a.entity.holder orelse return;
+    if (a.entity.holder == null) return;
     const f = a.currentFrame() orelse return;
     const p = f.place orelse return;
     a.mind.placed_frame = a.frame();
-    const holder = a.other(h) orelse return;
+    const holder = placer(a) orelse return;
     const at = holder.position;
     const e = a.entity;
     e.position.x = .parts(@intCast(at.x.whole() + @as(i32, p.x) * e.facing.sign()), e.position.x.frac());
     e.position.height = .parts(@intCast(at.height.whole() + p.height), e.position.height.frac());
     e.position.depth = .parts(@intCast(at.depth.whole()), e.position.depth.frac());
+}
+
+/// The one an enemy's hold places it from: its holder, or the one `placed_from` names (a twin's
+/// toss puts it beside the other twin, whose kick met it in the hold).
+fn placer(a: Actor) ?*entity.Entity {
+    const h = a.entity.holder orelse return null;
+    if (a.mind.placed_from) |p| if (p.holder.eql(h)) if (a.other(p.by)) |o| return o;
+    return a.other(h);
 }
 
 fn throwFall(a: Actor) void {
