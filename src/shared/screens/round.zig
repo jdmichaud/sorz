@@ -1093,6 +1093,7 @@ pub const Round = struct {
             if (self.stage(a).script.room) |rm| g.round = rm.back_round;
         }
         g.timer = w.timer.seconds;
+        g.boss_ending = w.room.yes_kept;
         g.boss_bars = 0;
         for (w.bosses) |h| g.boss_bars += @intFromBool(h != null);
         for (&g.players, w.players) |*gp, wp| gp.* = .{

@@ -253,9 +253,10 @@ pub const Clear = struct {
     header: []const u8,
     header_at: Cell,
     number: Cell,
-    /// The bonuses' lines (the clear's, the time's, the level's); a bonus's six digits from the
+    /// The bonuses' lines (the clear's, the time's, the level's; the last round's: its players
+    /// left's header, then player 1's lives' and player 2's); a bonus's six digits from the
     /// line's `digits`th letter on.
-    lines: [3]ClearLine,
+    lines: [6]ClearLine,
     digits: u8,
     /// The palettes of a line, and of the line counted.
     normal: u2,
@@ -270,6 +271,10 @@ pub const Clear = struct {
     count: u32,
     /// The colours faded in, over the status bar's.
     colours: []const u8,
+    /// The last round's clear (`last_round`) counts each player's lives left, `life_bonus` a
+    /// life by LEVEL of the options.
+    last_round: u8 = 8,
+    life_bonus: [4]u32 = .{ 0, 0, 0, 0 },
 };
 
 /// A pad's buttons that the options' CONTROL gives actions to.
@@ -452,7 +457,7 @@ fn withProvenance(arena: std.mem.Allocator, provenance: []const u8, rest: []cons
 }
 
 fn clearValue(arena: std.mem.Allocator, c: *const Clear) !json.Value {
-    const lines = try arena.alloc(json.Value, 3);
+    const lines = try arena.alloc(json.Value, c.lines.len);
     for (lines, c.lines) |*o, l| o.* = try obj(arena, &.{
         .{ .key = "text", .value = .{ .str = l.text } },
         .{ .key = "at", .value = try cellValue(arena, l.at) },
@@ -471,14 +476,16 @@ fn clearValue(arena: std.mem.Allocator, c: *const Clear) !json.Value {
         .{ .key = "level_bonus", .value = json.Value.num(c.level_bonus) },
         .{ .key = "count", .value = json.Value.num(c.count) },
         .{ .key = "colours", .value = .{ .str = c.colours } },
+        .{ .key = "last_round", .value = json.Value.num(c.last_round) },
+        .{ .key = "life_bonus", .value = .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(c.life_bonus[0]), json.Value.num(c.life_bonus[1]), json.Value.num(c.life_bonus[2]), json.Value.num(c.life_bonus[3]) }) } },
     });
 }
 
 fn readClear(n: json.Node) Error!Clear {
-    try n.only(&.{ "provenance", "header", "header_at", "number", "lines", "digits", "normal", "counted", "wait", "clear_bonus", "time_bonus", "level_bonus", "count", "colours" });
+    try n.only(&.{ "provenance", "header", "header_at", "number", "lines", "digits", "normal", "counted", "wait", "clear_bonus", "time_bonus", "level_bonus", "count", "colours", "last_round", "life_bonus" });
     const ls = try n.get("lines");
-    if (try ls.len() != 3) return ls.fail("not the three bonuses' lines");
-    var lines: [3]ClearLine = undefined;
+    if (try ls.len() != 6) return ls.fail("not the six bonuses' lines");
+    var lines: [6]ClearLine = undefined;
     for (&lines, 0..) |*l, k| {
         const e = try ls.at(k);
         try e.only(&.{ "text", "at" });
@@ -499,8 +506,16 @@ fn readClear(n: json.Node) Error!Clear {
         .level_bonus = try (try n.get("level_bonus")).int(u32),
         .count = try (try n.get("count")).int(u32),
         .colours = try (try n.get("colours")).string(),
+        .last_round = try (try n.get("last_round")).int(u8),
+        .life_bonus = blk: {
+            const lb = try n.get("life_bonus");
+            if (try lb.len() != 4) return lb.fail("not a bonus by LEVEL");
+            var out: [4]u32 = undefined;
+            for (&out, 0..) |*o, k| o.* = try (try lb.at(k)).int(u32);
+            break :blk out;
+        },
     };
-    for (c.lines, 0..) |l, k| if (l.text.len < @as(usize, c.digits) + 6) return (try ls.at(k)).fail("shorter than its digits");
+    for (c.lines, 0..) |l, k| if (k != 3 and l.text.len < @as(usize, c.digits) + 6) return (try ls.at(k)).fail("shorter than its digits");
     if (c.wait == 0 or c.count == 0) return n.fail("a wait or a count of none");
     return c;
 }
@@ -1178,6 +1193,9 @@ test "the screens' records write and read back the same" {
                     .{ .text = "CLEAR BONUS  000000 PTS", .at = .{ .x = 8, .y = 12 } },
                     .{ .text = " TIME BONUS  000000 PTS", .at = .{ .x = 8, .y = 14 } },
                     .{ .text = "LEVEL BONUS  000000 PTS", .at = .{ .x = 8, .y = 16 } },
+                    .{ .text = "PLAYERS LEFT BONUS", .at = .{ .x = 8, .y = 19 } },
+                    .{ .text = "        1UP  000000 PTS", .at = .{ .x = 8, .y = 21 } },
+                    .{ .text = "        2UP  000000 PTS", .at = .{ .x = 8, .y = 23 } },
                 },
                 .digits = 13,
                 .normal = 1,

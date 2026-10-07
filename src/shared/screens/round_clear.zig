@@ -33,13 +33,15 @@ pub const Act = union(enum) {
     fade_in,
     header,
     wait,
-    /// A bonus's line, in the normal colours, its digits when it is not zero.
-    line: u2,
+    /// A bonus's line (by its place among the lines), in the normal colours, its digits when its
+    /// bonus is not zero.
+    line: u3,
     /// A bonus's line in the counted colours, with its digits.
-    counted: u2,
-    count: u2,
+    counted: u3,
+    /// A bonus (by its place among the bonuses) counted into the scores.
+    count: u3,
     /// A bonus's line again in the normal colours, its own zeros.
-    normal: u2,
+    normal: u3,
     fade_out,
     done,
 };
@@ -57,7 +59,7 @@ fn counting(act: Act) Step {
     return .{ .act = act, .counting = true };
 }
 
-/// The steps of rounds 1 to 7 (round 8's lives bonuses come with PLAN item 15).
+/// The steps of the rounds but the last.
 pub const program = [_]Step{
     step(.fade_in),
     step(.header),
@@ -87,6 +89,66 @@ pub const program = [_]Step{
     step(.done),
 };
 
+/// The steps of the last round's clear: its players left's lines after the level's, each
+/// player's lives counted into its score after the level's bonus (a player out of play skips its
+/// line and its count); START does not skip its counting.
+pub const last_program = [_]Step{
+    step(.fade_in),
+    step(.header),
+    step(.wait),
+    step(.{ .line = 0 }),
+    step(.{ .line = 1 }),
+    step(.{ .line = 2 }),
+    step(.{ .line = 3 }),
+    step(.{ .line = 4 }),
+    step(.{ .line = 5 }),
+    step(.wait),
+    step(.{ .counted = 0 }),
+    step(.{ .count = 0 }),
+    step(.wait),
+    step(.{ .normal = 0 }),
+    step(.{ .counted = 1 }),
+    step(.wait),
+    step(.{ .count = 1 }),
+    step(.wait),
+    step(.{ .normal = 1 }),
+    step(.{ .counted = 2 }),
+    step(.wait),
+    step(.{ .count = 2 }),
+    step(.wait),
+    step(.{ .normal = 2 }),
+    step(.{ .counted = 4 }),
+    step(.wait),
+    step(.{ .count = 3 }),
+    step(.{ .normal = 4 }),
+    step(.{ .counted = 5 }),
+    step(.wait),
+    step(.{ .count = 4 }),
+    step(.{ .normal = 5 }),
+    step(.wait),
+    step(.wait),
+    step(.fade_out),
+    step(.done),
+};
+
+/// The bonus a line shows the digits of (the players left's header shows none).
+fn bonusOf(line: u3) ?u3 {
+    return switch (line) {
+        0, 1, 2 => line,
+        3 => null,
+        else => line - 1,
+    };
+}
+
+/// The player whose lives a line or a bonus is (player 1's, player 2's), when it is one.
+fn livesOf(line: u3) ?u1 {
+    return switch (line) {
+        4 => 0,
+        5 => 1,
+        else => null,
+    };
+}
+
 /// The first step after the counting, where START held goes. The counting's steps are one run.
 const skip_to = blk: {
     var first: ?usize = null;
@@ -110,7 +172,7 @@ pub const Line = struct {
 /// What the picture shows.
 pub const Shown = struct {
     header: bool = false,
-    lines: [3]Line = @splat(.{}),
+    lines: [6]Line = @splat(.{}),
     bar: round_screen.Bar = .{},
 };
 
@@ -122,10 +184,12 @@ pub const RoundClear = struct {
     set_up: bool = false,
     /// The round cleared.
     round: u8 = 1,
-    /// The bonuses left to count.
-    bonuses: [3]u32 = .{ 0, 0, 0 },
-    /// The bonus a count draws the digits of at each tick.
-    counting: ?u2 = null,
+    /// The last round's (its lives counted).
+    last: bool = false,
+    /// The bonuses left to count: the clear's, the time's, the level's, each player's lives'.
+    bonuses: [5]u32 = .{ 0, 0, 0, 0, 0 },
+    /// The line a count draws its bonus's digits on at each tick.
+    counting: ?u3 = null,
     now: Shown = .{},
     shown: Shown = .{},
     colours: Colours = .{},
@@ -192,8 +256,9 @@ pub const RoundClear = struct {
         }
         const c = &a.screen.clear;
         const g = &turn.setup.progress;
-        if (program[self.act].counting and startHeld(turn, g)) self.skip(g, c, a.screen.status_bar.score_most);
-        switch (program[self.act].act) {
+        const program_steps = self.steps();
+        if (program_steps[self.act].counting and startHeld(turn, g)) self.skip(g, c, a.screen.status_bar.score_most);
+        switch (program_steps[self.act].act) {
             .fade_in, .fade_out => if (self.colours.stepFade()) self.next(),
             .header => {
                 self.now.header = true;
@@ -211,39 +276,56 @@ pub const RoundClear = struct {
                 }
             },
             .line => |k| {
-                self.now.lines[k] = .{ .shown = true, .digits = if (self.bonuses[k] != 0) self.bonuses[k] else null };
+                if (self.outOf(g, k)) return self.skipped(g);
+                const b = bonusOf(k);
+                self.now.lines[k] = .{ .shown = true, .digits = if (b) |n| if (self.bonuses[n] != 0) self.bonuses[n] else null else null };
                 self.writes = lineWrites(c, k);
                 self.next();
             },
             .counted => |k| {
-                self.now.lines[k] = .{ .shown = true, .counted = true, .digits = self.bonuses[k] };
+                if (self.outOf(g, k)) return self.skipped(g);
+                self.now.lines[k] = .{ .shown = true, .counted = true, .digits = self.bonuses[bonusOf(k).?] };
                 self.writes = lineWrites(c, k);
                 self.next();
             },
             .normal => |k| {
+                if (self.outOf(g, k)) return self.skipped(g);
                 self.now.lines[k] = .{ .shown = true };
                 self.writes = lineWrites(c, k);
                 self.next();
             },
-            .count => |k| {
-                if (k == 1 and g.timer != 0) {
+            .count => |b| {
+                // Its line: the bonus's, by its place.
+                const k: u3 = if (b < 3) b else b + 1;
+                if (self.outOf(g, k)) return self.skipped(g);
+                if (b == 1 and g.timer != 0) {
                     g.timer -= 1;
                     turn.play(a.tick);
                 }
-                if (self.bonuses[k] == 0) {
+                if (self.bonuses[b] == 0) {
                     self.counting = null;
+                    // A player's lives counted, its status bar shows none.
+                    if (livesOf(k)) |pk| g.players[pk].lives = 0;
                     self.next();
                 } else {
-                    const n = @min(c.count, self.bonuses[k]);
-                    self.bonuses[k] -= n;
+                    const n = @min(c.count, self.bonuses[b]);
+                    self.bonuses[b] -= n;
                     self.counting = k;
-                    for (&g.players) |*p| if (p.in_play) addScore(p, n, a.screen.status_bar.score_most);
+                    // A player's lives go to its score; the others to every player in play's.
+                    for (&g.players, 0..) |*p, pk| {
+                        if (!p.in_play) continue;
+                        if (livesOf(k)) |only| if (only != pk) continue;
+                        addScore(p, n, a.screen.status_bar.score_most);
+                    }
                     turn.play(a.tick);
-                    self.now.lines[k].digits = self.bonuses[k];
+                    self.now.lines[k].digits = self.bonuses[b];
                     self.writes.cells += digitsOf(c, k);
                 }
             },
             .done => {
+                // After the last round, the ending (in the boss's chair when a player kept the
+                // offer's yes).
+                if (self.last) return if (g.boss_ending) .boss_ending else .ending;
                 g.round += 1;
                 return if (a.rounds.of(g.round) != null) .done else .missing;
             },
@@ -252,9 +334,26 @@ pub const RoundClear = struct {
         return null;
     }
 
+    fn steps(self: *const RoundClear) []const Step {
+        return if (self.last) &last_program else &program;
+    }
+
     fn next(self: *RoundClear) void {
         self.act += 1;
-        if (program[self.act].act == .fade_out) self.colours.startFade(.black);
+        if (self.steps()[self.act].act == .fade_out) self.colours.startFade(.black);
+    }
+
+    /// Whether line `k` is the lives' of a player out of play.
+    fn outOf(_: *const RoundClear, g: *const setup_mod.Progress, k: u3) bool {
+        const p = livesOf(k) orelse return false;
+        return !g.players[p].in_play;
+    }
+
+    /// A step skipped: the next, at this tick (the original's steps skipped two by two).
+    fn skipped(self: *RoundClear, g: *const setup_mod.Progress) ?flow.Exit {
+        self.next();
+        self.now.bar = barOf(g);
+        return null;
     }
 
     /// The frame that shows the tick: the colours when the tick touched them, the status bar's
@@ -288,7 +387,7 @@ pub const RoundClear = struct {
         var left: u32 = 0;
         for (self.bonuses) |b| left += b;
         for (&g.players) |*p| if (p.in_play) addScore(p, left, most);
-        for (&self.now.lines, 0..) |*l, k| {
+        for (self.now.lines[0..3], 0..) |*l, k| {
             l.* = .{ .shown = true };
             // Their letters written cell by cell.
             self.writes.cells += @intCast(c.lines[k].text.len);
@@ -311,10 +410,17 @@ pub const RoundClear = struct {
         for (g.players) |p| if (p.in_play) {
             specials += p.specials;
         };
+        self.last = g.round == c.last_round;
+        // The last round's lives: each player's, a bonus a life by LEVEL (none for a player on
+        // its last life: the original's count of a life less than none, 65536 of them, is not
+        // taken).
+        const life = c.life_bonus[@min(turn.setup.level, 3)];
         self.bonuses = .{
             c.clear_bonus * (1 + specials),
             c.time_bonus * g.timer,
             c.level_bonus * turn.setup.level,
+            if (self.last and g.players[0].in_play) life * g.players[0].lives else 0,
+            if (self.last and g.players[1].in_play) life * g.players[1].lives else 0,
         };
         self.colours.palettes = .{};
         self.colours.aim(a.players_colours);
@@ -406,7 +512,7 @@ test "the steps: the counting from the wait after the lines, a skip to the wait 
 }
 
 test "START held at the counting's first wait: the bonuses at once, held at the most, the lines' zeros" {
-    var r: RoundClear = .{ .act = 6, .bonuses = .{ 20000, 4500, 10000 } };
+    var r: RoundClear = .{ .act = 6, .bonuses = .{ 20000, 4500, 10000, 0, 0 } };
     r.now.lines[0] = .{ .shown = true, .digits = 20000 };
     var g: setup_mod.Progress = .{ .round = 1, .timer = 45 };
     g.players[0] = .{ .in_play = true, .score = 995_000 };
@@ -420,5 +526,5 @@ test "START held at the counting's first wait: the bonuses at once, held at the 
     try std.testing.expectEqual(@as(u32, 100), g.players[1].score);
     try std.testing.expectEqual(@as(u8, skip_to), r.act);
     try std.testing.expectEqual(@as(u8, 0), g.timer);
-    for (r.now.lines) |l| try std.testing.expect(l.shown and !l.counted and l.digits == null);
+    for (r.now.lines[0..3]) |l| try std.testing.expect(l.shown and !l.counted and l.digits == null);
 }

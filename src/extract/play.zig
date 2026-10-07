@@ -349,7 +349,11 @@ fn joinNext(rom: []const u8) ![3]records.Character {
 /// (0x18476: move.b #N,($FB4E)), the bonuses (0x18296).
 const clear_letters = 0x18468;
 const big_font = 0x6EE4E;
-const clear_lines = [3]u32{ 0x18564, 0x18580, 0x1859C };
+const clear_lines = [6]u32{ 0x18564, 0x18580, 0x1859C, 0x185B8, 0x185D4, 0x185F0 };
+/// The points a life left gives at round 8's clear by LEVEL (0x18324: the amounts' entries at
+/// 0x18334, of the table at 0x10DDE: 4 bytes of packed decimal each, entry N at N - 1).
+const life_amounts = 0x18334;
+const score_amounts = 0x10DDE;
 
 /// The plane A cell of video memory address `address` (a 64 cells wide plane at $C000).
 fn planeCell(address: u32) !records.Cell {
@@ -385,7 +389,7 @@ fn roundClear(b: *Builder, play_v: *const Vram) !records.Clear {
     var run: screens.Run = .{ .b = b, .v = v, .screen = &screen };
     try run.mapAt("round_end/header", &words, 26, 2, null, "ROUND n CLEAR (0x183F0): the letters at ROM 0x18468, each two cells by two from the big font's table at ROM 0x6EE4E; the round's number goes over the seventh letter's right half", .code);
     try run.finish();
-    var lines: [3]records.ClearLine = undefined;
+    var lines: [6]records.ClearLine = undefined;
     for (&lines, clear_lines) |*l, at| {
         var text: std.ArrayList(u8) = .empty;
         var k: u32 = at + 4;
@@ -413,7 +417,29 @@ fn roundClear(b: *Builder, play_v: *const Vram) !records.Clear {
         .level_bonus = 10000,
         .count = 100,
         .colours = "round_end/colours",
+        // The last round (0x184BA: cmpi.w #N,($FF02).w, the round from 0) counts the lives.
+        .last_round = if (u16be(rom, 0x184BA) == 0x0C78 and u16be(rom, 0x184BE) == 0xFF02) @intCast(u16be(rom, 0x184BC) + 1) else return error.BadData,
+        .life_bonus = blk: {
+            var out: [4]u32 = undefined;
+            for (&out, 0..) |*o, level| {
+                const n: u32 = u16be(rom, life_amounts + 2 * @as(u32, @intCast(level)));
+                if (n == 0) return error.BadData;
+                o.* = packedDecimal(u32be(rom, score_amounts + 4 * (n - 1)));
+            }
+            break :blk out;
+        },
     };
+}
+
+/// Packed decimal digits as a number.
+fn packedDecimal(v: u32) u32 {
+    var out: u32 = 0;
+    var k: u5 = 28;
+    while (true) : (k -= 4) {
+        out = out * 10 + ((v >> k) & 0xF);
+        if (k == 0) break;
+    }
+    return out;
 }
 
 /// The continue's question (0x5432): player 1's and player 2's places, from the instructions that

@@ -50,8 +50,10 @@ pub const Progress = struct {
     /// The bosses' bars the round showed: the picture builds their partial cells at each frame
     /// until the next round's load (the original keeps its bars' bosses until then).
     boss_bars: u2 = 0,
-    /// Mr. X's offer was accepted (round 8's): back there, he does not make it again.
+    /// Mr. X's offer was accepted (round 8's): back there, he does not make it again; a player
+    /// kept its yes to the last (the traitor): the game ends in the boss's chair.
     offer_accepted: bool = false,
+    boss_ending: bool = false,
 
     /// A new game: the players of the game menu's choice in play, each with the lives of the
     /// options (1, 3, 5 or 7) and three continues (the original's, set as the character select

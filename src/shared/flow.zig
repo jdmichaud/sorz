@@ -51,6 +51,9 @@ pub const Exit = enum {
     cleared,
     /// Mr. X's offer accepted: back to an earlier round (round 8's trapdoors).
     back,
+    /// The last round's clear: the game's ending, or the one in the boss's chair.
+    ending,
+    boss_ending,
     /// Every player is out of the game.
     game_over,
     /// What follows is not in the content: the next round after a clear.
@@ -126,6 +129,9 @@ pub const original: Graph = .{
         // The next round loads as the first does, its load its own (scene.zig).
         .{ .from = .round_clear, .exit = .done, .to = .round, .load = 53 },
         .{ .from = .round_clear, .exit = .missing, .to = .next_round },
+        // The endings are not scenes yet: the high scores follow at once.
+        .{ .from = .round_clear, .exit = .ending, .to = .high_scores, .load = 4, .driver_once = true },
+        .{ .from = .round_clear, .exit = .boss_ending, .to = .high_scores, .load = 4, .driver_once = true },
     },
 };
 
