@@ -1866,20 +1866,23 @@ pub fn Of(comptime M: type) type {
             a.pace(t.pacing_pace[k], 1);
         }
 
+        // Brought back --------------------------------------------------------------------------
+
+        /// Left behind the camera, it was brought back to its edge (`script.bringBack`): unless
+        /// it shows its knock-down's look (the original's animations 4 and 6), it takes up the
+        /// fight from its start again (the original sets its first state anew, set up at its
+        /// next turn).
+        pub fn leftBehind(a: A) void {
+            if (a.plays(.down)) return;
+            enter(a, M.fights);
+        }
+
         // Knocked back -------------------------------------------------------------------------
 
         /// A player's new life drops in while it is on the screen (Tick.knockBack): it is knocked
         /// back where it stands, flying across and up (its speeds' whole pixels set, their
         /// fractions kept), facing left, without the knock-down's set-up: its health and its
         /// sound spared. Knocked out, or waiting to come in, it stays as it is.
-        /// Brought back to the camera's edge by the round's script at a wall (script.zig's
-        /// `bringBack`): it takes up the fight again from its first state of it (the original's
-        /// state 1), but in its knock-down's look (the original's animations 4 and 6).
-        pub fn leftBehind(a: A) void {
-            if (a.plays(.down)) return;
-            enter(a, M.fights);
-        }
-
         pub fn knockedBack(a: A) void {
             const n = a.numbers();
             const b = body(a);
