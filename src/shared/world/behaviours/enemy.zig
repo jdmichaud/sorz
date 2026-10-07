@@ -438,7 +438,9 @@ pub fn Of(comptime M: type) type {
         pub fn tickStarts(a: A) bool {
             const b = body(a);
             b.thought = a.tick.world.tick;
-            if (!b.touched) b.touch_taken = false;
+            // Settling, it looks at no blow: the touch it took goes on (the original's reel keeps
+            // its mark of a touch through its settle's step).
+            if (!b.touched and !b.settling) b.touch_taken = false;
             b.touched = false;
             // It moves only where its state walks or flies (`go`, `walk`), its speed kept
             // otherwise.
