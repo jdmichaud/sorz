@@ -22,6 +22,10 @@ const sweep_from = 20;
 
 pub const lights_table = 0x3F53E;
 const lights_steps = 6;
+/// The ending's sky (0xBE44, type $8B): steps of 8 colours, palette 2's colours 3 to 10.
+pub const sky_table = 0x3F4FE;
+const sky_steps = 4;
+const sky_colours = 8;
 /// The words of the table the lights read: 12 bytes (the second colour's index wraps there).
 const lights_bytes = 12;
 
@@ -63,6 +67,16 @@ pub fn extract(b: *Builder) !void {
         .name = "",
         .provenance = try std.fmt.allocPrint(b.arena, "ROM 0x{X:0>5}: the city's lights, palette 1's colours 13 and 14 by step (0xD2A4, type $63; the second colour's word wraps to the table's start past its 12 bytes)", .{lights_table}),
         .steps = lights,
+    });
+    const sky = try b.arena.alloc(Step, sky_steps);
+    for (sky, 0..) |*st, k| {
+        st.* = @splat(@splat(null));
+        for (0..sky_colours) |c| st[2][3 + c] = builder_mod.colourOf(rom_mod.u16be(rom, sky_table + @as(u32, @intCast(k * 2 * sky_colours + 2 * c))));
+    }
+    try b.paletteSteps("ending/sky", .{
+        .name = "",
+        .provenance = try std.fmt.allocPrint(b.arena, "ROM 0x{X:0>5}: the ending's sky, 8 colours a step into palette 2's colours 3 to 10 (0xBE44, type $8B's steps)", .{sky_table}),
+        .steps = sky,
     });
     const title = try b.arena.alloc(Step, title_steps);
     for (title, 0..) |*s, i| s.* = colours(rom, title_table + @as(u32, @intCast(i)) * 2 * title_colours, 1, title_colours);

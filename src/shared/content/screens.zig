@@ -79,6 +79,83 @@ pub const Intro = struct {
     provenance: struct { story: []const u8 = "", profiles: []const u8 = "", script: []const u8 = "" } = .{},
 };
 
+/// The ending after round 8 (screens/ending.zig), as the original's script and objects run it.
+pub const Ending = struct {
+    provenance: []const u8 = "",
+    /// Its script: each entry the part it starts, the ticks to the next, the part's life.
+    script: []const ScriptEntry,
+    /// Its texts, typed a code every `type_period` ticks and erased so, one after the other: each
+    /// where its first row starts (a cell of a plane), its rows (`fonts/italic`'s glyphs, a space
+    /// a blank cell, a row a code too), and the ticks it stays typed. The font shows as its
+    /// dissolves let it (its pixels in or out every `dissolve_period` ticks).
+    texts: []const EndingText,
+    /// The pictures (their maps, in the order they are drawn), and their moments: the pictures
+    /// drawn then, the palette lines faded in (towards their colours) and out, the ticks to the
+    /// next moment.
+    pictures: []const []const u8,
+    moments: []const EndingMoment,
+    /// The last scene's steps: its next palette (`scene_colours`'s), the sky's next colours
+    /// (`sky`), the clouds sent off, the star's blink begun; the ticks to the next (0: until the
+    /// sun has set).
+    scene: []const SceneStep,
+    scene_colours: []const []const u8,
+    sky: []const u8,
+    /// The clouds crossing from the right and back, the setting sun, THE END glowing; the star.
+    clouds: []const Sprite,
+    sun: Sprite,
+    glow: Sprite,
+    star: []const Blink,
+    numbers: EndingNumbers,
+};
+
+pub const EndingText = struct { plane: art.Layer, x: u16, y: u16, rows: []const []const u8, stays: u16 };
+pub const EndingMoment = struct { pictures: u8, fade_in: []const LineColours, fade_out: []const u8, after: u16 };
+pub const LineColours = struct { line: u8, colours: []const u8 };
+/// A step of the last scene: what it shows; the ticks to the next (none: until the sun has set
+/// when `until_sun`, else for good).
+pub const SceneStep = struct { palette: bool, sky: bool, clouds_off: bool, star: bool, after: u16, until_sun: bool };
+/// A sprite of the ending: its frame, its place, its speed (in 1/65536 of a pixel a tick, across
+/// for a cloud, down for the sun), its palette and priority.
+pub const Sprite = struct { frame: []const u8, x: i16, y: i16, speed: i32, palette: u2, priority: bool };
+/// A star's look (its map) and the ticks it shows.
+pub const Blink = struct { map: []const u8, ticks: u16 };
+
+pub const EndingNumbers = struct {
+    type_period: u8,
+    erase_gap: u16,
+    dissolve_period: u8,
+    dissolve_step: u16,
+    dissolve_from: u16,
+    dissolve_span: u16,
+    fade_period: u8,
+    fade_life: u16,
+    /// The palette line the last picture's wait blackens, so many ticks before its end.
+    black_line: u8,
+    black_before: u16,
+    /// A cloud past `cloud_turn` across comes back at `cloud_back`, its height `cloud_height`
+    /// and a draw's low bits (`cloud_spread`).
+    cloud_turn: i16,
+    cloud_back: i16,
+    cloud_height: i16,
+    cloud_spread: u8,
+    /// The sun sets to `sun_until`.
+    sun_until: i16,
+    /// THE END glows: its line's colour `glow_colour` towards `glow_colours`, a step every
+    /// `glow_period` ticks.
+    glow_line: u8,
+    glow_colour: u8,
+    glow_period: u8,
+    glow_colours: []const u8,
+    /// The car's plane's lines from `scroll_first` (`scroll_lines` of them) scroll left a pixel
+    /// a tick, `scroll_ticks` ticks.
+    scroll_first: u16,
+    scroll_lines: u16,
+    scroll_ticks: u16,
+    /// START ends it from the script's entry `skip_from` on, `skip_within` ticks from the next.
+    skip_from: u8,
+    skip_within: u16,
+};
+
 /// A cell of the fixed layer (the status bar's): its column and its row.
 pub const Cell = struct { x: u8, y: u8 };
 
@@ -345,6 +422,7 @@ pub const Screens = struct {
     select: ?Select = null,
     intro: ?Intro = null,
     round: ?Round = null,
+    ending: ?Ending = null,
 
     /// The names of the records it has, in name order (the manifest's `screens`).
     pub fn names(self: *const Screens, out: *[record_names.len][]const u8) []const []const u8 {
@@ -360,13 +438,45 @@ pub const Screens = struct {
 };
 
 /// The records' names, in name order: their files are `screens/NAME.json`.
-pub const record_names = [_][]const u8{ "high_scores", "intro", "options", "round", "select" };
+pub const record_names = [_][]const u8{ "ending", "high_scores", "intro", "options", "round", "select" };
 
 pub fn path(arena: std.mem.Allocator, name: []const u8) error{OutOfMemory}![]const u8 {
     return std.fmt.allocPrint(arena, "screens/{s}.json", .{name});
 }
 
 // --- Writing ---------------------------------------------------------------------------------
+
+/// A plain record (numbers, booleans, strings, enums, lists and records of them) as JSON, its
+/// fields by name.
+fn plainValue(arena: std.mem.Allocator, x: anytype) error{OutOfMemory}!json.Value {
+    const T = @TypeOf(x);
+    switch (@typeInfo(T)) {
+        .int => return json.Value.num(x),
+        .bool => return .{ .bool = x },
+        .@"enum" => return .{ .str = @tagName(x) },
+        .array => {
+            const out = try arena.alloc(json.Value, x.len);
+            for (out, x) |*o, e| o.* = try plainValue(arena, e);
+            return .{ .array = out };
+        },
+        .pointer => |ptr| {
+            if (ptr.child == u8) return .{ .str = x };
+            const out = try arena.alloc(json.Value, x.len);
+            for (out, x) |*o, e| o.* = try plainValue(arena, e);
+            return .{ .array = out };
+        },
+        .@"struct" => |st| {
+            var fields: std.ArrayList(json.Field) = .empty;
+            inline for (st.field_names) |name| {
+                if (comptime std.mem.eql(u8, name, "provenance")) {
+                    if (x.provenance.len != 0) try fields.append(arena, .{ .key = name, .value = .{ .str = x.provenance } });
+                } else try fields.append(arena, .{ .key = name, .value = try plainValue(arena, @field(x, name)) });
+            }
+            return .{ .object = fields.items };
+        },
+        else => @compileError("not a plain record's field: " ++ @typeName(T)),
+    }
+}
 
 fn obj(arena: std.mem.Allocator, fields: []const json.Field) !json.Value {
     return .{ .object = try arena.dupe(json.Field, fields) };
@@ -782,6 +892,7 @@ pub fn value(arena: std.mem.Allocator, s: *const Screens, name: []const u8) erro
         });
         return obj(arena, &.{.{ .key = "first", .value = try listed(arena, h.provenance, "entries", .{ .array = entries }) }});
     }
+    if (std.mem.eql(u8, name, "ending")) return plainValue(arena, s.ending.?);
     if (std.mem.eql(u8, name, "intro")) {
         const it = s.intro.?;
         const profiles = try arena.alloc(json.Value, it.profiles.len);
@@ -821,6 +932,43 @@ pub fn value(arena: std.mem.Allocator, s: *const Screens, name: []const u8) erro
 }
 
 // --- Reading ---------------------------------------------------------------------------------
+
+/// A plain record of type `T` from JSON (`plainValue`'s): every field it has, none it has not.
+fn plainRead(comptime T: type, arena: std.mem.Allocator, n: json.Node) Error!T {
+    switch (@typeInfo(T)) {
+        .int => return n.int(T),
+        .bool => return n.boolean(),
+        .@"enum" => return std.meta.stringToEnum(T, try n.string()) orelse n.fail("not one of its names"),
+        .array => |arr| {
+            if (try n.len() != arr.len) return n.fail("not its count of entries");
+            var out: T = undefined;
+            for (&out, 0..) |*o, i| o.* = try plainRead(arr.child, arena, try n.at(i));
+            return out;
+        },
+        .pointer => |ptr| {
+            if (ptr.child == u8) return n.string();
+            const out = try arena.alloc(ptr.child, try n.len());
+            for (out, 0..) |*o, i| o.* = try plainRead(ptr.child, arena, try n.at(i));
+            return out;
+        },
+        .@"struct" => |st| {
+            const names = comptime blk: {
+                var out: [st.field_names.len][]const u8 = undefined;
+                for (st.field_names, 0..) |name, i| out[i] = name;
+                break :blk out;
+            };
+            try n.only(&names);
+            var out: T = undefined;
+            inline for (st.field_names, st.field_types) |name, F| {
+                if (comptime std.mem.eql(u8, name, "provenance")) {
+                    out.provenance = if (try n.opt("provenance")) |p| try p.string() else "";
+                } else @field(out, name) = try plainRead(F, arena, try n.get(name));
+            }
+            return out;
+        },
+        else => @compileError("not a plain record's field: " ++ @typeName(T)),
+    }
+}
 
 fn readStrings(arena: std.mem.Allocator, n: json.Node) Error![]const []const u8 {
     const out = try arena.alloc([]const u8, try n.len());
@@ -1069,6 +1217,13 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         }
         h.first = out;
         into.high_scores = h;
+        return;
+    }
+    if (std.mem.eql(u8, name, "ending")) {
+        const e = try plainRead(Ending, arena, root);
+        for (e.texts) |t| for (t.rows) |row| for (row) |c| if (c >= 0x80) return root.fail("a text's glyph not of the font");
+        if (e.clouds.len != 2) return (try root.get("clouds")).fail("not the two clouds");
+        into.ending = e;
         return;
     }
     if (std.mem.eql(u8, name, "intro")) {

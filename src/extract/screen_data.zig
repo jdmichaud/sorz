@@ -305,6 +305,180 @@ fn intro(arena: std.mem.Allocator, rom: []const u8) !screens.Intro {
     };
 }
 
+// --- The ending ---------------------------------------------------------------------------------
+
+/// The ending's parts by the type of the object that its script's entry makes (sor-remaster's
+/// frontend/intro_objects.zig, the handlers $82 to $8D).
+const ending_parts = [_]struct { kind: u8, part: []const u8 }{
+    .{ .kind = 0x83, .part = "pictures" },
+    .{ .kind = 0x84, .part = "texts" },
+    .{ .kind = 0x85, .part = "dissolve_in" },
+    .{ .kind = 0x86, .part = "dissolve_out" },
+    .{ .kind = 0x87, .part = "cloud_1" },
+    .{ .kind = 0x89, .part = "cloud_2" },
+    .{ .kind = 0x8A, .part = "sun" },
+    .{ .kind = 0x8B, .part = "scene" },
+    .{ .kind = 0x8C, .part = "glow" },
+    .{ .kind = 0x8D, .part = "scroll" },
+};
+
+/// The ending's texts: their places and paragraphs (0xC100: a VRAM address and a word each),
+/// their codes (word offsets at 0x3F7D0), how long each stays typed (0xBFF2).
+const ending_places = 0xC100;
+const ending_texts = 0x3F7D0;
+const ending_stays = 0xBFF2;
+const ending_text_count = 5;
+
+/// The immediate of the instruction at `at` (its word, or its long), when its opcode is `op`.
+fn imm(rom: []const u8, at: u32, op: u16) !u32 {
+    if (u16be(rom, at) != op) return error.BadData;
+    return switch (op) {
+        0x217C, 0x223C => u32be(rom, at + 2),
+        0x117C => rom[at + 3],
+        else => u16be(rom, at + 2),
+    };
+}
+
+/// The palette line of a tile word.
+fn paletteOf(word: u32) u2 {
+    return @intCast(word >> 13 & 3);
+}
+
+/// A cell's VRAM address as a plane's cell (planes 64 cells wide: A at $C000, B at $E000).
+fn planeCell(address: u16) !struct { plane: sorz.content.art.Layer, x: u16, y: u16 } {
+    const plane: sorz.content.art.Layer = if (address >= 0xE000) .plane_b else if (address >= 0xC000) .plane_a else return error.BadData;
+    const off = address - @as(u16, if (plane == .plane_b) 0xE000 else 0xC000);
+    return .{ .plane = plane, .x = off % 128 / 2, .y = off / 128 };
+}
+
+fn ending(arena: std.mem.Allocator, rom: []const u8) !screens.Ending {
+    // The script: entry 1 of 0x3F680's.
+    const at = script + 8;
+    const count: u32 = rom[at];
+    const list = u32be(rom, at + 4);
+    const entries = try arena.alloc(screens.ScriptEntry, count);
+    for (entries, 0..) |*e, i| {
+        const r = list + 8 * @as(u32, @intCast(i));
+        const kind = u16be(rom, r + 2);
+        const part = for (ending_parts) |p| {
+            if (p.kind == kind) break p.part;
+        } else return error.BadData;
+        e.* = .{ .part = part, .wait = u16be(rom, r + 4), .life = u16be(rom, r + 6) };
+    }
+    // The texts: each from its codes to its last paragraph's end ($FC), a row a paragraph.
+    const texts = try arena.alloc(screens.EndingText, ending_text_count);
+    for (texts, 0..) |*t, n| {
+        const place = try planeCell(u16be(rom, ending_places + 4 * @as(u32, @intCast(n))));
+        const paragraphs = u16be(rom, ending_places + 4 * @as(u32, @intCast(n)) + 2);
+        var a: u32 = @intCast(@as(i32, ending_texts) + s16be(rom, ending_texts + 2 * @as(u32, @intCast(n))));
+        const rows = try arena.alloc([]const u8, paragraphs);
+        for (rows) |*row| {
+            var line: std.ArrayList(u8) = .empty;
+            while (rom[a] != 0xFC) : (a += 1) {
+                const c = rom[a];
+                if (c == 0) {
+                    try line.append(arena, ' ');
+                    continue;
+                }
+                if (c >= 0x80) return error.BadData;
+                const g = for (fonts.main_glyphs) |g| {
+                    if (g.tile == c) break g;
+                } else return error.BadData;
+                try line.appendSlice(arena, g.text);
+            }
+            a += 1;
+            row.* = line.items;
+        }
+        t.* = .{ .plane = place.plane, .x = place.x, .y = place.y, .rows = rows, .stays = u16be(rom, ending_stays + 2 * @as(u32, @intCast(n))) };
+    }
+    // The pictures' moments (type $83, 0xC17C): the counts its states set.
+    const waits = [_]u32{ 0xC1AC, 0xC1CC, 0xC20A, 0xC236, 0xC25E, 0xC27E };
+    var after: [waits.len]u16 = undefined;
+    for (&after, waits) |*w, place| w.* = @intCast(try imm(rom, place, 0x317C));
+    const lc = screens.LineColours;
+    const moments = try arena.dupe(screens.EndingMoment, &.{
+        .{ .pictures = 1, .fade_in = &.{lc{ .line = 1, .colours = "ending/colours_00" }}, .fade_out = &.{}, .after = after[0] },
+        .{ .pictures = 0, .fade_in = &.{}, .fade_out = &.{1}, .after = after[1] },
+        .{ .pictures = 1, .fade_in = &.{ lc{ .line = 1, .colours = "ending/colours_01" }, lc{ .line = 2, .colours = "ending/colours_02" } }, .fade_out = &.{}, .after = after[2] },
+        .{ .pictures = 0, .fade_in = &.{}, .fade_out = &.{ 1, 2 }, .after = after[3] },
+        .{ .pictures = 1, .fade_in = &.{lc{ .line = 1, .colours = "ending/colours_03" }}, .fade_out = &.{}, .after = after[4] },
+        .{ .pictures = 0, .fade_in = &.{}, .fade_out = &.{1}, .after = after[5] },
+        .{ .pictures = 5, .fade_in = &.{ lc{ .line = 1, .colours = "ending/colours_04" }, lc{ .line = 2, .colours = "ending/colours_05" }, lc{ .line = 3, .colours = "ending/colours_06" }, lc{ .line = 0, .colours = "ending/colours_22" } }, .fade_out = &.{}, .after = 0 },
+    });
+    // The scene's steps (type $8B, 0xBD10): the counts its states set.
+    const sc = [_]u32{ 0xBD32, 0xBD48, 0xBD64, 0xBD7C, 0xBD94, 0xBDE2 };
+    var ticks: [sc.len]u16 = undefined;
+    for (&ticks, sc) |*w, place| w.* = @intCast(try imm(rom, place, 0x317C));
+    const scene = try arena.dupe(screens.SceneStep, &.{
+        .{ .palette = false, .sky = true, .clouds_off = false, .star = false, .after = ticks[0], .until_sun = false },
+        .{ .palette = true, .sky = true, .clouds_off = false, .star = false, .after = ticks[1], .until_sun = false },
+        .{ .palette = true, .sky = false, .clouds_off = false, .star = false, .after = ticks[2], .until_sun = false },
+        .{ .palette = false, .sky = true, .clouds_off = false, .star = false, .after = ticks[3], .until_sun = false },
+        .{ .palette = true, .sky = true, .clouds_off = false, .star = false, .after = ticks[4], .until_sun = false },
+        .{ .palette = true, .sky = false, .clouds_off = false, .star = false, .after = 0, .until_sun = true },
+        .{ .palette = true, .sky = false, .clouds_off = true, .star = false, .after = ticks[5], .until_sun = false },
+        .{ .palette = true, .sky = false, .clouds_off = false, .star = true, .after = 0, .until_sun = false },
+    });
+    // The star's looks and ticks (0xBEA6: five pairs of a tile, $2B on, and its ticks).
+    const blink = 0xBEA6;
+    const star = try arena.alloc(screens.Blink, 5);
+    for (star, 0..) |*b, k| {
+        const tile = u16be(rom, blink + 4 * @as(u32, @intCast(k)));
+        const names = [_][]const u8{ "ending/star_1", "ending/star_2", "ending/star_3" };
+        if (tile < 0x2B or tile > 0x2D) return error.BadData;
+        b.* = .{ .map = names[tile - 0x2B], .ticks = u16be(rom, blink + 4 * @as(u32, @intCast(k)) + 2) };
+    }
+    const sx = struct {
+        fn s16(v: u32) i16 {
+            return @bitCast(@as(u16, @truncate(v)));
+        }
+    };
+    const scroll = try imm(rom, 0xBB4A, 0x223C);
+    return .{
+        .provenance = std.fmt.comptimePrint("the ending (0xB3C6, its script ROM 0x{X:0>5}'s entry 1, run by 0xB6DE): its texts (type $84, 0xBF76: ROM 0x{X:0>5}'s places and paragraphs, 0x{X:0>5}'s codes, 0x{X:0>5}'s ticks typed), its pictures (type $83, 0xC17C) and their line fades (type $82, 0xC114, made by 0xC31E), its dissolves (types $85 and $86, 0xBEBA, 0xBF2A), its clouds (types $87 and $89, 0xBBEE, 0xBC5C, 0xBC2E), its sun (type $8A, 0xBCA2), its scene (type $8B, 0xBD10, its sky 0xBE44, its star 0xBE74), its glow (type $8C, 0xBB94), the car's scroll (type $8D, 0xBB18); START at its end (0x9214)", .{ script, ending_places, ending_texts, ending_stays }),
+        .script = entries,
+        .texts = texts,
+        .pictures = try arena.dupe([]const u8, &.{ "ending/picture_1", "ending/picture_2", "ending/picture_3", "ending/picture_4", "ending/sky", "ending/car", "ending/mask_left", "ending/mask_right" }),
+        .moments = moments,
+        .scene = scene,
+        .scene_colours = try arena.dupe([]const u8, &.{ "ending/colours_16", "ending/colours_17", "ending/colours_18", "ending/colours_19", "ending/colours_20", "ending/colours_21" }),
+        .sky = "ending/sky",
+        .clouds = try arena.dupe(screens.Sprite, &.{
+            .{ .frame = "ending/sprite_02", .x = sx.s16(try imm(rom, 0xBC10, 0x317C)), .y = sx.s16(try imm(rom, 0xBC0A, 0x317C)), .speed = @bitCast(try imm(rom, 0xBC16, 0x217C)), .palette = paletteOf(try imm(rom, 0xBC24, 0x323C)), .priority = try imm(rom, 0xBC24, 0x323C) & 0x8000 != 0 },
+            .{ .frame = "ending/sprite_03", .x = sx.s16(try imm(rom, 0xBC7E, 0x317C)), .y = sx.s16(try imm(rom, 0xBC78, 0x317C)), .speed = @bitCast(try imm(rom, 0xBC84, 0x217C)), .palette = paletteOf(try imm(rom, 0xBC92, 0x323C)), .priority = try imm(rom, 0xBC92, 0x323C) & 0x8000 != 0 },
+        }),
+        .sun = .{ .frame = "ending/sprite_00", .x = sx.s16(try imm(rom, 0xBCD4, 0x317C)), .y = sx.s16(try imm(rom, 0xBCCE, 0x317C)), .speed = @bitCast(try imm(rom, 0xBCDA, 0x217C)), .palette = paletteOf(try imm(rom, 0xBCE8, 0x323C)), .priority = try imm(rom, 0xBCE8, 0x323C) & 0x8000 != 0 },
+        .glow = .{ .frame = "ending/sprite_01", .x = sx.s16(try imm(rom, 0xBBB6, 0x317C)), .y = sx.s16(try imm(rom, 0xBBB0, 0x317C)), .speed = 0, .palette = paletteOf(try imm(rom, 0xBBC2, 0x323C)), .priority = try imm(rom, 0xBBC2, 0x323C) & 0x8000 != 0 },
+        .star = star,
+        .numbers = .{
+            .type_period = @intCast(try imm(rom, 0xBFB4, 0x317C)),
+            .erase_gap = @intCast(try imm(rom, 0xC048, 0x317C)),
+            .dissolve_period = @intCast(try imm(rom, 0xBEDE, 0x317C)),
+            .dissolve_step = @intCast(try imm(rom, 0xBF62, 0x0640)),
+            .dissolve_from = @intCast(try imm(rom, 0xBED6, 0x217C) >> 16),
+            .dissolve_span = @intCast(try imm(rom, 0xBF66, 0x0C40)),
+            .fade_period = @intCast(try imm(rom, 0xC142, 0x117C)),
+            .fade_life = @intCast(try imm(rom, 0xC32E, 0x337C)),
+            .black_line = 0,
+            .black_before = 2,
+            .cloud_turn = sx.s16(try imm(rom, 0xBC36, 0x0C68)),
+            .cloud_back = sx.s16(try imm(rom, 0xBC40, 0x317C)),
+            .cloud_height = sx.s16(try imm(rom, 0xBC50, 0x317C)),
+            .cloud_spread = @intCast(try imm(rom, 0xBC4C, 0x0240)),
+            .sun_until = sx.s16(try imm(rom, 0xBCF0, 0x0C68)),
+            .glow_line = 3,
+            .glow_colour = 13,
+            .glow_period = @intCast(try imm(rom, 0xBBCE, 0x117C)),
+            .glow_colours = "ending/glow",
+            .scroll_first = @intCast(scroll & 0xFFFF),
+            .scroll_lines = @intCast((scroll >> 16) + 1),
+            .scroll_ticks = @intCast(try imm(rom, 0xBB34, 0x317C)),
+            .skip_from = @intCast(try imm(rom, 0x9214, 0x0C38) & 0xFF),
+            .skip_within = @intCast(try imm(rom, 0x921C, 0x0C78)),
+        },
+    };
+}
+
 /// The screens' records of `rom`; the select's frames are named by `b`'s origins.
 pub fn extract(arena: std.mem.Allocator, rom: []const u8, b: *const Builder) !screens.Screens {
     return .{
@@ -312,6 +486,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, b: *const Builder) !sc
         .high_scores = try highScores(arena, rom),
         .select = try select(arena, rom, b),
         .intro = try intro(arena, rom),
+        .ending = try ending(arena, rom),
     };
 }
 

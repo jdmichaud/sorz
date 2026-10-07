@@ -296,6 +296,15 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   blinks), the `plane` (`plane_a`, `plane_b`) and the cell `at` its first character goes;
   `script.entries`, the intro's script: each the `part` it starts (by its name in the intro's
   code), the ticks to `wait` before the next entry, and the part's `life` in ticks.
+- `ending`: the ending after round 8: its `script` (the intro's entries: a part, the ticks to the
+  next, a life); its `texts` (each its plane and first cell, its rows in `fonts/italic`, the
+  ticks it stays typed); its `pictures` (maps, in order) and `moments` (the pictures drawn, the
+  palette lines faded in towards a palette or out, the ticks to the next); the last `scene`'s
+  steps (its next palette of `scene_colours`, the `sky`'s next step, the clouds sent off, the
+  star's blink, the ticks to the next or until the sun has set); its `clouds`, `sun` and `glow`
+  (a frame, a place, a speed in 1/65536 of a pixel a tick, a palette and a priority); the
+  `star`'s looks (maps) and ticks; and its `numbers` (the typing's and the dissolves' periods,
+  the dissolves' step and span, the fades', the clouds' turn, the car's scroll...).
 - `select`: `characters.adam`, `axel` and `blaze`, each character's poses on the character
   select, each an animation: `stand`, `idle`, `pose_a`, `pose_b`, `pose_c` and Blaze's `landing`.
   An animation is a list of steps, each a `frame`, the `ticks` it shows (1 or more), when it is

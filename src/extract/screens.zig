@@ -375,6 +375,11 @@ const ending = Screen{
         .{ .screen_palette = .{ .index = 19, .name = "ending/colours_19", .why = "the ending's scene (type $8B)" } },
         .{ .screen_palette = .{ .index = 20, .name = "ending/colours_20", .why = "the ending's scene (type $8B)" } },
         .{ .screen_palette = .{ .index = 21, .name = "ending/colours_21", .why = "the ending's scene (type $8B)" } },
+        .{ .colours = .{ .places = &.{ 1, 12 }, .words = &.{ 0xEEE, 0x888 }, .name = "ending/text", .why = "the colours the ending's texts set themselves (type $84, 0xBF76: white on palette 0)" } },
+        .{ .colours = .{ .places = &.{61}, .words = &.{0xAC}, .name = "ending/glow", .why = "THE END's colour, which its glow fades towards (type $8C, 0xBBDC)" } },
+        .{ .cells = .{ .address = 0xE42A, .words = &.{0x412B}, .map = "ending/star_1", .why = "the star's first look (type $8B's blink, 0xBE74: the tile of 0xBEA6's first pair plus $4100)" } },
+        .{ .cells = .{ .address = 0xE42A, .words = &.{0x412C}, .map = "ending/star_2", .why = "the star's second look (0xBEA6's second pair)" } },
+        .{ .cells = .{ .address = 0xE42A, .words = &.{0x412D}, .map = "ending/star_3", .why = "the star's third look (0xBEA6's third pair)" } },
     },
 };
 

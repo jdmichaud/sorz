@@ -50,6 +50,7 @@ pub const Menu = @import("screens/menu.zig").Menu;
 pub const Options = @import("screens/options.zig").Options;
 pub const HighScores = @import("screens/high_scores.zig").HighScores;
 pub const Intro = @import("screens/intro.zig").Intro;
+pub const Ending = @import("screens/ending.zig").Ending;
 pub const Title = @import("screens/title.zig").Title;
 pub const Select = @import("screens/select.zig").Select;
 
@@ -68,6 +69,7 @@ pub const Scene = union(Kind) {
     round: Round,
     round_clear: RoundClear,
     next_round: StandIn,
+    ending: Ending,
 
     /// The scene of kind `k` as it begins (a load is pushed by the flow, with its length).
     pub fn start(k: Kind, setup: *const Setup) Scene {
@@ -187,6 +189,7 @@ pub const Assets = struct {
     options: Options.Assets,
     high_scores: HighScores.Assets,
     intro: Intro.Assets,
+    ending: Ending.Assets,
     title: Title.Assets,
     select: Select.Assets,
 

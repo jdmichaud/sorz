@@ -32,6 +32,8 @@ pub const Kind = enum {
     round_clear,
     /// A next round the content does not have (PLAN items 15 and on): a stand-in, which says so.
     next_round,
+    /// The ending after round 8 (the offer refused).
+    ending,
 };
 
 /// How a scene ends.
@@ -129,8 +131,11 @@ pub const original: Graph = .{
         // The next round loads as the first does, its load its own (scene.zig).
         .{ .from = .round_clear, .exit = .done, .to = .round, .load = 53 },
         .{ .from = .round_clear, .exit = .missing, .to = .next_round },
-        // The endings are not scenes yet: the high scores follow at once.
-        .{ .from = .round_clear, .exit = .ending, .to = .high_scores, .load = 4, .driver_once = true },
+        // The ending after the last round's clear, then the high scores (by its end or START).
+        // The ending in the boss's chair is not a scene yet: the high scores follow at once.
+        .{ .from = .round_clear, .exit = .ending, .to = .ending, .load = 51 },
+        .{ .from = .ending, .exit = .done, .to = .high_scores, .load = 4, .driver_once = true },
+        .{ .from = .ending, .exit = .start, .to = .high_scores, .load = 4, .driver_once = true },
         .{ .from = .round_clear, .exit = .boss_ending, .to = .high_scores, .load = 4, .driver_once = true },
     },
 };

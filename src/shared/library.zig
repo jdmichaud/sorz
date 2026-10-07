@@ -331,6 +331,9 @@ fn findOne(comptime F: type, c: *const Content, name: []const u8, diag: *json.Di
         *const records.HighScores => if (std.mem.eql(u8, name, "screens/high_scores")) if (c.tree.screens.high_scores) |*r| r else null else null,
         *const records.Select => if (std.mem.eql(u8, name, "screens/select")) if (c.tree.screens.select) |*r| r else null else null,
         *const records.Intro => if (std.mem.eql(u8, name, "screens/intro")) if (c.tree.screens.intro) |*r| r else null else null,
+        *const records.Ending => if (std.mem.eql(u8, name, "screens/ending")) if (c.tree.screens.ending) |*r| r else null else null,
+        // The art as a whole (a record naming its pictures).
+        *const art.Art => if (std.mem.eql(u8, name, "art")) a else null,
         Text => if (a.font(name)) |f| if (a.sheet(f.sheet)) |s| Text{ .font = f, .sheet = s } else null else null,
         Sound => c.sounds.find(name),
         // The sound content as a whole, the kinds of entity, a round's script, play's screen,
