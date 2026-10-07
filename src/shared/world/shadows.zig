@@ -1,9 +1,10 @@
 //! The shadows' places: the original's shadow is an object of its own, in one of eight places it
 //! shares with the weapons (the weapons' places, World.weapon_places), and it takes that place
 //! whether it is seen or not. sorz draws its shadows its own way (just behind their entities,
-//! draw_list.zig: the user's choice); the places are kept here as the original takes and frees
-//! them, because they decide where the things made in those places go, and whether one finds a
-//! place at all (a knife Galsia that finds none for its knife fights without it).
+//! draw_list.zig: the user's choice), for the entities that hold a place only; the places are
+//! kept here as the original takes and frees them, because they decide whether an entity has a
+//! shadow, where the things made in those places go, and whether one finds a place at all (a
+//! knife Galsia that finds none for its knife fights without it).
 //!
 //! - After its turn, an entity of the first 50 places that takes a shadow (its kind's `shadow` or
 //!   `shadow_place`, not `shadowless`) and holds none takes the first free place of the eight

@@ -146,9 +146,9 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
         const shown = out.shown[i].?;
         const p = screenPlace(w, e);
         // Over a hole of a floor by cells (round 4's) the shadow lies at the hole's floor, far
-        // below the screen: none.
+        // below the screen: none. An entity that found no shadow's place has none (shadows.zig).
         const floor = t.floorUnder(e.position);
-        if (t.kinds.shadow) |shadow| if (floor) |f| if (t.kindOf(e).definition.shadow and !e.flags.shadowless and e.position.height.lessThan(f)) {
+        if (t.kinds.shadow) |shadow| if (floor) |f| if (t.kindOf(e).definition.shadow and !e.flags.shadowless and e.flags.has_shadow and e.position.height.lessThan(f)) {
             var y = (e.position.depth.whole() >> 1) + f.whole();
             if (!e.flags.on_screen) y -= w.camera.y.whole();
             out.sprites.append(.{ .frame = shadow, .x = p.x, .y = y, .palette = shadow.palette, .priority = shadow.priority or e.flags.in_front });
