@@ -1137,8 +1137,9 @@ pub const Run = struct {
         /// The lines of the enemies' colours, and which are a kind's own (the round's plan's).
         colour_lines: [3]u2 = .{ 1, 2, 1 },
         own_colours: u16 = 0,
-        /// The options' LEVEL of the game (the round's plan's).
+        /// The options' LEVEL of the game (the round's plan's); each player's continues left.
         level: u2 = 1,
+        continues: u8 = 0,
     };
 
     pub fn init(gpa: std.mem.Allocator, kinds: *const world.Kinds, script: *const Script, situation: *const Situation, extras: Extras, trace: ?*world.trace.Writer, probe: ?*Probe) !Run {
@@ -1198,7 +1199,7 @@ pub const Run = struct {
             if (e.health) |hp| x.health = @intCast(hp);
             if (e.state) |st| _ = world.behaviours.setState(&x.mind, st);
             if (e.player) |p| {
-                w.players[p - 1] = .{ .entity = h, .character = kind, .lives = situation.lives[p - 1][0], .specials = situation.lives[p - 1][1], .score = situation.scores[p - 1], .last = situation.pads[p - 1] };
+                w.players[p - 1] = .{ .entity = h, .character = kind, .lives = situation.lives[p - 1][0], .specials = situation.lives[p - 1][1], .score = situation.scores[p - 1], .continues = extras.continues, .last = situation.pads[p - 1] };
                 // The camera follows from where the situation's tick drew the player.
                 w.camera.drawn[p - 1] = x.position.x;
                 w.camera.drawn_lines[p - 1] = @truncate(world.draw_list.screenPlace(w, x).y);
