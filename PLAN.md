@@ -179,6 +179,10 @@
 ## F7 — Platforms and exactness
 
 - [ ] **21 — Windows acceptance** — Depends: 17. Tests and the game on Windows itself.
+  - Checked 2026-10-08 on Linux: `zig build all` cross-builds the Windows executables. Under
+    Wine, 419 of 430 unit tests pass: the 10 of the native transport fail on Wine's missing
+    sockets device (`docs/lessons.md`), and the engine-terms check's own test fails (expected 1
+    finding, found 3; likely its paths written with `/`); to look at on Windows itself.
 - [ ] **22 — Browser acceptance** — Depends: 17. Chromium, a real sound device and gamepad.
 - [ ] **23 — Exact** — Depends: 17.
   - Only if similar is not good enough (the user): traces equal tick by tick from power-on,
