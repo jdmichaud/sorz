@@ -267,8 +267,9 @@ pub const Entity = struct {
     /// The grab: the entity holding this one, and the one this one holds.
     holder: ?Handle = null,
     holding: ?Handle = null,
-    /// The last entity whose blow landed on it; a player's, also the last its own blow landed on
-    /// or it caught (the original keeps one record of the other in a hit, whichever struck).
+    /// The last entity it met in a hit, whichever struck: whose blow landed on it, on which its
+    /// own landed, which it caught or which caught it (the original keeps one record of the other
+    /// in a hit, on both sides).
     struck_by: ?Handle = null,
     /// How the round's script placed it (an enemy, a piece of scenery).
     spawn: Spawn = .{},
