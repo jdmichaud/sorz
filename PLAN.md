@@ -97,6 +97,10 @@
   - The map, the camera's stops, the waves, the status bar, the timer, pause, continue, game over,
     and the name entry of a score that enters the high-score table as its player's lives run out.
   - Gate: similar for round 1 end to end; the user plays it.
+  - [x] Checked 2026-10-08: the attract demo equal to sor-remaster at every display tick in
+    trace, sound and pictures (the accepted differences named in `src/tools/accepted.zig`); the
+    recorded round 1 play equal to round tick 10956; round 1's bot runs with Axel, Adam, Blaze and
+    two players equal. The user's play is pending.
 
 ## F5 — The whole game
 
@@ -117,10 +121,21 @@
     held, the back drop, the jump back over it, the jump out and the counter, each one placed
     from the other by its definition's `partners`. `similar-check`'s 12 scenarios of them equal
     (three pairs of characters, either player holding).
-- [ ] **15 — Rounds 2 to 8** — Depends: 13.
+- [x] **15 — Rounds 2 to 8** — Depends: 13.
   - Their enemies, bosses and set pieces (the ship, the lift, the offer, Mr. X).
-- [ ] **16 — Endings, high scores and name entry** — Depends: 15.
+  - Checked 2026-10-08: each round's run by sor-remaster's bot (`bot TICKS`, its pads recorded
+    and replayed in sorz) equal in trace end to end, rounds 2 to 8, with sound and pictures
+    compared at every display tick (the accepted differences named); coverage runs with Blaze
+    alone and with Adam and Blaze in rounds 2 to 7 equal end to end but two-player round 5 (a
+    trace field of a time over) and round 6 (round 4's boss too heavy to throw, in progress); the
+    offer's four ways (both refuse, both accept, one alone, the duel) against the original's own
+    captures. The user's play is pending (item 17).
+- [x] **16 — Endings, high scores and name entry** — Depends: 15.
   - The name entry at the endings (play's own is item 13's).
+  - Checked 2026-10-08 against the original's captures: round 8's clear and its name entries;
+    the good ending (660 of 771 sampled pictures equal, the rest a cloud's random height in a
+    taken-up run and pixel crossings); the ending in the boss's chair (884 of 884 equal); the
+    high scores after them.
 - [ ] **17 — Whole-game acceptance** — Depends: 14, 15, 16.
   - Gate: similar for every mechanic; the user plays the game through, alone and with two
     players.
