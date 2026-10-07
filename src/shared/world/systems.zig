@@ -528,6 +528,7 @@ fn freedByBlow(t: *Tick, xh: Handle, th: Handle) void {
     const p = t.world.get(th) orelse return;
     const held = p.holding orelse return;
     if (t.isPlayer(held) or held.index < xh.index) return;
+    t.unplaceHeld(th);
     t.letGo(th);
 }
 
@@ -645,6 +646,7 @@ fn heldStruck(t: *Tick, xh: Handle, th: Handle, knocks: bool) void {
     const p = t.world.get(th) orelse return;
     const held = p.holding orelse return;
     if (t.isPlayer(held) or held.index < xh.index) return;
+    t.unplaceHeld(th);
     t.letGo(th);
 }
 

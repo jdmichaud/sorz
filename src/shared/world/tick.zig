@@ -427,6 +427,12 @@ pub const Tick = struct {
         dispatch(t, held, "heldBy", void, {}, .{holder});
     }
 
+    /// A blow ends the hold of `holder` before the turn of the one it holds: the place its holder
+    /// gave it at this tick is undone (its behaviour's `unplaceHeld`); by default, nothing.
+    pub fn unplaceHeld(t: *Tick, holder: Handle) void {
+        dispatch(t, holder, "unplaceHeld", void, {}, .{});
+    }
+
     /// The hold of `holder` ends: neither holds the other any more, and the one it held is told
     /// (`letGoBy`), while its holder still shows the frame that let go.
     pub fn letGo(t: *Tick, holder: Handle) void {

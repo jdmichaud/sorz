@@ -190,9 +190,10 @@ pub const Mind = struct {
     fell_out: bool = false,
     /// Where it was as its turn started (a wall with no height sends it back there).
     turn_start: Vec3 = .zero,
-    /// It placed the one it holds at this tick (`placeHeld`); the conveyor carried it since,
-    /// this far across.
+    /// It placed the one it holds at this tick (`placeHeld`), from `held_from`; the conveyor
+    /// carried it since, this far across.
     placed_held: bool = false,
+    held_from: Vec3 = .zero,
     held_carry: i8 = 0,
     /// The enemy it holds or held, drawn behind the others at its depth, and the state it held
     /// it in (`drawnBehind`).
@@ -1368,6 +1369,17 @@ fn conveyed(a: Actor) void {
     if (a.mind.placed_held) a.mind.held_carry = by;
 }
 
+/// The hold is ended by a blow before the turn of the one held: it was not placed at this tick
+/// (the original's held enemy places itself at its own turn, and freed, it does not), so it goes
+/// back where it was.
+pub fn unplaceHeld(a: Actor) void {
+    if (!a.mind.placed_held) return;
+    a.mind.placed_held = false;
+    const h = a.entity.holding orelse return;
+    const held = a.other(h) orelse return;
+    held.position = a.mind.held_from;
+}
+
 /// How far across a conveyor carried it at this tick since it placed the one it holds.
 pub fn heldCarry(a: Actor) i8 {
     return a.mind.held_carry;
@@ -1570,6 +1582,7 @@ fn placeHeld(a: Actor) void {
     const was = held.position;
     // A boss takes its places in a hold itself.
     if (a.tick.kindOf(held).family() != .boss) {
+        a.mind.held_from = was;
         held.position = .{
             .x = .parts(@intCast(at.x.whole() + @as(i32, where.x) * a.entity.facing.sign()), was.x.frac()),
             .depth = .parts(@intCast(at.depth.whole()), was.depth.frac()),
