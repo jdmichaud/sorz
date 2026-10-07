@@ -72,7 +72,7 @@ pub const Mind = struct {
     leader: ?Handle = null,
     others: [2]?Handle = .{ null, null },
     /// The leader's: the roles in their places (a bit each), and the side of the screen's middle
-    /// the trio takes (left).
+    /// the trio takes (left); the others keep the right (`sideChanged`).
     in_place: u3 = 0,
     left: bool = false,
     /// The charge begins with its pose; a leap across at its target (else to its leader's side).
@@ -264,13 +264,14 @@ fn place(a: Actor) void {
     a.mind.body.dest_x = .pixels(middle + out);
 }
 
-/// Whether its side of the screen's middle is no longer its trio's: it leaps across.
+/// Whether its side of the screen's middle is no longer the one it keeps: it leaps across. The
+/// leader keeps its trio's (`place`); the others keep the right, which the original gives them as
+/// they are made and never changes, so they leap across from left of the middle.
 fn sideChanged(a: Actor) bool {
     const n = a.numbers();
     const middle = a.tick.world.camera.x.whole() + n.middle;
     const left = !(middle < a.entity.position.x.whole());
-    const l = leaderOf(a) orelse return false;
-    if (l.left == left) return false;
+    if (a.mind.left == left) return false;
     go(a, .leap_across);
     return true;
 }
