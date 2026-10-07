@@ -291,6 +291,26 @@ fn standUp(a: Actor) void {
     a.remove();
 }
 
+/// Taken up from a situation past his first tick (the situation's place is his first): his lower
+/// part and his pipe are the world's, his laughs the room's progress's, and he sits higher.
+pub fn takeUp(a: Actor, elapsed: u32) void {
+    _ = elapsed;
+    const m = a.mind;
+    if (m.state == .start) return;
+    const w = a.tick.world;
+    for (&w.entities, 0..) |*e, i| {
+        if (!e.alive()) continue;
+        switch (e.mind) {
+            .mr_x_seated_lower => m.lower = w.handleAt(i),
+            .mr_x_pipe => m.pipe = w.handleAt(i),
+            else => {},
+        }
+    }
+    const r = &w.room;
+    m.laughs = if (r.has(.second_laugh)) 4 else if (r.has(.first_laugh)) 2 else 0;
+    a.entity.position.height = a.entity.position.height.sub(.pixels(a.numbers().raised));
+}
+
 fn lowerOf(a: Actor) ?tick.Actor(lower_mod) {
     return a.tick.actor(lower_mod, a.mind.lower orelse return null);
 }

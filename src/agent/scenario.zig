@@ -1203,7 +1203,10 @@ pub const Run = struct {
                 w.camera.drawn[p - 1] = x.position.x;
                 w.camera.drawn_lines[p - 1] = @truncate(world.draw_list.screenPlace(w, x).y);
             }
-            if (x.team == .enemy) takeUpSpawn(kinds, x, e, extras.round, two, &r.used);
+            if (x.team == .enemy) takeUpSpawn(kinds, x, e, extras.round, two, &r.used) else if (x.mind == .statue) {
+                // A statue stands in the pose its record gives (Mr. X's room's).
+                if (recordOf(e, extras.round, two, &r.used)) |rec| x.spawn = world.script.placing(rec);
+            }
             // A breakable standing still holds the item its record names.
             if (std.mem.eql(u8, e.kind, "breakable") and stateIn(e.state, &.{ "s0", "s1" })) {
                 if (recordOf(e, extras.round, two, &r.used)) |rec| if (rec.holds) |name| if (kinds.find(name)) |item| {
@@ -1321,27 +1324,6 @@ pub const Run = struct {
             var t: world.tick.Tick = .{ .world = w, .kinds = kinds, .random = &r.random, .out = &r.out };
             t.grabbed(hh, m.h);
             t.takeUpHeld(m.h, @intCast(situation.t -| m.e.since));
-        }
-        // Mr. X seated holds the lower part and the pipe he made beside him, and counts the laughs
-        // the room's progress has.
-        for (made) |m_| {
-            const m = m_ orelse continue;
-            const x = w.get(m.h) orelse continue;
-            if (x.mind != .mr_x_seated) continue;
-            const seated = &x.mind.mr_x_seated;
-            for (made) |o_| {
-                const o = o_ orelse continue;
-                switch (w.get(o.h).?.mind) {
-                    .mr_x_seated_lower => seated.lower = o.h,
-                    .mr_x_pipe => seated.pipe = o.h,
-                    else => {},
-                }
-            }
-            seated.laughs = if (w.room.has(.second_laugh)) 4 else if (w.room.has(.first_laugh)) 2 else 0;
-            // Past his first tick he sits higher than the trace's place, which is his first.
-            if (seated.state != .start) if (kinds.get(x.kind.?).definition.number("raised")) |up| {
-                x.position.height = x.position.height.sub(.pixels(@intCast(up)));
-            };
         }
         // A shutter waiting opened when its player first came near it since it was put up.
         if (kinds.find(world.tick.Tick.shutter_kind)) |sk| {
@@ -1472,9 +1454,21 @@ pub const Run = struct {
             if (count < lists.len) lists[count] = l;
             count += 1;
         };
+        // Round 8's room's: its placed first.
+        const room_at = count;
+        if (r.room) |rm| {
+            for ([_][]const Record{ rm.placed, rm.reserve }) |l| {
+                if (count < lists.len) lists[count] = l;
+                count += 1;
+            }
+            for (rm.waves) |l| {
+                if (count < lists.len) lists[count] = l;
+                count += 1;
+            }
+        }
         for (lists[0..@min(count, lists.len)], 0..) |list, li| {
             // Placed ahead: by its place; brought in: by its depth.
-            const placed = li % 3 == 0 and li < 3 * r.sections.len;
+            const placed = (li % 3 == 0 and li < 3 * r.sections.len) or li == room_at;
             for (list) |*rec| {
                 defer n += 1;
                 if (n >= used.len or used[n]) continue;

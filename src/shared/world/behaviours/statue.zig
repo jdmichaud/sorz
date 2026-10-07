@@ -34,13 +34,27 @@ pub fn think(a: Actor) void {
     e.flags.still = true;
     switch (m.state) {
         .start => {
-            e.position.height = .parts(a.numbers().height, e.position.height.frac());
-            const room = e.spawn.traits.room_pose;
-            a.animate(if (room) .stand_room else .stand);
-            e.flags.behind = room;
+            stand(a);
+            e.flags.behind = e.spawn.traits.room_pose;
             m.state = .stand;
         },
         .stand => e.flags.behind = true,
     }
     if (a.tick.behindCamera(e.position.x, a.numbers().left_behind)) a.remove();
+}
+
+/// At its height, in its pose.
+fn stand(a: Actor) void {
+    const e = a.entity;
+    e.position.height = .parts(a.numbers().height, e.position.height.frac());
+    a.animate(if (e.spawn.traits.room_pose) .stand_room else .stand);
+}
+
+/// Taken up from a situation past its first tick (the situation's place is its first): it
+/// stands as that tick put it.
+pub fn takeUp(a: Actor, elapsed: u32) void {
+    _ = elapsed;
+    if (a.mind.state == .start) return;
+    stand(a);
+    a.entity.flags.behind = true;
 }
