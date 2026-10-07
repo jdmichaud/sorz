@@ -183,7 +183,7 @@ fn findRounds(c: *const Content, diag: *json.Diagnostic) LoadError!Rounds {
             .colours = a.palette(full[2]) orelse return refuse(diag, full[2], "a round's colours, not in its art set"),
             .music = c.sounds.find(r.music) orelse return refuse(diag, r.music, "a round's music, not in sound/sounds.json"),
             .number = a.frame(number) orelse return refuse(diag, number, "a banner's number, not in the art"),
-            .boss_colours = if (r.boss) |b| if (b.colours) |boss| a.palette(boss) orelse return refuse(diag, boss, "a boss's colours, not in the art") else null else null,
+            .boss_colours = if (bossColoursOf(r)) |boss| a.palette(boss) orelse return refuse(diag, boss, "a boss's colours, not in the art") else null,
         };
         for (r.sections) |*s| for (s.reserve) |*rec| try reserveBossColours(a, rec, &round_assets, diag);
         if (r.boss) |*b| for (b.reserve) |*rec| try reserveBossColours(a, rec, &round_assets, diag);
@@ -214,6 +214,13 @@ fn findRounds(c: *const Content, diag: *json.Diagnostic) LoadError!Rounds {
 
 /// A reserve's record's boss's colours (`ReserveBoss.palette`) found, by their number: one
 /// palette a number.
+/// The colours a round's `boss` colour load loads: its boss's, or its room's (round 8's).
+fn bossColoursOf(r: *const content.round.Round) ?[]const u8 {
+    if (r.boss) |b| return b.colours;
+    if (r.room) |rm| return rm.boss_colours;
+    return null;
+}
+
 fn reserveBossColours(a: *const art.Art, rec: *const content.round.Spawn, out: *RoundAssets, diag: *json.Diagnostic) LoadError!void {
     const b = rec.reserve_boss orelse return;
     const pal = a.palette(b.palette) orelse return refuse(diag, b.palette, "a reserve's boss's colours, not in the art");

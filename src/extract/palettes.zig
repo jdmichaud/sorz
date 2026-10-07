@@ -84,11 +84,12 @@ pub fn enemyColours(arena: std.mem.Allocator) ![]const sorz.content.screens.Colo
 }
 
 /// The name of the boss's colours whose list is at `list` (a variant of the boss kinds at
-/// 0x1C3CC), or null.
+/// 0x1C3CC, or Mr. X's), or null.
 pub fn bossColoursName(arena: std.mem.Allocator, rom: []const u8, list: u32) !?[]const u8 {
     for (boss_variants) |bv| for (0..bv.count) |k| {
         if (u32be(rom, boss_lists + 4 * (bv.first + @as(u32, @intCast(k)))) == list)
             return try std.fmt.allocPrint(arena, "{s}/variant_{d}", .{ bv.owner, k + 1 });
     };
+    if (list == mrx_list) return "mrx/colours";
     return null;
 }

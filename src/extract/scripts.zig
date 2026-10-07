@@ -1070,7 +1070,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
 
     // Round 8's boss's section is Mr. X's room (`roomOf`), its own state (0x4CA).
     const boss_section: ?round.Boss = if (exit != null or leftward) null else try bossSection(arena, rom, r, entryAt(rom, part, section_count), &l);
-    const room: ?round.Room = if (leftward) try roomOf(arena, rom, entryAt(rom, part, section_count), &l, &page, page_step, camera_stops + leftward_walls + 2 * section_count, timer_later) else null;
+    const room: ?round.Room = if (leftward) try roomOf(arena, rom, entryAt(rom, part, section_count), &l, &page, page_step, camera_stops + leftward_walls + 2 * section_count, timer_later, @intCast(r)) else null;
 
     // The ground: the floor's height (0xAD2A probes the floor map) at every place the script
     // places an enemy, the same in all.
@@ -1356,7 +1356,7 @@ fn bossSection(arena: std.mem.Allocator, rom: []const u8, r: u32, at: u32, l: *L
 /// own: its door opens it, `$FFFA0D`); its timed waves, each brought by a step of its fight
 /// (0x4CA, 0x464), then its reserve. Its wall is the next of the walls' table, its timer a later
 /// section's.
-fn roomOf(arena: std.mem.Allocator, rom: []const u8, at: u32, l: *Lists, page: *u16, page_step: u16, wall_at: u32, timer: u8) Error!round.Room {
+fn roomOf(arena: std.mem.Allocator, rom: []const u8, at: u32, l: *Lists, page: *u16, page_step: u16, wall_at: u32, timer: u8, r: u8) Error!round.Room {
     if (u16be(rom, 0x66A) != 0x0C78 or u16be(rom, 0x670) != 0x6510 or u32be(rom, 0x672) != 0x08F80006 or u16be(rom, 0x676) != 0xFA05) return error.BadData;
     if (u32be(rom, 0xDF4) != 0x08380006 or u16be(rom, 0xDF8) != 0xFA05) return error.BadData;
     var placed: std.ArrayList(round.Spawn) = .empty;
@@ -1397,6 +1397,8 @@ fn roomOf(arena: std.mem.Allocator, rom: []const u8, at: u32, l: *Lists, page: *
         .streamed = try stream.schedule(arena, loads.items),
         .again = try againStream(arena, rom, kinds),
         .colours = try sectionColours(rom, at),
+        // Mr. X's colours, loaded as the fight's step begins (0x4CA: the round's boss's list).
+        .boss_colours = try palettes.bossColoursName(arena, rom, u32be(rom, round_bosses + 6 * @as(u32, r))) orelse return error.BadData,
         .art = kinds,
         .placed = placed.items,
         .waves = waves.items,
