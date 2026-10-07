@@ -624,7 +624,7 @@ pub fn Of(comptime M: type) type {
             const dx = b.dest_x.whole() - a.entity.position.x.whole();
             const dd = b.dest_depth.whole() - a.entity.position.depth.whole();
             if (@abs(dx) < 4 and @abs(dd) < 4) return true;
-            const h = fixed.heading(dx, dd, b.speed);
+            const h = fixed.heading(dx, dd, levelSpeed(a, b.speed));
             a.entity.velocity.x = h.x;
             a.entity.velocity.depth = h.depth;
             return false;
@@ -637,9 +637,15 @@ pub fn Of(comptime M: type) type {
             const off: i32 = if (a.entity.facingLeft()) beside else -@as(i32, beside);
             const dx = t.position.x.whole() + off - a.entity.position.x.whole();
             const dd = t.position.depth.whole() - a.entity.position.depth.whole();
-            const h = fixed.heading(dx, dd, speed);
+            const h = fixed.heading(dx, dd, levelSpeed(a, speed));
             a.entity.velocity.x = h.x;
             a.entity.velocity.depth = h.depth;
+        }
+
+        /// The speed its heading takes at the options' level (slower at the easiest).
+        fn levelSpeed(a: A, speed: Fixed) Fixed {
+            const p = a.tick.plan orelse return speed;
+            return fixed.levelSpeed(p.level, speed);
         }
 
         /// It walks by its speed, across and in depth, each refused at the street's limits; a
@@ -2161,7 +2167,7 @@ pub fn Of(comptime M: type) type {
                 var d = t.position.depth.whole() + off;
                 if (d < 0 or d >= a.numbers().walk_depth_most) d -= 2 * off;
                 const side: i32 = if (t.position.x.whole() < was.x.whole()) a.entity.spawn.offset_x else -@as(i32, a.entity.spawn.offset_x);
-                const h = fixed.heading(t.position.x.whole() + side - was.x.whole(), d - was.depth.whole(), body(a).speed);
+                const h = fixed.heading(t.position.x.whole() + side - was.x.whole(), d - was.depth.whole(), levelSpeed(a, body(a).speed));
                 if (h.x.raw == v.x.raw and h.depth.raw == v.depth.raw) return;
                 a.entity.spawn.offset_depth = -a.entity.spawn.offset_depth;
             }
