@@ -123,7 +123,11 @@ pub fn Of(comptime M: type) type {
 
         /// Out of a hand (none holds it) and left behind the camera, it goes: whether it went.
         pub fn leftBehind(a: A) bool {
-            if (a.entity.holder != null or !a.entity.alive()) return false;
+            if (a.entity.holder != null or !a.entity.alive() or a.entity.flags.stays) return false;
+            if (a.mind.state == .held and !a.mind.body.dropped and !a.mind.body.put_down) {
+                holderGone(a);
+                return false;
+            }
             if (!a.tick.behindCamera(a.entity.position.x, a.numbers().left_behind)) return false;
             a.remove();
             return true;
@@ -185,6 +189,16 @@ pub fn Of(comptime M: type) type {
             a.mind.state = .lying;
         }
 
+        /// Its holder went while it held it (walked off far from the screen): the original's
+        /// weapon follows its holder's emptied place, at the level's corner, from then on, unseen;
+        /// it keeps its place among the weapons'.
+        fn holderGone(a: A) void {
+            const e = a.entity;
+            e.position = .zero;
+            e.flags.hidden = true;
+            e.flags.stays = true;
+        }
+
         /// Its holder dropped it.
         pub fn dropped(a: A) void {
             a.mind.body.dropped = true;
@@ -229,7 +243,7 @@ pub fn Of(comptime M: type) type {
         /// frame without a hand, unseen at its holder's place.
         pub fn follow(a: A) void {
             if (a.mind.state != .held) return;
-            const hh = a.entity.holder orelse return;
+            const hh = a.entity.holder orelse return holderGone(a);
             const holder = a.other(hh) orelse return;
             a.mind.body.held_by = hh;
             const e = a.entity;

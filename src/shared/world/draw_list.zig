@@ -98,18 +98,24 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
 
     var buf: [capacity]u8 = undefined;
     var drawn: [capacity]u8 = undefined;
+    var gone: [capacity]u8 = undefined;
     var n: usize = 0;
+    var n_gone: usize = 0;
     for (w.updateOrder(&buf)) |i| {
         const e = &w.entities[i];
         if (e.flags.hidden or e.flags.blinked or out.shown[i] == null) continue;
-        if (!e.flags.stays and !w.special and farOff(screenPlace(w, e))) {
-            if (remove_far_off) w.remove(w.handleAt(i).?);
+        // One held follows its holder (a weapon in a hand): it does not go of itself, nor with
+        // its holder going at this tick (it follows its holder's emptied place from the next).
+        if (!e.flags.stays and e.holder == null and !w.special and farOff(screenPlace(w, e))) {
+            gone[n_gone] = i;
+            n_gone += 1;
             out.shown[i] = null;
             continue;
         }
         drawn[n] = i;
         n += 1;
     }
+    if (remove_far_off) for (gone[0..n_gone]) |i| w.remove(w.handleAt(i).?);
     // The shadows' places far off the screen go too (shadows.zig).
     if (remove_far_off and !w.special) shadows.goFarOff(w, farOffAt);
     // A hidden entity's shadow, held in its place, shows where that place lies (the original's
