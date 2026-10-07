@@ -849,8 +849,13 @@ pub const Round = struct {
             self.join_as = null;
             if (w.players[1].entity == null) if (self.joinOf(turn, a, c)) |x| return x;
         }
-        // The special attack holds the invitation as it is (its count, its blink).
+        // The special attack holds the invitation as it is (its count, its blink); in its closed
+        // round (the last) there is none.
         if (w.special) return null;
+        if (self.number == j.closed_round) {
+            self.join.shown = false;
+            return null;
+        }
         if (!self.join.due(w.players[1].entity == null, self.waiting(0), j.blink)) return null;
         const first = turn.setup.characters[0];
         if (!turn.pads.pad2.start or w.special or !turn.second_pad or first == null) {

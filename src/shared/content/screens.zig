@@ -254,6 +254,8 @@ pub const Join = struct {
     blink: u8,
     lives: u8 = 3,
     next: [3]Character = .{ .blaze, .adam, .axel },
+    /// The round in which player 2 neither joins nor is invited (0: none).
+    closed_round: u8 = 0,
 };
 
 /// The bosses' bars (the original's enemies' bars: round 1's Antonio's, and those after), shown
@@ -739,6 +741,7 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
                 .{ .key = "blink", .value = json.Value.num(r.status_bar.join.blink) },
                 .{ .key = "lives", .value = json.Value.num(r.status_bar.join.lives) },
                 .{ .key = "next", .value = try nextValue(arena, &r.status_bar.join.next) },
+                .{ .key = "closed_round", .value = json.Value.num(r.status_bar.join.closed_round) },
             }) },
         }) },
         .{ .key = "clear", .value = try clearValue(arena, &r.clear) },
@@ -1140,7 +1143,7 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
     const image = try s.get("image");
     if (try image.len() != 2) return image.fail("not [rows, cells]");
     const j = try s.get("join");
-    try j.only(&.{ "text", "at", "blink", "lives", "next" });
+    try j.only(&.{ "text", "at", "blink", "lives", "next", "closed_round" });
     const ps = try s.get("players");
     if (try ps.len() != 2) return ps.fail("not the two players'");
     var players: [2]BarPlayer = undefined;
@@ -1229,6 +1232,7 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
                 .blink = try (try j.get("blink")).int(u8),
                 .lives = try (try j.get("lives")).int(u8),
                 .next = try readNext(try j.get("next")),
+                .closed_round = if (try j.opt("closed_round")) |x| try x.int(u8) else 0,
             },
             .score_most = try (try s.get("score_most")).int(u32),
             .extra_lives = if (try s.opt("extra_lives")) |x| try readExtraLives(arena, x) else &.{},

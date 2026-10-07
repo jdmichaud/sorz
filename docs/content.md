@@ -338,7 +338,8 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   play: its `text` (`fonts/main`, its words only: a space leaves the bar's cell) `at` its cell,
   shown and hidden in turn every `blink` logic ticks of play; at a blink's tick with player 2's
   START held, player 2 joins with `lives` (the one it plays counted) as the character `next`
-  names by player 1's (`{"adam": ..., "axel": ..., "blaze": ...}`); `score_most`, the most a score
+  names by player 1's (`{"adam": ..., "axel": ..., "blaze": ...}`), but in its `closed_round`
+  (the last), which has neither; `score_most`, the most a score
   holds (points past it are lost), its digits the bar's score's; `extra_lives`, the scores that
   give a player a life more, by the lives its score gave it already (at the end of its turn, one
   a turn, with the sound `extra life`; a continue counts them from none again); `image`, the

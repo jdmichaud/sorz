@@ -833,7 +833,7 @@ pub fn extract(b: *Builder) !records.Round {
             .seconds = try decimal(try immediate(rom, 0x1099A, &.{ 0x31, 0xFC }, 2)),
         },
         .status_bar = .{
-            .provenance = "the status bar's image (0x110AC: window rows 1 to 3, 40 cells a row): the players' names (0x4CD0, the rows at 0x4D30 and 0x4D38) and their special attack's mark, their scores (0x4D60), their lives and special attacks (0x4E14) and the marks before them (0x4CD0), their health bars (0x4E6C), player 2's 26 cells on but its lives and special attacks swapped; the timer (0x10C88); player 2's invitation to join (0x11682: its rows at ROM 0x1168A's, its place ROM 0x1169C's, its blinks ROM 0x1163C's) and the join (0x1164C: its character by player 1's from the table ROM 0x1165E reads, the original's characters numbered Axel, Adam, Blaze; its lives ROM 0x11666's and the one it plays); its image written at every frame of play, its rows and cells (ROM 0x11142's and 0x1114A's, 0x110AC); the most a score holds, where a score's overflow holds it (0x10DA6: move.l #N,(-1,a6) at ROM 0x10DC0, packed decimal); the scores that give a life more, by the lives a score gave already (0x4D60, at the end of a player's turn: the table at ROM 0x4DEC, packed decimal longs, to the code after it)",
+            .provenance = "the status bar's image (0x110AC: window rows 1 to 3, 40 cells a row): the players' names (0x4CD0, the rows at 0x4D30 and 0x4D38) and their special attack's mark, their scores (0x4D60), their lives and special attacks (0x4E14) and the marks before them (0x4CD0), their health bars (0x4E6C), player 2's 26 cells on but its lives and special attacks swapped; the timer (0x10C88); player 2's invitation to join (0x11682: its rows at ROM 0x1168A's, its place ROM 0x1169C's, its blinks ROM 0x1163C's; none in the round ROM 0x115DC compares, 0x115CC) and the join (0x1164C: its character by player 1's from the table ROM 0x1165E reads, the original's characters numbered Axel, Adam, Blaze; its lives ROM 0x11666's and the one it plays); its image written at every frame of play, its rows and cells (ROM 0x11142's and 0x1114A's, 0x110AC); the most a score holds, where a score's overflow holds it (0x10DA6: move.l #N,(-1,a6) at ROM 0x10DC0, packed decimal); the scores that give a life more, by the lives a score gave already (0x4D60, at the end of a player's turn: the table at ROM 0x4DEC, packed decimal longs, to the code after it)",
             .players = players,
             .time = cellAt(0x2E),
             .join = .{
@@ -846,6 +846,8 @@ pub fn extract(b: *Builder) !records.Round {
                 .blink = @intCast(try immediate(rom, join_blink, &.{ 0x11, 0xFC }, 2)),
                 .lives = @intCast(1 + try immediate(rom, join_lives, &.{ 0x11, 0xFC }, 2)),
                 .next = try joinNext(rom),
+                // 0x115DC: cmpi.w #N,($FF02).w (the round from 0), beq past the join.
+                .closed_round = if (u16be(rom, 0x115DC) == 0x0C78 and u16be(rom, 0x115E0) == 0xFF02 and u16be(rom, 0x115E2) == 0x6700) @intCast(u16be(rom, 0x115DE) + 1) else return error.BadData,
             },
             .score_most = try scoreMost(rom),
             .extra_lives = try extraLives(arena, rom),
