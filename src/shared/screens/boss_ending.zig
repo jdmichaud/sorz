@@ -53,9 +53,11 @@ const Line = struct { typed: u8 = 0, erased: u8 = 0, lit: ?u8 = null };
 pub const BossEnding = struct {
     ticks: u16 = 0,
     /// A tick is two display ticks: the second shows nothing new; START pressed then counts at
-    /// the next.
+    /// the next. The fade out's sound, asked for at a tick, goes at its second (the original
+    /// sends its tick's sounds at the tick's end).
     second: bool = false,
     kept: bool = false,
+    leave_due: bool = false,
     who: setup_mod.Character = .axel,
     pad2: bool = false,
     step: Step = .fade_in,
@@ -118,6 +120,8 @@ pub const BossEnding = struct {
         if (self.second) {
             self.second = false;
             self.kept = pressed.start;
+            if (self.leave_due) turn.play(a.leave);
+            self.leave_due = false;
             turn.frame = null;
             return null;
         }
@@ -194,7 +198,7 @@ pub const BossEnding = struct {
                 if (start_pressed) {
                     self.step = .fade_out;
                     self.colours.startFade(.black);
-                    turn.play(a.leave);
+                    self.leave_due = true;
                 }
             },
             .fade_out => if (self.colours.stepFade()) return .done,
