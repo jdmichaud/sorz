@@ -1832,8 +1832,8 @@ fn placeByHolderKind(a: Actor, name: []const u8) bool {
     return true;
 }
 
-/// Thrown over its holder's head: a frame at a time, each placed from the holder; at its last,
-/// it falls ahead, knocked down, the holder's blow carried to the landing.
+/// Thrown over its holder's head: a frame at a time, placed from the holder (an enemy: at every
+/// tick); at its last, it falls ahead, knocked down, the holder's blow carried to the landing.
 fn thrown(a: Actor) void {
     const n = a.numbers();
     const by_player = partnerOf(a) != null;
