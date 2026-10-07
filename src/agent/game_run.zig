@@ -491,7 +491,15 @@ pub const Run = struct {
             }
             self.seen_t = r.trace_t;
             if (r.trace_scene == .round) tw.setPhase(phaseName(r));
-            try tw.observeAt(v, r.trace_t, &r.play.world, &self.content.kinds, &self.out);
+            // A tick the world did not run (the time over's) asked for no sound: the output's
+            // are the last tick's.
+            var quiet: world.output.Output = undefined;
+            const out = if (r.logic_ran) &self.out else blk: {
+                quiet = self.out;
+                quiet.sounds = .{};
+                break :blk &quiet;
+            };
+            try tw.observeAt(v, r.trace_t, &r.play.world, &self.content.kinds, out);
             // The sounds its set-up asked for under the load (a life more for the clear's
             // points), with its first observation, as sor-remaster's trace has them.
             for (self.deferred[0..self.deferred_len]) |id| try tw.sceneSound(self.content.sounds.sounds[id].name);
