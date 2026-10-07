@@ -413,8 +413,111 @@ pub fn cartridge(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definit
     };
 }
 
+/// `subq.w #N,(D,a1)` (or `addq.w`: `add`) at `at`: N, the displacement checked.
+fn quickOn(rom: []const u8, at: u32, displacement: u16, add: bool) Error!i32 {
+    if (u16be(rom, at + 2) != displacement) return error.BadData;
+    return quick(rom, at, if (add) 0x5069 else 0x5169);
+}
+
+/// Mr. X seated (type $33, 0x12B5C): in his chair at the room's end, his lower part (type $34)
+/// and his pipe (type $38) beside him; he talks, gestures and laughs as the room's offer asks
+/// (behaviours/mr_x_seated.zig), and at the fight's last wave he stands up: his standing self
+/// takes his place.
+pub fn seated(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    var d = try def(arena, rom);
+    if (u16be(rom, 0x12B94) != 0x217C or u32be(rom, 0x12B96) != set or u16be(rom, 0x12B9C) != 0x0028 or u16be(rom, 0x12B9E) != 0x0040) return error.BadData;
+    // His poses (0x12BA6, 0x12E22, 0x12EBA): each one entry, its frames their own.
+    for ([_]struct { name: []const u8, at: u32 }{
+        .{ .name = "talk", .at = 0x12BA6 },
+        .{ .name = "gesture", .at = 0x12E22 },
+        .{ .name = "laugh", .at = 0x12EBA },
+    }) |an| {
+        const word = try moveq(rom, an.at, 0);
+        try d.animations.append(arena, .{ .name = an.name, .loop = true, .frames = try sideFrames(&d, @intCast(@divExact(word, 2)), false) });
+    }
+    try d.number("lower_x", -(try quickOn(rom, 0x12BC2, 16, false)), "ROM 0x12BC2: subq.w #N,(16,a1) (his lower part across from him)");
+    try d.number("pipe_x", try quickOn(rom, 0x12BE8, 16, true), "ROM 0x12BE8: addq.w #N,(16,a1) (his pipe across)");
+    try d.number("pipe_depth", try quickOn(rom, 0x12BF2, 20, true), "ROM 0x12BF2: addq.w #N,(20,a1) (and in depth)");
+    if (u16be(rom, 0x12BFC) != 0x0468 or u16be(rom, 0x12C00) != 24) return error.BadData;
+    const raised = u16be(rom, 0x12BFE);
+    if (u16be(rom, 0x12D0C) != 0x0669 or u16be(rom, 0x12D0E) != raised or u16be(rom, 0x12D10) != 24) return error.BadData;
+    try d.number("raised", raised, "ROM 0x12BFC: subi.w #N,(24,a0) (seated, above his place; standing, his standing self that much lower, 0x12D0C)");
+    if (u16be(rom, 0x12DA4) != 0x0838 or u16be(rom, 0x12DA6) != 7 or u16be(rom, 0x12DA8) != 0xFF44) return error.BadData;
+    try d.number("talk_ticks", try movedWord(rom, 0x12DAC, 84), "ROM 0x12DAC: move.w #N,(84,a0) (overseas; in Japan ROM 0x12D9E's: 0x12D9E)");
+    try d.number("gesture_ticks", try movedWord(rom, 0x12C18, 84), "ROM 0x12C18: move.w #N,(84,a0)");
+    const due = try movedWord(rom, 0x12C78, 86);
+    for ([_]u32{ 0x12C90, 0x12D70 }) |at| if (try movedWord(rom, at, 86) != due) return error.BadData;
+    try d.number("stamp_due", due, "ROM 0x12C78: move.w #N,(86,a0) (ticks to his stamp; 0x12C90, 0x12D70)");
+    try d.number("kick_due", try movedWord(rom, 0x12D22, 86), "ROM 0x12D22: move.w #N,(86,a0) (ticks to his pipe's kick)");
+    try d.number("kick_ticks", try movedWord(rom, 0x12DCE, 84), "ROM 0x12DCE: move.w #N,(84,a0)");
+    try d.number("stamp_ticks", try movedWord(rom, 0x12E04, 84), "ROM 0x12E04: move.w #N,(84,a0) (then his line said)");
+    try d.number("laugh_ticks", try movedWord(rom, 0x12EC6, 84), "ROM 0x12EC6: move.w #N,(84,a0)");
+    try d.number("laugh_more", try movedWord(rom, 0x12EDC, 84), "ROM 0x12EDC: move.w #N,(84,a0) (its second frame)");
+    return .{
+        .name = "mr_x_seated",
+        .provenance = try std.fmt.allocPrint(arena, "Mr. X seated, type $33 (handler 0x12B5C, his states at 0x12B64): his animation set at ROM 0x{X:0>5}; his palette line his seated art's (move.w #N,d1 at ROM 0x12BA2); no shadow (0x12B9C: ori.b #$40,(1,a0)){s}", .{ set, d.number_notes.items }),
+        .family = .scenery,
+        .team = .neutral,
+        .behaviour = "mr_x_seated",
+        .palette = try paletteOf(rom, 0x12BA2),
+        .numbers = d.numbers.items,
+        .animations = d.animations.items,
+    };
+}
+
+/// Mr. X's lower part, seated (type $34, 0x12F14): still, it stamps when he asks (its frames
+/// once, then a shake) and stomps (its next frame a while).
+pub fn seatedLower(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    var d = try def(arena, rom);
+    if (u16be(rom, 0x12F28) != 0x217C or u32be(rom, 0x12F2A) != set) return error.BadData;
+    const word = try moveq(rom, 0x12F34, 0);
+    try d.animations.append(arena, .{ .name = "stamp", .loop = true, .frames = try sideFrames(&d, @intCast(@divExact(word, 2)), false) });
+    try d.number("stamp_ticks", try movedWord(rom, 0x12F50, 84), "ROM 0x12F50: move.w #N,(84,a0) (its frames run)");
+    try d.number("still_ticks", try movedWord(rom, 0x12F64, 84), "ROM 0x12F64: move.w #N,(84,a0) (then the shake)");
+    try d.number("stomp_ticks", try movedWord(rom, 0x12F92, 84), "ROM 0x12F92: move.w #N,(84,a0)");
+    return .{
+        .name = "mr_x_seated_lower",
+        .provenance = try std.fmt.allocPrint(arena, "Mr. X's lower part seated, type $34 (handler 0x12F14, its states at 0x12F1C), made by him (0x12BB2): his animation set at ROM 0x{X:0>5}; its palette line his seated art's (move.w #N,d1 at ROM 0x12F30){s}", .{ set, d.number_notes.items }),
+        .family = .screen,
+        .team = .neutral,
+        .behaviour = "mr_x_seated_lower",
+        .palette = try paletteOf(rom, 0x12F30),
+        .numbers = d.numbers.items,
+        .animations = d.animations.items,
+    };
+}
+
+/// Mr. X's pipe beside his chair (type $38, 0x12FB4): the second pipe's first frame; kicked, it
+/// flies and bounces, and on the floor it becomes the second pipe (type $0B), a weapon; his
+/// refusal turns it into one at once.
+pub fn pipe(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    if (u16be(rom, 0x12FC4) != 0x0028 or u16be(rom, 0x12FC6) != 0x0040 or u16be(rom, 0x12FCA) != 0x227C) return error.BadData;
+    const pipe_set = u32be(rom, 0x12FCC);
+    if (u16be(rom, 0x12FD0) != 0x7200 or u16be(rom, 0x12FD2) != 0x4EF9 or u32be(rom, 0x12FD4) != 0xB1D6) return error.BadData;
+    var d: Def = .{ .arena = arena, .rom = rom, .dir = "weapons", .prefix = "pipe_2", .set = pipe_set, .box_table = entities.object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, pipe_set) };
+    try d.animations.append(arena, .{ .name = "lie", .loop = true, .frames = try sideFrames(&d, 0, false) });
+    try d.number("kick_x", try movedLong(rom, 0x12FDE, 28), "ROM 0x12FDE: move.l #N,(28,a0)");
+    try d.number("kick_depth", try movedLong(rom, 0x12FE6, 32), "ROM 0x12FE6: move.l #N,(32,a0)");
+    try d.number("kick_up", try movedLong(rom, 0x12FEE, 36), "ROM 0x12FEE: move.l #N,(36,a0)");
+    try d.number("gravity", try movedLong(rom, 0x12FF6, 98), "ROM 0x12FF6: move.l #N,(98,a0)");
+    try d.number("bounce_above", try comparedLong(rom, 0x13032, 36), "ROM 0x13032: cmpi.l #N,(36,a0) (falling faster, it bounces at half the speed: 0x13030)");
+    if (u16be(rom, 0x1304E) != 0x137C or u16be(rom, 0x13052) != 0) return error.BadData;
+    return .{
+        .name = "mr_x_pipe",
+        .provenance = try std.fmt.allocPrint(arena, "Mr. X's pipe, type $38 (handler 0x12FB4, its states at 0x12FBC), made by him (0x12BD8): the second pipe's animation set (ROM 0x{X:0>5}, 0x12FCA), its first entry; no shadow (0x12FC4: ori.b #$40,(1,a0)); on the floor, the second pipe (0x13048: move.b #$0B,(0,a1), in the weapons' places){s}", .{ pipe_set, d.number_notes.items }),
+        .family = .scenery,
+        .team = .neutral,
+        .behaviour = "mr_x_pipe",
+        .numbers = d.numbers.items,
+        .animations = d.animations.items,
+    };
+}
+
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
     try out.append(arena, try boss(arena, rom));
     try out.append(arena, try shot(arena, rom));
     try out.append(arena, try cartridge(arena, rom));
+    try out.append(arena, try seated(arena, rom));
+    try out.append(arena, try seatedLower(arena, rom));
+    try out.append(arena, try pipe(arena, rom));
 }

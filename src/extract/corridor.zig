@@ -18,6 +18,7 @@ const rom_mod = @import("rom.zig");
 const sprites = @import("sprites.zig");
 const entities = @import("entities.zig");
 const items = @import("items.zig");
+const boss_r3 = @import("boss_r3.zig");
 
 const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
@@ -40,11 +41,16 @@ fn def(arena: std.mem.Allocator, rom: []const u8, prefix: []const u8, set: u32) 
 }
 
 /// The statue (type $15): its stand (entry 0, held still), its height; a record with a variant
-/// takes entry 2 (0x7630; Mr. X's room's, not the corridor's).
+/// (Mr. X's room's, not the corridor's) stands the other way (`stand_room`, 0x7630) and is drawn
+/// behind from its first tick.
 fn statue(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
     const set: u32 = @bitCast(try immediate(rom, 0x7622, &.{ 0x43, 0xF9 }, 4));
     var d = try def(arena, rom, "statue", set);
     try d.animations.append(arena, .{ .name = "stand", .loop = true, .frames = try entryFrames(&d, "stand", 0, null, false) });
+    // Mr. X's room's (a record whose byte $40 is set, 0x7628): its animation of word 2 (0x7638:
+    // jmp to 0x0B1DA, moveq #2,d0), its frame mirrored.
+    if (u16be(rom, 0x7628) != 0x1028 or u16be(rom, 0x762A) != 0x40 or u16be(rom, 0x7638) != 0x4EFA or 0x763A + @as(i32, rom_mod.s16be(rom, 0x763A)) != 0xB1DA or u16be(rom, 0xB1DA) != 0x7002) return error.BadData;
+    try d.animations.append(arena, .{ .name = "stand_room", .loop = true, .frames = try boss_r3.sideFrames(&d, 1, false) });
     try d.number("height", try moveWord(rom, 0x761C, 24), "ROM 0x0761C: move.w #N,(24,a0)");
     // From its second tick, behind what stands at its depth (0x763C: ori.b #$80,(1,a0)); no
     // shadow (0x6ABC: ori.b #$40).

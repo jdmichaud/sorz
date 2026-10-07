@@ -129,6 +129,11 @@ pub const mr_x = @import("behaviours/mr_x.zig");
 pub const mr_x_shot = @import("behaviours/mr_x_shot.zig");
 pub const mr_x_cartridge = @import("behaviours/mr_x_cartridge.zig");
 pub const trolley = @import("behaviours/trolley.zig");
+pub const mr_x_seated = @import("behaviours/mr_x_seated.zig");
+pub const mr_x_seated_lower = @import("behaviours/mr_x_seated_lower.zig");
+pub const mr_x_pipe = @import("behaviours/mr_x_pipe.zig");
+pub const door = @import("behaviours/door.zig");
+pub const door_splinter = @import("behaviours/door_splinter.zig");
 
 /// An entity's behaviour and its memory: one line a behaviour module.
 pub const Mind = union(enum) {
@@ -192,6 +197,11 @@ pub const Mind = union(enum) {
     mr_x_shot: mr_x_shot.Mind,
     mr_x_cartridge: mr_x_cartridge.Mind,
     trolley: trolley.Mind,
+    mr_x_seated: mr_x_seated.Mind,
+    mr_x_seated_lower: mr_x_seated_lower.Mind,
+    mr_x_pipe: mr_x_pipe.Mind,
+    door: door.Mind,
+    door_splinter: door_splinter.Mind,
 };
 
 pub const Behaviour = std.meta.Tag(Mind);

@@ -179,7 +179,9 @@ pub const Traits = packed struct(u16) {
     knives_b: bool = false,
     /// A boss whose beating is not the round's end: he goes as an enemy.
     goes_as_enemy: bool = false,
-    _: u2 = 0,
+    /// A gold statue stands in Mr. X's room's pose, not the corridor's.
+    room_pose: bool = false,
+    _: u1 = 0,
 };
 
 /// A thing flying or swung as a blow: a body thrown, a weapon in the hand or thrown. What its

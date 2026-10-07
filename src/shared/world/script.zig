@@ -23,6 +23,14 @@
 //! A round without a boss ends with its `Exit`: once its last section is cleared, the timer stops
 //! and the players walk out by themselves (`exitWalk`).
 //!
+//! Round 8 ends in Mr. X's room (its `Room`, world/room.zig): after the corridor's last section
+//! the room begins as a section does (its placed, its art); once its art is loaded its own script
+//! starts (the players walk in; the door's breaking opens it). Its fight's first wave comes at Mr.
+//! X's first laugh, with the fight's music; at its clear and his second laugh, the second; at the
+//! second's clear the music fades and the fight's last art loads, then Mr. X stands up to the
+//! last music, and once the art after it is in the last wave comes, then the reserve. Mr. X's
+//! beating ends the round.
+//!
 //! The original's level events do not run during the special attack, nor does its timer: the
 //! script and the timer wait while it lasts.
 const std = @import("std");
@@ -190,6 +198,12 @@ pub const Stage = enum {
     boss_wave,
     /// The last section of a round without a boss is cleared: the players walk out.
     exit,
+    /// Round 8's room has begun: its own script starts in `ticks` (its art loaded).
+    room_load,
+    /// The room's fight's step: the fight begun, its next wave waits for Mr. X's laugh.
+    room,
+    /// The room's fight after a wave: its clear, then its last art.
+    room_end,
     /// A beaten boss has ended the round (or the players walked out).
     won,
     /// Its records come from elsewhere: an agent's situation brings them as the other program's
@@ -328,6 +342,13 @@ pub fn placeFirst(t: *Tick, plan: *const Plan) void {
     beginSection(t, plan, 0);
 }
 
+/// The script of a world taken up in round 8's room: begun as the corridor's last section's
+/// clear begins it.
+pub fn takeUpRoom(t: *Tick, plan: *const Plan) void {
+    t.world.script.section = @intCast(plan.round.sections.len - 1);
+    beginRoom(t, plan);
+}
+
 /// The timer: a second less every `pace` ticks while every player in play plays (none dying or
 /// waiting to continue); at zero the time is up. It holds during the special attack, and stops
 /// at a boss's last blow.
@@ -349,7 +370,8 @@ pub fn timer(t: *Tick) void {
 pub fn restartTimer(w: anytype, plan: *const Plan) void {
     const r = plan.round;
     const k = @min(w.script.section, r.sections.len - 1);
-    w.timer = .{ .seconds = r.sections[k].timer, .shown = r.sections[k].timer, .ticks = r.timer.pace };
+    const seconds = if (w.script.section >= r.sections.len and r.room != null) r.room.?.timer else r.sections[k].timer;
+    w.timer = .{ .seconds = seconds, .shown = seconds, .ticks = r.timer.pace };
 }
 
 /// The round's animation, after the entities' turns: every `every` ticks, its next step (the
@@ -372,7 +394,9 @@ pub const go_arrow = "go_arrow";
 pub fn opening(t: *Tick) void {
     const p = t.plan orelse return;
     const s = &t.world.script;
-    if (t.world.special or s.stage != .opening) return;
+    if (t.world.special) return;
+    if (t.world.room.opening) return openRoom(t, p);
+    if (s.stage != .opening) return;
     s.ticks -|= 1;
     if (s.ticks != 0) return;
     s.section = s.part;
@@ -391,6 +415,22 @@ pub fn opening(t: *Tick) void {
     ownSoundAtSection(t.world, p.round);
     restartTimer(t.world, p);
     // The GO arrow, in a free place of the effects'.
+    if (t.kinds.find(go_arrow)) |kind| {
+        const places = World.effect_places;
+        _ = t.world.spawnWithin(t.kinds, kind, places.from, places.to, .zero, .right) catch return;
+    }
+}
+
+/// Round 8's room opens as its door breaks (world/room.zig): its wall (the camera's limit on the
+/// left), its timer, the GO arrow; the script stays at the room's step.
+fn openRoom(t: *Tick, p: *const Plan) void {
+    const rm = p.round.room orelse return;
+    const s = &t.world.script;
+    t.world.room.opening = false;
+    s.section = s.part;
+    t.world.camera.x_min = .pixels(rm.wall);
+    ownSoundAtSection(t.world, p.round);
+    restartTimer(t.world, p);
     if (t.kinds.find(go_arrow)) |kind| {
         const places = World.effect_places;
         _ = t.world.spawnWithin(t.kinds, kind, places.from, places.to, .zero, .right) catch return;
@@ -439,13 +479,19 @@ pub fn run(t: *Tick) void {
         .wave => {
             s.ticks -|= 1;
             if (s.ticks != 0) return;
-            bring(t, p, &waveOf(r, s.part)[s.next]);
+            bring(t, p, &waveOf(t, r, s.part)[s.next]);
             s.next += 1;
             nextWave(t, p);
         },
         .wave_end => {
             s.ticks -|= 1;
             if (s.ticks != 0) return;
+            // The room's fight goes on to its next step until its last art.
+            if (s.part >= r.sections.len and r.room != null and t.world.room.has(.begun) and !t.world.room.has(.last_art)) {
+                t.world.room.wave +|= 1;
+                s.stage = .room_end;
+                return roomEnd(t, p);
+            }
             s.stage = .reserve;
             s.waiting = true;
             s.taken = 0;
@@ -493,6 +539,14 @@ pub fn run(t: *Tick) void {
             };
             clearIfDone(t, p);
         },
+        .room_load => {
+            s.ticks -|= 1;
+            if (s.ticks != 0) return;
+            s.stage = .room;
+            roomFight(t, p);
+        },
+        .room => roomFight(t, p),
+        .room_end => roomEnd(t, p),
         .boss_opening => {
             s.ticks -|= 1;
             if (s.ticks != 0) return;
@@ -592,7 +646,7 @@ pub fn won(w: anytype) void {
 /// the wave's end: read at the next tick, the reserve set up at the one after.
 fn nextWave(t: *Tick, p: *const Plan) void {
     const s = &t.world.script;
-    const list = waveOf(p.round, s.part);
+    const list = waveOf(t, p.round, s.part);
     while (s.next < list.len and !comes(p, s, &list[s.next])) s.next += 1;
     if (s.next < list.len) {
         s.ticks = @max(list[s.next].after, 1);
@@ -736,6 +790,8 @@ fn clearIfDone(t: *Tick, p: *const Plan) void {
     const r = p.round;
     const all = (@as(u64, 1) << @intCast(reserveOf(r, s.part).len)) - 1;
     if (s.taken != all or s.arriving != 0 or s.enemies != 0) return;
+    // Round 8's room ends with Mr. X's beating.
+    if (s.part >= r.sections.len and r.room != null) return;
     if (s.part >= r.sections.len) {
         // The boss's section with nothing left and no boss: the content does not have him yet
         // (his kind skipped as the wave brought him). The round is won rather than left without
@@ -745,6 +801,7 @@ fn clearIfDone(t: *Tick, p: *const Plan) void {
     }
     const k = s.part + 1;
     if (k < r.sections.len) return beginSection(t, p, k);
+    if (r.room != null) return beginRoom(t, p);
     if (r.exit) |ex| {
         // The players walk out; the timer stops; the next entry's colours are loaded.
         holdColours(t, ex.colours);
@@ -784,6 +841,115 @@ fn beginSection(t: *Tick, p: *const Plan, k: u8) void {
         if (comes(p, s, rec)) place(t, rec, rec.x);
     }
     s.enemies = countEnemies(t);
+}
+
+/// Round 8's room begins as a section does (its colours, its art, its placed); its own script
+/// starts once its art is loaded.
+fn beginRoom(t: *Tick, p: *const Plan) void {
+    const rm = &p.round.room.?;
+    const s = &t.world.script;
+    const k: u8 = @intCast(p.round.sections.len);
+    holdColours(t, rm.colours);
+    @memcpy(s.art[0..4], &rm.art);
+    s.waiting = false;
+    t.out.streamed = .{ .part = k };
+    s.part = k;
+    s.stage = .room_load;
+    s.ticks = @max(rm.starts_after, 1);
+    s.next = 0;
+    s.calls = 0;
+    s.arriving = 0;
+    s.two_players = s.two_players or t.playersInPlay() == 2;
+    for (rm.placed) |*rec| {
+        if (comes(p, s, rec)) place(t, rec, rec.x);
+    }
+    s.enemies = countEnemies(t);
+}
+
+/// The room's fight's step (0x4CA): at its first, Mr. X's colours, a player out of the game
+/// leaves, the players walk in, the art slots the room's; then, once Mr. X has laughed, the
+/// fight's music and its first wave; after it, once he has laughed again, its next wave.
+fn roomFight(t: *Tick, p: *const Plan) void {
+    const rm = &p.round.room.?;
+    const s = &t.world.script;
+    const r = &t.world.room;
+    if (!r.set(.begun)) {
+        bossColours(t);
+        for (&t.world.players, 0..) |*pl, k| {
+            const h = pl.entity orelse continue;
+            const e = t.world.get(h) orelse continue;
+            if (e.mind == .player) continue;
+            r.gone[k] = true;
+            pl.entity = null;
+            pl.out = true;
+            t.world.remove(h);
+        }
+        r.walking = true;
+        s.art[0] = room_slot_art;
+        s.art[boss_slot] = 0;
+        s.art_counts[0] = 1;
+    }
+    if (r.has(.music)) {
+        if (!r.has(.second_laugh)) return;
+    } else {
+        if (!r.has(.first_laugh)) return;
+        t.sound(rm.music, null);
+        _ = r.set(.music);
+    }
+    s.stage = .wave;
+    s.next = 0;
+    nextWave(t, p);
+}
+
+/// The art the room's first slot holds from the fight's start (0x4CA: $F, none of the enemies'),
+/// and from Mr. X's standing up (0x4B4: 1).
+const room_slot_art = 0xF;
+const room_stand_art = 1;
+
+/// The room's fight after a wave (0x464): once no enemy is left, the fight's next step (the next
+/// wave waits for Mr. X's laugh); the second time, the music fades and the last art loads; once
+/// it is in, Mr. X stands up to the last music and the art after it loads; once that is in, the
+/// fight's step again (its last wave).
+fn roomEnd(t: *Tick, p: *const Plan) void {
+    const rm = &p.round.room.?;
+    const s = &t.world.script;
+    const r = &t.world.room;
+    if (!r.has(.last_art)) {
+        if (roomEnemies(t) != 0) return;
+        if (!r.set(.cleared)) {
+            s.stage = .room;
+            return;
+        }
+        t.sound(rm.fade, null);
+        s.art_counts[0] = 0;
+        s.art[boss_slot] = room_slot_art;
+        t.out.streamed = .{ .part = s.part, .room_art = .last };
+        _ = r.set(.last_art);
+        // Its load counts from the next tick.
+        s.ticks = @max(rm.last_art_after, 1);
+        return;
+    }
+    s.ticks -|= 1;
+    if (s.ticks != 0) return;
+    if (r.set(.last_loaded)) {
+        s.stage = .room;
+        return;
+    }
+    _ = r.set(.stands);
+    t.sound(rm.last_music, null);
+    s.art[0] = room_stand_art;
+    t.out.streamed = .{ .part = s.part, .room_art = .stand };
+    s.ticks = @max(rm.stand_art_after, 1);
+}
+
+/// The room's enemies left: those of the enemies' family (Mr. X is none of them).
+fn roomEnemies(t: *Tick) u8 {
+    var n: u8 = 0;
+    for (&t.world.entities) |*e| {
+        const kind = e.kind orelse continue;
+        if (t.kinds.get(kind).family() == .enemy) n +|= 1;
+    }
+    return n;
 }
 
 /// A section's colours loaded (0xF46): the other's first when it gives one (else the other keeps
@@ -832,12 +998,16 @@ fn comes(p: *const Plan, s: *const State, rec: *const Spawn) bool {
     return true;
 }
 
-fn waveOf(r: *const Round, part: u8) []const Spawn {
-    return if (part < r.sections.len) r.sections[part].wave else r.boss.?.wave;
+fn waveOf(t: *const Tick, r: *const Round, part: u8) []const Spawn {
+    if (part < r.sections.len) return r.sections[part].wave;
+    if (r.room) |*rm| return rm.waves[@min(t.world.room.wave, rm.waves.len - 1)];
+    return r.boss.?.wave;
 }
 
 fn reserveOf(r: *const Round, part: u8) []const Spawn {
-    return if (part < r.sections.len) r.sections[part].reserve else r.boss.?.reserve;
+    if (part < r.sections.len) return r.sections[part].reserve;
+    if (r.room) |*rm| return rm.reserve;
+    return r.boss.?.reserve;
 }
 
 /// A wave's or a reserve's record comes in at the screen's edge on its side.

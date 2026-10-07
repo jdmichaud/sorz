@@ -120,6 +120,7 @@ fn kindName(t: u8) ?[]const u8 {
         0x28 => "juggler_knife",
         0x2A => "acrobat_trio",
         0x30 => "boss_r3",
+        0x33 => "mr_x_seated",
         0x3F => "money",
         0x40 => "gold",
         0x41 => "shatter",
@@ -601,9 +602,15 @@ fn entry(rom: []const u8, type_byte: u8, bytes: [3]u8, y: u8) Error!round.Spawn 
             s.place = bytes[0];
             return s;
         },
-        // A drip, the rain, a flight, a lamp, the lift's pieces, the corridor's statues (a
-        // variant is Mr. X's room's): their code reads none of the bytes.
-        0x14, 0x15, 0x17, 0x4D, 0x4E, 0x50...0x53 => {
+        // A statue: by its byte $40, Mr. X's room's pose (0x7628), not the corridor's.
+        0x15 => {
+            if (bytes[0] > 1 or bytes[1] != 0 or bytes[2] != 0) return error.BadData;
+            if (bytes[0] != 0) s.traits.insert(.room_pose);
+            return s;
+        },
+        // A drip, the rain, a flight, a lamp, the lift's pieces: their code reads none of the
+        // bytes.
+        0x14, 0x17, 0x4D, 0x4E, 0x50...0x53 => {
             if (!std.mem.allEqual(u8, &bytes, 0)) return error.BadData;
             return s;
         },
@@ -1061,9 +1068,9 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         };
     }
 
-    // Round 8's boss's section (Mr. X's room: its own state, 0x4CA) is not written yet: its
-    // script ends with its last section. TODO(PLAN item 15): Mr. X's room.
+    // Round 8's boss's section is Mr. X's room (`roomOf`), its own state (0x4CA).
     const boss_section: ?round.Boss = if (exit != null or leftward) null else try bossSection(arena, rom, r, entryAt(rom, part, section_count), &l);
+    const room: ?round.Room = if (leftward) try roomOf(arena, rom, entryAt(rom, part, section_count), &l, &page, page_step, camera_stops + leftward_walls + 2 * section_count, timer_later) else null;
 
     // The ground: the floor's height (0xAD2A probes the floor map) at every place the script
     // places an enemy, the same in all.
@@ -1153,6 +1160,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .sections = sections,
         .special = try specialArt(arena, rom),
         .boss = boss_section,
+        .room = room,
         .own_sound = try ownSound(arena, rom, r),
         .animation = try animation(arena, rom, r),
         .art_from = try artFrom(rom, r),
@@ -1341,6 +1349,180 @@ fn bossSection(arena: std.mem.Allocator, rom: []const u8, r: u32, at: u32, l: *L
         .reserve = try reserve(arena, rom, l),
     };
 }
+
+/// Round 8's last room, Mr. X's (the section after the corridor's, opened as a section is: 0x5F4,
+/// its round's last sections flagged at 0x66A): its three groups placed ahead, its art loaded
+/// (0xD70), then its own state (0xDF4: with $FFFA05 bit 6, state $14 at 0x4CA; no opening of its
+/// own: its door opens it, `$FFFA0D`); its timed waves, each brought by a step of its fight
+/// (0x4CA, 0x464), then its reserve. Its wall is the next of the walls' table, its timer a later
+/// section's.
+fn roomOf(arena: std.mem.Allocator, rom: []const u8, at: u32, l: *Lists, page: *u16, page_step: u16, wall_at: u32, timer: u8) Error!round.Room {
+    if (u16be(rom, 0x66A) != 0x0C78 or u16be(rom, 0x670) != 0x6510 or u32be(rom, 0x672) != 0x08F80006 or u16be(rom, 0x676) != 0xFA05) return error.BadData;
+    if (u32be(rom, 0xDF4) != 0x08380006 or u16be(rom, 0xDF8) != 0xFA05) return error.BadData;
+    var placed: std.ArrayList(round.Spawn) = .empty;
+    for (0..3) |_| {
+        try group(arena, rom, l, page.*, &placed);
+        page.* +%= page_step * 0x100;
+    }
+    const kinds = artKinds(rom, at);
+    const art = try artTicks(rom, kinds);
+    var loads: std.ArrayList(stream.Load) = .empty;
+    try artLoads(arena, rom, kinds, 1, &loads);
+    var waves: std.ArrayList([]const round.Spawn) = .empty;
+    for (0..room_waves) |_| try waves.append(arena, try wave(arena, rom, l));
+    // The players' walk in (0x50A6, while $FFFA56): to the door's depths (cmpi.w #N,d0) left of
+    // its place (cmpi.w #N,(16,a0)), where the first puts the door (0x516E: its place by its
+    // move.w's); then to the room's depths and each player's place (move.w #N,d0, less 0x512C's).
+    if (u16be(rom, 0x50D4) != 0x0C40 or u16be(rom, 0x50DC) != 0x0C40 or u16be(rom, 0x50E4) != 0x0C68 or u16be(rom, 0x50E8) != 16) return error.BadData;
+    if (u16be(rom, 0x5100) != 0x0C40 or u16be(rom, 0x5108) != 0x0C40 or u16be(rom, 0x5110) != 0x303C or u16be(rom, 0x511A) != 0x303C or u16be(rom, 0x512C) != 0x0440) return error.BadData;
+    if (u16be(rom, 0x5172) != 0x1D7C or u16be(rom, 0x5174) != 0x0046) return error.BadData;
+    for ([_]u32{ 0x5178, 0x517E, 0x5184 }, [_]u16{ 16, 20, 24 }) |move, d| if (u16be(rom, move) != 0x3D7C or u16be(rom, move + 4) != d) return error.BadData;
+    // The camera's speed across meanwhile (0x18C5A: with $FFFA56, move.l #N,(10,a1)).
+    if (u32be(rom, 0x18C5A) != 0x4A38FA56 or u16be(rom, 0x18C60) != 0x23FC and u16be(rom, 0x18C60) != 0x237C) return error.BadData;
+    // The fight's steps (0x4CA, 0x464): the music as the first wave is due, its fade and the last
+    // art (load 6), then the music as Mr. X stands up and the art after it (load 13).
+    const music = try immediate(rom, 0x552, &.{ 0x11, 0xFC, 0x00 }, 1);
+    const fade = try immediate(rom, 0x47A, &.{ 0x11, 0xFC, 0x00 }, 1);
+    const last_music = try immediate(rom, 0x4AE, &.{ 0x11, 0xFC, 0x00 }, 1);
+    const last_load: u16 = @intCast(try entities.moveq(rom, 0x480, 0));
+    const stand_load: u16 = @intCast(try entities.moveq(rom, 0x4BA, 0));
+    var buf: [8]u16 = undefined;
+    const last_after = streamTicks(try loadBlocks(rom, last_load, &buf));
+    const stand_after = streamTicks(try loadBlocks(rom, stand_load, &buf));
+    return .{
+        .provenance = try std.fmt.allocPrint(arena, "Mr. X's room, the section after the corridor's (0x5F4, 0x66A): its wall from the walls at 0x{X:0>5}; its entry at ROM 0x{X:0>5} (0x1C1C4), its art kinds {any} loaded in {d} ticks (0xD70) from the corridor's clear, then 2 ticks for its turn and its state's (0xDF4, 0x4CA); its {d} timed waves (0x784), each at a step of its fight (0x4CA, 0x464), and its reserve", .{ wall_at, at, kinds, art, room_waves }),
+        .wall = u16be(rom, wall_at),
+        .timer = timer,
+        .starts_after = @intCast(art + 2),
+        .streamed = try stream.schedule(arena, loads.items),
+        .again = try againStream(arena, rom, kinds),
+        .colours = try sectionColours(rom, at),
+        .art = kinds,
+        .placed = placed.items,
+        .waves = waves.items,
+        .reserve = try reserve(arena, rom, l),
+        .scroll = @as(i32, @bitCast(u32be(rom, 0x18C62))) >> 16,
+        .walk = .{
+            .door_depth = .{ u16be(rom, 0x50D6), u16be(rom, 0x50DE) },
+            .door_x = u16be(rom, 0x50E6),
+            .depth = .{ u16be(rom, 0x5102), u16be(rom, 0x510A) },
+            .places = .{ u16be(rom, 0x5112), u16be(rom, 0x511C) },
+            .near = u16be(rom, 0x512E),
+        },
+        .door = .{ .x = u16be(rom, 0x517A), .depth = u16be(rom, 0x5180), .height = u16be(rom, 0x5186) },
+        .music = try soundName(@intCast(music)),
+        .fade = try soundName(@intCast(fade)),
+        .last_music = try soundName(@intCast(last_music)),
+        .last_art = try stream.schedule(arena, &.{.{ .after = 1, .blocks = try loadStream(arena, rom, last_load) }}),
+        .last_art_after = @intCast(last_after),
+        .stand_art = try stream.schedule(arena, &.{.{ .after = 1, .blocks = try loadStream(arena, rom, stand_load) }}),
+        .stand_art_after = @intCast(stand_after),
+        .offer = try offerOf(arena, rom),
+    };
+}
+
+/// `lea (d16,pc),a1` at `at`: its target.
+fn leaTarget(rom: []const u8, at: u32) Error!u32 {
+    if (u16be(rom, at) != 0x43FA) return error.BadData;
+    return @intCast(@as(i32, @intCast(at + 2)) + s16be(rom, at + 2));
+}
+
+/// Mr. X's offer's window (0x11B4C), as a console outside Japan shows it (`$FFFF44` bit 7, as
+/// sorz plays): its texts (the overseas `lea`s), each read by 0x1221E into lines of cells: 8 lines
+/// (0x121F2: three calls, four more overseas, then the routine itself) of 25 cells (0x121DA),
+/// the answers' of 3 (0x121B6), the marks' of 1 (0x121A0); a byte its cell from the font's
+/// overseas base (0x12202), 0 the blank (0x121F2), $FB, $FC, $FD their own cells, $FE the line's
+/// rest blank.
+fn offerOf(arena: std.mem.Allocator, rom: []const u8) Error!round.Offer {
+    if (u16be(rom, 0x121F2) != 0x343C or u16be(rom, 0x12202) != 0x363C or u16be(rom, 0x12248) != 0x303C or u16be(rom, 0x1224A) != u16be(rom, 0x121F4)) return error.BadData;
+    const blank = u16be(rom, 0x121F4);
+    const base = u16be(rom, 0x12204);
+    const own = [_]struct { byte: u8, at: u32 }{ .{ .byte = 0xFB, .at = 0x1224E }, .{ .byte = 0xFC, .at = 0x12254 }, .{ .byte = 0xFD, .at = 0x12242 } };
+    for (own) |o| if (u16be(rom, o.at) != 0x303C) return error.BadData;
+    const Reader = struct {
+        fn lines(ar: std.mem.Allocator, rm: []const u8, at: u32, cells: u8, bl: u16, bs: u16, ow: anytype) Error![]const []const u16 {
+            const out = try ar.alloc([]const u16, 8);
+            var a = at;
+            for (out) |*line| {
+                const ln = try ar.alloc(u16, cells);
+                var k: usize = 0;
+                while (k < cells) : (k += 1) {
+                    const b = rm[a];
+                    a += 1;
+                    if (b == 0xFE) {
+                        @memset(ln[k..], bl);
+                        break;
+                    }
+                    ln[k] = if (b == 0) bl else bs + b;
+                    for (ow) |o| if (b == o.byte) {
+                        ln[k] = u16be(rm, o.at + 2);
+                    };
+                }
+                line.* = ln;
+            }
+            return out;
+        }
+    };
+    if (try entities.moveq(rom, 0x121DA, 6) != 25 or try entities.moveq(rom, 0x121B6, 6) != 3 or try entities.moveq(rom, 0x121A0, 6) != 1) return error.BadData;
+    const texts = [_]struct { name: []const u8, at: u32 }{
+        .{ .name = "offer", .at = 0x11CF6 },
+        .{ .name = "reward", .at = 0x11E48 },
+        .{ .name = "die", .at = 0x11EC8 },
+        .{ .name = "join", .at = 0x12048 },
+        .{ .name = "duel", .at = 0x11FD2 },
+        .{ .name = "traitor", .at = 0x1209A },
+    };
+    const out = try arena.alloc(round.OfferText, texts.len);
+    for (out, texts) |*o, t| o.* = .{ .name = t.name, .lines = try Reader.lines(arena, rom, try leaTarget(rom, t.at), 25, blank, base, own) };
+    const answers_at = try leaTarget(rom, 0x11E12);
+    if (try leaTarget(rom, 0x11F3E) != answers_at or try leaTarget(rom, 0x11F64) != answers_at) return error.BadData;
+    const yes = try Reader.lines(arena, rom, try leaTarget(rom, 0x12174), 1, blank, base, own);
+    const no = try Reader.lines(arena, rom, try leaTarget(rom, 0x12180), 1, blank, base, own);
+    if (u16be(rom, 0x11CE4) != 0x31FC or u16be(rom, 0x11CE6) != 0x0202 or u16be(rom, 0x11C92) != 0x0C40 or u16be(rom, 0x11C18) != 0x31FC) return error.BadData;
+    // The steps' flags (0x11B54: by the step, lea at 0x11B58): 0 free, 2 free and the pads
+    // cleared, else held in the choice (their $59 bit 4), bit 7 able to answer (0x12106).
+    if (u16be(rom, 0x11B58) != 0x43FA) return error.BadData;
+    const flags_at = try leaTarget(rom, 0x11B58);
+    const steps = try arena.alloc(round.OfferStep, offer_steps);
+    for (steps, 0..) |*st, k| {
+        const f = rom[flags_at + k];
+        st.* = switch (f) {
+            0 => .free,
+            2 => .clear,
+            1 => .hold,
+            0x81 => .answer,
+            else => return error.BadData,
+        };
+    }
+    return .{
+        .blank = blank,
+        .texts = out,
+        .steps = steps,
+        .answers = try Reader.lines(arena, rom, answers_at, 3, blank, base, own),
+        .marks = .{ try flatLines(arena, yes), try flatLines(arena, no) },
+        .type_period = rom[0x11CE7],
+        .rows = @intCast(u16be(rom, 0x11C94)),
+        .wait = @intCast(u16be(rom, 0x11C1A)),
+        .letter = try soundName(@bitCast(@as(i8, @intCast(try entities.moveq(rom, 0x11D7E, 7))))),
+        .move = try soundName(@bitCast(@as(i8, @intCast(try entities.moveq(rom, 0x12144, 7))))),
+        .answer = try soundName(@bitCast(@as(i8, @intCast(try entities.moveq(rom, 0x12150, 7))))),
+        .duel_music = try soundName(@bitCast(@as(i8, @intCast(try entities.moveq(rom, 0x11B3C, 7))))),
+    };
+}
+
+/// The offer's steps (0x11B94's table: to $41, the fight's).
+const offer_steps = 0x42;
+
+/// The cells of lines of one cell each, one after the other.
+fn flatLines(arena: std.mem.Allocator, lines: []const []const u16) Error![]const u16 {
+    const out = try arena.alloc(u16, lines.len);
+    for (out, lines) |*o, l| o.* = l[0];
+    return out;
+}
+
+/// The room's timed waves: the first as the fight begins, the second at the first's clear, the
+/// third as Mr. X stands up (0x4CA, 0x464).
+const room_waves = 3;
 
 /// The camera's rocking (0x1916E, after plane B's bands: its speed grows by its acceleration,
 /// which turns to its opposite at the end of its ticks, then every period; plane A's place down

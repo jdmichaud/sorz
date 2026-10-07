@@ -18,6 +18,7 @@ const tick_mod = @import("tick.zig");
 const draw_list = @import("draw_list.zig");
 const behaviours = @import("behaviours.zig");
 const script = @import("script.zig");
+const room = @import("room.zig");
 const content_round = @import("../content/round.zig");
 const lives = @import("lives.zig");
 const shadow_places = @import("shadows.zig");
@@ -46,6 +47,7 @@ pub const System = struct {
 pub const pipeline = [_]System{
     .{ .name = "timer", .run = script.timer },
     .{ .name = "own_sound", .run = script.ownSound },
+    .{ .name = "offer", .run = room.offerTick },
     .{ .name = "commands", .run = commands },
     .{ .name = "control", .run = control },
     .{ .name = "players_move", .run = playersMove },
@@ -220,7 +222,7 @@ fn padOf(pads: input.Pads, player: usize) input.Pad {
 fn control(t: *Tick) void {
     for (t.world.players, 0..) |p, k| {
         const h = p.entity orelse continue;
-        t.control(h, script.exitWalk(t, @intCast(k), h) orelse p.command);
+        t.control(h, room.walkIn(t, @intCast(k), h) orelse room.choice(t, @intCast(k), h) orelse script.exitWalk(t, @intCast(k), h) orelse p.command);
     }
 }
 
@@ -269,6 +271,9 @@ fn betweenPlayers(t: *Tick) void {
                 if (t.kindOf(s).definition.moves[s.move.?].reaction != .knock_down) t.letGo(hs[b]);
             },
             .grabbed => {
+                // Round 8's walk in clears the players' requests of holds at each tick:
+                // neither holds the other.
+                if (t.world.room.walking) continue;
                 const g = t.world.get(hs[a]).?;
                 const o = t.world.get(hs[b]).?;
                 if (g.holding != null or g.holder != null or o.holding != null or o.holder != null) continue;
@@ -749,7 +754,9 @@ fn camera(t: *Tick) void {
         if (c.run == null) {
             if (rules.leftward) c.x_max = c.x else c.x_min = c.x;
         }
-        c.x = c.x.add(.pixels(std.math.clamp(followSpeed(c, rules), -rules.most, rules.most)));
+        // While the players walk into round 8's room it scrolls by itself.
+        const speed = room.scrolls(t) orelse std.math.clamp(followSpeed(c, rules), -rules.most, rules.most);
+        c.x = c.x.add(.pixels(speed));
     }
     c.x = c.x.clamp(c.x_min, c.x_max);
     // On the lift no limit holds the camera down (its jolts move it) and no fall shakes it;

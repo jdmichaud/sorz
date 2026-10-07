@@ -1,6 +1,8 @@
 //! A gold statue on its pedestal (round 8's corridor). It stands at its height `height`, its
 //! frames held still; from its second tick it is drawn behind what stands at its depth (the
 //! original marks it so at each tick but its first). It goes once the camera leaves it behind.
+//! One in Mr. X's room (its record's `room_pose`) stands the other way, drawn behind from its
+//! first tick.
 //!
 //! The other program's traces name its states by number (`trace_states`).
 const tick = @import("../tick.zig");
@@ -18,7 +20,7 @@ pub const Mind = struct {
     state: State = .start,
 };
 
-pub const Animation = enum { stand };
+pub const Animation = enum { stand, stand_room };
 
 pub const Numbers = struct {
     height: i16,
@@ -33,7 +35,9 @@ pub fn think(a: Actor) void {
     switch (m.state) {
         .start => {
             e.position.height = .parts(a.numbers().height, e.position.height.frac());
-            a.animate(.stand);
+            const room = e.spawn.traits.room_pose;
+            a.animate(if (room) .stand_room else .stand);
+            e.flags.behind = room;
             m.state = .stand;
         },
         .stand => e.flags.behind = true,

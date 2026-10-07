@@ -113,6 +113,15 @@ pub fn turn(t: *Tick, i: usize) void {
     s.turned = true;
 }
 
+/// The shadows' turns that come before the turn of the one in place `place`, had now: what it
+/// makes in the weapons' places during its turn finds the places the shadows leave, as the
+/// original's objects take their turns one after the other (the door of Mr. X's room, in the
+/// effects' places). They have their turns again at the movement's (they lie where they lay,
+/// or go then).
+pub fn turnBefore(t: *Tick, place: usize) void {
+    for (first..@min(first + count, place)) |i| turn(t, i);
+}
+
 /// The shadows that have had a turn and lie far off the screen (`farOff`, given where they show:
 /// the draw list's rule) go, their entities keeping their marks of a shadow.
 pub fn goFarOff(w: *World, farOff: *const fn (x: i32, y: i32) bool) void {

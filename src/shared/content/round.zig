@@ -52,6 +52,9 @@ pub const Trait = enum {
     /// A boss whose beating is not the round's end: he goes as an enemy (round 5's round 3's
     /// bosses).
     goes_as_enemy,
+    /// A gold statue stands in Mr. X's room's pose (round 8's room's, by its record's first
+    /// byte).
+    room_pose,
 };
 
 pub const Traits = std.EnumSet(Trait);
@@ -75,7 +78,8 @@ pub const Streamed = struct {
     bytes: u16 = 0,
 };
 
-/// Which of a round's streamed lists: a section's (the boss's, `part` the sections' count), or
+/// Which of a round's streamed lists: a section's (the boss's or the room's, `part` the sections'
+/// count), or
 /// one of its reserve's records'; a section's art again after the special attack (`again`); or
 /// the special attack's of a caller (`special`: player 1's, player 2's), as its police car comes.
 pub const StreamOf = struct {
@@ -83,13 +87,23 @@ pub const StreamOf = struct {
     record: ?u8 = null,
     again: bool = false,
     special: ?u1 = null,
+    /// The room's fight's art: its last, or the art after it (`Room`).
+    room_art: ?enum { last, stand } = null,
 
     pub fn of(self: StreamOf, r: *const Round) []const Streamed {
         if (self.special) |k| return r.special.streamed[k];
+        if (self.room_art) |which| if (r.room) |*rm| return switch (which) {
+            .last => rm.last_art,
+            .stand => rm.stand_art,
+        };
         if (self.part < r.sections.len) {
             const s = &r.sections[self.part];
             if (self.again) return s.again;
             return if (self.record) |k| s.reserve[k].streamed else s.streamed;
+        }
+        if (r.room) |*rm| {
+            if (self.again) return rm.again;
+            return if (self.record) |k| rm.reserve[k].streamed else rm.streamed;
         }
         const b = &(r.boss orelse return &.{});
         if (self.again) return b.again;
@@ -218,6 +232,93 @@ pub const Boss = struct {
     wave: []const Spawn = &.{},
     reserve: []const Spawn = &.{},
 };
+
+/// Round 8's last room, Mr. X's: the section after the corridor's, which the room's script runs
+/// (world/room.zig). It begins as a section does, at the corridor's clear: its placed come (Mr.
+/// X in his chair, two statues), its art loads; then the room's script begins (the players walk
+/// in), and the door's breaking opens it (its wall, the GO arrow, its timer). Its fight's waves
+/// come each at a step of the fight, then its reserve.
+pub const Room = struct {
+    provenance: []const u8 = "",
+    /// The camera's left limit once it opens, its timer's seconds then.
+    wall: i32,
+    timer: u8,
+    /// The ticks from the corridor's clear to the room's script's start (its art loaded).
+    starts_after: u16,
+    /// Its art, streamed in from its start, and again after the special attack (`Section`'s).
+    streamed: []const Streamed = &.{},
+    again: []const Streamed = &.{},
+    /// The enemies' colours it holds as it begins, and its art slots (`Section`'s).
+    colours: Colours = .{},
+    art: [4]u8 = .{ 0, 0, 0, 0 },
+    placed: []const Spawn = &.{},
+    /// Its fight's timed waves, in their order, and its reserve.
+    waves: []const []const Spawn = &.{},
+    reserve: []const Spawn = &.{},
+    /// The camera's speed across while the players walk in, by itself (pixels a tick).
+    scroll: i32,
+    walk: Walk,
+    /// Where the first player at the door's depths puts the door.
+    door: Point,
+    /// The fight's music as its first wave is due, the music's fade at its last art, and the
+    /// music as Mr. X stands up.
+    music: []const u8,
+    fade: []const u8,
+    last_music: []const u8,
+    /// The fight's last art (from the second wave's clear: once loaded, Mr. X stands up) and the
+    /// art after it (once loaded, the last wave comes): streamed, and the ticks they load in.
+    last_art: []const Streamed = &.{},
+    last_art_after: u16,
+    stand_art: []const Streamed = &.{},
+    stand_art_after: u16,
+    offer: Offer,
+
+    /// The players' walk in: each to the door's depths (`door_depth[0]` to `door_depth[1]`,
+    /// excluded) and left of `door_x`; then to `depth` (the same) and its place across (player
+    /// 1's, player 2's), within `near` pixels left of it.
+    pub const Walk = struct {
+        door_depth: [2]i32,
+        door_x: i32,
+        depth: [2]i32,
+        places: [2]i32,
+        near: i32,
+    };
+};
+
+/// A place in the level: across, in depth, in height.
+pub const Point = struct { x: i32, depth: i32, height: i32 };
+
+/// Mr. X's offer in its window (the room's script, world/room.zig): its texts, typed a letter at
+/// a time, the answers and their marks; the cells are the window's (its font's names, `blank` the
+/// cell of nothing).
+pub const Offer = struct {
+    blank: u16,
+    /// The texts, each 4 rows of 25 letters, a letter two cells tall: its lines of cells, top and
+    /// bottom of each row in turn.
+    texts: []const OfferText,
+    /// The answers (yes, then no, a row apart) as 8 lines of 3 cells; the mark at each.
+    answers: []const []const u16,
+    marks: [2][]const u16,
+    /// Each step of the offer's script (by its number): whether the players are held in the
+    /// choice (their pads taken), and may answer (`hold`, `answer`); else free, their pads
+    /// cleared or not (`clear`).
+    steps: []const OfferStep,
+    /// A letter typed every `type_period` ticks; the window opens and closes a row a tick, to
+    /// `rows`; a wait between two steps lasts `wait` ticks.
+    type_period: u8,
+    rows: u8,
+    wait: u8,
+    /// The sounds: a letter typed (but a blank), the mark moved, an answer given; the duel's
+    /// music.
+    letter: []const u8,
+    move: []const u8,
+    answer: []const u8,
+    duel_music: []const u8,
+};
+
+pub const OfferText = struct { name: []const u8, lines: []const []const u16 };
+
+pub const OfferStep = enum { free, clear, hold, answer };
 
 /// The special attack's art, streamed in as its police car comes, by its caller (player 1's,
 /// player 2's): the car's, then the caller's weapon's.
@@ -412,6 +513,8 @@ pub const Round = struct {
     knocked_back_left: bool = false,
     /// How it ends without a boss (round 7's): the players walk out.
     exit: ?Exit = null,
+    /// Its last room after its last section, its boss's (round 8's: Mr. X's).
+    room: ?Room = null,
 };
 
 /// A round on a lift (round 7's): the camera stays where it starts; plane B, the face the lift
@@ -705,6 +808,92 @@ fn spawnsValue(arena: std.mem.Allocator, list: []const Spawn, where: Where) !jso
     return .{ .array = out };
 }
 
+fn cellsValue(arena: std.mem.Allocator, lines: []const []const u16) !json.Value {
+    const out = try arena.alloc(json.Value, lines.len);
+    for (out, lines) |*o, line| {
+        const cells = try arena.alloc(json.Value, line.len);
+        for (cells, line) |*c, x| c.* = json.Value.num(x);
+        o.* = .{ .array = cells };
+    }
+    return .{ .array = out };
+}
+
+fn offerValue(arena: std.mem.Allocator, o: *const Offer) !json.Value {
+    const texts = try arena.alloc(json.Value, o.texts.len);
+    for (texts, o.texts) |*v, t| v.* = try obj(arena, &.{
+        .{ .key = "name", .value = .{ .str = t.name } },
+        .{ .key = "lines", .value = try cellsValue(arena, t.lines) },
+    });
+    return obj(arena, &.{
+        .{ .key = "blank", .value = json.Value.num(o.blank) },
+        .{ .key = "texts", .value = .{ .array = texts } },
+        .{ .key = "steps", .value = blk: {
+            const v = try arena.alloc(json.Value, o.steps.len);
+            for (v, o.steps) |*x, st| x.* = .{ .str = @tagName(st) };
+            break :blk .{ .array = v };
+        } },
+        .{ .key = "answers", .value = try cellsValue(arena, o.answers) },
+        .{ .key = "marks", .value = try cellsValue(arena, &o.marks) },
+        .{ .key = "type_period", .value = json.Value.num(o.type_period) },
+        .{ .key = "rows", .value = json.Value.num(o.rows) },
+        .{ .key = "wait", .value = json.Value.num(o.wait) },
+        .{ .key = "letter", .value = .{ .str = o.letter } },
+        .{ .key = "move", .value = .{ .str = o.move } },
+        .{ .key = "answer", .value = .{ .str = o.answer } },
+        .{ .key = "duel_music", .value = .{ .str = o.duel_music } },
+    });
+}
+
+fn readCells(arena: std.mem.Allocator, n: json.Node) Error![]const []const u16 {
+    const out = try arena.alloc([]const u16, try n.len());
+    for (out, 0..) |*line, i| {
+        const ln = try n.at(i);
+        const cells = try arena.alloc(u16, try ln.len());
+        for (cells, 0..) |*c, j| c.* = try (try ln.at(j)).int(u16);
+        line.* = cells;
+    }
+    return out;
+}
+
+fn readOffer(arena: std.mem.Allocator, n: json.Node) Error!Offer {
+    try n.only(&.{ "blank", "texts", "steps", "answers", "marks", "type_period", "rows", "wait", "letter", "move", "answer", "duel_music" });
+    const sn = try n.get("steps");
+    const steps = try arena.alloc(OfferStep, try sn.len());
+    for (steps, 0..) |*st, i| {
+        const x = try sn.at(i);
+        st.* = std.meta.stringToEnum(OfferStep, try x.string()) orelse return x.fail("not free, clear, hold or answer");
+    }
+    const tn = try n.get("texts");
+    const texts = try arena.alloc(OfferText, try tn.len());
+    for (texts, 0..) |*t, i| {
+        const x = try tn.at(i);
+        try x.only(&.{ "name", "lines" });
+        t.* = .{ .name = try (try x.get("name")).string(), .lines = try readCells(arena, try x.get("lines")) };
+        if (t.lines.len != 8) return (try x.get("lines")).fail("not 8 lines");
+        for (t.lines) |line| if (line.len != 25) return (try x.get("lines")).fail("a line not of 25 cells");
+    }
+    const mn = try n.get("marks");
+    const marks = try readCells(arena, mn);
+    if (marks.len != 2) return mn.fail("not the two marks");
+    const o: Offer = .{
+        .blank = try (try n.get("blank")).int(u16),
+        .texts = texts,
+        .steps = steps,
+        .answers = try readCells(arena, try n.get("answers")),
+        .marks = .{ marks[0], marks[1] },
+        .type_period = try (try n.get("type_period")).int(u8),
+        .rows = try (try n.get("rows")).int(u8),
+        .wait = try (try n.get("wait")).int(u8),
+        .letter = try (try n.get("letter")).string(),
+        .move = try (try n.get("move")).string(),
+        .answer = try (try n.get("answer")).string(),
+        .duel_music = try (try n.get("duel_music")).string(),
+    };
+    if (o.type_period == 0) return (try n.get("type_period")).fail("not 1 or more");
+    if (o.wait == 0) return (try n.get("wait")).fail("not 1 or more");
+    return o;
+}
+
 /// The JSON of round `r`.
 pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.Value {
     const sections = try arena.alloc(json.Value, r.sections.len);
@@ -843,6 +1032,43 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         .{ .key = "wave", .value = try spawnsValue(arena, b.wave, .wave) },
         .{ .key = "reserve", .value = try spawnsValue(arena, b.reserve, .reserve) },
     }) });
+    if (r.room) |*rm| {
+        const waves = try arena.alloc(json.Value, rm.waves.len);
+        for (waves, rm.waves) |*o, list| o.* = try spawnsValue(arena, list, .wave);
+        try fields.append(arena, .{ .key = "room", .value = try withProvenance(arena, rm.provenance, &.{
+            .{ .key = "wall", .value = json.Value.num(rm.wall) },
+            .{ .key = "timer", .value = json.Value.num(rm.timer) },
+            .{ .key = "starts_after", .value = json.Value.num(rm.starts_after) },
+            .{ .key = "streamed", .value = try streamedValue(arena, rm.streamed) },
+            .{ .key = "again", .value = try streamedValue(arena, rm.again) },
+            .{ .key = "colours", .value = try coloursValue(arena, rm.colours) },
+            .{ .key = "art", .value = try artValue(arena, rm.art) },
+            .{ .key = "placed", .value = try spawnsValue(arena, rm.placed, .placed) },
+            .{ .key = "waves", .value = .{ .array = waves } },
+            .{ .key = "reserve", .value = try spawnsValue(arena, rm.reserve, .reserve) },
+            .{ .key = "scroll", .value = json.Value.num(rm.scroll) },
+            .{ .key = "walk", .value = try obj(arena, &.{
+                .{ .key = "door_depth", .value = try pair(arena, rm.walk.door_depth[0], rm.walk.door_depth[1]) },
+                .{ .key = "door_x", .value = json.Value.num(rm.walk.door_x) },
+                .{ .key = "depth", .value = try pair(arena, rm.walk.depth[0], rm.walk.depth[1]) },
+                .{ .key = "places", .value = try pair(arena, rm.walk.places[0], rm.walk.places[1]) },
+                .{ .key = "near", .value = json.Value.num(rm.walk.near) },
+            }) },
+            .{ .key = "door", .value = try obj(arena, &.{
+                .{ .key = "x", .value = json.Value.num(rm.door.x) },
+                .{ .key = "depth", .value = json.Value.num(rm.door.depth) },
+                .{ .key = "height", .value = json.Value.num(rm.door.height) },
+            }) },
+            .{ .key = "music", .value = .{ .str = rm.music } },
+            .{ .key = "fade", .value = .{ .str = rm.fade } },
+            .{ .key = "last_music", .value = .{ .str = rm.last_music } },
+            .{ .key = "last_art", .value = try streamedValue(arena, rm.last_art) },
+            .{ .key = "last_art_after", .value = json.Value.num(rm.last_art_after) },
+            .{ .key = "stand_art", .value = try streamedValue(arena, rm.stand_art) },
+            .{ .key = "stand_art_after", .value = json.Value.num(rm.stand_art_after) },
+            .{ .key = "offer", .value = try offerValue(arena, &rm.offer) },
+        }) });
+    }
     return withProvenance(arena, r.provenance, fields.items);
 }
 
@@ -959,7 +1185,7 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off", "in_front", "lift", "exit", "depth_walls", "enemy_walk", "knocked_back_left" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off", "in_front", "lift", "exit", "depth_walls", "enemy_walk", "knocked_back_left", "room" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
@@ -1225,6 +1451,49 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
             .wave = try readSpawns(arena, try b.get("wave"), .wave),
             .reserve = try readSpawns(arena, try b.get("reserve"), .reserve),
         };
+    }
+    if (try root.opt("room")) |rn| {
+        try rn.only(&.{ "provenance", "wall", "timer", "starts_after", "streamed", "again", "colours", "art", "placed", "waves", "reserve", "scroll", "walk", "door", "music", "fade", "last_music", "last_art", "last_art_after", "stand_art", "stand_art_after", "offer" });
+        const wk = try rn.get("walk");
+        try wk.only(&.{ "door_depth", "door_x", "depth", "places", "near" });
+        const dn = try rn.get("door");
+        try dn.only(&.{ "x", "depth", "height" });
+        const wn = try rn.get("waves");
+        const waves = try arena.alloc([]const Spawn, try wn.len());
+        for (waves, 0..) |*w, i| w.* = try readSpawns(arena, try wn.at(i), .wave);
+        r.room = .{
+            .provenance = try provenanceOf(rn),
+            .wall = try (try rn.get("wall")).int(i32),
+            .timer = try (try rn.get("timer")).int(u8),
+            .starts_after = try (try rn.get("starts_after")).int(u16),
+            .streamed = try readStreamed(arena, try rn.get("streamed")),
+            .again = if (try rn.opt("again")) |x| try readStreamed(arena, x) else &.{},
+            .colours = if (try rn.opt("colours")) |x| try readColours(x) else .{},
+            .art = if (try rn.opt("art")) |x| try readArt(x) else .{ 0, 0, 0, 0 },
+            .placed = try readSpawns(arena, try rn.get("placed"), .placed),
+            .waves = waves,
+            .reserve = try readSpawns(arena, try rn.get("reserve"), .reserve),
+            .scroll = try (try rn.get("scroll")).int(i32),
+            .walk = .{
+                .door_depth = try readPair(try wk.get("door_depth"), i32),
+                .door_x = try (try wk.get("door_x")).int(i32),
+                .depth = try readPair(try wk.get("depth"), i32),
+                .places = try readPair(try wk.get("places"), i32),
+                .near = try (try wk.get("near")).int(i32),
+            },
+            .door = .{ .x = try (try dn.get("x")).int(i32), .depth = try (try dn.get("depth")).int(i32), .height = try (try dn.get("height")).int(i32) },
+            .music = try (try rn.get("music")).string(),
+            .fade = try (try rn.get("fade")).string(),
+            .last_music = try (try rn.get("last_music")).string(),
+            .last_art = if (try rn.opt("last_art")) |x| try readStreamed(arena, x) else &.{},
+            .last_art_after = try (try rn.get("last_art_after")).int(u16),
+            .stand_art = if (try rn.opt("stand_art")) |x| try readStreamed(arena, x) else &.{},
+            .stand_art_after = try (try rn.get("stand_art_after")).int(u16),
+            .offer = try readOffer(arena, try rn.get("offer")),
+        };
+        if (r.room.?.timer > 99) return (try rn.get("timer")).fail("more than 99 seconds");
+        if (r.room.?.starts_after == 0) return (try rn.get("starts_after")).fail("not 1 or more");
+        if (r.boss != null or r.exit != null) return rn.fail("a room in a round with a boss or an exit");
     }
     if (r.exit != null and r.boss != null) return (try root.get("exit")).fail("an exit in a round with a boss");
     return r;
