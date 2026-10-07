@@ -1324,6 +1324,19 @@ pub fn walls(a: Actor) void {
     e.velocity.depth = .zero;
 }
 
+/// On the floor by cells, at or below its cell's height, it stands at that height (its fraction
+/// gone), as the original lands its players on their cell at every tick (put lower by a wall
+/// with no height, it is up on its cell at the next); on a cell with no height, `offWall`.
+fn standOnCell(a: Actor) void {
+    const c = a.tick.cellAt(a.entity.position) orelse return;
+    if (!c.floor) return;
+    if (c.height == 0) {
+        _ = offWall(a);
+        return;
+    }
+    a.entity.position.height = .pixels(c.height);
+}
+
 /// On a cell with no height (round 6's machines), it is put `wall_back` back across, at height
 /// `wall_height` (the original's landing on such a cell, its fraction cleared). Returns whether it
 /// was.
@@ -2084,11 +2097,10 @@ fn onGround(a: Actor) void {
 /// the holds its depth (whole pixels, its fractions kept).
 pub fn moved(a: Actor) void {
     if (a.mind.fell_out) a.mind.fell_out = false else ledge(a);
-    // On the ground over a conveyor (round 6's), it is carried; on a cell with no height, it is
-    // put back.
+    // On the ground over a conveyor (round 6's), it is carried; then it stands on its cell.
     if (!a.entity.flags.airborne and !a.entity.flags.landed and a.entity.velocity.height.raw == 0 and a.tick.onFloor(a.entity.position)) {
         conveyed(a);
-        _ = offWall(a);
+        standOnCell(a);
     }
     pushedOut(a);
     if (a.mind.knee_spark_due) {
