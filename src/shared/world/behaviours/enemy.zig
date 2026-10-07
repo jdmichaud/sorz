@@ -585,6 +585,8 @@ pub fn Of(comptime M: type) type {
                 // A thing that strikes of itself (round 8's rolling trolley): the original reads
                 // the one it met last, none here (the level's left end: left).
                 if (m.by.eql(h)) return null;
+                // Mr. X's shot: the original reads the shot, not him.
+                if (!a.tick.isPlayer(m.by)) return o;
                 return a.other(m.by) orelse o;
             }
             if (a.tick.heldLastBy(h)) |by| return a.other(by) orelse o;
