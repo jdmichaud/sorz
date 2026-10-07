@@ -189,7 +189,7 @@ fn grabs(a: Actor) bool {
     // The one its box met is named as the last it met (the original's test writes it, held or
     // knocked down: a special attack's knock-down names it).
     a.mind.body.other = th;
-    if (!a.tick.isPlayer(th) or t.holding != null or t.holder != null or escaping(t)) {
+    if (!a.tick.isPlayer(th) or enemy.holdsWord(t) or t.holder != null or escaping(t)) {
         // A blow that knocks down.
         if (!a.tick.struck(th, .{ .attacker = a.handle, .damage = Common.power(a), .reaction = .knock_down, .push = .zero })) return false;
         Common.enter(a, .lurk);

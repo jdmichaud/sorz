@@ -139,11 +139,7 @@ fn holdsOrWatches(a: Actor) bool {
         return true;
     }
     const th = a.mind.body.target.?;
-    if (!a.tick.isPlayer(th) or t.holding != null or t.holder != null) return false;
-    // A knee keeps its hold to its end, the one kneed knocked away already (the last knee, or
-    // one that took the last of its health), and its hold's look after it to its next turn: the
-    // original's player keeps its hold's word.
-    if (stateIs(t, "knee") or stateIs(t, "knee_last") or stateIs(t, "grab")) return false;
+    if (!a.tick.isPlayer(th) or enemy.holdsWord(t) or t.holder != null) return false;
     if (!Common.reachMeetsTarget(a)) return false;
     if (@abs(t.position.height.whole() - a.entity.position.height.whole()) >= 8) return false;
     if (!a.tick.catchable(th)) return false;

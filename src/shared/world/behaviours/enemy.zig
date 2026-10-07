@@ -49,6 +49,17 @@ const Entity = entity.Entity;
 /// lift, flying across before it falls.
 pub const Down = enum { flying, sliding, lying, knocked_off };
 
+/// Whether the player `p` keeps its hold's word: it holds one, or it knees, or it is back in its
+/// hold's look after its last knee (the one kneed knocked away already), to its next turn, as the
+/// original's player keeps the word of its hold (an enemy does not catch it then).
+pub fn holdsWord(p: *const Entity) bool {
+    if (p.holding != null) return true;
+    return switch (p.mind) {
+        .player => |m| m.state == .knee or m.state == .knee_last or m.state == .grab,
+        else => false,
+    };
+}
+
 /// The memory every enemy keeps for its common states.
 pub const Body = struct {
     /// The state's set-up is due (its first tick).
