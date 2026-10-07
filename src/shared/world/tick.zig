@@ -654,6 +654,7 @@ pub const Tick = struct {
     /// original's end of the fight; the traces credit the blow to the one it last met, none for
     /// one that met none).
     pub fn bossBeaten(t: *Tick) void {
+        script.fightOver(t.world);
         for (t.world.players) |p| {
             const ph = p.entity orelse continue;
             const pe = t.world.get(ph) orelse continue;

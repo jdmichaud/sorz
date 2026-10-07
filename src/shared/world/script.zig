@@ -204,6 +204,9 @@ pub const Stage = enum {
     room,
     /// The room's fight after a wave: its clear, then its last art.
     room_end,
+    /// The boss's fight is over (`fightOver`): the reserve is called no more, and the round
+    /// waits for the boss's behaviour to end it.
+    fight_over,
     /// A beaten boss has ended the round (or the players walked out).
     won,
     /// Its records come from elsewhere: an agent's situation brings them as the other program's
@@ -456,7 +459,7 @@ pub fn run(t: *Tick) void {
     s.enemies = now;
     const r = p.round;
     switch (s.stage) {
-        .opening, .exit, .won, .stand_in => {},
+        .opening, .exit, .fight_over, .won, .stand_in => {},
         .lift => {
             // Its wait's last tick forgets the jolts before (the lift's start's); then the next
             // one (its stop's) brings the wave.
@@ -637,6 +640,12 @@ pub fn exitWalk(t: *Tick, k: u1, h: entity.Handle) ?world_mod.Command {
 /// part.
 pub fn bossFight(w: anytype, plan: *const Plan) bool {
     return w.script.part >= plan.round.sections.len;
+}
+
+/// The boss's fight is over (his beating knocks the enemies out): the original's events wait for
+/// the section's clear, so no more of the reserve come.
+pub fn fightOver(w: anytype) void {
+    if (w.script.stage != .won) w.script.stage = .fight_over;
 }
 
 /// The boss was beaten: the round is won (the boss's behaviour says when).
