@@ -250,12 +250,13 @@ pub fn Of(comptime M: type) type {
 
         /// In a player's hand: a tick its blow strikes, it joins the things whose blows land
         /// (once more; the original's list of them holds five); another, it leaves them once.
+        /// Its blows land on the other player too.
         fn strike(a: A, holder: Handle, strikes: bool) void {
             const b = &a.mind.body;
             if (strikes) {
                 b.strikes = @min(b.strikes + 1, 5);
             } else if (b.strikes != 0) b.strikes -= 1;
-            a.entity.missile = if (b.strikes != 0) .{ .by = holder, .damage = a.numbers().power } else null;
+            a.entity.missile = if (b.strikes != 0) .{ .by = holder, .damage = a.numbers().power, .on_players = true } else null;
         }
 
         /// Taken up from a situation: its pose by its state (held, its holder's hand places it
