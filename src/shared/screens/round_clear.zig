@@ -488,7 +488,7 @@ pub const RoundClear = struct {
         // The last round's lives: each player's, a bonus a life by LEVEL (none for a player on
         // its last life: the original's count of a life less than none, 65536 of them, is not
         // taken).
-        const life = c.life_bonus[@min(turn.setup.level, 3)];
+        const life = a.screen.levels.life_bonus[@min(turn.setup.level, 3)];
         self.bonuses = .{
             c.clear_bonus * (1 + specials),
             c.time_bonus * g.timer,

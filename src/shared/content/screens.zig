@@ -387,10 +387,9 @@ pub const Clear = struct {
     count: u32,
     /// The colours faded in, over the status bar's.
     colours: []const u8,
-    /// The last round's clear (`last_round`) counts each player's lives left, `life_bonus` a
-    /// life by LEVEL of the options.
+    /// The last round's clear (`last_round`) counts each player's lives left (`Levels.life_bonus`
+    /// a life).
     last_round: u8 = 8,
-    life_bonus: [4]u32 = .{ 0, 0, 0, 0 },
 };
 
 /// A pad's buttons that the options' CONTROL gives actions to.
@@ -432,13 +431,15 @@ pub const Round = struct {
 /// What the options' LEVEL changes in play, by level (0, the easiest, to 3): a thing heading for
 /// a point (an enemy walking to its place, a knife sent off) at `slower_from` or faster goes
 /// `slower` less fast, in 1/65536 pixel a tick; the common enemies come with `enemy_health` more
-/// health, and their blows do `enemy_power` more damage. Left out, the level changes none.
+/// health, and their blows do `enemy_power` more damage; the last round's clear gives
+/// `life_bonus` points a life left. Left out, the level changes none.
 pub const Levels = struct {
     provenance: []const u8 = "",
     slower_from: i32 = 0,
     slower: [4]i32 = @splat(0),
     enemy_health: [4]u8 = @splat(0),
     enemy_power: [4]u8 = @splat(0),
+    life_bonus: [4]u32 = @splat(0),
 };
 
 /// The attract demo: round 1 played by the game on the pads the cartridge holds, both players in
@@ -641,12 +642,11 @@ fn clearValue(arena: std.mem.Allocator, c: *const Clear) !json.Value {
         .{ .key = "count", .value = json.Value.num(c.count) },
         .{ .key = "colours", .value = .{ .str = c.colours } },
         .{ .key = "last_round", .value = json.Value.num(c.last_round) },
-        .{ .key = "life_bonus", .value = .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(c.life_bonus[0]), json.Value.num(c.life_bonus[1]), json.Value.num(c.life_bonus[2]), json.Value.num(c.life_bonus[3]) }) } },
     });
 }
 
 fn readClear(n: json.Node) Error!Clear {
-    try n.only(&.{ "provenance", "header", "header_at", "number", "lines", "digits", "normal", "counted", "wait", "clear_bonus", "time_bonus", "level_bonus", "count", "colours", "last_round", "life_bonus" });
+    try n.only(&.{ "provenance", "header", "header_at", "number", "lines", "digits", "normal", "counted", "wait", "clear_bonus", "time_bonus", "level_bonus", "count", "colours", "last_round" });
     const ls = try n.get("lines");
     if (try ls.len() != 6) return ls.fail("not the six bonuses' lines");
     var lines: [6]ClearLine = undefined;
@@ -671,13 +671,6 @@ fn readClear(n: json.Node) Error!Clear {
         .count = try (try n.get("count")).int(u32),
         .colours = try (try n.get("colours")).string(),
         .last_round = try (try n.get("last_round")).int(u8),
-        .life_bonus = blk: {
-            const lb = try n.get("life_bonus");
-            if (try lb.len() != 4) return lb.fail("not a bonus by LEVEL");
-            var out: [4]u32 = undefined;
-            for (&out, 0..) |*o, k| o.* = try (try lb.at(k)).int(u32);
-            break :blk out;
-        },
     };
     for (c.lines, 0..) |l, k| if (k != 3 and l.text.len < @as(usize, c.digits) + 6) return (try ls.at(k)).fail("shorter than its digits");
     if (c.wait == 0 or c.count == 0) return n.fail("a wait or a count of none");
@@ -823,21 +816,24 @@ fn levelsValue(arena: std.mem.Allocator, l: *const Levels) !json.Value {
     var slower: [4]json.Value = undefined;
     var health: [4]json.Value = undefined;
     var power: [4]json.Value = undefined;
-    for (&slower, &health, &power, l.slower, l.enemy_health, l.enemy_power) |*s, *h, *p, sv, hv, pv| {
+    var life: [4]json.Value = undefined;
+    for (&slower, &health, &power, &life, l.slower, l.enemy_health, l.enemy_power, l.life_bonus) |*s, *h, *p, *b, sv, hv, pv, bv| {
         s.* = json.Value.num(sv);
         h.* = json.Value.num(hv);
         p.* = json.Value.num(pv);
+        b.* = json.Value.num(bv);
     }
     return withProvenance(arena, l.provenance, &.{
         .{ .key = "enemy_health", .value = .{ .array = try arena.dupe(json.Value, &health) } },
         .{ .key = "enemy_power", .value = .{ .array = try arena.dupe(json.Value, &power) } },
+        .{ .key = "life_bonus", .value = .{ .array = try arena.dupe(json.Value, &life) } },
         .{ .key = "slower", .value = .{ .array = try arena.dupe(json.Value, &slower) } },
         .{ .key = "slower_from", .value = json.Value.num(l.slower_from) },
     });
 }
 
 fn readLevels(n: json.Node) Error!Levels {
-    try n.only(&.{ "provenance", "slower_from", "slower", "enemy_health", "enemy_power" });
+    try n.only(&.{ "provenance", "slower_from", "slower", "enemy_health", "enemy_power", "life_bonus" });
     var l: Levels = .{
         .provenance = if (try n.opt("provenance")) |x| try x.string() else "",
         .slower_from = try (try n.get("slower_from")).int(i32),
@@ -853,6 +849,10 @@ fn readLevels(n: json.Node) Error!Levels {
         if (sv.* < 0) return (try s.at(k)).fail("a speed less than 0");
         hv.* = try (try h.at(k)).int(u8);
         pv.* = try (try p.at(k)).int(u8);
+    }
+    if (try n.opt("life_bonus")) |b| {
+        if (try b.len() != 4) return b.fail("not 4 bonuses, one a level");
+        for (&l.life_bonus, 0..) |*bv, k| bv.* = try (try b.at(k)).int(u32);
     }
     return l;
 }

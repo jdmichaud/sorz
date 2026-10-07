@@ -385,7 +385,8 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   entries, the easiest first): a thing heading for a point (an enemy to its place, a knife sent
   off) at `slower_from` or faster goes `slower` less fast (1/65536 pixel a tick); the common
   enemies come with `enemy_health` more health, and their blows do `enemy_power` more damage (a
-  weapon's do its own); left out, none. `demo`, the attract demo: round 1
+  weapon's do its own); the last round's clear gives `life_bonus` points a life left; left out,
+  none. `demo`, the attract demo: round 1
   played by the game, both players in play, the characters `players` names (player 1's, player
   2's), each with `lives` and `specials` (the status bar shows those a new life gives until they
   change); its play lasts `ticks` ticks, then fades out; its `sign`, a kind of entity fixed on

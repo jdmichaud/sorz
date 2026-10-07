@@ -419,15 +419,6 @@ fn roundClear(b: *Builder, play_v: *const Vram) !records.Clear {
         .colours = "round_end/colours",
         // The last round (0x184BA: cmpi.w #N,($FF02).w, the round from 0) counts the lives.
         .last_round = if (u16be(rom, 0x184BA) == 0x0C78 and u16be(rom, 0x184BE) == 0xFF02) @intCast(u16be(rom, 0x184BC) + 1) else return error.BadData,
-        .life_bonus = blk: {
-            var out: [4]u32 = undefined;
-            for (&out, 0..) |*o, level| {
-                const n: u32 = u16be(rom, life_amounts + 2 * @as(u32, @intCast(level)));
-                if (n == 0) return error.BadData;
-                o.* = packedDecimal(u32be(rom, score_amounts + 4 * (n - 1)));
-            }
-            break :blk out;
-        },
     };
 }
 
@@ -647,7 +638,8 @@ fn immediate(rom: []const u8, at: u32, opcode: []const u8, width: u8) !u32 {
 /// strengths: the speeds toward a point (0x982C: `tst.w ($FFC6).w`, the easiest, then `cmpi.w
 /// #N,d6` and `subi.w #N,d6` on the speed in 1/256 pixel), and the common enemies' blows as they
 /// are set up (0x93CE: `cmpi.w #N,($FFC6).w`, then `addq.b #N` to their health's low byte $33 and
-/// their power $34).
+/// their power $34); the last round's lives bonus (0x18324: a life's points by the level, the
+/// table at 0x18334 of entries of the score amounts at 0x10DDE).
 fn levels(rom: []const u8) !records.Levels {
     if (u32be(rom, 0x982C) != 0x4A78FFC6 or u16be(rom, 0x9830) != 0x660A or u16be(rom, 0x9836) != 0x6504) return error.BadData;
     const from = try immediate(rom, 0x9832, &.{ 0x0C, 0x46 }, 2);
@@ -659,12 +651,17 @@ fn levels(rom: []const u8) !records.Levels {
     const add_power = u16be(rom, 0x9400);
     if (add_health & 0xF1FF != 0x5028 or u16be(rom, 0x93FE) != 0x33 or add_power & 0xF1FF != 0x5028 or u16be(rom, 0x9402) != 0x34) return error.BadData;
     var l: records.Levels = .{
-        .provenance = "ROM 0x0982C: tst.w ($FFC6).w, then cmpi.w #N,d6 and subi.w #N,d6 (a speed toward a point, 1/256 pixel, the easiest level); ROM 0x093F4: cmpi.w #N,($FFC6).w, then addq.b #N,(51,a0) and (52,a0) (a common enemy's health, its low byte, and its power as it is set up)",
+        .provenance = "ROM 0x0982C: tst.w ($FFC6).w, then cmpi.w #N,d6 and subi.w #N,d6 (a speed toward a point, 1/256 pixel, the easiest level); ROM 0x093F4: cmpi.w #N,($FFC6).w, then addq.b #N,(51,a0) and (52,a0) (a common enemy's health, its low byte, and its power as it is set up); ROM 0x18334: by level, the entry of the score amounts (ROM 0x10DDE, packed decimal) a life left gives at the last round's clear (0x18324)",
         .slower_from = @as(i32, @intCast(from)) << 8,
     };
     l.slower[0] = @as(i32, @intCast(by)) << 8;
     l.enemy_health[@intCast(level)] = quick(add_health);
     l.enemy_power[@intCast(level)] = quick(add_power);
+    for (&l.life_bonus, 0..) |*o, k| {
+        const n: u32 = u16be(rom, life_amounts + 2 * @as(u32, @intCast(k)));
+        if (n == 0) return error.BadData;
+        o.* = packedDecimal(u32be(rom, score_amounts + 4 * (n - 1)));
+    }
     return l;
 }
 
