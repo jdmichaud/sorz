@@ -1069,7 +1069,7 @@ fn feelBlow(a: Actor) void {
     const knocked = t.reaction == .knock_down or a.entity.flags.airborne;
     if (knocked) a.tick.sound(fallSound(a, t.by), a.handle);
     dropWeapon(a);
-    loses(a, t.by, t.damage);
+    loses(a, t.by, strikerDamage(a, t));
     if (a.entity.health <= 0) return die(a, t.by);
     if (!knocked) a.sound(.hurt);
     letGoStruck(a);
@@ -1082,6 +1082,16 @@ fn feelBlow(a: Actor) void {
     }
     change(a, .hurt);
     a.mind.timer = n.hurt;
+}
+
+/// The damage of the blow it feels: the other player's, when that one had its turn before it
+/// at this tick (player 1 struck player 2), is the power its blow has now, as the original's
+/// struck player reads its striker's power at its own turn (0 once the blow's frame is over:
+/// hurt, it loses nothing); else the blow's.
+fn strikerDamage(a: Actor, t: Taken) i16 {
+    const by = a.tick.world.get(t.by) orelse return t.damage;
+    if (by.mind != .player or t.by.index > a.handle.index) return t.damage;
+    return a.tick.power(by);
 }
 
 /// Struck, it lets go of its hold, or is let go; but held by the other player jumping over it (a
