@@ -651,7 +651,8 @@ fn appear(a: Actor) void {
     const bar = e.spawn.bar orelse 0;
     if (bar != 0 and !e.spawn.traits.twin) {
         if (a.tick.kinds.find(helper_kind)) |hk| {
-            if (w.spawnWithin(a.tick.kinds, hk, places.from, places.to, e.position, .right)) |hh| {
+            // Made at the level's corner: the original's helper has no place of its own.
+            if (w.spawnWithin(a.tick.kinds, hk, places.from, places.to, .zero, .right)) |hh| {
                 if (a.tick.actor(@import("boss_r3_helper.zig"), hh)) |ha| ha.mind.owner = a.handle;
             } else |_| {}
         }
