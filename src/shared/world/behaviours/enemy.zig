@@ -595,11 +595,17 @@ pub fn Of(comptime M: type) type {
             return a.entity.facingLeft();
         }
 
-        /// Its point: at its target's depth, `beside` pixels from it on its own side.
+        /// Its point: at its target's depth, `beside` pixels from it on its own side. Its target
+        /// gone (out of the game), it reads the place its target held, whatever holds it now (an
+        /// emptied place's is the level's corner), as the original's.
         pub fn pointBeside(a: A, beside: i16) void {
-            const t = target(a) orelse return;
-            body(a).dest_depth = .pixels(t.position.depth.whole());
-            besideTarget(a, t, beside);
+            const th = body(a).target orelse return;
+            const o = &a.tick.world.entities[th.index];
+            const at: fixed.Vec3 = if (o.alive()) o.position else .zero;
+            body(a).dest_depth = .pixels(at.depth.whole());
+            const tx = at.x.whole();
+            const side: i32 = if (tx < a.entity.position.x.whole()) beside else -@as(i32, beside);
+            body(a).dest_x = .pixels(tx + side);
         }
 
         /// Its point: its target's place and its own offsets (across on its own side, and in
