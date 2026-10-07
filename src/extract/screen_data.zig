@@ -23,6 +23,8 @@ const screens = sorz.content.screens;
 const rom_mod = @import("rom.zig");
 const enigma = @import("enigma.zig");
 const fonts = @import("fonts.zig");
+const sprites = @import("sprites.zig");
+const entities = @import("entities.zig");
 const sound_names = @import("sound_names.zig");
 const builder_mod = @import("builder.zig");
 const Builder = builder_mod.Builder;
@@ -479,6 +481,106 @@ fn ending(arena: std.mem.Allocator, rom: []const u8) !screens.Ending {
     };
 }
 
+// --- The ending in the boss's chair -------------------------------------------------------------
+
+/// The lines (a VDP command long, then codes of the game's font: $FE or $FF its end, 0 a blank),
+/// the credits (0x8A4E's lea: a row byte, then codes, $FE a line's end, $FF the last's), the
+/// chairs (0x8E62: by character, Axel, Adam, Blaze, an animation set, then their places).
+const boss_lines = [_]u32{ 0x898E, 0x89A8, 0x8DE6 };
+const boss_credits = 0x8AE8;
+const boss_chairs = 0x8E62;
+const chair_names = [_][]const u8{ "axel", "adam", "blaze" };
+
+fn fontText(arena: std.mem.Allocator, rom: []const u8, at: u32, ends: []const u8) !struct { text: []const u8, next: u32 } {
+    var out: std.ArrayList(u8) = .empty;
+    var a = at;
+    while (std.mem.indexOfScalar(u8, ends, rom[a]) == null) : (a += 1) {
+        const c = rom[a];
+        if (c == 0) {
+            try out.append(arena, ' ');
+            continue;
+        }
+        const g = for (fonts.main_glyphs) |g| {
+            if (g.tile == c) break g;
+        } else return error.BadData;
+        try out.appendSlice(arena, g.text);
+    }
+    return .{ .text = out.items, .next = a };
+}
+
+fn bossEnding(arena: std.mem.Allocator, rom: []const u8) !screens.BossEnding {
+    const lines = try arena.alloc(screens.BossLine, boss_lines.len);
+    for (lines, boss_lines) |*l, at| {
+        const place = try planeCell(u16be(rom, at) & 0x3FFF | 0xC000);
+        if (place.plane != .plane_a or u16be(rom, at + 2) != 3) return error.BadData;
+        l.* = .{ .x = place.x, .y = place.y, .text = (try fontText(arena, rom, at + 4, &.{ 0xFE, 0xFF })).text };
+    }
+    if (u32be(rom, 0x8A4E) != boss_credits) return error.BadData;
+    var credits: std.ArrayList(screens.CreditLine) = .empty;
+    var a: u32 = boss_credits;
+    while (true) {
+        const row = rom[a];
+        const t = try fontText(arena, rom, a + 1, &.{ 0xFE, 0xFF });
+        try credits.append(arena, .{ .row = row, .text = t.text });
+        if (rom[t.next] == 0xFF) break;
+        a = t.next + 1;
+    }
+    const chairs = try arena.alloc(screens.Chair, chair_names.len);
+    for (chairs, chair_names, 0..) |*ch, name, k| {
+        const set = u32be(rom, boss_chairs + 4 * @as(u32, @intCast(k)));
+        const frames = try sprites.frameAddresses(arena, rom, set);
+        const Anim = struct {
+            fn of(ar: std.mem.Allocator, r: []const u8, st: u32, entry: u32, fs: []const u32, who: []const u8) ![]const screens.ChairFrame {
+                const raw = try entities.readAnimation(ar, r, st, entry);
+                const out = try ar.alloc(screens.ChairFrame, raw.frames.len);
+                for (out, raw.frames) |*o, f| {
+                    const i = std.mem.indexOfScalar(u32, fs, f.address) orelse return error.BadData;
+                    o.* = .{ .frame = try std.fmt.allocPrint(ar, "boss_ending/{s}_{d:0>2}", .{ who, i }), .ticks = raw.timing };
+                }
+                return out;
+            }
+        };
+        const steps = try arena.alloc([]const u8, 5);
+        for (steps, 0..) |*st, i| st.* = try std.fmt.allocPrint(arena, "boss_ending/{s}_step_{d}", .{ name, i + 1 });
+        ch.* = .{
+            .character = name,
+            .x = @bitCast(u16be(rom, boss_chairs + 12 + 4 * @as(u32, @intCast(k)))),
+            .y = @bitCast(u16be(rom, boss_chairs + 14 + 4 * @as(u32, @intCast(k)))),
+            .palette = paletteOf(try imm(rom, 0x8E5A, 0x323C)),
+            .sit = try Anim.of(arena, rom, set, 0, frames, name),
+            .turn = try Anim.of(arena, rom, set, 1, frames, name),
+            .colours = try std.fmt.allocPrint(arena, "boss_ending/{s}", .{name}),
+            .steps = steps,
+        };
+    }
+    const room_steps = try arena.alloc([]const u8, 5);
+    for (room_steps, 0..) |*st, i| st.* = try std.fmt.allocPrint(arena, "boss_ending/room_step_{d}", .{i + 1});
+    if (u16be(rom, 0x897A) != 0xC1FC or u16be(rom, 0x8E84) != 0x11FC) return error.BadData;
+    const level = u16be(rom, 0x897C);
+    if (level != 0x222) return error.BadData;
+    return .{
+        .provenance = "the ending in the boss's chair (0x87C6, mode $1C; its steps 0x8890, the table at 0x88A0): its lines (ROM 0x0898E, 0x089A8, 0x08DE6: a VDP command, then the game's font's codes), typed a letter at a time in a grey ramp (0x88F6, 0x8946) and erased (0x8A10); its credits (ROM 0x08AE8, rolled up plane A by 0x8A62); its chairs (ROM 0x08E62, the character's animation set and place, type 4: 0x8E2C); its colours' steps (0x8D82, the lists at 0x1F716); START (0x8DF6)",
+        .lines = lines,
+        .credits = credits.items,
+        .credit_column = 2,
+        .credit_cells = 36,
+        .chairs = chairs,
+        .room_colours = "boss_ending/room",
+        .room_steps = room_steps,
+        .credits_colours = "boss_ending/credits",
+        .letter_line = 3,
+        .letter_colour = 1,
+        .letter_levels = 7,
+        .white_colour = 1,
+        .wait = @intCast(try imm(rom, 0x89BC, 0x31FC)),
+        .turn = rom[0x8E87],
+        .step_period = @intCast(try imm(rom, 0x8D76, 0x31FC) >> 8),
+        .scroll = 0x8000,
+        .music = "bad ending music",
+        .leave = "fade out",
+    };
+}
+
 /// The screens' records of `rom`; the select's frames are named by `b`'s origins.
 pub fn extract(arena: std.mem.Allocator, rom: []const u8, b: *const Builder) !screens.Screens {
     return .{
@@ -487,6 +589,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, b: *const Builder) !sc
         .select = try select(arena, rom, b),
         .intro = try intro(arena, rom),
         .ending = try ending(arena, rom),
+        .boss_ending = try bossEnding(arena, rom),
     };
 }
 

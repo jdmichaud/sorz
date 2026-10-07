@@ -305,6 +305,17 @@ the sound content, frames by their full names. A list carries its `provenance`. 
   (a frame, a place, a speed in 1/65536 of a pixel a tick, a palette and a priority); the
   `star`'s looks (maps) and ticks; and its `numbers` (the typing's and the dissolves' periods,
   the dissolves' step and span, the fades', the clouds' turn, the car's scroll...).
+- `boss_ending`: the ending in the boss's chair: its three `lines` (each its first cell `x`,
+  `y` of plane A and its `text` in `fonts/italic`, a blank taking no time), typed a letter a
+  tick after another in palette line `letter_line`'s colour `letter_colour`, rising to
+  `letter_levels` before the letter takes the font's colours, and erased so; its `credits` (each
+  the `row`, of 16 pixels, at which the rolling plane writes it below the view, and its `text`;
+  the last's row ends them), from `credit_column`, `credit_cells` cells; its `chairs` by
+  `character` (a place, a palette, the frames and ticks it `sit`s and `turn`s, its `colours` and
+  their five `steps`); the room's colours and steps, the credits' colours; the colour made white
+  at the end (`white_colour` of line 0); the ticks of a `wait`, of the `turn`, between the
+  colours' steps (`step_period`); the credits' scroll a tick (`scroll`, in 1/65536 of a pixel);
+  its `music` and the sound as it fades out (`leave`).
 - `select`: `characters.adam`, `axel` and `blaze`, each character's poses on the character
   select, each an animation: `stand`, `idle`, `pose_a`, `pose_b`, `pose_c` and Blaze's `landing`.
   An animation is a list of steps, each a `frame`, the `ticks` it shows (1 or more), when it is

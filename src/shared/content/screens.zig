@@ -156,6 +156,45 @@ pub const EndingNumbers = struct {
     skip_within: u16,
 };
 
+/// The ending in the boss's chair (screens/boss_ending.zig), when a player kept Mr. X's offer.
+pub const BossEnding = struct {
+    provenance: []const u8 = "",
+    /// The lines typed a letter at a time (each faded in from black, in the game's font) and
+    /// erased so: the two first, then, after the credits, the last; each its first cell of
+    /// plane A and its text (a space a blank that takes no time).
+    lines: []const BossLine,
+    /// The credits rolling up plane A: each the row (16 pixels each) the plane's place comes to
+    /// as it is written below the view, and its text; written from `credit_column`, a row of
+    /// `credit_cells` cells.
+    credits: []const CreditLine,
+    credit_column: u8,
+    credit_cells: u8,
+    /// The character in the chair, by its name: its place, palette, frames sitting and turning,
+    /// colours, and its colours' steps.
+    chairs: []const Chair,
+    room_colours: []const u8,
+    room_steps: []const []const u8,
+    credits_colours: []const u8,
+    /// A letter's colour: palette `letter_line`'s colour `letter_colour`, a level a tick to
+    /// `letter_levels`; white at the end; the waits, the turn, the colours' steps' period, the
+    /// credits' speed down (in 1/65536 of a pixel a tick).
+    letter_line: u2,
+    letter_colour: u8,
+    letter_levels: u8,
+    white_colour: u8,
+    wait: u16,
+    turn: u16,
+    step_period: u8,
+    scroll: i32,
+    music: []const u8,
+    leave: []const u8,
+};
+
+pub const BossLine = struct { x: u16, y: u16, text: []const u8 };
+pub const CreditLine = struct { row: u8, text: []const u8 };
+pub const Chair = struct { character: []const u8, x: i16, y: i16, palette: u2, sit: []const ChairFrame, turn: []const ChairFrame, colours: []const u8, steps: []const []const u8 };
+pub const ChairFrame = struct { frame: []const u8, ticks: u8 };
+
 /// A cell of the fixed layer (the status bar's): its column and its row.
 pub const Cell = struct { x: u8, y: u8 };
 
@@ -437,6 +476,7 @@ pub const Screens = struct {
     intro: ?Intro = null,
     round: ?Round = null,
     ending: ?Ending = null,
+    boss_ending: ?BossEnding = null,
 
     /// The names of the records it has, in name order (the manifest's `screens`).
     pub fn names(self: *const Screens, out: *[record_names.len][]const u8) []const []const u8 {
@@ -452,7 +492,7 @@ pub const Screens = struct {
 };
 
 /// The records' names, in name order: their files are `screens/NAME.json`.
-pub const record_names = [_][]const u8{ "ending", "high_scores", "intro", "options", "round", "select" };
+pub const record_names = [_][]const u8{ "boss_ending", "ending", "high_scores", "intro", "options", "round", "select" };
 
 pub fn path(arena: std.mem.Allocator, name: []const u8) error{OutOfMemory}![]const u8 {
     return std.fmt.allocPrint(arena, "screens/{s}.json", .{name});
@@ -946,6 +986,7 @@ pub fn value(arena: std.mem.Allocator, s: *const Screens, name: []const u8) erro
         return obj(arena, &.{.{ .key = "first", .value = try listed(arena, h.provenance, "entries", .{ .array = entries }) }});
     }
     if (std.mem.eql(u8, name, "ending")) return plainValue(arena, s.ending.?);
+    if (std.mem.eql(u8, name, "boss_ending")) return plainValue(arena, s.boss_ending.?);
     if (std.mem.eql(u8, name, "intro")) {
         const it = s.intro.?;
         const profiles = try arena.alloc(json.Value, it.profiles.len);
@@ -1271,6 +1312,11 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         }
         h.first = out;
         into.high_scores = h;
+        return;
+    }
+    if (std.mem.eql(u8, name, "boss_ending")) {
+        into.boss_ending = try plainRead(BossEnding, arena, root);
+        if (into.boss_ending.?.lines.len != 3) return (try root.get("lines")).fail("not its three lines");
         return;
     }
     if (std.mem.eql(u8, name, "ending")) {

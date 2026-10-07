@@ -332,6 +332,7 @@ fn findOne(comptime F: type, c: *const Content, name: []const u8, diag: *json.Di
         *const records.Select => if (std.mem.eql(u8, name, "screens/select")) if (c.tree.screens.select) |*r| r else null else null,
         *const records.Intro => if (std.mem.eql(u8, name, "screens/intro")) if (c.tree.screens.intro) |*r| r else null else null,
         *const records.Ending => if (std.mem.eql(u8, name, "screens/ending")) if (c.tree.screens.ending) |*r| r else null else null,
+        *const records.BossEnding => if (std.mem.eql(u8, name, "screens/boss_ending")) if (c.tree.screens.boss_ending) |*r| r else null else null,
         // The art as a whole (a record naming its pictures).
         *const art.Art => if (std.mem.eql(u8, name, "art")) a else null,
         Text => if (a.font(name)) |f| if (a.sheet(f.sheet)) |s| Text{ .font = f, .sheet = s } else null else null,
