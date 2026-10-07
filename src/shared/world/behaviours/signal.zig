@@ -240,10 +240,12 @@ fn sizeUp(a: Actor) void {
     a.mind.body.timer -%= 1;
     if (a.mind.body.timer != 0) return;
     if (!distance(a, t).lessThan(n.far)) return Common.enter(a, fights);
+    // Level with its target, it slides; but not with a target nearer the street's top than the
+    // level's span (the original compares from the target's depth less the span, unsigned).
     if (a.entity.spawn.traits.slides) {
         const ty = t.position.depth.whole();
         const y = a.entity.position.depth.whole();
-        if (ty - n.slide_level < y and y <= ty + n.slide_level) return Common.enter(a, .slide);
+        if (ty >= n.slide_level and ty - n.slide_level < y and y <= ty + n.slide_level) return Common.enter(a, .slide);
     }
     Common.enter(a, .close_in);
 }
