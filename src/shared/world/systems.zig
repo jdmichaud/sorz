@@ -392,6 +392,16 @@ fn movement(t: *Tick) void {
     }
 }
 
+/// Where `e`'s move of this tick takes it, before its fall: its place and its speed (but in
+/// depth when it keeps its depth, and in height on the ground); held or still, where it is.
+pub fn movedPlace(e: *const Entity) fixed.Vec3 {
+    if (e.flags.still or e.holder != null) return e.position;
+    var p = e.position.add(e.velocity);
+    if (e.flags.keeps_depth) p.depth = e.position.depth;
+    if (!e.flags.airborne) p.height = e.position.height;
+    return p;
+}
+
 /// An entity moves by its speed (but in depth when it `keeps_depth`, and in height on the
 /// ground), unless it is held (its holder places it, or it follows its holder: `Tick.follow`) or
 /// still; its behaviour's `walls` may undo it (`Tick.walls`). In the air, its behaviour's `fall`
@@ -636,7 +646,11 @@ fn missileOn(t: *Tick, ah: Handle, th: Handle) bool {
         .neutral => by_team == .player,
     };
     if (!lands) return false;
-    if (!meet(a, &t.kindOf(a).definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return false;
+    // A missile whose turn came before the target's meets it where its move of this tick takes it
+    // (the original's things move in their own turns; the world moves them after all of them).
+    var moved = a.*;
+    if (ah.index < th.index) moved.position = movedPlace(a);
+    if (!meet(&moved, &t.kindOf(a).definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return false;
     const damage = if (target.team == .player) m.player_damage orelse m.damage else m.damage;
     const b: tick_mod.Blow = .{ .attacker = ah, .damage = damage, .reaction = m.reaction, .push = .zero, .missile = true };
     if (!t.struck(th, b)) return false;

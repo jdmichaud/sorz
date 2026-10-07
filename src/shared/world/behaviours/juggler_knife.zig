@@ -17,6 +17,7 @@ const fixed = @import("../fixed.zig");
 const entity = @import("../entity.zig");
 const world_mod = @import("../world.zig");
 const juggler = @import("juggler.zig");
+const systems = @import("../systems.zig");
 
 const Fixed = fixed.Fixed;
 const Handle = entity.Handle;
@@ -188,12 +189,8 @@ fn holder(a: Actor) ?*Entity {
 /// knife's (the original's things move in their own turns; the world moves them after all of
 /// them), else where it is.
 fn movedPlace(a: Actor, h: *const Entity) fixed.Vec3 {
-    const index = a.mind.holder.?.index;
-    if (index > a.handle.index or h.flags.still or h.holder != null) return h.position;
-    var p = h.position.add(h.velocity);
-    if (h.flags.keeps_depth) p.depth = h.position.depth;
-    if (!h.flags.airborne) p.height = h.position.height;
-    return p;
+    if (a.mind.holder.?.index > a.handle.index) return h.position;
+    return systems.movedPlace(h);
 }
 
 fn juggling(e: *Entity) *juggler.Memory {
