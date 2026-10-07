@@ -63,11 +63,15 @@ pub fn lifeOver(t: *Tick, h: Handle) void {
         enters = last.beatenBy(t.world.players[k].score);
         t.out.rankings.append(.{ .player = k });
     };
+    const health = t.world.get(h).?.health;
     t.world.morph(t.kinds, h, kind);
     switch (t.world.get(h).?.mind) {
         .player_waiting => |*m| m.entering = enters,
         else => {},
     }
+    // The health it had left (fallen out of a hole) goes with its record: noted for the traces.
+    const now = t.world.get(h).?.health;
+    if (health > now) t.out.hits.append(.{ .attacker = null, .target = h, .damage = health - now });
     // The original clears its record: at the level's corner, which the camera's keeping the
     // players in view then moves (it stays hidden there), its mark of a shadow gone (it takes a
     // shadow again, drawn at its first tick: world/shadows.zig, draw_list.zig).
