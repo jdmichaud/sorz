@@ -229,7 +229,9 @@ pub fn Punk(comptime M: type) type {
             if (b.timer == 0) return C.enter(a, M.fights);
             C.pointBeside(a, n.close_in_beside);
             if (C.headForPoint(a)) return C.enter(a, .walk_off);
-            if (!C.walk(a)) return;
+            // In reach it punches, though its walk just turned it away (a solid thing in its
+            // way): the original looks at its reach whatever its walk's answer.
+            _ = C.walk(a);
             _ = inReach(a);
         }
 
