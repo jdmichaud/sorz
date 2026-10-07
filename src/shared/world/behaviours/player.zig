@@ -891,9 +891,14 @@ fn act(a: Actor, c: Command) void {
         .thrown => thrown(a),
         .tossed => tossed(a),
         .shaken => shaken(a),
+        // Its holder gone (it died meanwhile, which let go), it falls from the knee's height.
         .slam_pause => {
             a.mind.timer -%= 1;
-            if (a.mind.timer == 0) change(a, .held);
+            if (a.mind.timer != 0) return;
+            if (a.entity.holder != null) return change(a, .held);
+            change(a, .fall);
+            a.entity.velocity.height = a.numbers().drop;
+            a.entity.flags.airborne = true;
         },
         .lift => lift(a),
         .air_slam => airSlam(a),
