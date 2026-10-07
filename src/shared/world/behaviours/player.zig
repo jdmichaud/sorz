@@ -1403,9 +1403,10 @@ pub fn landed(a: Actor) void {
             change(a, .lying_dead);
             a.mind.timer = n.dead;
         },
+        // A weapon held through a hold's last knee is still held at its landing.
         .fall, .jump, .jump_kick, .back_attack_air, .attack4, .knee_last => {
             a.sound(.land);
-            change(a, .land);
+            change(a, if (a.mind.weapon != null) .armed_land else .land);
         },
         .air_fall => {
             a.entity.position.x = a.entity.position.x.add(Fixed.pixels(n.air_fall_ahead).times(a.entity.facing.sign()));
