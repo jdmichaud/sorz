@@ -44,9 +44,9 @@ pub const State = enum {
 /// The traces' names of his states that are not theirs.
 pub const trace_states = [_]struct { name: []const u8, state: State }{
     .{ .name = "slash", .state = .swing },
-    .{ .name = "thrown6", .state = .tossed },
-    .{ .name = "thrown7", .state = .vaulted },
-    .{ .name = "thrown8", .state = .flung },
+    .{ .name = "thrown", .state = .tossed },
+    .{ .name = "thrown", .state = .vaulted },
+    .{ .name = "thrown", .state = .flung },
     .{ .name = "struck_by_bottle", .state = .peppered },
 };
 
