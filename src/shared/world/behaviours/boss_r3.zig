@@ -591,8 +591,9 @@ fn hitCheck(a: Actor) bool {
 }
 
 /// His frame's blow meets a player's body (player 1's first; not one struck at this tick): in
-/// his charge it knocks the player down; backing off, nothing; held, nothing more; else he
-/// catches the player in a hug.
+/// his charge it knocks the player down, and one the player holds, its turn still to come, reads
+/// a plain hold in front (the original's boss writes that request as it knocks down); backing
+/// off, nothing; held, nothing more; else he catches the player in a hug.
 fn blowOnPlayers(a: Actor) bool {
     const m = a.mind;
     const e = a.entity;
@@ -608,7 +609,9 @@ fn blowOnPlayers(a: Actor) bool {
         switch (m.state) {
             .back_off => return false,
             .held => return true,
-            .charge => _ = a.tick.struck(ph, .{ .attacker = a.handle, .damage = m.power, .reaction = .knock_down, .push = .zero }),
+            .charge => if (a.tick.struck(ph, .{ .attacker = a.handle, .damage = m.power, .reaction = .knock_down, .push = .zero })) {
+                systems.heldInFront(a.tick, a.handle, ph);
+            },
             else => {
                 m.let_go = false;
                 setState(a, .hug);

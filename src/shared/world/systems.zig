@@ -536,7 +536,7 @@ fn freedByBlow(t: *Tick, xh: Handle, th: Handle) void {
 /// (the original's striker writes it after the hit test cleared the request): the one held, its
 /// turn still to come, reads a plain hold, not the knee its holder started at this tick (the
 /// holder's move ends here; it feels the blow at its next tick).
-fn heldInFront(t: *Tick, xh: Handle, th: Handle) void {
+pub fn heldInFront(t: *Tick, xh: Handle, th: Handle) void {
     const p = t.world.get(th) orelse return;
     const held = p.holding orelse return;
     if (t.isPlayer(held) or held.index < xh.index) return;
