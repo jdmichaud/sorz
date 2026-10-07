@@ -357,6 +357,8 @@ pub fn shot(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
     try d.number("up", u16be(rom, 0x14170), "ROM 0x1416E: subi.w #N,(24,a0) (his gun's height)");
     try d.number("depth_most", try comparedLong(rom, 0x14184, 20), "ROM 0x14184: cmpi.l #N,(20,a0) (deeper, it goes)");
     try d.number("power", try moveByte(rom, 0x141A8, 52), "ROM 0x141A8: move.b #N,(52,a0) (its blow on a player)");
+    if (u16be(rom, 0xA9F2) & 0xF1FF != 0x5168) return error.BadData;
+    try d.number("enemy_damage", (u16be(rom, 0xA9F2) >> 9) & 7, "ROM 0x0A9F2: subq.w #N,($32,a0) (on an enemy, from a thing below the weapons' places)");
     if (u16be(rom, 0x141C2) != 0xE680 or u16be(rom, 0x141CC) != 0xE680) return error.BadData;
     try d.number("knocked_shift", 3, "ROM 0x141C2: asr.l #3,d0 (struck: its speeds an eighth, back across; 0x141CC)");
     try d.number("knocked_up", try movedLong(rom, 0x141D2, 36), "ROM 0x141D2: move.l #N,(36,a0)");

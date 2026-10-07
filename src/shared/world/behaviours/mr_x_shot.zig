@@ -3,7 +3,8 @@
 //! - `s0`: its first tick: the gun's sound, its speeds, frame and offsets by its index in the
 //!   burst's table (fired to the left: the other way across), at his gun's height;
 //! - `s1`: it flies; out of the screen's middle (where it was drawn at the last tick) or deeper
-//!   than his depths it goes. It knocks down a player it meets (its power the damage); a player's
+//!   than his depths it goes. It knocks down a player it meets (its power the damage) and an enemy
+//!   (`enemy_damage`); a player's
 //!   blow knocks it out of the air;
 //! - `s2`: knocked out of the air, it falls and bounces on the floor (`bounce`, which a cartridge
 //!   shares), and goes.
@@ -42,7 +43,9 @@ pub const Numbers = struct {
     speed_shift: u5,
     up: i16,
     depth_most: Fixed,
+    /// Its blow on a player; on an enemy (as a thing below the weapons' places).
     power: u8,
+    enemy_damage: u8,
     /// Knocked out of the air: its speeds an eighth (across turned back), up, its fall, its
     /// frame.
     knocked_shift: u5,
@@ -117,7 +120,7 @@ fn fired(a: Actor) void {
     const m = a.mind;
     const e = a.entity;
     a.sound(.fire);
-    if (m.by) |by| e.missile = .{ .by = by, .damage = n.power, .on_enemies = true };
+    if (m.by) |by| e.missile = .{ .by = by, .damage = n.enemy_damage, .player_damage = n.power, .on_enemies = true };
     e.facing = if (m.left) .left else .right;
     a.animate(.fly);
     a.pause(true);
