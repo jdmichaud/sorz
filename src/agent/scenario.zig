@@ -382,6 +382,9 @@ pub const Situation = struct {
     reseeded: bool = false,
     last_values: []const u16 = &.{},
     last_count: u32 = 0,
+    /// After a seed set otherwise with no draws before the situation: the first draws after it,
+    /// which tell the state it holds until then.
+    next_values: []const u16 = &.{},
     special: bool = false,
     /// Round 8's room's script runs (the phase `script`): taken up in its fight.
     script: bool = false,
@@ -420,6 +423,10 @@ pub const Situation = struct {
             appear: u32,
             /// It went, knocked out or not.
             remove: struct { id: u32, knocked_out: bool },
+            /// Mr. X seated ended a laugh (round 8's room: his laughs bring its fight's waves).
+            laughed,
+            /// Round 8's room began (Mr. X seated came): the corridor's last section cleared.
+            room_begun,
         },
     };
     pub const Other = struct { t: u64, id: u32, kind: []const u8 };
@@ -516,7 +523,14 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
         if (v != .object) return error.BadTrace;
         const o = v.object;
         const ev = str(o, "ev") orelse return error.BadTrace;
-        if (std.mem.eql(u8, ev, "begin")) continue;
+        if (std.mem.eql(u8, ev, "begin")) {
+            // A trace begun from a reference, not from power-on: its draws do not count from
+            // the generator's first state, which its last draws tell instead.
+            if (str(o, "start")) |st| if (std.mem.eql(u8, st, "reference")) {
+                s.reseeded = true;
+            };
+            continue;
+        }
         if (std.mem.eql(u8, ev, "end")) break;
         if (at) |limit| {
             const ev_v: u64 = @intCast(int(o, "v") orelse 0);
@@ -577,6 +591,7 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             s.next_id = @max(s.next_id, e + 1);
             const own = scripted(seen.get(e).?.kind) and !(std.mem.eql(u8, seen.get(e).?.kind, "breakable") and !std.mem.eql(u8, state orelse "", "s0"));
             if ((in_round or intro) and own) try history.append(arena, .{ .t = if (intro) 0 else ev_t, .what = .{ .spawn = .{ .id = e, .kind = seen.get(e).?.kind, .x = x >> 16, .depth = d >> 16 } } });
+            if (in_round and std.mem.eql(u8, seen.get(e).?.kind, room_begins)) try history.append(arena, .{ .t = ev_t, .what = .room_begun });
         } else if (std.mem.eql(u8, ev, "remove")) {
             const e: u32 = @intCast(int(o, "e") orelse return error.BadTrace);
             const knocked_out = if (seen.get(e)) |x| std.mem.eql(u8, x.state orelse "", "knocked_out") else false;
@@ -591,6 +606,9 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
             const state = str(o, "state") orelse return error.BadTrace;
             if (in_round and x.player == null and std.mem.eql(u8, x.state orelse "", "appear") and !std.mem.eql(u8, state, "appear")) {
                 try history.append(arena, .{ .t = @intCast(int(o, "t") orelse 0), .what = .{ .appear = @intCast(int(o, "e") orelse 0) } });
+            }
+            if (in_round and std.mem.eql(u8, x.kind, "mr_x_seated") and std.mem.eql(u8, x.state orelse "", laughed_state) and !std.mem.eql(u8, state, laughed_state)) {
+                try history.append(arena, .{ .t = @intCast(int(o, "t") orelse 0), .what = .laughed });
             }
             if (x.state == null or !std.mem.eql(u8, x.state.?, state)) {
                 x.came_from = x.state;
@@ -709,6 +727,16 @@ pub fn situationOf(arena: std.mem.Allocator, trace_text: []const u8, at: ?u64) !
         const o = v.object;
         const ev = str(o, "ev") orelse return error.BadTrace;
         if (std.mem.eql(u8, ev, "end") or std.mem.eql(u8, ev, "scene")) break;
+        if (std.mem.eql(u8, ev, "rng")) {
+            if (!s.reseeded or s.last_values.len >= 2 or s.next_values.len >= 2) continue;
+            const vals = o.get("values") orelse continue;
+            if (vals != .array) continue;
+            const out = try arena.alloc(u16, s.next_values.len + vals.array.items.len);
+            @memcpy(out[0..s.next_values.len], s.next_values);
+            for (out[s.next_values.len..], vals.array.items) |*x, y| x.* = @intCast(y.integer);
+            s.next_values = out;
+            continue;
+        }
         if (std.mem.eql(u8, ev, "hit")) {
             // A blow struck at the situation's tick costs its health at the next, where the
             // trace names the striker: who struck the one that entered its state then.
@@ -827,7 +855,10 @@ fn padOf(letters: []const u8) sorz.input.Pad {
 /// place; the trace's removals followed), its camera where the trace has it, and play's phase
 /// the trace's. Null when the script's spawns or sections part from the trace's (the stand-in
 /// then brings what the trace brought).
-fn replayScript(gpa: std.mem.Allocator, kinds: *const world.Kinds, plan: *const world.script.Plan, situation: *const Situation, two: bool) !?world.script.State {
+/// The round's script, and round 8's room's, as a replay leaves them.
+const Replayed = struct { script: world.script.State, room: world.room.State };
+
+fn replayScript(gpa: std.mem.Allocator, kinds: *const world.Kinds, plan: *const world.script.Plan, situation: *const Situation, two: bool) !?Replayed {
     const Replay = struct {
         w: *world.World,
         kinds: *const world.Kinds,
@@ -881,13 +912,36 @@ fn replayScript(gpa: std.mem.Allocator, kinds: *const world.Kinds, plan: *const 
     w.script.two_players = two;
     var r: Replay = .{ .w = w, .kinds = kinds, .steps = situation.history };
     defer r.ids.deinit(gpa);
-    // The round's start: the first section's placed, the trace's at its first ticks.
-    world.script.placeFirst(&t, plan);
-    if (!try r.match(gpa, 0, 1)) return null;
     const steps = situation.history;
     var k: usize = 0;
     var camera: i32 = w.camera.x.raw;
+    var laughs: u3 = 0;
     var tick: u64 = 1;
+    // Round 8's room begun before the situation: the script from the room's beginning (the
+    // corridor's sections behind it), else from the round's start.
+    const room_at: ?u64 = room: {
+        var at: ?u64 = null;
+        for (steps) |st| {
+            if (st.t > situation.t) break;
+            if (st.what == .room_begun) at = st.t;
+        }
+        break :room at;
+    };
+    if (room_at) |at| {
+        while (k < steps.len and steps[k].t <= at) : (k += 1) switch (steps[k].what) {
+            .camera => |x| camera = x,
+            .special => |on| w.special = on,
+            else => {},
+        };
+        w.camera.x = .{ .raw = camera };
+        world.script.takeUpRoom(&t, plan);
+        if (!try r.match(gpa, at, at)) return null;
+        tick = at + 1;
+    } else {
+        // The round's start: the first section's placed, the trace's at its first ticks.
+        world.script.placeFirst(&t, plan);
+        if (!try r.match(gpa, 0, 1)) return null;
+    }
     while (tick <= situation.t) : (tick += 1) {
         var to = k;
         while (to < steps.len and steps[to].t <= tick) to += 1;
@@ -904,6 +958,17 @@ fn replayScript(gpa: std.mem.Allocator, kinds: *const world.Kinds, plan: *const 
                 w.remove(kv.value);
             },
             .special => |on| w.special = on,
+            // Mr. X's laughs mark the room's fight's progress (his first, then his second).
+            .laughed => {
+                w.room.progress |= @as(u8, 1) << laughs;
+                laughs +%= 2;
+            },
+            // Round 8's room opens as its door breaks: where the trace opens it.
+            .section => |sec| if (sec == plan.round.sections.len and plan.round.room != null and w.script.part == sec) {
+                w.room.opening = true;
+                w.room.door_made = true;
+                w.room.door_broken = true;
+            },
             else => {},
         };
         w.camera.x = .{ .raw = camera };
@@ -930,8 +995,15 @@ fn replayScript(gpa: std.mem.Allocator, kinds: *const world.Kinds, plan: *const 
         };
         k = to;
     }
-    return w.script;
+    return .{ .script = w.script, .room = w.room };
 }
+
+/// The kind whose coming begins round 8's room.
+const room_begins = "mr_x_seated";
+
+/// Mr. X seated's state at the end of a laugh (behaviours/mr_x_seated.zig's `laughed`, as the
+/// other program numbers it).
+const laughed_state = "s20";
 
 /// The kinds the round's script places: its enemies, its bosses, its breakables (rounds 1 and 2).
 fn scripted(kind: []const u8) bool {
@@ -951,6 +1023,7 @@ pub fn generatorOf(s: *const Situation) ?world.Random {
         while (k < s.draws) : (k += 1) _ = r.next();
         return r;
     }
+    if (s.last_values.len < 2 and s.next_values.len >= 2) return before(s.next_values);
     const vals = s.last_values;
     if (vals.len < 2) return null;
     var low: u32 = 0;
@@ -966,6 +1039,25 @@ pub fn generatorOf(s: *const Situation) ?world.Random {
     }
     return null;
 }
+
+/// The state whose next draws are `vals`: the state after the first (its draw the high half,
+/// the low half found by the others), a step back (the product's halves, over the multiplier).
+fn before(vals: []const u16) ?world.Random {
+    var low: u32 = 0;
+    while (low <= 0xFFFF) : (low += 1) {
+        var r: world.Random = .{ .state = @as(u32, vals[0]) << 16 | low };
+        for (vals[1..]) |want| {
+            if (r.next() != want) break;
+        } else {
+            const high: u32 = vals[0] -% @as(u16, @intCast(low));
+            return .{ .state = (high << 16 | low) *% multiplier_inverse };
+        }
+    }
+    return null;
+}
+
+/// The inverse of the generator's multiplier, 41, modulo 2^32.
+const multiplier_inverse: u32 = 3247414297;
 
 fn str(o: std.json.ObjectMap, name: []const u8) ?[]const u8 {
     const v = o.get(name) orelse return null;
@@ -1045,6 +1137,8 @@ pub const Run = struct {
         /// The lines of the enemies' colours, and which are a kind's own (the round's plan's).
         colour_lines: [3]u2 = .{ 1, 2, 1 },
         own_colours: u16 = 0,
+        /// The options' LEVEL of the game (the round's plan's).
+        level: u2 = 1,
     };
 
     pub fn init(gpa: std.mem.Allocator, kinds: *const world.Kinds, script: *const Script, situation: *const Situation, extras: Extras, trace: ?*world.trace.Writer, probe: ?*Probe) !Run {
@@ -1228,6 +1322,27 @@ pub const Run = struct {
             t.grabbed(hh, m.h);
             t.takeUpHeld(m.h, @intCast(situation.t -| m.e.since));
         }
+        // Mr. X seated holds the lower part and the pipe he made beside him, and counts the laughs
+        // the room's progress has.
+        for (made) |m_| {
+            const m = m_ orelse continue;
+            const x = w.get(m.h) orelse continue;
+            if (x.mind != .mr_x_seated) continue;
+            const seated = &x.mind.mr_x_seated;
+            for (made) |o_| {
+                const o = o_ orelse continue;
+                switch (w.get(o.h).?.mind) {
+                    .mr_x_seated_lower => seated.lower = o.h,
+                    .mr_x_pipe => seated.pipe = o.h,
+                    else => {},
+                }
+            }
+            seated.laughs = if (w.room.has(.second_laugh)) 4 else if (w.room.has(.first_laugh)) 2 else 0;
+            // Past his first tick he sits higher than the trace's place, which is his first.
+            if (seated.state != .start) if (kinds.get(x.kind.?).definition.number("raised")) |up| {
+                x.position.height = x.position.height.sub(.pixels(@intCast(up)));
+            };
+        }
         // A shutter waiting opened when its player first came near it since it was put up.
         if (kinds.find(world.tick.Tick.shutter_kind)) |sk| {
             const near = kinds.get(sk).definition.number("near") orelse 0;
@@ -1309,13 +1424,21 @@ pub const Run = struct {
     /// the wall of, and the timer as it last counted (the ticks of its second since).
     fn takeUpScript(r: *Run, round: *const sorz.content.round.Round, situation: *const Situation, extras: Extras) !void {
         const w = &r.play.world;
-        r.plan = .{ .round = round, .last_score = extras.last_score, .colour_lines = extras.colour_lines, .own_colours = extras.own_colours };
+        r.plan = .{ .round = round, .level = extras.level, .last_score = extras.last_score, .colour_lines = extras.colour_lines, .own_colours = extras.own_colours };
         w.script.stage = .stand_in;
         const two = for (situation.entities) |*e| {
             if (e.player == 2) break true;
         } else false;
         if (try replayScript(r.gpa, r.kinds, &r.plan.?, situation, two)) |state| {
-            w.script = state;
+            w.script = state.script;
+            // Round 8's room's fight as far as the script knows it: Mr. X's laughs, the waves,
+            // the walk in begun, the door broken (the offer's step is the phase's).
+            const room = &w.room;
+            room.progress = state.room.progress;
+            room.wave = state.room.wave;
+            room.door_made = state.room.door_made;
+            room.door_broken = state.room.door_broken;
+            if (!situation.script) room.walking = state.room.walking;
             r.scripted = true;
         }
         for (round.sections, 0..) |sec, k| if (sec.wall == situation.camera_stop[0] >> 16) {
@@ -1663,6 +1786,10 @@ test "a start from a recorded play, and the random generator its draws left" {
     const values = [_]u16{ first, second };
     const found = generatorOf(&.{ .v = 0, .t = 0, .entities = &.{}, .reseeded = true, .last_values = &values, .last_count = 3 }).?;
     try std.testing.expectEqual(r.state, found.state);
+    // No draws before the situation: found from the first draws after it.
+    const held = r.state;
+    const next = [_]u16{ r.next(), r.next(), r.next() };
+    try std.testing.expectEqual(held, generatorOf(&.{ .v = 0, .t = 0, .entities = &.{}, .reseeded = true, .next_values = &next }).?.state);
 }
 
 test "the body: a press holds a tick and releases one; a hold lasts until released" {

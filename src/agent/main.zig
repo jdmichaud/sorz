@@ -22,7 +22,8 @@ const usage =
     \\                  [--frames N] [--until-session N] [--key FRAME:NAME[:HOLD]]...
     \\       sorz-agent DIR|ROM --server [ADDRESS:]PORT
     \\       sorz-agent DIR|ROM --scenario FILE [--situation TRACE [--situation-probe PROBE]
-    \\                  [--game-tick N | --take-up]] [--trace-events OUT] [--probe OUT] [--reload]
+    \\                  [--game-tick N | --take-up] [--level N]] [--trace-events OUT] [--probe OUT]
+    \\                  [--reload]
     \\                  [--form-sizes OUT] [--wav PATH] [--shot FRAME:PATH]...
     \\       sorz-agent trace-compare FIRST SECOND [--ticks M] [--pos PIXELS] [--tol FIELD=N]...
     \\                  [--ignore EV[,EV...]] [--scene NAME] [--after TICK] [--ignore-kind K[,K...]]
@@ -56,7 +57,8 @@ const usage =
     \\                   its script of pad events to its end; --situation-probe gives the other
     \\                   program's probe of the same run (the frames its entities show);
     \\                   --game-tick gives the round's clock (the other program's tick counter at
-    \\                   the script's start, its `script_game_tick`); --take-up runs the whole
+    \\                   the script's start, its `script_game_tick`); --level gives the options'
+    \\                   LEVEL of the game taken up (0, the easiest, to 3; 1 by default); --take-up runs the whole
     \\                   game from power-on with the recorded play's pads, the round's world
     \\                   taken up from TRACE's at the script's start (from there, the other
     \\                   program's world goes on in sorz's game); --trace-events writes its
@@ -111,6 +113,7 @@ pub fn main(init: std.process.Init) !void {
     var situation_probe: ?[]const u8 = null;
     var game_tick: ?u32 = null;
     var take_up = false;
+    var level: ?u2 = null;
     var trace_events: ?[]const u8 = null;
     var probe: ?[]const u8 = null;
     var reload = false;
@@ -154,6 +157,8 @@ pub fn main(init: std.process.Init) !void {
             game_tick = std.fmt.parseInt(u32, args.next() orelse return fail(io), 10) catch return fail(io);
         } else if (std.mem.eql(u8, arg, "--take-up")) {
             take_up = true;
+        } else if (std.mem.eql(u8, arg, "--level")) {
+            level = std.fmt.parseInt(u2, args.next() orelse return fail(io), 10) catch return fail(io);
         } else if (std.mem.eql(u8, arg, "--trace-events")) {
             trace_events = args.next() orelse return fail(io);
         } else if (std.mem.eql(u8, arg, "--probe")) {
@@ -208,11 +213,14 @@ pub fn main(init: std.process.Init) !void {
         // A situation's world alone has no sound and no pictures; one taken up in the whole
         // game has, and no clock of its own.
         if (take_up and (situation == null or game_tick != null)) return fail(io);
+        // The level of a game taken up: a world taken up alone (the whole game's options give it).
+        if (level != null and (situation == null or take_up)) return fail(io);
         if (situation != null and !take_up and (wav_path != null or shots.items.len != 0)) return fail(io);
         sc.situation = situation;
         sc.situation_probe = situation_probe;
         sc.game_tick = game_tick;
         sc.take_up = take_up;
+        if (level) |l| sc.level = l;
         sc.trace = trace_events;
         sc.probe = probe;
         sc.wav = wav_path;

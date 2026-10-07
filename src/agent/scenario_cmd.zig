@@ -82,6 +82,8 @@ pub const Options = struct {
     take_up: bool = false,
     /// The other program's tick counter at the script's start (its `script_game_tick`).
     game_tick: ?u32 = null,
+    /// The options' LEVEL of the game a world taken up alone is of.
+    level: u2 = 1,
     trace: ?[]const u8 = null,
     probe: ?[]const u8 = null,
     /// Where a run from power-on writes its sound (a WAV file).
@@ -183,7 +185,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
         if (x.number == situation.round) break x;
     } else if (c.rounds.len != 0) &c.rounds[0] else null;
     // The enemies' colours' lines, and which are a kind's own (play's record), as the round's.
-    var extras: scenario.Run.Extras = .{ .game_tick = options.game_tick, .round = round, .last_score = last_score };
+    var extras: scenario.Run.Extras = .{ .game_tick = options.game_tick, .round = round, .last_score = last_score, .level = options.level };
     if (c.screens.round) |*play| {
         const ec = &play.enemy_colours;
         extras.colour_lines = ec.lines;
