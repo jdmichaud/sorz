@@ -386,9 +386,12 @@ pub const Camera = struct {
     /// the camera's left edge (those at or behind it come), and the depth.
     left_behind: [2]i32 = .{ -32, 96 },
     /// A player drawn left of `follow[0]` or from `follow[1]` on, across the screen, moves the
-    /// camera by as much, at most `follow_most` pixels a tick.
+    /// camera by as much, at most `follow_most` pixels a tick. A player whose life ended at this
+    /// tick is read `follow_cleared` across the screen (the original clears its record, its place
+    /// on the screen with it, before the camera's turn).
     follow: [2]i16,
     follow_most: i16,
+    follow_cleared: i16,
     /// The players are kept within `kept_x` across from the camera's left edge (but in a hold),
     /// and within the depths `kept_depth`.
     kept_x: [2]i16,
@@ -711,6 +714,7 @@ fn cameraValue(arena: std.mem.Allocator, c: *const Camera) !json.Value {
         .{ .key = "left_behind", .value = try pair(arena, c.left_behind[0], c.left_behind[1]) },
         .{ .key = "follow", .value = try pair(arena, c.follow[0], c.follow[1]) },
         .{ .key = "follow_most", .value = json.Value.num(c.follow_most) },
+        .{ .key = "follow_cleared", .value = json.Value.num(c.follow_cleared) },
         .{ .key = "kept_x", .value = try pair(arena, c.kept_x[0], c.kept_x[1]) },
         .{ .key = "kept_depth", .value = try pair(arena, c.kept_depth[0], c.kept_depth[1]) },
         .{ .key = "shake", .value = try pair(arena, c.shake[0], c.shake[1]) },
@@ -1262,7 +1266,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     } else return (try root.get("art")).fail("no art set of this name");
 
     const c = try root.get("camera");
-    try c.only(&.{ "provenance", "at", "x_min", "x_max", "leftward", "behind_right", "left_behind_right", "y", "plane_b", "plane_b_down", "scroll", "wall_within", "edges", "left_behind", "follow", "follow_most", "kept_x", "kept_depth", "shake", "wobble", "bands", "water" });
+    try c.only(&.{ "provenance", "at", "x_min", "x_max", "leftward", "behind_right", "left_behind_right", "y", "plane_b", "plane_b_down", "scroll", "wall_within", "edges", "left_behind", "follow", "follow_most", "follow_cleared", "kept_x", "kept_depth", "shake", "wobble", "bands", "water" });
     const at = try readPair(try c.get("at"), i32);
     const y = try readPair(try c.get("y"), i32);
     r.camera = .{
@@ -1284,6 +1288,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         .left_behind = try readPair(try c.get("left_behind"), i32),
         .follow = try readPair(try c.get("follow"), i16),
         .follow_most = try (try c.get("follow_most")).int(i16),
+        .follow_cleared = try (try c.get("follow_cleared")).int(i16),
         .kept_x = try readPair(try c.get("kept_x"), i16),
         .kept_depth = try readPair(try c.get("kept_depth"), i16),
         .shake = try readPair(try c.get("shake"), i16),
@@ -1561,7 +1566,7 @@ pub const example: Round = .{
     .art = "round1",
     .music = "round 1 music",
     .ground = 160,
-    .camera = .{ .x = 768, .y = 0, .x_min = 768, .y_min = 0, .y_max = 0, .follow = .{ 144, 176 }, .follow_most = 3, .kept_x = .{ 32, 288 }, .kept_depth = .{ 2, 112 }, .shake = .{ 8, 3 }, .bands = .{ &.{.{ .rows = 15, .times = 1, .per = 1 }}, &.{.{ .rows = 15, .times = 1, .per = 1 }} } },
+    .camera = .{ .x = 768, .y = 0, .x_min = 768, .y_min = 0, .y_max = 0, .follow = .{ 144, 176 }, .follow_most = 3, .follow_cleared = -128, .kept_x = .{ 32, 288 }, .kept_depth = .{ 2, 112 }, .shake = .{ 8, 3 }, .bands = .{ &.{.{ .rows = 15, .times = 1, .per = 1 }}, &.{.{ .rows = 15, .times = 1, .per = 1 }} } },
     .players = .{ .x = 0, .depth = .{ 64, 32 }, .height = 0 },
     .timer = .{ .pace = 90 },
     .sections = &.{

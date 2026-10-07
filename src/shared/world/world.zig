@@ -160,12 +160,14 @@ pub const Camera = struct {
 
     /// How it follows the players (the round's camera's, script.zig `cameraRules`): a player
     /// drawn left of `band[0]` or from `band[1]` on, across the screen, moves it by as much, at
-    /// most `most` pixels a tick; the players are kept within `kept_x` across from its left edge
+    /// most `most` pixels a tick (one whose life ended at this tick read at `cleared`); the
+    /// players are kept within `kept_x` across from its left edge
     /// (but in a hold) and on the depths `kept_depth`; a heavy fall shakes it `shake_ticks`
     /// ticks, `shake_by` pixels down and up in turn.
     pub const Rules = struct {
         band: [2]i16,
         most: i16,
+        cleared: i16,
         kept_x: [2]i16,
         kept_depth: [2]i16,
         shake_ticks: u8,

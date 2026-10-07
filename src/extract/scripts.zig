@@ -959,6 +959,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .left_behind = .{ -@as(i32, @intCast(behind_x)), @intCast(behind_depth) },
         .follow = .{ @intCast(@as(i32, @intCast(band_from)) - origin), @intCast(@as(i32, @intCast(band_to)) - origin) },
         .follow_most = @intCast(follow_most),
+        .follow_cleared = -origin,
         .kept_x = .{ @intCast(kept_left), @intCast(kept_left + kept_width) },
         .kept_depth = .{ @intCast(depth_from), @intCast(if (r == own_round) depth_to_own else depth_to_common) },
         .shake = .{ @intCast(shake_ticks), @intCast(shake_by) },

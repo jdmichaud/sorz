@@ -44,6 +44,10 @@ pub fn lose(t: *Tick, h: Handle) void {
 /// continue. `h`'s behaviour changes: its hook returns at once.
 pub fn lifeOver(t: *Tick, h: Handle) void {
     const k = t.world.playerOf(h) orelse return;
+    // Its record is cleared before the camera's turn: the camera reads it where a cleared one
+    // is drawn, not where it was.
+    const c = &t.world.camera;
+    if (c.follows) |rules| c.drawn[k] = c.x.add(.pixels(rules.cleared));
     if (t.world.players[k].lives != 0) return newLife(t, k);
     const kind = t.kinds.find(waiting_kind) orelse {
         std.log.warn("the content defines no {s}: player {d} is out of the game", .{ waiting_kind, @as(u8, k) + 1 });

@@ -281,6 +281,7 @@ pub fn cameraRules(r: *const Round) world_mod.Camera.Rules {
     return .{
         .band = .{ @intCast(c.follow[0]), @intCast(c.follow[1]) },
         .most = @intCast(c.follow_most),
+        .cleared = c.follow_cleared,
         .kept_x = .{ @intCast(c.kept_x[0]), @intCast(c.kept_x[1]) },
         .kept_depth = .{ @intCast(c.kept_depth[0]), @intCast(c.kept_depth[1]) },
         .shake_ticks = @intCast(c.shake[0]),
