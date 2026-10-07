@@ -1403,6 +1403,9 @@ fn roomOf(arena: std.mem.Allocator, rom: []const u8, at: u32, l: *Lists, page: *
         .colours = try sectionColours(rom, at),
         // Mr. X's colours, loaded as the fight's step begins (0x4CA: the round's boss's list).
         .boss_colours = try palettes.bossColoursName(arena, rom, u32be(rom, round_bosses + 6 * @as(u32, r))) orelse return error.BadData,
+        // Play left with the offer accepted ($FFFF34): round 6's load (0x10912: move.w
+        // #N,($FF02).w, the round from 0).
+        .back_round = if (u16be(rom, 0x10912) == 0x31FC and u16be(rom, 0x10916) == 0xFF02) @intCast(u16be(rom, 0x10914) + 1) else return error.BadData,
         .art = kinds,
         .placed = placed.items,
         .waves = waves.items,

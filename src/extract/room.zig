@@ -112,7 +112,28 @@ pub fn splinter(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definiti
     };
 }
 
+/// The trapdoors (type $1A, 0x77B6; the offer puts them in the effects' places, 0x11E50): at
+/// their first tick (0x77EC) their sound, then (0x77FC) the floor's cells cleared, the open
+/// trapdoors' cells in the round's plane, and they go (behaviours/trapdoor.zig). Their sprite
+/// (the door's set) never shows: they go at the tick they come.
+pub fn trapdoor(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
+    if (u16be(rom, 0x77B6) != 0x43FA or 0x77B8 + @as(i32, s16be(rom, 0x77B8)) != 0x77BE or u16be(rom, 0x77BE) != 0x77EC or u16be(rom, 0x77C0) != 0x77FC) return error.BadData;
+    if (try setAt(rom, 0x77EC) != try setAt(rom, 0x766E) or !callsTo(rom, 0x77F2, thing_start)) return error.BadData;
+    if (u16be(rom, 0x77FE) != 0x43F9 or u32be(rom, 0x7800) != 0x00FFA000) return error.BadData;
+    var d = try def(arena, rom, "door", try setAt(rom, 0x77EC));
+    try d.sound("open", @bitCast(@as(i8, @intCast(try moveq(rom, 0x77F6, 7)))));
+    return .{
+        .name = "trapdoor",
+        .provenance = "Mr. X's trapdoors, type $1A (handler 0x77B6, its states at 0x77BE: 0x77EC, 0x77FC): their sound, the floor's cells cleared (0x77FE: $FFA000 on), their cells in the plane; they go at once",
+        .family = .effect,
+        .team = .neutral,
+        .behaviour = "trapdoor",
+        .sounds = d.sounds.items,
+    };
+}
+
 pub fn all(arena: std.mem.Allocator, rom: []const u8, out: *std.ArrayList(entity.Definition)) Error!void {
     try out.append(arena, try door(arena, rom));
     try out.append(arena, try splinter(arena, rom));
+    try out.append(arena, try trapdoor(arena, rom));
 }

@@ -506,7 +506,10 @@ pub fn startLife(a: Actor) void {
 /// entered it: its state's animation and move, its speed kept, its frames on by the ticks since;
 /// but dropping in, its life already started (its blinking over).
 pub fn takeUp(a: Actor, elapsed: u32) void {
-    if (a.mind.state != .fall) a.mind.started = true;
+    if (a.mind.state != .fall) {
+        a.mind.started = true;
+        a.entity.flags.stays = true;
+    }
     const v = a.entity.velocity;
     begin(a, a.mind.state);
     a.entity.velocity = v;
@@ -1162,7 +1165,11 @@ fn flies(state: State) bool {
 fn fellOut(a: Actor) bool {
     const out = a.numbers().fall_out orelse return false;
     if (a.entity.position.height.whole() < out) return false;
-    // TODO(PLAN item 15): round 8's balcony ends the round instead.
+    // In a round with Mr. X's room (round 8's) a fall out ends the round: it falls on.
+    if (a.tick.plan) |p| if (p.round.room != null) {
+        a.tick.world.script.stage = .won;
+        return false;
+    };
     if (a.entity.health != 0) lives.lose(a.tick, a.handle);
     a.sound(.death);
     const h = a.handle;

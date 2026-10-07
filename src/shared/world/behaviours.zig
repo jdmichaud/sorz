@@ -132,6 +132,7 @@ pub const trolley = @import("behaviours/trolley.zig");
 pub const mr_x_seated = @import("behaviours/mr_x_seated.zig");
 pub const mr_x_seated_lower = @import("behaviours/mr_x_seated_lower.zig");
 pub const mr_x_pipe = @import("behaviours/mr_x_pipe.zig");
+pub const trapdoor = @import("behaviours/trapdoor.zig");
 pub const door = @import("behaviours/door.zig");
 pub const door_splinter = @import("behaviours/door_splinter.zig");
 
@@ -200,6 +201,7 @@ pub const Mind = union(enum) {
     mr_x_seated: mr_x_seated.Mind,
     mr_x_seated_lower: mr_x_seated_lower.Mind,
     mr_x_pipe: mr_x_pipe.Mind,
+    trapdoor: trapdoor.Mind,
     door: door.Mind,
     door_splinter: door_splinter.Mind,
 };

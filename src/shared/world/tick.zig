@@ -222,6 +222,8 @@ pub const Tick = struct {
     /// The height of the floor under `at` (the round's floor by cells; else its ground
     /// everywhere), or null over a hole, where nothing stands.
     pub fn floorUnder(t: *const Tick, at: fixed.Vec3) ?Fixed {
+        // Round 8's trapdoors open: no floor anywhere.
+        if (t.world.room.floor_gone) return null;
         const p = t.plan orelse return t.world.ground;
         const f = p.round.floor orelse return t.world.ground;
         const cell = f.at(at.x.whole(), at.depth.whole());

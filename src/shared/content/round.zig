@@ -252,6 +252,8 @@ pub const Room = struct {
     colours: Colours = .{},
     /// Mr. X's colours, loaded as its fight's step begins (a palette's full name).
     boss_colours: ?[]const u8 = null,
+    /// The round the offer accepted takes the players back to (its trapdoors, their fall).
+    back_round: u8 = 1,
     art: [4]u8 = .{ 0, 0, 0, 0 },
     placed: []const Spawn = &.{},
     /// Its fight's timed waves, in their order, and its reserve.
@@ -1107,6 +1109,7 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
                 .{ .key = "height", .value = json.Value.num(rm.door.height) },
             }) },
             .{ .key = "boss_colours", .value = if (rm.boss_colours) |name| .{ .str = name } else .null },
+            .{ .key = "back_round", .value = json.Value.num(rm.back_round) },
             .{ .key = "music", .value = .{ .str = rm.music } },
             .{ .key = "fade", .value = .{ .str = rm.fade } },
             .{ .key = "last_music", .value = .{ .str = rm.last_music } },
@@ -1501,7 +1504,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         };
     }
     if (try root.opt("room")) |rn| {
-        try rn.only(&.{ "provenance", "wall", "timer", "starts_after", "streamed", "again", "colours", "art", "placed", "waves", "reserve", "scroll", "walk", "door", "boss_colours", "music", "fade", "last_music", "last_art", "last_art_after", "stand_art", "stand_art_after", "offer" });
+        try rn.only(&.{ "provenance", "wall", "timer", "starts_after", "streamed", "again", "colours", "art", "placed", "waves", "reserve", "scroll", "walk", "door", "boss_colours", "back_round", "music", "fade", "last_music", "last_art", "last_art_after", "stand_art", "stand_art_after", "offer" });
         const wk = try rn.get("walk");
         try wk.only(&.{ "door_depth", "door_x", "depth", "places", "near" });
         const dn = try rn.get("door");
@@ -1531,6 +1534,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
             },
             .door = .{ .x = try (try dn.get("x")).int(i32), .depth = try (try dn.get("depth")).int(i32), .height = try (try dn.get("height")).int(i32) },
             .boss_colours = if (try rn.opt("boss_colours")) |x| try x.string() else null,
+            .back_round = try (try rn.get("back_round")).int(u8),
             .music = try (try rn.get("music")).string(),
             .fade = try (try rn.get("fade")).string(),
             .last_music = try (try rn.get("last_music")).string(),

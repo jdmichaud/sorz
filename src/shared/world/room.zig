@@ -81,6 +81,9 @@ pub const State = struct {
     yes_kept: bool = false,
     back: bool = false,
     accepted_before: bool = false,
+    /// The trapdoors opened under the players in play then (a bit each): the floor is gone.
+    trapdoors: ?u2 = null,
+    floor_gone: bool = false,
 
     pub fn has(s: *const State, bit: Progress) bool {
         return s.progress & bit.mask() != 0;

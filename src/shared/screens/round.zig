@@ -257,8 +257,10 @@ pub const Round = struct {
     /// shows (as the display tick began).
     lamps: Lamps = .{},
     shown_lamps: Lamps = .{},
-    /// Round 8's door of Mr. X's room is broken open.
+    /// Round 8's door of Mr. X's room is broken open; its trapdoors open under the players then
+    /// in play (a bit each).
     shown_door_open: bool = false,
+    shown_trapdoors: ?u2 = null,
     /// Round 8's offer's window.
     shown_offer: OfferShown = .{},
     /// The art play streams in (a section's, the boss's, an arriving enemy's, the special
@@ -506,6 +508,7 @@ pub const Round = struct {
         self.shown_animation = self.animation_shown;
         self.shown_lamps = self.lamps;
         self.shown_door_open = self.play.world.room.door_broken;
+        self.shown_trapdoors = self.play.world.room.trapdoors;
         self.shown_offer = .{};
         if (a.rounds.of(self.number)) |st| if (st.script.room) |*rm| {
             self.shown_offer = .of(&self.play.world.room, &rm.offer);
@@ -1039,7 +1042,7 @@ pub const Round = struct {
             self.phase = .time_over;
             self.left = a.screen.time_over.ticks;
         } else if (w.script.stage == .won) {
-            self.leave(turn, a, .cleared);
+            self.leave(turn, a, if (w.room.back) .back else .cleared);
         } else if (self.over) {
             self.leave(turn, a, .game_over);
         } else if (self.gameOver() == .game_over) {
@@ -1084,6 +1087,11 @@ pub const Round = struct {
             return;
         }
         const w = &self.play.world;
+        // Back to the round the offer takes the players to: the next one loaded.
+        if (outcome == .back) {
+            g.offer_accepted = true;
+            if (self.stage(a).script.room) |rm| g.round = rm.back_round;
+        }
         g.timer = w.timer.seconds;
         g.boss_bars = 0;
         for (w.bosses) |h| g.boss_bars += @intFromBool(h != null);
@@ -1124,6 +1132,7 @@ pub const Round = struct {
         w.* = .{};
         w.ground = .pixels(s.script.ground);
         w.score_most = a.screen.status_bar.score_most;
+        w.room.accepted_before = g.offer_accepted;
         const p = self.plan(setup, a);
         world.script.start(w, &p);
         var scratch: world.Output = .{};
@@ -1366,6 +1375,10 @@ pub const Round = struct {
         };
         // Round 8's door broken open: its cells of plane A.
         if (self.shown_door_open and (prev == null or !prev.?.shown_door_open)) if (s.door_open) |m| {
+            const place = m.place.?;
+            try v.board(.a).drawMap(m, place.x, place.y);
+        };
+        if (self.shown_trapdoors) |players| if (players != 0 and (prev == null or prev.?.shown_trapdoors == null)) if (s.trapdoors[players - 1]) |m| {
             const place = m.place.?;
             try v.board(.a).drawMap(m, place.x, place.y);
         };

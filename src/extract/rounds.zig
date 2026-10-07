@@ -99,8 +99,10 @@ fn roundName(arena: std.mem.Allocator, n: u32, comptime fmt: []const u8, args: a
 
 /// Round 6's presses' lamps' two looks (0x7ADE: two words each, the first look shown first).
 const press_lamp_looks = 0x7B40;
-/// Round 8's open door's blocks (0x7724).
+/// Round 8's open door's blocks (0x7724); its trapdoors' patches and blocks (0x77B4, 0x78A2).
 const door_open_blocks = 0x7724;
+const trapdoor_patches = 0x77B4;
+const trapdoor_blocks = 0x78A2;
 
 /// Extracts round `n` (0 to 7) into the builder.
 pub fn extract(b: *Builder, n: u32) !void {
@@ -222,6 +224,38 @@ pub fn extract(b: *Builder, n: u32) !void {
         const column: u16 = (u16be(rom, 0x517A) / 8) & ~@as(u16, 63);
         const why = try std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: the open door's 7 rows of 3 blocks of plane A, written by 0x76DE at VRAM $C500 as the door of Mr. X's room breaks", .{door_open_blocks});
         try run.mapAt(try roundName(arena, n, "door_open", .{}), &words, 6, 14, .{ .layer = .plane_a, .x = column, .y = 10 }, why, .code);
+        // The trapdoors open (0x77FC), by the players in play (1, 2, both: 0x77B4 plus 14 times
+        // $FFFF18): their rectangle's VDP command and size, the first row's blocks (their count
+        // less one, their offset among 0x78A2's), the bytes from a block's top to its bottom; then
+        // a row of block $B7 and one of block $4B, in front (0x78AE: four blocks a player, three
+        // times four for both). The room is the level's first 64 columns: the ring's are its.
+        if (u16be(rom, 0x785A) != 0x303C or u16be(rom, 0x7864) != 0x303C or u16be(rom, 0x7816) != 0xC1FC or u16be(rom, 0x7818) != 14) return error.BadData;
+        const front = [2]u16{ u16be(rom, 0x785C), u16be(rom, 0x7866) };
+        for ([_][]const u8{ "trapdoors_1", "trapdoors_2", "trapdoors_both" }, 1..) |name, players| {
+            const e: u32 = trapdoor_patches + 14 * @as(u32, @intCast(players));
+            const cmd = u32be(rom, e);
+            const at = 0xC000 | ((cmd >> 16) & 0x3FFF);
+            if (cmd & 0xC000FFFF != 0x40000003 or at < 0xC000 or at >= 0xD000) return error.BadData;
+            const cols: usize = u16be(rom, e + 4) + 1;
+            const rows: usize = u16be(rom, e + 6) + 1;
+            const first: usize = u16be(rom, e + 8) + 1;
+            if (rows != 6 or cols != 2 * first) return error.BadData;
+            const cells = try arena.alloc(u16, cols * rows);
+            for (0..first) |k| {
+                const blk: usize = rom[trapdoor_blocks + u16be(rom, e + 10) + k];
+                for (0..4) |q| cells[(q / 2) * cols + 2 * k + q % 2] = if (blk * 4 + q < table.len) table[blk * 4 + q] else 0;
+            }
+            for (front, 0..) |blk, r| for (0..first) |k| for (0..4) |q| {
+                const w: u16 = if (blk * 4 + q < table.len) table[blk * 4 + q] else 0;
+                cells[(2 + 2 * r + q / 2) * cols + 2 * k + q % 2] = w | 0x8000;
+            };
+            const about = try std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: Mr. X's trapdoors open, {s}, written by 0x77FC at VRAM ${X:0>4}", .{ e, switch (players) {
+                1 => "player 1 alone",
+                2 => "player 2 alone",
+                else => "both players",
+            }, at });
+            try run.mapAt(try roundName(arena, n, "{s}", .{name}), cells, @intCast(cols), @intCast(rows), .{ .layer = .plane_a, .x = @intCast((at - 0xC000) % 128 / 2), .y = @intCast((at - 0xC000) / 128) }, about, .code);
+        }
     }
 
     if (n == 2) {

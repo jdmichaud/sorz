@@ -49,6 +49,8 @@ pub const Exit = enum {
     chosen,
     /// The round is won.
     cleared,
+    /// Mr. X's offer accepted: back to an earlier round (round 8's trapdoors).
+    back,
     /// Every player is out of the game.
     game_over,
     /// What follows is not in the content: the next round after a clear.
@@ -118,6 +120,9 @@ pub const original: Graph = .{
         // sound's driver runs through its load.
         .{ .from = .round, .exit = .cleared, .to = .round_clear, .load = 18, .sound_held = false },
         .{ .from = .round, .exit = .game_over, .to = .high_scores, .load = 4, .driver_once = true },
+        // Round 8's offer accepted: the round it takes the players back to loads as a next
+        // round does.
+        .{ .from = .round, .exit = .back, .to = .round, .load = 53 },
         // The next round loads as the first does, its load its own (scene.zig).
         .{ .from = .round_clear, .exit = .done, .to = .round, .load = 53 },
         .{ .from = .round_clear, .exit = .missing, .to = .next_round },
