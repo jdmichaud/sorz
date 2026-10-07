@@ -240,6 +240,9 @@ pub const Mind = struct {
     /// next tick); it lifts itself over the one it holds (not lifted by its throw); the steps
     /// of a slam; and what it showed at its tick's start (a new frame places it).
     request: Request = .none,
+    /// A blow on it asked the one it holds for the hold in front again at this tick (the
+    /// original's striker writes that request over its knee's), until its next turn.
+    front_asked: bool = false,
     countered: bool = false,
     lifting_over: bool = false,
     step: u8 = 0,
@@ -691,6 +694,7 @@ pub fn control(a: Actor, c: Command) void {
     a.mind.held_carry = 0;
     a.mind.shown = .{ .animation = a.entity.animation.index, .frame = a.frame(), .facing = a.entity.facing };
     defer a.mind.request = .none;
+    a.mind.front_asked = false;
     if (!a.mind.started) {
         a.mind.started = true;
         a.mind.blink = n.blink;

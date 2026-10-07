@@ -509,10 +509,10 @@ fn onPlayers(t: *Tick, xh: Handle, dealt: ?Dealt) void {
         }
         const landed = if (dealt) |d| dealtOn(t, xh, th, d) else blow(t, xh, th);
         if (landed) {
-            // A boss's blow leaves the hold's request (the original's bosses clear the
-            // reaction instead), and so does a blow that knocks down (its striker asks for the
-            // hold in front again): the one held is let go as the player feels the blow.
-            if (t.kindOf(x).family() == .boss) return;
+            // A boss's blow, and one that knocks down, ask for the hold in front again (the
+            // original's bosses write that request as their blow lands, as the strikers of a
+            // knock-down do): the one held is let go as the player feels the blow.
+            if (t.kindOf(x).family() == .boss) return heldInFront(t, xh, th);
             const knocks = if (dealt) |d| d.blow.reaction == .knock_down else knocksDown(t, x);
             if (knocks) return heldInFront(t, xh, th);
             freedByBlow(t, xh, th);
@@ -558,6 +558,10 @@ pub fn heldInFront(t: *Tick, xh: Handle, th: Handle) void {
     const held = p.holding orelse return;
     if (t.isPlayer(held) or held.index < xh.index) return;
     p.move = null;
+    switch (p.mind) {
+        .player => |*m| m.front_asked = true,
+        else => {},
+    }
 }
 
 /// Whether `a`'s move under way knocks down.

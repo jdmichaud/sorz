@@ -464,6 +464,11 @@ pub fn Of(comptime M: type) type {
         }
 
         pub fn reactionOf(a: A, holder: *const Entity) Reaction {
+            // A blow on his holder asked for the hold in front again (systems.zig `heldInFront`).
+            switch (holder.mind) {
+                .player => |m| if (m.front_asked) return .front,
+                else => {},
+            }
             const name = behaviours.stateName(&holder.mind) orelse return .release;
             _ = a;
             const table = [_]struct { []const u8, Reaction }{
