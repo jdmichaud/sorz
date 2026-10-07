@@ -1590,9 +1590,10 @@ fn feelCatch(a: Actor) void {
     a.entity.velocity = .zero;
 }
 
-/// It takes one blow or catch a tick, the first (the original's players take one hit a tick).
+/// It takes one blow or catch a tick, the first (the original's players take one hit a tick),
+/// and none once its reach caught one (the original's player marked with its grab).
 pub fn catchable(a: Actor) bool {
-    return a.mind.taken == null and a.mind.caught_by == null;
+    return a.mind.taken == null and a.mind.caught_by == null and !a.mind.caught;
 }
 
 /// Whether an enemy may set on it now: not while it blinks, nor from a blow or a fall until it

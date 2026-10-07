@@ -445,8 +445,8 @@ fn blowsOn(t: *Tick, xh: Handle) void {
 
 /// Whether player `k`'s blow or grab on an enemy is looked at, at the enemy's turn: the
 /// original's enemy looks at its meetings with the players in turn, and its look ends once player
-/// 1 was struck or caught at this tick (by one whose turn came before), nor looks at player 2
-/// once it was.
+/// 1 was struck or caught at this tick (by one whose turn came before), or its reach caught one,
+/// nor looks at player 2 once it was (`catchable`).
 fn playerLooked(t: *Tick, k: u1) bool {
     if (t.world.players[0].entity) |h| if (!t.catchable(h)) return false;
     if (k == 1) if (t.world.players[1].entity) |h| if (!t.catchable(h)) return false;
