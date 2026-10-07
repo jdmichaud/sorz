@@ -189,6 +189,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource
     // The enemies' colours' lines, and which are a kind's own (play's record), as the round's.
     var extras: scenario.Run.Extras = .{ .game_tick = options.game_tick, .round = round, .last_score = last_score, .level = options.level, .continues = options.continues };
     if (c.screens.round) |*play| {
+        extras.levels = play.levels;
         const ec = &play.enemy_colours;
         extras.colour_lines = ec.lines;
         for (ec.sets[0..@min(ec.sets.len, 16)], 0..) |set, n| {

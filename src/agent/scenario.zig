@@ -1137,8 +1137,10 @@ pub const Run = struct {
         /// The lines of the enemies' colours, and which are a kind's own (the round's plan's).
         colour_lines: [3]u2 = .{ 1, 2, 1 },
         own_colours: u16 = 0,
-        /// The options' LEVEL of the game (the round's plan's); each player's continues left.
+        /// The options' LEVEL of the game (the round's plan's), and what it changes in play
+        /// (play's record); each player's continues left.
         level: u2 = 1,
+        levels: sorz.content.screens.Levels = .{},
         continues: u8 = 0,
     };
 
@@ -1407,7 +1409,7 @@ pub const Run = struct {
     /// the wall of, and the timer as it last counted (the ticks of its second since).
     fn takeUpScript(r: *Run, round: *const sorz.content.round.Round, situation: *const Situation, extras: Extras) !void {
         const w = &r.play.world;
-        r.plan = .{ .round = round, .level = extras.level, .last_score = extras.last_score, .colour_lines = extras.colour_lines, .own_colours = extras.own_colours };
+        r.plan = .{ .round = round, .level = extras.level, .levels = extras.levels, .last_score = extras.last_score, .colour_lines = extras.colour_lines, .own_colours = extras.own_colours };
         w.script.stage = .stand_in;
         const two = for (situation.entities) |*e| {
             if (e.player == 2) break true;
