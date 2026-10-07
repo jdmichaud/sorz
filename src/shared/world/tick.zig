@@ -132,15 +132,19 @@ pub const Tick = struct {
 
     /// The damage `e`'s blow does at this tick: its move's, while the frame it shows has the
     /// blow under way (one whose frames the animation runs: the frame its boxes are of, which it
-    /// showed at the last tick, as the original's hits read the frame drawn last); 0 otherwise.
+    /// showed at the last tick, as the original's hits read the frame drawn last); 0 otherwise. A
+    /// player's weighs three times as much in round 8's duel.
     pub fn power(t: *const Tick, e: *const Entity) i16 {
         const m = e.move orelse return 0;
         if (behaviours.drivesAnimation(&e.mind)) {
             const f = t.frameOf(e) orelse return 0;
             if (!f.blow) return 0;
         } else if (!e.boxes.blow) return 0;
-        if (e.power != 0) return e.power;
-        return std.math.cast(i16, t.kindOf(e).definition.moves[m].damage) orelse std.math.maxInt(i16);
+        const p = if (e.power != 0) e.power else std.math.cast(i16, t.kindOf(e).definition.moves[m].damage) orelse std.math.maxInt(i16);
+        // In round 8's duel the players' blows weigh three times theirs (the original's power, a
+        // nibble: its excess lost).
+        if (t.world.room.duel and e.mind == .player) return @mod(3 * p, 16);
+        return p;
     }
 
     /// `target` takes `damage` from `attacker` (null: no entity's, the special attack's): its
