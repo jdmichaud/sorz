@@ -183,6 +183,13 @@ fn commands(t: *Tick) void {
     }
 }
 
+/// The command of a single read of a pad, `now`, after `was` (a screen's, outside play: the round's
+/// clear's name entries): its presses the new buttons.
+pub fn commandOf(was: input.Pad, now: input.Pad, layout: content_screens.Layout) world_mod.Command {
+    const new = bits(now) & ~bits(was);
+    return .{ .held = actions(bits(now), layout), .pressed = actions(new, layout), .last = actions(new, layout) };
+}
+
 /// The actions of a pad's bits by `layout`.
 fn actions(pad_bits: u8, layout: content_screens.Layout) world_mod.Actions {
     const pad: input.Pad = @bitCast(pad_bits);

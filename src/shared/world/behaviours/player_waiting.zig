@@ -188,8 +188,12 @@ fn otherHeard(a: Actor) bool {
 /// The name entry's start: the cursor at the first place on the first letter, every place's
 /// letter the first, no letter taken; the letter shows, its blink starts.
 fn startEntry(a: Actor) void {
-    const m = a.mind;
-    m.state = .name_entry;
+    a.mind.state = .name_entry;
+    beginName(a.mind, a.numbers().name_blink);
+}
+
+/// The name entry's start of `m` (its blink of `blink` ticks), as a waiting player's.
+pub fn beginName(m: *Mind, blink: u8) void {
     m.place = 0;
     m.letter = 0;
     m.letters = @splat(0);
@@ -197,7 +201,7 @@ fn startEntry(a: Actor) void {
     m.name = @splat(null);
     m.shown = true;
     m.phase = false;
-    m.ticks = a.numbers().name_blink;
+    m.ticks = blink;
 }
 
 /// A tick of the name entry, on the pad's presses: START ends it; B goes back a place (the
@@ -206,10 +210,15 @@ fn startEntry(a: Actor) void {
 /// last tick of a showing); the letter blinks.
 fn entry(a: Actor, c: Command) void {
     const n = a.numbers();
-    const m = a.mind;
+    if (enterName(a.mind, n.letters, n.name_blink, c)) endEntry(a);
+}
+
+/// A tick of `m`'s name entry (`letters` letters, its blink of `blink` ticks; `entry`'s rules):
+/// whether the name is entered.
+pub fn enterName(m: *Mind, letters: u8, blink: u8, c: Command) bool {
     const p = c.last;
-    if (p.start) return endEntry(a);
-    const end = n.letters -| 1;
+    if (p.start) return true;
+    const end = letters -| 1;
     if (p.attack and m.place != 0) {
         m.letters[m.place] = m.letter;
         m.place -= 1;
@@ -220,10 +229,10 @@ fn entry(a: Actor, c: Command) void {
         m.letters[m.place] = m.letter;
         m.name[m.place] = m.letter;
         m.shown = true;
-        if (m.letter == end) return endEntry(a);
+        if (m.letter == end) return true;
         m.place += 1;
         m.reached = @max(m.reached, m.place);
-        if (m.place == places) return endEntry(a);
+        if (m.place == places) return true;
         m.letter = m.letters[m.place];
     }
     var left = p.left;
@@ -239,10 +248,11 @@ fn entry(a: Actor, c: Command) void {
     }
     m.ticks -%= 1;
     if (m.ticks == 0) {
-        m.ticks = n.name_blink;
+        m.ticks = blink;
         m.phase = !m.phase;
     }
     m.shown = m.phase;
+    return false;
 }
 
 /// The name is entered: the round enters it in the high-score table; the next tick asks the
