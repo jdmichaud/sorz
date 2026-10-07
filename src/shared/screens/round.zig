@@ -257,6 +257,10 @@ pub const Round = struct {
     /// shows (as the display tick began).
     lamps: Lamps = .{},
     shown_lamps: Lamps = .{},
+    /// Round 8's door of Mr. X's room is broken open.
+    shown_door_open: bool = false,
+    /// Round 8's offer's window.
+    shown_offer: OfferShown = .{},
     /// The art play streams in (a section's, the boss's, an arriving enemy's, the special
     /// attack's): its list, and the display tick of it that comes next.
     art: world.script.ArtQueue = .{},
@@ -331,6 +335,7 @@ pub const Round = struct {
         bosses_label: *const art.TileMap,
         boss_bar_over: *const art.TileMap,
         police_icon: *const art.TileMap,
+        offer_window: *const art.TileMap,
         fills: *const art.TileSheet,
         text: library.Text,
         banner_left: *const art.Frame,
@@ -360,6 +365,7 @@ pub const Round = struct {
             .bosses_label = "play/enemy_bar_label",
             .boss_bar_over = "play/enemy_bar_over",
             .police_icon = "play/police_icon",
+            .offer_window = "offer/window",
             .fills = "play/fills",
             .text = "fonts/main",
             .banner_left = "play/banner_left",
@@ -376,10 +382,14 @@ pub const Round = struct {
         };
     };
 
+    /// The fixed layer's rows: the status bar's, the bosses' bars' row and round 8's offer's
+    /// window's.
+    const window_rows = 14;
+
     /// The boards: the round's planes' (none before its set-up), the status bar's (with the
-    /// bosses' bars' row).
+    /// bosses' bars' row and the offer's window).
     pub fn layoutOf(self: *const Round) view.Layout {
-        return .{ .a = self.planes[0], .b = self.planes[1], .window = .{ .width = 40, .height = 5 } };
+        return .{ .a = self.planes[0], .b = self.planes[1], .window = .{ .width = 40, .height = window_rows } };
     }
 
     /// The round played's content. The flow plays only a round the content has (round 1, then
@@ -461,10 +471,19 @@ pub const Round = struct {
         if (setup.high_scores != null or !std.meta.eql(table, was)) setup.high_scores = table;
     }
 
+    /// The offer's window's rows are the video chip's register, which the offer's script sets
+    /// as it runs: they show from the picture of the tick it ran in, not the next one's.
+    fn offerRows(self: *Round, a: *const Assets) void {
+        const st = a.rounds.of(self.number) orelse return;
+        const rm = &(st.script.room orelse return);
+        self.shown_offer.rows = world.room.windowRows(&self.play.world.room, &rm.offer);
+    }
+
     /// One display tick.
     pub fn tick(self: *Round, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
         const was = self.phase;
         defer turn.frame = self.pictureOf(a, was);
+        defer self.offerRows(a);
         defer turn.streamed = self.nextStreamed(a);
         self.colours.latch();
         self.shown_phase = self.phase;
@@ -486,6 +505,11 @@ pub const Round = struct {
         self.shown_game_over = self.gameOver() != null;
         self.shown_animation = self.animation_shown;
         self.shown_lamps = self.lamps;
+        self.shown_door_open = self.play.world.room.door_broken;
+        self.shown_offer = .{};
+        if (a.rounds.of(self.number)) |st| if (st.script.room) |*rm| {
+            self.shown_offer = .of(&self.play.world.room, &rm.offer);
+        };
         self.shown_drifted = self.drifted;
         if (turn.world_out) |o| o.latch();
         self.logic_ran = false;
@@ -1340,6 +1364,11 @@ pub const Round = struct {
             var x: i32 = place.x;
             while (x < board.width) : (x += m.width) try board.drawMap(m, x, place.y);
         };
+        // Round 8's door broken open: its cells of plane A.
+        if (self.shown_door_open and (prev == null or !prev.?.shown_door_open)) if (s.door_open) |m| {
+            const place = m.place.?;
+            try v.board(.a).drawMap(m, place.x, place.y);
+        };
         // The presses' lamps whose look changed.
         if (s.lamp_on) |on| if (s.lamp_off) |off| for (self.shown_lamps.items) |lamp| {
             const l = lamp orelse continue;
@@ -1368,8 +1397,10 @@ pub const Round = struct {
             if (bands.len != 0 and bands[0].drift != null) driftLines(bands, self.shown_drifted, &left) else bandLines(bands, x, &left);
             v.lineScroll(p, &left);
         }
-        // The bosses' bars make the status bar a row taller.
-        const lines = barLines(a) + if (now.bosses != null) bossesRows(a) * art.tile_side else 0;
+        if (r.room) |*rm| try drawOffer(v, a, &rm.offer, self.shown_offer, if (prev) |p| p.shown_offer else null);
+        // The bosses' bars make the status bar a row taller; the offer's window, taller still.
+        const offer_lines = @as(u16, self.shown_offer.rows) * art.tile_side;
+        const lines = @max(offer_lines, barLines(a) + if (now.bosses != null) bossesRows(a) * art.tile_side else 0);
         v.screen.window.lines = .{ .top = 0, .bottom = lines };
         v.screen.sprite_lines = .{ .top = lines, .bottom = render.height };
         v.screen.colours = self.colours.shown;
@@ -1387,6 +1418,80 @@ pub const Round = struct {
         if (self.shown_game_over) try v.sprites.append(v.gpa, .of(a.game_over_text, 0, 0));
     }
 };
+
+/// Round 8's offer's window as the world has it: its rows (0: the status bar's own), its text
+/// (by its index in the offer's texts) and the letters typed, and each player's answers shown
+/// and its mark (on no, or on yes), by their places.
+pub const OfferShown = struct {
+    rows: u8 = 0,
+    text: ?u8 = null,
+    typed: u8 = 0,
+    answers: [2]bool = .{ false, false },
+    marks: [2]?bool = .{ null, null },
+
+    fn of(r: *const world.room.State, o: *const content_round.Offer) OfferShown {
+        return .{
+            .rows = world.room.windowRows(r, o),
+            .text = r.text,
+            .typed = r.typed,
+            .answers = r.answers_shown,
+            .marks = .{ if (r.mark_shown[0]) r.on_no[0] else null, if (r.mark_shown[1]) r.on_no[1] else null },
+        };
+    }
+};
+
+/// Round 8's offer's window, what changed in it: its frame (its cells' blank) as it opens and
+/// when its text goes; the text's letters typed since, a glyph each (a space leaves the blank);
+/// the answers at a player's place, and its mark on its answer's line.
+fn drawOffer(v: *view.View, a: *const Round.Assets, o: *const content_round.Offer, now: OfferShown, was: ?OfferShown) !void {
+    const board = v.board(.window);
+    const frame = a.offer_window;
+    const w = &o.window;
+    const fresh = now.rows != 0 and (was == null or was.?.rows == 0 or (was.?.text != null and was.?.text != now.text));
+    if (fresh) try board.drawMapAtPlace(frame);
+    if (now.rows == 0) return;
+    if (now.text) |k| {
+        const text = o.texts[k];
+        const from: u8 = if (fresh or was.?.text != now.text) 0 else was.?.typed;
+        var n = from;
+        while (n < now.typed) : (n += 1) {
+            const row = n / 25;
+            const col = n % 25;
+            for (0..2) |half| {
+                const c = text.lines[2 * row + half][col..][0..1];
+                if (c[0] != ' ') try v.write(.window, a.text, w.text.x + col, w.text.y + 2 * row + @as(u8, @intCast(half)), c, .{});
+            }
+        }
+    }
+    for (0..2) |k| {
+        const shown = now.answers[k];
+        const had = if (was) |x| x.answers[k] and !fresh else false;
+        if (shown and !had) {
+            for (o.answers, 0..) |line, y| for (line, 0..) |c, x| {
+                if (c != ' ') try v.write(.window, a.text, w.answers[k].x + @as(u8, @intCast(x)), w.answers[k].y + @as(u8, @intCast(y)), line[x..][0..1], .{});
+            };
+        } else if (!shown and had) restoreOffer(board, frame, w.answers[k], 3, 8);
+        const mark = now.marks[k];
+        const marked = if (was) |x| if (fresh) null else x.marks[k] else null;
+        if (std.meta.eql(mark, marked) and !fresh) continue;
+        if (marked != null or fresh) restoreOffer(board, frame, w.marks[k], 1, 8);
+        if (mark) |on_no| try v.write(.window, a.text, w.marks[k].x, w.marks[k].y + o.mark_lines[@intFromBool(on_no)], o.mark, .{});
+    }
+}
+
+/// The offer window's frame's cells over a rectangle of `width` x `height` from `at`.
+fn restoreOffer(board: *render.Board, frame: *const art.TileMap, at: content_round.Cell, width: u8, height: u8) void {
+    const place = frame.place orelse art.Place{ .layer = .window, .x = 0, .y = 0 };
+    for (0..height) |dy| for (0..width) |dx| {
+        const x = @as(i32, at.x) + @as(i32, @intCast(dx));
+        const y = @as(i32, at.y) + @as(i32, @intCast(dy));
+        board.erase(x, y, 1, 1);
+        const mx = x - place.x;
+        const my = y - place.y;
+        if (mx >= 0 and my >= 0 and mx < frame.width and my < frame.height)
+            putCell(board, frame, @intCast(mx), @intCast(my), @intCast(x), @intCast(y)) catch {};
+    };
+}
 
 /// Whether a plane's bands scroll at their own ratios of its place across, not all at it.
 fn ownRatios(bands: []const content_round.Band) bool {

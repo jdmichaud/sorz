@@ -99,6 +99,8 @@ fn roundName(arena: std.mem.Allocator, n: u32, comptime fmt: []const u8, args: a
 
 /// Round 6's presses' lamps' two looks (0x7ADE: two words each, the first look shown first).
 const press_lamp_looks = 0x7B40;
+/// Round 8's open door's blocks (0x7724).
+const door_open_blocks = 0x7724;
 
 /// Extracts round `n` (0 to 7) into the builder.
 pub fn extract(b: *Builder, n: u32) !void {
@@ -201,6 +203,25 @@ pub fn extract(b: *Builder, n: u32) !void {
             const why = try std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: a press's lamp's two cells, look {d} of 2 (written by 0x7ADE as it shakes, at its place's cells of plane A, 0x7B28)", .{ at, k + 1 });
             try run.mapAt(try roundName(arena, n, "{s}", .{what}), &words, 2, 1, null, why, .code);
         }
+    }
+
+    if (n == 7) {
+        // Round 8's door of Mr. X's room broken (0x76DE): plane A's cells from VRAM $C500 (its
+        // row 10, the column 0 of its ring of 64), 6 x 14: 7 rows of 3 of the plane's blocks
+        // (0x7724, the block table at $FFE032). The ring's column 0 is the level's column of the
+        // door's place (0x517A: move.w #N,($10,a6)) rounded down to 64.
+        if (u32be(rom, 0x76E4) != 0x28FC4500 or u16be(rom, 0x76E8) != 3 or u32be(rom, 0x76EA) != 0x38FC0005 or u32be(rom, 0x76EE) != 0x38FC000D) return error.BadData;
+        if (u32be(rom, 0x76F2) != 0x43FA0030 or u32be(rom, 0x76F6) != 0x2C78E032 or u32be(rom, 0x76FA) != 0x76067402) return error.BadData;
+        if (u16be(rom, 0x5178) != 0x3D7C or u16be(rom, 0x517C) != 0x10) return error.BadData;
+        const table = (try enigma.decompress(arena, rom, u32be(rom, @intCast(h + 16)), 0)).words;
+        var words: [6 * 14]u16 = undefined;
+        for (0..7) |r| for (0..3) |c| {
+            const blk: usize = rom[door_open_blocks + 3 * r + c];
+            for (0..4) |q| words[(r * 2 + q / 2) * 6 + c * 2 + q % 2] = if (blk * 4 + q < table.len) table[blk * 4 + q] else 0;
+        };
+        const column: u16 = (u16be(rom, 0x517A) / 8) & ~@as(u16, 63);
+        const why = try std.fmt.allocPrint(arena, "ROM 0x{X:0>5}: the open door's 7 rows of 3 blocks of plane A, written by 0x76DE at VRAM $C500 as the door of Mr. X's room breaks", .{door_open_blocks});
+        try run.mapAt(try roundName(arena, n, "door_open", .{}), &words, 6, 14, .{ .layer = .plane_a, .x = column, .y = 10 }, why, .code);
     }
 
     if (n == 2) {

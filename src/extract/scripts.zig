@@ -38,6 +38,7 @@ const rounds = @import("rounds.zig");
 const stream = @import("stream.zig");
 const scenery = @import("scenery.zig");
 const entities = @import("entities.zig");
+const fonts = @import("fonts.zig");
 
 const u16be = rom_mod.u16be;
 const u32be = rom_mod.u32be;
@@ -1437,30 +1438,39 @@ fn leaTarget(rom: []const u8, at: u32) Error!u32 {
 /// rest blank.
 fn offerOf(arena: std.mem.Allocator, rom: []const u8) Error!round.Offer {
     if (u16be(rom, 0x121F2) != 0x343C or u16be(rom, 0x12202) != 0x363C or u16be(rom, 0x12248) != 0x303C or u16be(rom, 0x1224A) != u16be(rom, 0x121F4)) return error.BadData;
+    // The cells: a byte is the game's font's tile from its base (0x12204: the font's first tile,
+    // pattern-load entry 3 at $F800); 0 and $FE the window's blank (0x121F4: the status bar's
+    // solid cell); $FB, $FC and $FD three of the font's tiles (0x1224E, 0x12254, 0x12242).
     const blank = u16be(rom, 0x121F4);
     const base = u16be(rom, 0x12204);
+    if (base & 0x7FF != font_tile or blank & 0x7FF != status_bar_tile + 24) return error.BadData;
     const own = [_]struct { byte: u8, at: u32 }{ .{ .byte = 0xFB, .at = 0x1224E }, .{ .byte = 0xFC, .at = 0x12254 }, .{ .byte = 0xFD, .at = 0x12242 } };
-    for (own) |o| if (u16be(rom, o.at) != 0x303C) return error.BadData;
+    for (own) |o| if (u16be(rom, o.at) != 0x303C or u16be(rom, o.at + 2) & 0xF800 != base & 0xF800) return error.BadData;
     const Reader = struct {
-        fn lines(ar: std.mem.Allocator, rm: []const u8, at: u32, cells: u8, bl: u16, bs: u16, ow: anytype) Error![]const []const u16 {
-            const out = try ar.alloc([]const u16, 8);
+        fn glyph(rm: []const u8, b: u8, ow: anytype, bs: u16) Error![]const u8 {
+            var tile: u16 = b;
+            for (ow) |o| if (b == o.byte) {
+                tile = (u16be(rm, o.at + 2) & 0x7FF) - (bs & 0x7FF);
+            };
+            for (fonts.main_glyphs) |g| if (g.tile == tile) return g.text;
+            return error.BadData;
+        }
+        fn lines(ar: std.mem.Allocator, rm: []const u8, at: u32, cells: u8, ow: anytype, bs: u16) Error![]const []const u8 {
+            const out = try ar.alloc([]const u8, 8);
             var a = at;
             for (out) |*line| {
-                const ln = try ar.alloc(u16, cells);
+                var ln: std.ArrayList(u8) = .empty;
                 var k: usize = 0;
                 while (k < cells) : (k += 1) {
                     const b = rm[a];
                     a += 1;
                     if (b == 0xFE) {
-                        @memset(ln[k..], bl);
+                        try ln.appendNTimes(ar, ' ', cells - k);
                         break;
                     }
-                    ln[k] = if (b == 0) bl else bs + b;
-                    for (ow) |o| if (b == o.byte) {
-                        ln[k] = u16be(rm, o.at + 2);
-                    };
+                    try ln.appendSlice(ar, if (b == 0) " " else try glyph(rm, b, ow, bs));
                 }
-                line.* = ln;
+                line.* = ln.items;
             }
             return out;
         }
@@ -1475,11 +1485,24 @@ fn offerOf(arena: std.mem.Allocator, rom: []const u8) Error!round.Offer {
         .{ .name = "traitor", .at = 0x1209A },
     };
     const out = try arena.alloc(round.OfferText, texts.len);
-    for (out, texts) |*o, t| o.* = .{ .name = t.name, .lines = try Reader.lines(arena, rom, try leaTarget(rom, t.at), 25, blank, base, own) };
+    for (out, texts) |*o, t| o.* = .{ .name = t.name, .lines = try Reader.lines(arena, rom, try leaTarget(rom, t.at), 25, own, base) };
     const answers_at = try leaTarget(rom, 0x11E12);
     if (try leaTarget(rom, 0x11F3E) != answers_at or try leaTarget(rom, 0x11F64) != answers_at) return error.BadData;
-    const yes = try Reader.lines(arena, rom, try leaTarget(rom, 0x12174), 1, blank, base, own);
-    const no = try Reader.lines(arena, rom, try leaTarget(rom, 0x12180), 1, blank, base, own);
+    // The mark at yes and at no (0x12174, 0x12180): a column of 8 cells, the mark on one.
+    const yes = try Reader.lines(arena, rom, try leaTarget(rom, 0x12174), 1, own, base);
+    const no = try Reader.lines(arena, rom, try leaTarget(rom, 0x12180), 1, own, base);
+    var mark: ?[]const u8 = null;
+    var mark_lines: [2]u8 = undefined;
+    for ([_][]const []const u8{ yes, no }, &mark_lines) |col, *line| {
+        var found = false;
+        for (col, 0..) |c, k| if (!std.mem.eql(u8, c, " ")) {
+            if (found or (mark != null and !std.mem.eql(u8, mark.?, c))) return error.BadData;
+            found = true;
+            mark = c;
+            line.* = @intCast(k);
+        };
+        if (!found) return error.BadData;
+    }
     if (u16be(rom, 0x11CE4) != 0x31FC or u16be(rom, 0x11CE6) != 0x0202 or u16be(rom, 0x11C92) != 0x0C40 or u16be(rom, 0x11C18) != 0x31FC) return error.BadData;
     // The steps' flags (0x11B54: by the step, lea at 0x11B58): 0 free, 2 free and the pads
     // cleared, else held in the choice (their $59 bit 4), bit 7 able to answer (0x12106).
@@ -1496,12 +1519,28 @@ fn offerOf(arena: std.mem.Allocator, rom: []const u8) Error!round.Offer {
             else => return error.BadData,
         };
     }
+    // The window's cells, from the VRAM commands of its writes (the window's map at $D000, 64
+    // cells a row): the text's letter's rectangle a cell before its first letter (0x121DC:
+    // move.l #N,($FFDE20).w), the answers' (0x121BC: player 1's, 0x121C8: player 2's), the
+    // marks' (0x1219C: player 1's, 0x12192: player 2's). As it opens, the window shows 4 rows
+    // more than those opened, 4 more overseas (0x11C9C, 0x11CA6: addq.w #4,d0); as it closes, 4
+    // more (0x11EE2).
+    if (u16be(rom, 0x121DC) != 0x21FC or u16be(rom, 0x121BC) != 0x303C or u16be(rom, 0x121C8) != 0x303C or u16be(rom, 0x1219C) != 0x303C or u16be(rom, 0x12192) != 0x303C) return error.BadData;
+    for ([_]u32{ 0x11C9C, 0x11CA6, 0x11EE2 }) |at| if (u16be(rom, at) & 0xF1FF != 0x5040) return error.BadData;
+    const window: round.OfferWindow = .{
+        .text = try windowCell(u16be(rom, 0x121DE), 1),
+        .answers = .{ try windowCell(u16be(rom, 0x121BE), 0), try windowCell(u16be(rom, 0x121CA), 0) },
+        .marks = .{ try windowCell(u16be(rom, 0x1219E), 0), try windowCell(u16be(rom, 0x12194), 0) },
+        .open = quick(rom, 0x11C9C) + quick(rom, 0x11CA6),
+        .shut = quick(rom, 0x11EE2),
+    };
     return .{
-        .blank = blank,
         .texts = out,
         .steps = steps,
-        .answers = try Reader.lines(arena, rom, answers_at, 3, blank, base, own),
-        .marks = .{ try flatLines(arena, yes), try flatLines(arena, no) },
+        .answers = try Reader.lines(arena, rom, answers_at, 3, own, base),
+        .mark = mark.?,
+        .mark_lines = mark_lines,
+        .window = window,
         .type_period = rom[0x11CE7],
         .rows = @intCast(u16be(rom, 0x11C94)),
         .wait = @intCast(u16be(rom, 0x11C1A)),
@@ -1512,15 +1551,30 @@ fn offerOf(arena: std.mem.Allocator, rom: []const u8) Error!round.Offer {
     };
 }
 
+/// The font's first tile in play's video memory, and the status bar's (pattern-load entries 3
+/// and 4).
+const font_tile = 0x7C0;
+const status_bar_tile = 0x6BF;
+
+/// The quick immediate of the addq at `at` (1 to 8).
+fn quick(rom: []const u8, at: u32) u8 {
+    const n: u8 = @intCast(u16be(rom, at) >> 9 & 7);
+    return if (n == 0) 8 else n;
+}
+
+/// The window's cell at the VRAM write command's high word `command` ($5xxx: $D000 and on),
+/// `after` cells further across.
+fn windowCell(command: u32, after: u8) Error!round.Cell {
+    if (command & 0xC000 != 0x4000) return error.BadData;
+    const at = 0xC000 | (command & 0x3FFF);
+    if (at < 0xD000 or at >= 0xD000 + 14 * 128) return error.BadData;
+    const x = (at - 0xD000) % 128 / 2 + after;
+    if (x >= 40) return error.BadData;
+    return .{ .x = @intCast(x), .y = @intCast((at - 0xD000) / 128) };
+}
+
 /// The offer's steps (0x11B94's table: to $41, the fight's).
 const offer_steps = 0x42;
-
-/// The cells of lines of one cell each, one after the other.
-fn flatLines(arena: std.mem.Allocator, lines: []const []const u16) Error![]const u16 {
-    const out = try arena.alloc(u16, lines.len);
-    for (out, lines) |*o, l| o.* = l[0];
-    return out;
-}
 
 /// The room's timed waves: the first as the fight begins, the second at the first's clear, the
 /// third as Mr. X stands up (0x4CA, 0x464).

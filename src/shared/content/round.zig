@@ -294,13 +294,17 @@ pub const Point = struct { x: i32, depth: i32, height: i32 };
 /// a time, the answers and their marks; the cells are the window's (its font's names, `blank` the
 /// cell of nothing).
 pub const Offer = struct {
-    blank: u16,
-    /// The texts, each 4 rows of 25 letters, a letter two cells tall: its lines of cells, top and
-    /// bottom of each row in turn.
+    /// The texts, each 4 rows of 25 letters, a letter two cells tall: its lines, top and bottom
+    /// of each row in turn, in the game's font (`fonts/main`'s glyphs; a space, the window's own
+    /// blank cell).
     texts: []const OfferText,
-    /// The answers (yes, then no, a row apart) as 8 lines of 3 cells; the mark at each.
-    answers: []const []const u16,
-    marks: [2][]const u16,
+    /// The answers (yes, then no, a row apart) as 8 lines of 3; the mark of the answer a player
+    /// is on (a glyph), on its line at yes and at no.
+    answers: []const []const u8,
+    mark: []const u8,
+    mark_lines: [2]u8,
+    /// The window under the status bar (its frame `offer/window`): where its cells go.
+    window: OfferWindow,
     /// Each step of the offer's script (by its number): whether the players are held in the
     /// choice (their pads taken), and may answer (`hold`, `answer`); else free, their pads
     /// cleared or not (`clear`).
@@ -318,7 +322,20 @@ pub const Offer = struct {
     duel_music: []const u8,
 };
 
-pub const OfferText = struct { name: []const u8, lines: []const []const u16 };
+/// The offer's window, in the cells of the fixed layer: the text's first letter; each player's
+/// answers and mark (player 1's, or the one player's when alone; player 2's); the rows shown
+/// as it opens (`open` and the rows opened) and as it closes (`shut` and the rows left).
+pub const OfferWindow = struct {
+    text: Cell,
+    answers: [2]Cell,
+    marks: [2]Cell,
+    open: u8,
+    shut: u8,
+};
+
+pub const Cell = struct { x: u8, y: u8 };
+
+pub const OfferText = struct { name: []const u8, lines: []const []const u8 };
 
 pub const OfferStep = enum { free, clear, hold, answer };
 
@@ -810,32 +827,30 @@ fn spawnsValue(arena: std.mem.Allocator, list: []const Spawn, where: Where) !jso
     return .{ .array = out };
 }
 
-fn cellsValue(arena: std.mem.Allocator, lines: []const []const u16) !json.Value {
-    const out = try arena.alloc(json.Value, lines.len);
-    for (out, lines) |*o, line| {
-        const cells = try arena.alloc(json.Value, line.len);
-        for (cells, line) |*c, x| c.* = json.Value.num(x);
-        o.* = .{ .array = cells };
-    }
-    return .{ .array = out };
-}
-
 fn offerValue(arena: std.mem.Allocator, o: *const Offer) !json.Value {
     const texts = try arena.alloc(json.Value, o.texts.len);
     for (texts, o.texts) |*v, t| v.* = try obj(arena, &.{
         .{ .key = "name", .value = .{ .str = t.name } },
-        .{ .key = "lines", .value = try cellsValue(arena, t.lines) },
+        .{ .key = "lines", .value = try stringsValue(arena, t.lines) },
     });
+    const w = &o.window;
     return obj(arena, &.{
-        .{ .key = "blank", .value = json.Value.num(o.blank) },
         .{ .key = "texts", .value = .{ .array = texts } },
         .{ .key = "steps", .value = blk: {
             const v = try arena.alloc(json.Value, o.steps.len);
             for (v, o.steps) |*x, st| x.* = .{ .str = @tagName(st) };
             break :blk .{ .array = v };
         } },
-        .{ .key = "answers", .value = try cellsValue(arena, o.answers) },
-        .{ .key = "marks", .value = try cellsValue(arena, &o.marks) },
+        .{ .key = "answers", .value = try stringsValue(arena, o.answers) },
+        .{ .key = "mark", .value = .{ .str = o.mark } },
+        .{ .key = "mark_lines", .value = .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(o.mark_lines[0]), json.Value.num(o.mark_lines[1]) }) } },
+        .{ .key = "window", .value = try obj(arena, &.{
+            .{ .key = "text", .value = try cellValue(arena, w.text) },
+            .{ .key = "answers", .value = .{ .array = try arena.dupe(json.Value, &.{ try cellValue(arena, w.answers[0]), try cellValue(arena, w.answers[1]) }) } },
+            .{ .key = "marks", .value = .{ .array = try arena.dupe(json.Value, &.{ try cellValue(arena, w.marks[0]), try cellValue(arena, w.marks[1]) }) } },
+            .{ .key = "open", .value = json.Value.num(w.open) },
+            .{ .key = "shut", .value = json.Value.num(w.shut) },
+        }) },
         .{ .key = "type_period", .value = json.Value.num(o.type_period) },
         .{ .key = "rows", .value = json.Value.num(o.rows) },
         .{ .key = "wait", .value = json.Value.num(o.wait) },
@@ -846,19 +861,38 @@ fn offerValue(arena: std.mem.Allocator, o: *const Offer) !json.Value {
     });
 }
 
-fn readCells(arena: std.mem.Allocator, n: json.Node) Error![]const []const u16 {
-    const out = try arena.alloc([]const u16, try n.len());
+fn stringsValue(arena: std.mem.Allocator, lines: []const []const u8) !json.Value {
+    const v = try arena.alloc(json.Value, lines.len);
+    for (v, lines) |*x, l| x.* = .{ .str = l };
+    return .{ .array = v };
+}
+
+fn cellValue(arena: std.mem.Allocator, c: Cell) !json.Value {
+    return .{ .array = try arena.dupe(json.Value, &.{ json.Value.num(c.x), json.Value.num(c.y) }) };
+}
+
+/// Lines of `width` letters each.
+fn readStrings(arena: std.mem.Allocator, n: json.Node, count: usize, width: usize) Error![]const []const u8 {
+    if (try n.len() != count) return n.fail("not its count of lines");
+    const out = try arena.alloc([]const u8, count);
     for (out, 0..) |*line, i| {
         const ln = try n.at(i);
-        const cells = try arena.alloc(u16, try ln.len());
-        for (cells, 0..) |*c, j| c.* = try (try ln.at(j)).int(u16);
-        line.* = cells;
+        line.* = try ln.string();
+        if (line.len != width) return ln.fail("a line not of its letters");
     }
     return out;
 }
 
+/// A cell of the fixed layer (40 x 14).
+fn readCell(n: json.Node) Error!Cell {
+    if (try n.len() != 2) return n.fail("not [x, y]");
+    const c: Cell = .{ .x = try (try n.at(0)).int(u8), .y = try (try n.at(1)).int(u8) };
+    if (c.x >= 40 or c.y >= 14) return n.fail("not a cell of the fixed layer (40 x 14)");
+    return c;
+}
+
 fn readOffer(arena: std.mem.Allocator, n: json.Node) Error!Offer {
-    try n.only(&.{ "blank", "texts", "steps", "answers", "marks", "type_period", "rows", "wait", "letter", "move", "answer", "duel_music" });
+    try n.only(&.{ "texts", "steps", "answers", "mark", "mark_lines", "window", "type_period", "rows", "wait", "letter", "move", "answer", "duel_music" });
     const sn = try n.get("steps");
     const steps = try arena.alloc(OfferStep, try sn.len());
     for (steps, 0..) |*st, i| {
@@ -870,19 +904,29 @@ fn readOffer(arena: std.mem.Allocator, n: json.Node) Error!Offer {
     for (texts, 0..) |*t, i| {
         const x = try tn.at(i);
         try x.only(&.{ "name", "lines" });
-        t.* = .{ .name = try (try x.get("name")).string(), .lines = try readCells(arena, try x.get("lines")) };
-        if (t.lines.len != 8) return (try x.get("lines")).fail("not 8 lines");
-        for (t.lines) |line| if (line.len != 25) return (try x.get("lines")).fail("a line not of 25 cells");
+        t.* = .{ .name = try (try x.get("name")).string(), .lines = try readStrings(arena, try x.get("lines"), 8, 25) };
     }
-    const mn = try n.get("marks");
-    const marks = try readCells(arena, mn);
-    if (marks.len != 2) return mn.fail("not the two marks");
+    const ml = try n.get("mark_lines");
+    if (try ml.len() != 2) return ml.fail("not [yes, no]");
+    const wn = try n.get("window");
+    try wn.only(&.{ "text", "answers", "marks", "open", "shut" });
+    const an = try wn.get("answers");
+    const mn = try wn.get("marks");
+    if (try an.len() != 2) return an.fail("not the two players'");
+    if (try mn.len() != 2) return mn.fail("not the two players'");
     const o: Offer = .{
-        .blank = try (try n.get("blank")).int(u16),
         .texts = texts,
         .steps = steps,
-        .answers = try readCells(arena, try n.get("answers")),
-        .marks = .{ marks[0], marks[1] },
+        .answers = try readStrings(arena, try n.get("answers"), 8, 3),
+        .mark = try (try n.get("mark")).string(),
+        .mark_lines = .{ try (try ml.at(0)).int(u8), try (try ml.at(1)).int(u8) },
+        .window = .{
+            .text = try readCell(try wn.get("text")),
+            .answers = .{ try readCell(try an.at(0)), try readCell(try an.at(1)) },
+            .marks = .{ try readCell(try mn.at(0)), try readCell(try mn.at(1)) },
+            .open = try (try wn.get("open")).int(u8),
+            .shut = try (try wn.get("shut")).int(u8),
+        },
         .type_period = try (try n.get("type_period")).int(u8),
         .rows = try (try n.get("rows")).int(u8),
         .wait = try (try n.get("wait")).int(u8),
@@ -893,6 +937,7 @@ fn readOffer(arena: std.mem.Allocator, n: json.Node) Error!Offer {
     };
     if (o.type_period == 0) return (try n.get("type_period")).fail("not 1 or more");
     if (o.wait == 0) return (try n.get("wait")).fail("not 1 or more");
+    if (o.mark_lines[0] >= 8 or o.mark_lines[1] >= 8) return ml.fail("not a line of the 8");
     return o;
 }
 

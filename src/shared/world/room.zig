@@ -59,9 +59,10 @@ pub const State = struct {
     wave: u8 = 0,
     /// A player out of the game left the room (as the fight began, or beaten in the duel).
     gone: [2]bool = .{ false, false },
-    /// The offer's window: its rows open, the text in it (by its index in the offer's texts) and
-    /// its letters typed, the ticks to the next letter; a wait's ticks.
+    /// The offer's window: its rows open (closing, `shutting`), the text in it (by its index in
+    /// the offer's texts) and its letters typed, the ticks to the next letter; a wait's ticks.
     rows: u8 = 0,
+    shutting: bool = false,
     text: ?u8 = null,
     typed: u8 = 0,
     type_ticks: u8 = 0,
@@ -115,6 +116,14 @@ pub const fight: u8 = 0x41;
 
 /// The kind of the room's door.
 pub const door_kind = "door";
+
+/// The window's rows below the status bar's as the offer has them (0: none): opening, `open`
+/// and the rows opened so far (to `rows`, less one); closing, `shut` and the rows left.
+pub fn windowRows(r: *const State, o: *const Offer) u8 {
+    if (r.offer == null or r.rows == 0 or r.rows > o.rows) return 0;
+    if (r.shutting) return if (r.rows < o.rows) o.window.shut + r.rows else 0;
+    return o.window.open + @min(r.rows, o.rows - 1);
+}
 
 /// Whether the camera scrolls by itself (the players walk in), and by how much a tick.
 pub fn scrolls(t: *const Tick) ?i32 {
@@ -205,6 +214,7 @@ pub fn offerTick(t: *Tick) void {
         // The font's art: none is loaded outside Japan.
         1, 0x2B => next(r),
         2, 0x2C => {
+            r.shutting = false;
             r.rows +%= 1;
             if (r.rows < o.rows) return;
             if (r.accepted_before) r.offer = 0x12;
@@ -352,6 +362,7 @@ fn waitTick(r: *State) void {
 
 /// The window closes a row: whether it is closed (it was).
 fn closeRow(r: *State, o: *const Offer) bool {
+    r.shutting = true;
     r.rows -%= 1;
     return r.rows >= o.rows;
 }
@@ -379,7 +390,7 @@ fn typeLetter(t: *Tick, r: *State, o: *const Offer) void {
     const text = o.texts[r.text orelse return];
     const bottom = text.lines[2 * (r.typed / text_cells) + 1][r.typed % text_cells];
     r.typed += 1;
-    if (bottom != o.blank) t.out.sounds.append(.{ .name = o.letter, .first = true });
+    if (bottom != ' ') t.out.sounds.append(.{ .name = o.letter, .first = true });
 }
 
 /// The players in the game: 1 or 2.
