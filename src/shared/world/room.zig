@@ -178,7 +178,8 @@ pub fn walkIn(t: *Tick, k: u1, h: Handle) ?world_mod.Command {
         const needed: u8 = if (t.playersInPlay() == 2) 1 else 0;
         if (r.arrived > needed) {
             r.walking = false;
-            r.offer = 0;
+            // The offer begins (back after the duel, it goes on).
+            if (r.offer == null) r.offer = 0;
             t.world.timer.stopped = true;
         }
         r.in_place[k] = true;
@@ -308,8 +309,10 @@ pub fn offerTick(t: *Tick) void {
         },
         // The duel's end: a player out of the game, the one left walks back to its place.
         0x29 => {
-            const left: u1 = if (r.gone[0]) 1 else if (r.gone[1]) 0 else return;
-            if (r.gone[1]) r.duel = false;
+            const w = t.world;
+            const out = [2]bool{ r.gone[0] or w.players[0].out, r.gone[1] or w.players[1].out };
+            const left: u1 = if (out[0]) 1 else if (out[1]) 0 else return;
+            if (!out[0]) r.duel = false;
             r.walking = true;
             if (!r.in_place[left]) return;
             r.in_place[left] = false;
@@ -396,21 +399,20 @@ fn typeLetter(t: *Tick, r: *State, o: *const Offer) void {
     if (bottom != ' ') t.out.sounds.append(.{ .name = o.letter, .first = true });
 }
 
+/// Whether player `k` is in the game (not out of it, nor gone from the room).
+fn inGame(t: *const Tick, k: u1) bool {
+    const p = t.world.players[k];
+    return p.entity != null and !p.out and !t.world.room.gone[k];
+}
+
 /// The players in the game: 1 or 2.
 fn playersIn(t: *const Tick) u8 {
-    var n: u8 = 0;
-    for (t.world.players, 0..) |p, k| {
-        if (p.entity != null and !t.world.room.gone[k]) n += 1;
-    }
-    return n;
+    return @as(u8, @intFromBool(inGame(t, 0))) + @intFromBool(inGame(t, 1));
 }
 
 /// The one player asked alone: player 1 when it is the only one in the game, else player 2.
 fn lone(t: *const Tick) u1 {
-    const w = t.world;
-    const first = w.players[0].entity != null and !w.room.gone[0];
-    const second = w.players[1].entity != null and !w.room.gone[1];
-    return if (first and !second) 0 else 1;
+    return if (inGame(t, 0) and !inGame(t, 1)) 0 else 1;
 }
 
 /// The command player `k` takes while held in the choice: none (its pads are taken). When the
