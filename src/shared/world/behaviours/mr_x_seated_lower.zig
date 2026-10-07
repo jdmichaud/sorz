@@ -24,6 +24,7 @@ pub const Mind = struct {
 };
 
 pub const Animation = enum { stamp };
+pub const Sound = enum { shake };
 
 pub const Numbers = struct {
     stamp_ticks: u16,
@@ -57,6 +58,9 @@ pub fn think(a: Actor) void {
         .stamped => {
             m.ticks -%= 1;
             if (m.ticks != 0) return;
+            // The floor shakes, with its sound, unless it shakes already.
+            const c = &a.tick.world.camera;
+            if (!a.tick.world.special and c.shake == 0) a.sound(.shake);
             a.tick.shake();
             a.setFrame(0);
             m.state = .still;

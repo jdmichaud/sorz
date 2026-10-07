@@ -475,6 +475,10 @@ pub fn seatedLower(arena: std.mem.Allocator, rom: []const u8) Error!entity.Defin
     try d.number("stamp_ticks", try movedWord(rom, 0x12F50, 84), "ROM 0x12F50: move.w #N,(84,a0) (its frames run)");
     try d.number("still_ticks", try movedWord(rom, 0x12F64, 84), "ROM 0x12F64: move.w #N,(84,a0) (then the shake)");
     try d.number("stomp_ticks", try movedWord(rom, 0x12F92, 84), "ROM 0x12F92: move.w #N,(84,a0)");
+    // The shake (0x12F7E: jsr 0x4D40), unless the floor shakes already or the special attack
+    // runs: its sound (0x4D58).
+    if (u16be(rom, 0x12F7E) != 0x4EB9 or u32be(rom, 0x12F80) != 0x4D40 or u16be(rom, 0x4D46) != 0x4A38 or u16be(rom, 0x4D48) != 0xFA44) return error.BadData;
+    try d.sound("shake", @bitCast(@as(i8, @intCast(try moveq(rom, 0x4D58, 7)))));
     return .{
         .name = "mr_x_seated_lower",
         .provenance = try std.fmt.allocPrint(arena, "Mr. X's lower part seated, type $34 (handler 0x12F14, its states at 0x12F1C), made by him (0x12BB2): his animation set at ROM 0x{X:0>5}; its palette line his seated art's (move.w #N,d1 at ROM 0x12F30){s}", .{ set, d.number_notes.items }),
@@ -483,6 +487,7 @@ pub fn seatedLower(arena: std.mem.Allocator, rom: []const u8) Error!entity.Defin
         .behaviour = "mr_x_seated_lower",
         .palette = try paletteOf(rom, 0x12F30),
         .numbers = d.numbers.items,
+        .sounds = d.sounds.items,
         .animations = d.animations.items,
     };
 }
