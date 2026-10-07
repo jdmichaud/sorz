@@ -147,6 +147,9 @@ pub const Taken = struct {
     by: Handle,
     damage: i16,
     reaction: content_entity.Reaction,
+    /// A missile's: its damage goes with it (the original's juggled knife writes it into the one
+    /// it strikes as it goes).
+    missile: bool = false,
 };
 
 /// An enemy's catch, felt at the next tick: who holds it, from behind or the front.
@@ -1078,7 +1081,10 @@ fn feelBlow(a: Actor) void {
     const knocked = t.reaction == .knock_down or a.entity.flags.airborne;
     if (knocked) a.tick.sound(fallSound(a, t.by), a.handle);
     dropWeapon(a);
-    loses(a, t.by, strikerDamage(a, t));
+    // Its damage is read from the one who struck as it feels the blow, as the original reads
+    // that object's power: its place emptied since (a boss's shoulder gone as his rush ended),
+    // none, but a missile's, which went with it.
+    loses(a, t.by, if (o.alive() or t.missile) strikerDamage(a, t) else 0);
     if (a.entity.health <= 0) return die(a, t.by);
     if (!knocked) a.sound(.hurt);
     letGoStruck(a);
@@ -1209,7 +1215,7 @@ fn die(a: Actor, by: ?Handle) void {
 /// A blow meets its body: it feels it at the next tick.
 pub fn struck(a: Actor, blow: tick.Blow) bool {
     if (!catchable(a)) return false;
-    a.mind.taken = .{ .by = blow.attacker, .damage = blow.damage, .reaction = blow.reaction };
+    a.mind.taken = .{ .by = blow.attacker, .damage = blow.damage, .reaction = blow.reaction, .missile = blow.missile };
     // The original keeps one touch a player: a blow taken after its own landed at this tick
     // writes over it (no spark of it then, nor its combo's window or pause).
     a.mind.landed_blow = false;
