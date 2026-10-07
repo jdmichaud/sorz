@@ -193,6 +193,7 @@ pub const Tick = struct {
 
     /// The entity's blow was taken by `target`.
     pub fn blowLanded(t: *Tick, h: Handle, target: Handle) void {
+        if (t.isPlayer(h)) t.world.get(h).?.struck_by = target;
         dispatch(t, h, "blowLanded", void, {}, .{target});
     }
 
@@ -423,6 +424,7 @@ pub const Tick = struct {
 
     /// The grab began: the entity `holder` holds `held`.
     pub fn grabbed(t: *Tick, holder: Handle, held: Handle) void {
+        if (t.isPlayer(holder)) t.world.get(holder).?.struck_by = held;
         dispatch(t, holder, "holds", void, {}, .{held});
         dispatch(t, held, "heldBy", void, {}, .{holder});
     }

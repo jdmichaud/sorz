@@ -1066,7 +1066,7 @@ pub const Round = struct {
             // What it had left, at most the time over's (its health holds at none).
             const lost = @min(t.health, @max(e.health, 0));
             e.health -= lost;
-            if (turn.world_out) |out| out.hits.append(.{ .attacker = null, .target = h, .damage = lost });
+            if (turn.world_out) |out| out.hits.append(.{ .attacker = e.struck_by, .target = h, .damage = lost });
         }
         self.noteBars();
         self.phase = .play;
