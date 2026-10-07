@@ -366,12 +366,13 @@ pub fn timer(t: *Tick) void {
     if (tm.seconds == 0) tm.up = true;
 }
 
-/// The timer starts again at the open section's seconds (a section's opening, a life's start).
+/// The timer starts again at the open section's seconds (a section's opening, a life's start);
+/// stopped (round 8's offer, a boss's last blow), it stays stopped.
 pub fn restartTimer(w: anytype, plan: *const Plan) void {
     const r = plan.round;
     const k = @min(w.script.section, r.sections.len - 1);
     const seconds = if (w.script.section >= r.sections.len and r.room != null) r.room.?.timer else r.sections[k].timer;
-    w.timer = .{ .seconds = seconds, .shown = seconds, .ticks = r.timer.pace };
+    w.timer = .{ .seconds = seconds, .shown = seconds, .ticks = r.timer.pace, .stopped = w.timer.stopped };
 }
 
 /// The round's animation, after the entities' turns: every `every` ticks, its next step (the
