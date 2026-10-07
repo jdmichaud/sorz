@@ -80,6 +80,10 @@ pub const list = [_]Accepted{
         .reason = "sor-remaster draws the frames of round 3's boss that his code draws at the name bases $343 and $3FE (his slam, knocked away, thrown and slammed, his hug, his part's charge and hug) from other tiles than the boss's load's second and third blocks there: scrambled, its bug (the user's note, 2026-10-05). sorz draws them from the ROM's art",
         .covers = bossLaterBlocks,
     },
+    .{
+        .name = "a holder killed in its knee's pause",
+        .reason = "a player killed while it holds the other player in a knee's pause (Mr. X's blow on Axel kneeing Blaze, G6_good's round 8 at its tick 2060): at the pause's end the original stands the dead holder up beside the one it held, lets it fall and land, and has it die a second time, and puts the one held at its dead holder's height, where it falls, out of a blow's reach meanwhile; sorz lets the one held fall from where it stands, and the dead holder lies dead: more correct, the user's rule (2026-10-07). A run parts there: the one held takes the next blow in sorz. Nothing recognises it: a comparison ends at it",
+    },
 };
 
 /// The row the bosses' bars add below the status bar's own lines, while it shows.
