@@ -489,8 +489,11 @@ pub fn Of(comptime M: type) type {
             const st = a.entity.spawn.strength;
             const t = a.tables();
             a.entity.health = if (st == 0) a.kind.definition.health else t.strength_health[st];
-            // A stronger one's blows all do its strength's damage (one at strength 0 its moves').
+            // A stronger one's blows all do its strength's damage (one at strength 0 its moves');
+            // the options' level may add to its health and to them.
             if (st != 0) a.entity.power = t.strength_power[st];
+            a.entity.health += a.tick.enemyHealthMore();
+            a.entity.power_more = a.tick.enemyPowerMore();
             // Its walk's first frame, held: the original's object appears not animated, and the
             // states of its fight start its frames (with no player in play it stands, its frame's
             // ticks as they were set, which a knock-back's first frame shows: Tick.knockBack).
@@ -636,7 +639,7 @@ pub fn Of(comptime M: type) type {
             const dx = b.dest_x.whole() - a.entity.position.x.whole();
             const dd = b.dest_depth.whole() - a.entity.position.depth.whole();
             if (@abs(dx) < 4 and @abs(dd) < 4) return true;
-            const h = fixed.heading(dx, dd, levelSpeed(a, b.speed));
+            const h = a.tick.heading(dx, dd, b.speed);
             a.entity.velocity.x = h.x;
             a.entity.velocity.depth = h.depth;
             return false;
@@ -649,15 +652,9 @@ pub fn Of(comptime M: type) type {
             const off: i32 = if (a.entity.facingLeft()) beside else -@as(i32, beside);
             const dx = t.position.x.whole() + off - a.entity.position.x.whole();
             const dd = t.position.depth.whole() - a.entity.position.depth.whole();
-            const h = fixed.heading(dx, dd, levelSpeed(a, speed));
+            const h = a.tick.heading(dx, dd, speed);
             a.entity.velocity.x = h.x;
             a.entity.velocity.depth = h.depth;
-        }
-
-        /// The speed its heading takes at the options' level (slower at the easiest).
-        fn levelSpeed(a: A, speed: Fixed) Fixed {
-            const p = a.tick.plan orelse return speed;
-            return fixed.levelSpeed(p.level, speed);
         }
 
         /// It walks by its speed, across and in depth, each refused at the street's limits; a
@@ -883,16 +880,24 @@ pub fn Of(comptime M: type) type {
             enter(a, if (a.mind.state == .walk_off) M.fights else .walk_off);
         }
 
-        /// The damage its blows do: its own (kept from a weapon it lost), else its kind's.
+        /// The damage its blows do: its own (kept from a weapon it lost), else its kind's, and
+        /// what the options' level adds.
         pub fn power(a: A) i16 {
+            return ownPower(a) + a.entity.power_more;
+        }
+
+        /// The damage its blows do, without what the options' level adds.
+        pub fn ownPower(a: A) i16 {
             if (a.entity.power != 0) return a.entity.power;
             return a.numbers().power;
         }
 
         /// It takes up a new weapon of the kind named `name` (`Tick.arm`): false when no place
-        /// is free for it.
+        /// is free for it. The weapon's blows do its own damage, which the options' level leaves
+        /// as it is (the original's weapon strikes with its own power).
         pub fn arm(a: A, name: []const u8) bool {
             body(a).weapon = a.tick.arm(a.handle, name) orelse return false;
+            a.entity.power_more = 0;
             return true;
         }
 
@@ -2186,7 +2191,7 @@ pub fn Of(comptime M: type) type {
                 var d = t.position.depth.whole() + off;
                 if (d < 0 or d >= a.numbers().walk_depth_most) d -= 2 * off;
                 const side: i32 = if (t.position.x.whole() < was.x.whole()) a.entity.spawn.offset_x else -@as(i32, a.entity.spawn.offset_x);
-                const h = fixed.heading(t.position.x.whole() + side - was.x.whole(), d - was.depth.whole(), levelSpeed(a, body(a).speed));
+                const h = a.tick.heading(t.position.x.whole() + side - was.x.whole(), d - was.depth.whole(), body(a).speed);
                 if (h.x.raw == v.x.raw and h.depth.raw == v.depth.raw) return;
                 a.entity.spawn.offset_depth = -a.entity.spawn.offset_depth;
             }

@@ -535,6 +535,7 @@ pub fn takeOver(t: *tick.Tick, h: Handle, body: enemy.Body, power: u8, state: St
     b.weapon = null;
     e.mind = .{ .galsia = .{ .state = state, .body = b } };
     e.power = power;
+    e.power_more = t.enemyPowerMore();
     e.spawn.entrance = .close_in;
     e.spawn.traits = .{};
 }

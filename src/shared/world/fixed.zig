@@ -228,25 +228,6 @@ pub fn heading(dx: i32, ddepth: i32, speed: Fixed) Heading {
     return .{ .x = .of(x), .depth = .of(d) };
 }
 
-/// The speed a heading takes at the options' LEVEL `level` (0, the easiest, to 3), as the
-/// original's enemies head for a point: at the easiest, `easy_least` pixels a tick or
-/// more go `easy_less` slower (the extractor checks both against the ROM's).
-pub fn levelSpeed(level: u2, speed: Fixed) Fixed {
-    const s = @as(u32, @bitCast(speed.raw)) >> 8 & std.math.maxInt(u16);
-    if (level != 0 or s < easy_least.raw >> 8) return speed;
-    return speed.sub(easy_less);
-}
-
-pub const easy_least: Fixed = .pixels(3);
-pub const easy_less: Fixed = .pixels(1);
-
-test "a heading at the easiest level goes a pixel slower from 3 pixels a tick" {
-    try std.testing.expectEqual(Fixed.of(229376), levelSpeed(0, .of(294912)));
-    try std.testing.expectEqual(Fixed.of(196608 - 65536), levelSpeed(0, .of(196608)));
-    try std.testing.expectEqual(Fixed.of(196607), levelSpeed(0, .of(196607)));
-    try std.testing.expectEqual(Fixed.of(294912), levelSpeed(1, .of(294912)));
-}
-
 /// The sine and the cosine of each slope of 64ths, in 1/65536 and rounded: the original's table
 /// (the extractor checks it against the ROM's).
 pub const slopes = blk: {

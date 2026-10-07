@@ -127,7 +127,7 @@ fn approachSetUp(a: Actor) void {
 
 fn approach(a: Actor) void {
     if (a.mind.body.weapon == null and !Common.arm(a, if (a.entity.spawn.traits.pipe_b) pipe_b else pipe)) {
-        return galsia.takeOver(a.tick, a.handle, a.mind.body, @intCast(Common.power(a)), galsia.fights);
+        return galsia.takeOver(a.tick, a.handle, a.mind.body, @intCast(Common.ownPower(a)), galsia.fights);
     }
     if (!Common.pointByOffsets(a)) return;
     if (!Common.headForPoint(a)) {
@@ -213,7 +213,7 @@ fn disarmed(a: Actor) void {
     a.entity.animation.pace = null;
     const h = a.handle;
     const t = a.tick;
-    galsia.takeOver(t, h, a.mind.body, @intCast(Common.power(a)), .knocked_down);
+    galsia.takeOver(t, h, a.mind.body, @intCast(Common.ownPower(a)), .knocked_down);
     t.begin(h);
 }
 

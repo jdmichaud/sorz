@@ -276,8 +276,10 @@ pub const Entity = struct {
     /// It flies or is swung as a blow.
     missile: ?Missile = null,
     /// The damage its blows do, for a kind whose blows all do the same (an enemy's, from its
-    /// strength, kept when it loses its weapon); 0: each move's own.
+    /// strength, kept when it loses its weapon); 0: each move's own. And what the options' level
+    /// adds to them (a common enemy's at the hardest, `Tick.enemyPowerMore`).
     power: u8 = 0,
+    power_more: u8 = 0,
     /// Its behaviour's state and memory.
     mind: behaviours.Mind = .none,
 

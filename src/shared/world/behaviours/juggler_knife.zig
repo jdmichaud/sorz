@@ -221,7 +221,8 @@ fn maker(a: Actor) void {
 fn start(a: Actor) void {
     const n = a.numbers();
     const m = a.mind;
-    m.power = n.power;
+    // Its juggler's power, which the options' level may add to.
+    m.power = n.power + a.tick.enemyPowerMore();
     const b = if (holder(a)) |h| h.spawn.traits.knives_b else false;
     a.animate(if (b) .knife_b else .knife);
     a.pace(n.pace, n.pace);
@@ -489,7 +490,7 @@ fn deflect(a: Actor, by: Handle) void {
     const depth = a.tables().deflect_depth[a.pick(.knife_deflect_depth, 4)];
     var x = a.tick.world.camera.x.whole();
     if (e.velocity.x.raw < 0) x += n.deflect_width;
-    const h = fixed.heading(x - e.position.x.whole(), depth - e.position.depth.whole(), n.deflect_speed);
+    const h = a.tick.heading(x - e.position.x.whole(), depth - e.position.depth.whole(), n.deflect_speed);
     e.velocity.x = h.x;
     e.velocity.depth = h.depth;
 }
@@ -507,7 +508,7 @@ fn atOtherPlayer(a: Actor, by: ?Handle) void {
     const o = if (other) |h| w.get(h) else null;
     const tx: i32 = if (o) |t| t.position.x.whole() else 0;
     const td: i32 = if (o) |t| t.position.depth.whole() else 0;
-    const h = fixed.heading(tx - e.position.x.whole(), td - e.position.depth.whole(), n.redirect_speed);
+    const h = a.tick.heading(tx - e.position.x.whole(), td - e.position.depth.whole(), n.redirect_speed);
     e.velocity.x = h.x;
     e.velocity.depth = h.depth;
 }

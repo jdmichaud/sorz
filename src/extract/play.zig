@@ -643,6 +643,37 @@ fn immediate(rom: []const u8, at: u32, opcode: []const u8, width: u8) !u32 {
     };
 }
 
+/// What the options' LEVEL ($FFC6) changes in play, beside the waves' records and the bosses'
+/// strengths: the speeds toward a point (0x982C: `tst.w ($FFC6).w`, the easiest, then `cmpi.w
+/// #N,d6` and `subi.w #N,d6` on the speed in 1/256 pixel), and the common enemies' blows as they
+/// are set up (0x93CE: `cmpi.w #N,($FFC6).w`, then `addq.b #N` to their health's low byte $33 and
+/// their power $34).
+fn levels(rom: []const u8) !records.Levels {
+    if (u32be(rom, 0x982C) != 0x4A78FFC6 or u16be(rom, 0x9830) != 0x660A or u16be(rom, 0x9836) != 0x6504) return error.BadData;
+    const from = try immediate(rom, 0x9832, &.{ 0x0C, 0x46 }, 2);
+    const by = try immediate(rom, 0x9838, &.{ 0x04, 0x46 }, 2);
+    const level = try immediate(rom, 0x93F4, &.{ 0x0C, 0x78 }, 2);
+    if (level > 3 or u16be(rom, 0x93F8) != 0xFFC6 or u16be(rom, 0x93FA) != 0x6608) return error.BadData;
+    // addq.b #N,(51,a0) then addq.b #N,(52,a0): N in the opcodes' bits 9 to 11 (0 for 8).
+    const add_health = u16be(rom, 0x93FC);
+    const add_power = u16be(rom, 0x9400);
+    if (add_health & 0xF1FF != 0x5028 or u16be(rom, 0x93FE) != 0x33 or add_power & 0xF1FF != 0x5028 or u16be(rom, 0x9402) != 0x34) return error.BadData;
+    var l: records.Levels = .{
+        .provenance = "ROM 0x0982C: tst.w ($FFC6).w, then cmpi.w #N,d6 and subi.w #N,d6 (a speed toward a point, 1/256 pixel, the easiest level); ROM 0x093F4: cmpi.w #N,($FFC6).w, then addq.b #N,(51,a0) and (52,a0) (a common enemy's health, its low byte, and its power as it is set up)",
+        .slower_from = @as(i32, @intCast(from)) << 8,
+    };
+    l.slower[0] = @as(i32, @intCast(by)) << 8;
+    l.enemy_health[@intCast(level)] = quick(add_health);
+    l.enemy_power[@intCast(level)] = quick(add_power);
+    return l;
+}
+
+/// The quick operand of an `addq` opcode: its bits 9 to 11, 0 for 8.
+fn quick(opcode: u16) u8 {
+    const n: u8 = @intCast(opcode >> 9 & 7);
+    return if (n == 0) 8 else n;
+}
+
 /// A packed decimal byte as a number.
 fn decimal(b: u32) !u8 {
     if (b > 0x99 or b & 0xF > 9) return error.BadData;
@@ -830,6 +861,7 @@ pub fn extract(b: *Builder) !records.Round {
         .enemy_colours = try enemyColours(arena, rom),
         .clear = clear,
         .buttons = try buttons(arena, rom),
+        .levels = try levels(rom),
         .demo = try demo(b),
     };
 }

@@ -130,6 +130,30 @@ pub const Tick = struct {
         return &t.kindOf(e).definition.animations[index].frames[e.animation.frame];
     }
 
+    /// The speeds along the way to a place `dx` across and `ddepth` in depth away at `speed`
+    /// (`fixed.heading`), as the options' level has them: at its `slower_from` or faster, its
+    /// `slower` less (the easiest's).
+    pub fn heading(t: *const Tick, dx: i32, ddepth: i32, speed: Fixed) fixed.Heading {
+        var s = speed;
+        if (t.plan) |p| {
+            const by = p.levels.slower[p.level];
+            if (by != 0 and s.raw >= p.levels.slower_from) s = .of(s.raw - by);
+        }
+        return fixed.heading(dx, ddepth, s);
+    }
+
+    /// The health the options' level adds to the common enemies as they come, and the damage it
+    /// adds to their blows (the hardest's).
+    pub fn enemyHealthMore(t: *const Tick) u8 {
+        const p = t.plan orelse return 0;
+        return p.levels.enemy_health[p.level];
+    }
+
+    pub fn enemyPowerMore(t: *const Tick) u8 {
+        const p = t.plan orelse return 0;
+        return p.levels.enemy_power[p.level];
+    }
+
     /// The damage `e`'s blow does at this tick: its move's, while the frame it shows has the
     /// blow under way (one whose frames the animation runs: the frame its boxes are of, which it
     /// showed at the last tick, as the original's hits read the frame drawn last); 0 otherwise. A
@@ -140,7 +164,8 @@ pub const Tick = struct {
             const f = t.frameOf(e) orelse return 0;
             if (!f.blow) return 0;
         } else if (!e.boxes.blow) return 0;
-        const p = if (e.power != 0) e.power else std.math.cast(i16, t.kindOf(e).definition.moves[m].damage) orelse std.math.maxInt(i16);
+        const own = if (e.power != 0) e.power else std.math.cast(i16, t.kindOf(e).definition.moves[m].damage) orelse std.math.maxInt(i16);
+        const p = own +| e.power_more;
         // In round 8's duel the players' blows weigh three times theirs (the original's power, a
         // nibble: its excess lost).
         if (t.world.room.duel and e.mind == .player) return @mod(3 * p, 16);

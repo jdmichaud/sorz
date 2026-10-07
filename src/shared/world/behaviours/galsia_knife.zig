@@ -147,7 +147,7 @@ fn choose(a: Actor) void {
 fn armed(a: Actor) bool {
     if (a.mind.body.weapon != null) return true;
     if (Common.arm(a, knife)) return true;
-    galsia.takeOver(a.tick, a.handle, a.mind.body, @intCast(Common.power(a)), galsia.fights);
+    galsia.takeOver(a.tick, a.handle, a.mind.body, @intCast(Common.ownPower(a)), galsia.fights);
     return false;
 }
 
@@ -319,7 +319,7 @@ fn knockedDown(a: Actor) bool {
     a.entity.animation.pace = null;
     const h = a.handle;
     const t = a.tick;
-    galsia.takeOver(t, h, a.mind.body, @intCast(Common.power(a)), .knocked_down);
+    galsia.takeOver(t, h, a.mind.body, @intCast(Common.ownPower(a)), .knocked_down);
     t.begin(h);
     return true;
 }

@@ -384,8 +384,22 @@ pub const Round = struct {
     clear: Clear,
     /// The players' buttons by the options' CONTROL.
     buttons: Buttons = .{},
+    /// What the options' LEVEL changes in play.
+    levels: Levels = .{},
     /// The attract demo.
     demo: Demo = .{},
+};
+
+/// What the options' LEVEL changes in play, by level (0, the easiest, to 3): a thing heading for
+/// a point (an enemy walking to its place, a knife sent off) at `slower_from` or faster goes
+/// `slower` less fast, in 1/65536 pixel a tick; the common enemies come with `enemy_health` more
+/// health, and their blows do `enemy_power` more damage. Left out, the level changes none.
+pub const Levels = struct {
+    provenance: []const u8 = "",
+    slower_from: i32 = 0,
+    slower: [4]i32 = @splat(0),
+    enemy_health: [4]u8 = @splat(0),
+    enemy_power: [4]u8 = @splat(0),
 };
 
 /// The attract demo: round 1 played by the game on the pads the cartridge holds, both players in
@@ -708,6 +722,7 @@ fn roundValue(arena: std.mem.Allocator, r: *const Round) !json.Value {
         .{ .key = "name_entry", .value = try nameEntryValue(arena, &r.name_entry) },
         .{ .key = "enemy_colours", .value = try enemyColoursValue(arena, &r.enemy_colours) },
         .{ .key = "buttons", .value = try buttonsValue(arena, &r.buttons) },
+        .{ .key = "levels", .value = try levelsValue(arena, &r.levels) },
     });
     // The attract demo, when the record has one.
     if (r.demo.ticks == 0) return record;
@@ -762,6 +777,44 @@ fn buttonsValue(arena: std.mem.Allocator, b: *const Buttons) !json.Value {
         o.* = .{ .object = f };
     }
     return withProvenance(arena, b.provenance, &.{.{ .key = "layouts", .value = .{ .array = layouts } }});
+}
+
+fn levelsValue(arena: std.mem.Allocator, l: *const Levels) !json.Value {
+    var slower: [4]json.Value = undefined;
+    var health: [4]json.Value = undefined;
+    var power: [4]json.Value = undefined;
+    for (&slower, &health, &power, l.slower, l.enemy_health, l.enemy_power) |*s, *h, *p, sv, hv, pv| {
+        s.* = json.Value.num(sv);
+        h.* = json.Value.num(hv);
+        p.* = json.Value.num(pv);
+    }
+    return withProvenance(arena, l.provenance, &.{
+        .{ .key = "enemy_health", .value = .{ .array = try arena.dupe(json.Value, &health) } },
+        .{ .key = "enemy_power", .value = .{ .array = try arena.dupe(json.Value, &power) } },
+        .{ .key = "slower", .value = .{ .array = try arena.dupe(json.Value, &slower) } },
+        .{ .key = "slower_from", .value = json.Value.num(l.slower_from) },
+    });
+}
+
+fn readLevels(n: json.Node) Error!Levels {
+    try n.only(&.{ "provenance", "slower_from", "slower", "enemy_health", "enemy_power" });
+    var l: Levels = .{
+        .provenance = if (try n.opt("provenance")) |x| try x.string() else "",
+        .slower_from = try (try n.get("slower_from")).int(i32),
+    };
+    const s = try n.get("slower");
+    const h = try n.get("enemy_health");
+    const p = try n.get("enemy_power");
+    if (try s.len() != 4) return s.fail("not 4 speeds, one a level");
+    if (try h.len() != 4) return h.fail("not 4 healths, one a level");
+    if (try p.len() != 4) return p.fail("not 4 powers, one a level");
+    for (&l.slower, &l.enemy_health, &l.enemy_power, 0..) |*sv, *hv, *pv, k| {
+        sv.* = try (try s.at(k)).int(i32);
+        if (sv.* < 0) return (try s.at(k)).fail("a speed less than 0");
+        hv.* = try (try h.at(k)).int(u8);
+        pv.* = try (try p.at(k)).int(u8);
+    }
+    return l;
 }
 
 fn readButtons(arena: std.mem.Allocator, n: json.Node) Error!Buttons {
@@ -1029,7 +1082,7 @@ fn readFrame(n: json.Node, a: ?*const art.Art) Error![]const u8 {
 }
 
 fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!Round {
-    try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue", "name_entry", "enemy_colours", "clear", "buttons", "demo" });
+    try n.only(&.{ "banner", "pause", "time_over", "status_bar", "continue", "name_entry", "enemy_colours", "clear", "buttons", "levels", "demo" });
     const b = try n.get("banner");
     try b.only(&.{ "provenance", "left", "numbers", "right", "fade", "in", "in_ticks", "wait", "out", "out_ticks", "after" });
     const ns = try b.get("numbers");
@@ -1102,6 +1155,7 @@ fn readRound(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error!R
         .name_entry = try readNameEntry(arena, try n.get("name_entry")),
         .enemy_colours = try readEnemyColours(arena, try n.get("enemy_colours"), a),
         .buttons = if (try n.opt("buttons")) |x| try readButtons(arena, x) else .{},
+        .levels = if (try n.opt("levels")) |x| try readLevels(x) else .{},
         .demo = if (try n.opt("demo")) |x| try readDemo(x) else .{},
         .banner = .{
             .provenance = if (try b.opt("provenance")) |x| try x.string() else "",

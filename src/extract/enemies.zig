@@ -225,11 +225,8 @@ fn commonNumbers(d: *Def, kind: u8) Error!void {
     try d.number("slammed_up", try immediate(rom, 0xA360, &.{ 0x21, 0x7C }, 4), "ROM 0x0A360: move.l #N,(36,a0)");
     try d.number("grab_height", try immediate(rom, 0xAAF6, &.{ 0x0C, 0x42 }, 2), "ROM 0x0AAF6: cmpi.w #N,d2");
     // Its heading toward a point (0x982C) takes the sine and cosine of a slope from the table
-    // at 0x2705E: the world computes the same table (world/fixed.zig), checked here; and at the
-    // easiest level (tst.w ($FFC6).w) a speed of 3 pixels a tick or more (cmpi.w #N,d6, 8.8)
-    // goes a pixel slower (subi.w #N,d6): the world's numbers, checked too.
-    if (u32be(rom, 0x982C) != 0x4A78FFC6 or u16be(rom, 0x9832) != 0x0C46 or u16be(rom, 0x9838) != 0x0446) return error.BadData;
-    if (u16be(rom, 0x9834) != sorz.world.fixed.easy_least.raw >> 8 or u16be(rom, 0x983A) != sorz.world.fixed.easy_less.raw >> 8) return error.BadData;
+    // at 0x2705E: the world computes the same table (world/fixed.zig), checked here (the level's
+    // part of it, the round screen's `levels`: play.zig).
     for (sorz.world.fixed.slopes[1..], 1..) |sl, j| {
         const at = slopes + 4 * @as(u32, @intCast(j));
         if (u16be(rom, at) != sl.sine or u16be(rom, at + 2) != sl.cosine) return error.BadData;

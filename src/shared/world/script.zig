@@ -53,8 +53,10 @@ const Streamed = content_round.Streamed;
 /// What the script follows besides the world: the round's script and the options of the game.
 pub const Plan = struct {
     round: *const Round,
-    /// The options' LEVEL (0, the easiest, to 3): a record comes from its `level` on.
+    /// The options' LEVEL (0, the easiest, to 3): a record comes from its `level` on; what else
+    /// it changes in play (`levels`, read at it: `Tick.heading`, `Tick.enemyPowerMore`).
     level: u2 = 1,
+    levels: content_screens.Levels = .{},
     /// The lives a continue gives (the options' lives).
     lives: u8 = 3,
     /// The scores that give a player a life more, by the lives its score gave it already (play's

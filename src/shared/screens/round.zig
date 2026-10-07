@@ -437,6 +437,7 @@ pub const Round = struct {
         return .{
             .round = self.stage(a).script,
             .level = @intCast(@min(setup.level, 3)),
+            .levels = a.screen.levels,
             .lives = setup_mod.Progress.livesOf(setup),
             .extra_lives = a.screen.status_bar.extra_lives,
             // The demo's pads are read as they are (the cartridge's first layout).
