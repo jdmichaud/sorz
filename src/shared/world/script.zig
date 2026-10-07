@@ -233,6 +233,9 @@ pub const State = struct {
     arriving: u16 = 0,
     /// The script's enemies in the world at the end of its last tick.
     enemies: u8 = 0,
+    /// The enemies that went far off the screen since its last tick (draw_list.zig): they call
+    /// none of the reserve (the original deletes them; only one knocked out calls one).
+    culled: u8 = 0,
     /// Two players were in play when a section started: the two players' records come (and
     /// keep coming).
     two_players: bool = false,
@@ -457,8 +460,9 @@ pub fn run(t: *Tick) void {
         return;
     }
     const now = countEnemies(t);
-    const went = s.enemies -| now;
+    const went = (s.enemies -| now) -| s.culled;
     s.enemies = now;
+    s.culled = 0;
     const r = p.round;
     switch (s.stage) {
         .opening, .exit, .fight_over, .won, .stand_in => {},

@@ -115,7 +115,13 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
         drawn[n] = i;
         n += 1;
     }
-    if (remove_far_off) for (gone[0..n_gone]) |i| w.remove(w.handleAt(i).?);
+    if (remove_far_off) for (gone[0..n_gone]) |i| {
+        switch (t.kindOf(&w.entities[i]).family()) {
+            .enemy, .boss => w.script.culled +|= 1,
+            else => {},
+        }
+        w.remove(w.handleAt(i).?);
+    };
     // The shadows' places far off the screen go too (shadows.zig).
     if (remove_far_off and !w.special) shadows.goFarOff(w, farOffAt);
     // A hidden entity's shadow, held in its place, shows where that place lies (the original's
