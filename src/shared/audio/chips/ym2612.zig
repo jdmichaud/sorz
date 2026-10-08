@@ -231,6 +231,37 @@ fn attenuationToVolume(input: u32) u32 {
     return @as(u32, power_table[input & 0xff]) >> @intCast(input >> 8);
 }
 
+/// The sums of a waveform's attenuation (at most `sin_table[0]`) and an envelope's (4.6 fixed
+/// point, at most $3FF, shifted left by 2).
+const volume_span = sin_table[0] + (0x3ff << 2) + 1;
+
+/// The volume of each such sum (`attenuationToVolume`), then the same negated.
+const signed_volume: [2 * volume_span]i16 = blk: {
+    @setEvalBranchQuota(100000);
+    var t: [2 * volume_span]i16 = undefined;
+    for (0..volume_span) |i| {
+        t[i] = @intCast(attenuationToVolume(i));
+        t[volume_span + i] = -t[i];
+    }
+    break :blk t;
+};
+
+/// The waveform as indices into `signed_volume`: its attenuation, past `volume_span` when it is
+/// negative.
+const signed_waveform: [waveform_length]u16 = blk: {
+    @setEvalBranchQuota(10000);
+    var w: [waveform_length]u16 = undefined;
+    for (&w, waveform) |*v, x| v.* = (x & 0x7fff) + if (x & 0x8000 != 0) volume_span else 0;
+    break :blk w;
+};
+
+/// The operator's 14-bit signed output at a phase (its integer part, with the modulation) and an
+/// envelope attenuation shifted left by 2, as `Ym2612.opComputeVolume` gives it for an operator
+/// without SSG-EG's inversion: there, an envelope above `eg_quiet` gives 0 by the lookup itself.
+inline fn waveVolume(phase: u32, eg4: u32) i32 {
+    return signed_volume[signed_waveform[phase & (waveform_length - 1)] + eg4];
+}
+
 /// Per 6-bit rate, eight 4-bit envelope increments (ymfm's `attenuation_increment`).
 const increment_table = [64]u32{
     0x00000000, 0x00000000, 0x10101010, 0x10101010,
@@ -530,7 +561,7 @@ pub const Ym2612 = struct {
     fn renderChannel(y: *Ym2612, c: usize, clocks: *const Clocks, raw: []Frame) void {
         const dac = c == 5 and y.dac_enable != 0;
         if (bitfield(y.active_channels, @intCast(c), 1) != 0 and !dac) {
-            y.runChannel(&y.chans[c], clocks, raw, true);
+            y.runAudible(&y.chans[c], clocks, raw);
             return;
         }
         y.runChannel(&y.chans[c], clocks, raw, false);
@@ -539,6 +570,193 @@ pub const Ym2612 = struct {
             f.left += dac_zero;
             f.right += dac_zero;
         };
+    }
+
+    /// An active channel through the block: `runChannel`, which follows ymfm step by step, when
+    /// one of its operators that are not silent has SSG-EG; else `runPlain`, its algorithm known.
+    fn runAudible(y: *Ym2612, ch: *Channel, clocks: *const Clocks, raw: []Frame) void {
+        var am = false;
+        for (ch.ops, 0..) |i, n| {
+            if (ch.live & (@as(u4, 1) << @intCast(n)) == 0) continue;
+            const cache = &y.ops[i].cache;
+            if (cache.ssg_eg_enable) return y.runChannel(ch, clocks, raw, true);
+            am = am or cache.lfo_am_enable;
+        }
+        inline for (algorithm_ops) |algorithm| {
+            if (ch.cache.algorithm == algorithm) {
+                return if (am) y.runPlain(ch, clocks, raw, algorithm, true) else y.runPlain(ch, clocks, raw, algorithm, false);
+            }
+        }
+        unreachable;
+    }
+
+    /// `runChannel` with output, for a channel whose operators that are not silent have no SSG-EG
+    /// (their inversion is cleared at their first clock, and nothing else sets it), its algorithm
+    /// `algorithm` (its `algorithm_ops`) and, with `am`, operators with the LFO's AM. It does the
+    /// same work in fewer steps: each operator's envelope attenuation is worked out when the
+    /// envelope moves or the AM offset changes, the routing is the algorithm's alone, and the
+    /// volume is one lookup (`waveVolume`).
+    fn runPlain(y: *Ym2612, ch: *Channel, clocks: *const Clocks, raw: []Frame, comptime algorithm: u16, comptime am: bool) void {
+        const rshift = 5;
+        const clipmax: i32 = 256;
+        const clipmin = -clipmax - 1;
+        const op = [4]*Operator{ &y.ops[ch.ops[0]], &y.ops[ch.ops[1]], &y.ops[ch.ops[2]], &y.ops[ch.ops[3]] };
+        const distort = y.variant == .ym2612;
+        const output0 = ch.cache.output0;
+        const output1 = ch.cache.output1;
+        const feedback = ch.cache.feedback;
+        const am_shift = ch.cache.am_shift;
+        var live = ch.live;
+        // Per operator: the phase and its step (0 when silent: it is not clocked), the steps that
+        // follow the LFO's PM, the envelope attenuation with the total level, and with the AM
+        // offset when it applies, shifted left by 2.
+        var phase: [4]u32 = @splat(0);
+        var step: [4]u32 = @splat(0);
+        var dynamic: u4 = 0;
+        var base: [4]u32 = @splat(0);
+        var am_mask: [4]u32 = @splat(0);
+        var eg4: [4]u32 = @splat(0);
+        // The envelope counters at which an operator's envelope can move (`envelopeMask`).
+        var env_mask: [4]u32 = @splat(0);
+        inline for (0..4) |n| {
+            const bit = @as(u4, 1) << n;
+            const cache = &op[n].cache;
+            phase[n] = op[n].phase;
+            if (live & bit != 0) {
+                op[n].ssg_inverted = 0;
+                step[n] = cache.phase_step;
+                if (cache.phase_step == OpCache.phase_step_dynamic) dynamic |= bit;
+                env_mask[n] = envelopeMask(op[n]);
+            }
+            base[n] = op[n].env_attenuation + cache.total_level;
+            am_mask[n] = if (cache.lfo_am_enable) ~@as(u32, 0) else 0;
+            eg4[n] = envelope4(base[n]);
+        }
+        // The AM offset, which changes with the LFO's steps.
+        var am_offset: u32 = 0;
+        if (am) {
+            am_offset = (@as(u32, clocks.lfo_am[0]) << 1) >> am_shift;
+            inline for (0..4) |n| eg4[n] = envelope4(base[n] + (am_offset & am_mask[n]));
+        }
+        var fb0: i32 = ch.feedback[0];
+        var fb1: i32 = ch.feedback[1];
+        var fb_in: i16 = ch.feedback_in;
+        var pm: i32 = OpCache.pm_none;
+        for (raw, 0..) |*f, i| {
+            fb0 = fb1;
+            fb1 = fb_in;
+            // The clock: the phases, their steps again when the LFO's PM value changes; then the
+            // envelopes when they run, those that can move.
+            if (dynamic != 0 and clocks.lfo_pm[i] != pm) {
+                pm = clocks.lfo_pm[i];
+                inline for (0..4) |n| {
+                    if (dynamic & (@as(u4, 1) << n) != 0) {
+                        const cache = &op[n].cache;
+                        if (cache.pm_value != pm) {
+                            cache.pm_value = pm;
+                            cache.pm_step = computePhaseStep(cache, pm);
+                        }
+                        step[n] = cache.pm_step;
+                    }
+                }
+            }
+            inline for (0..4) |n| phase[n] +%= step[n];
+            const env_counter = clocks.env_counter[i];
+            if (env_counter & 3 == 0 and live != 0) {
+                const counter = env_counter >> 2;
+                inline for (0..4) |n| {
+                    const bit = @as(u4, 1) << n;
+                    if (live & bit != 0 and counter & env_mask[n] == 0) {
+                        opClockEnvelope(op[n], counter);
+                        env_mask[n] = envelopeMask(op[n]);
+                        base[n] = op[n].env_attenuation + op[n].cache.total_level;
+                        eg4[n] = envelope4(base[n] + (am_offset & am_mask[n]));
+                        if (opSilent(op[n])) {
+                            live &= ~bit;
+                            step[n] = 0;
+                            dynamic &= ~bit;
+                        }
+                    }
+                }
+            }
+            if (am) {
+                const offset = (@as(u32, clocks.lfo_am[i]) << 1) >> am_shift;
+                if (offset != am_offset) {
+                    am_offset = offset;
+                    inline for (0..4) |n| eg4[n] = envelope4(base[n] + (am_offset & am_mask[n]));
+                }
+            }
+
+            // The output: O1 with its feedback, then the algorithm's routing.
+            var mod1: i32 = 0;
+            if (feedback != 0) mod1 = (fb0 + fb1) >> @intCast(10 - feedback);
+            fb_in = @truncate(waveVolume((phase[0] >> 10) +% @as(u32, @bitCast(mod1)), eg4[0]));
+            // With both outputs off, only the feedback is computed.
+            if (!output0 and !output1) {
+                if (distort) {
+                    f.left += dac_zero;
+                    f.right += dac_zero;
+                }
+                continue;
+            }
+            const o1: i16 = fb_in;
+            const o2: i16 = @truncate(waveVolume((phase[1] >> 10) +% modulation(bitfield(algorithm, 0, 1), o1, 0, 0), eg4[1]));
+            const o3: i16 = @truncate(waveVolume((phase[2] >> 10) +% modulation(bitfield(algorithm, 1, 3), o1, o2, 0), eg4[2]));
+            var result = waveVolume((phase[3] >> 10) +% modulation(bitfield(algorithm, 4, 3), o1, o2, o3), eg4[3]) >> rshift;
+            if (comptime bitfield(algorithm, 7, 1) != 0) result = @max(@min(result + (@as(i32, o1) >> rshift), clipmax), clipmin);
+            if (comptime bitfield(algorithm, 8, 1) != 0) result = @max(@min(result + (@as(i32, o2) >> rshift), clipmax), clipmin);
+            if (comptime bitfield(algorithm, 9, 1) != 0) result = @max(@min(result + (@as(i32, o3) >> rshift), clipmax), clipmin);
+
+            const left = if (output0) result else 0;
+            const right = if (output1) result else 0;
+            if (distort) {
+                f.left += dacDiscontinuity(left);
+                f.right += dacDiscontinuity(right);
+            } else {
+                f.left += left;
+                f.right += right;
+            }
+        }
+        inline for (0..4) |n| {
+            if (ch.live & (@as(u4, 1) << n) != 0) op[n].phase = phase[n];
+        }
+        ch.live = live;
+        ch.feedback = .{ @intCast(fb0), @intCast(fb1) };
+        ch.feedback_in = fb_in;
+    }
+
+    /// The bits of the envelope counter (`opClockEnvelope`'s, divided by 4) that are 0 when the
+    /// operator's envelope can move: those of its state's rate, or none when its state changes at
+    /// the next clock (it reached 0 in the attack, or its sustain level in the decay). In between,
+    /// a clock of its envelope changes nothing.
+    fn envelopeMask(op: *const Operator) u32 {
+        const att = op.env_attenuation;
+        if (op.env_state == .attack and att == 0) return 0;
+        if (op.env_state == .decay and att >= op.cache.eg_sustain) return 0;
+        const rate_shift: u5 = @intCast(op.cache.eg_rate[@backingInt(op.env_state)] >> 2);
+        return @as(u32, 0x7ff) >> rate_shift;
+    }
+
+    /// An envelope attenuation with the total level and the AM offset, at most $3FF, shifted left
+    /// by 2 for `waveVolume`.
+    inline fn envelope4(attenuation: u32) u32 {
+        return @as(u32, @min(attenuation, 0x3ff)) << 2;
+    }
+
+    /// The modulation of an operator by the input `index` of `algorithm_ops` (0: none; 1, 2, 3:
+    /// O1, O2, O3; 5, 6, 7: O1 + O2, O1 + O3, O2 + O3), halved, as an addition to its phase.
+    inline fn modulation(comptime index: u32, o1: i16, o2: i16, o3: i16) u32 {
+        const in: i16 = switch (index) {
+            0 => 0,
+            1 => o1,
+            2 => o2,
+            3 => o3,
+            5 => o1 +% o2,
+            6 => o1 +% o3,
+            7 => o2 +% o3,
+            else => unreachable,
+        };
+        return @bitCast(@as(i32, in >> 1));
     }
 
     /// The channel's clock and, with `output`, its output by its algorithm, 9 bits after the shift
@@ -631,7 +849,7 @@ pub const Ym2612 = struct {
 
     /// The YM2612's DAC distortion: each channel's output moves away from 0 by 4 (positive) or 3
     /// (negative) steps, a silent channel included.
-    fn dacDiscontinuity(value: i32) i32 {
+    inline fn dacDiscontinuity(value: i32) i32 {
         return if (value < 0) value - 3 else value + 4;
     }
 
