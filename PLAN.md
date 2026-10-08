@@ -187,6 +187,14 @@
     LIVES 5 giving x5 in a two-player game); variants-check, netplay-check, smoke, and the
     browser check's flow and settings parts in Chromium. A real gamepad, autofire and friendly
     hits off in play: unit tests only; the user's play is pending.
+- [ ] **25 — Gamepads known by their model** — Depends: 24.
+  - The platform names each gamepad (a key of its model and a name, DESIGN.md 3.3); the settings
+    keep every gamepad seen under a label of its own for good (GAMEPAD 1...), identical pads
+    numbered in the order they come, the buttons per model, a player's gamepad by its label; the
+    INPUT CONFIGURATION's GAMEPAD LIST..., scrolling, where an unconnected one is forgotten.
+  - Gate: a gamepad back after a restart plays its player with its buttons; the list played; the
+    SDL, browser and agent hosts name their gamepads; variants-check, smoke and the browser's
+    flow and settings parts pass.
 
 ## F7 — Platforms and exactness
 
