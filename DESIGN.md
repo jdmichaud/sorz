@@ -433,25 +433,34 @@ are its own, driven by its player alone. The host and its clients:
 - **The host** is the native game whose player chooses NETWORK PLAY in its menu (1 PLAYER, 2
   PLAYERS, NETWORK PLAY, OPTIONS), or the first page connected to a server (its menu: 1 PLAYER,
   NETWORK PLAY, OPTIONS). NETWORK PLAY opens the network options: PLAYERS (2, the only number
-  today), OBSERVERS (yes or no), SAME CHARACTER (whether two players may choose one character), and
-  START. START opens the session: the native host listens on every interface (0.0.0.0) at its
-  port, and serves there the page and the game's files (section 5.3); the host's player goes to the
-  character select as player 1, and plays alone until a player joins. The host's front end
-  screens list who is connected at the bottom left: LOCAL (PLAYER 1), and each client by its name
-  and what it does (MENU, PLAYER 2, OBSERVING).
+  today), PORT (the native host's), OBSERVERS (yes or no), SAME CHARACTER (whether two players may
+  choose one character), then START SERVER, START GAME and EXIT. START SERVER opens the session:
+  the native host listens on every interface (0.0.0.0) at its port, and serves there the page and
+  the game's files (section 5.3); the host's player stays at its menu while clients connect. START
+  GAME opens the session if it is not open, and the host's player goes to the character select as
+  player 1, and plays alone until a player joins. The session stays open from game to game; while
+  it is, the network options' STOP SERVER closes it: its clients go back to their menus, told
+  THE HOST STOPPED, and the clients that come are turned away (they try again every second) until
+  the session opens again. The host's front end screens list who is connected at the bottom left,
+  in white over the picture: LOCAL - PLAYER 1, and each client by its name and what it does (MENU,
+  PLAYER 2, OBSERVING).
 - **A client** is a page of that host or server (not the first), or `--join`: it connects as it
   starts, and its player gives a name of three letters, kept in the settings. Its menu: JOIN, when
-  the host's session is open and a player's place is free; OBSERVE, when it is open and the host
-  takes observers; OPTIONS. A line it cannot take is dimmed.
+  the host's session is open and a player's place is free; OBSERVE, when it is open, the host
+  takes observers and has a game; OPTIONS. A line it cannot take is dimmed. With the host at its
+  menu, JOIN's player chooses a character and waits for the host's game.
 - **JOIN** goes to the client's own character select, and joins the host's game as player 2: at
   the host's select, the two meet there and each sees the other's cursor; in play, the client's
   player chooses a character on its own machine while the host plays on, and drops in once chosen,
   as the original's second player joins a game (its PRESS 2UP START).
 - **OBSERVE** shows the host's game on the client: it takes the host's game and then each tick's
-  pads (below), and holds no one. START leaves it, back to the client's menu.
+  pads (below), and holds no one. START leaves it, back to the client's menu; at the game's end
+  the client plays on to its own front end.
 - The game's rules (LEVEL, the lives, whatever of OPTIONS or the settings the game reads, SAME
   CHARACTER) are the host's game's: a client's OPTIONS shows only what is its own.
-- When the game ends, each machine goes back to its own menu, and the session closes.
+- When the game ends, each machine plays on to its own front end (a client in its own variant
+  again), and the session stays open for the next game. A player who leaves, or does not come back
+  in time, dies in the game as at the time over, and is out of it.
 
 **The join.** The host's game holds for a moment while its state crosses (its canonical form,
 section 6); the client loads it, and from that tick on both run the same game in lockstep.
