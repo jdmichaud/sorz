@@ -89,7 +89,8 @@ pub const Relay = struct {
         var events: [64]platform.Event = undefined;
         var text: [64]bool = undefined;
         while (true) {
-            try self.transport.wait(.none);
+            // Bounded: a cancel that lands as the wait begins is seen at the next one.
+            try self.transport.wait(.{ .duration = .{ .raw = .fromMilliseconds(250), .clock = .awake } });
             const n = self.transport.pollText(&events, &text);
             for (events[0..n], text[0..n]) |e, is_text| self.handle(e, is_text);
         }
