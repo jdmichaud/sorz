@@ -175,6 +175,14 @@
     sprites (the world's), and the rule's two readers (the round's players; the select, where
     two cursors may share a portrait). Played with the agent host (two Axels, the select's
     labels taking turns); variants-check and round-check's `two` equal.
+- [ ] **24 — Input configuration and the settings' rules** — Depends: 19.
+  - The settings' INPUT CONFIGURATION page: a column for each player of the machine, its input
+    method (the keyboard or a gamepad connected), its keys or its gamepad's buttons, its
+    autofire; a gamepad that comes told and given to player 1 on the keyboard; outside the
+    original, the game's rules from the settings (lives, continues, friendly hits) in place of
+    OPTIONS' hidden lives.
+  - Gate: the original unchanged; the pages played and the rules seen in a game; variants-check,
+    netplay-check, smoke and the browser's flow and settings parts pass.
 
 ## F7 — Platforms and exactness
 
