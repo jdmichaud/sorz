@@ -187,7 +187,7 @@
     LIVES 5 giving x5 in a two-player game); variants-check, netplay-check, smoke, and the
     browser check's flow and settings parts in Chromium. A real gamepad, autofire and friendly
     hits off in play: unit tests only; the user's play is pending.
-- [ ] **25 — Gamepads known by their model** — Depends: 24.
+- [x] **25 — Gamepads known by their model** — Depends: 24.
   - The platform names each gamepad (a key of its model and a name, DESIGN.md 3.3); the settings
     keep every gamepad seen under a label of its own for good (GAMEPAD 1...), identical pads
     numbered in the order they come, the buttons per model, a player's gamepad by its label; the
@@ -195,6 +195,10 @@
   - Gate: a gamepad back after a restart plays its player with its buttons; the list played; the
     SDL, browser and agent hosts name their gamepads; variants-check, smoke and the browser's
     flow and settings parts pass.
+  - [x] Checked 2026-10-08: played on the agent host with a record of two pads (a new pad kept
+    and labelled, a player's gamepad with its model's buttons, GAMEPAD LIST and a pad
+    forgotten); the hosts' naming in unit tests (SDL's virtual joystick); variants-check,
+    netplay-check, smoke, and the browser's flow and settings parts. Real gamepads: the user's.
 
 ## F7 — Platforms and exactness
 
