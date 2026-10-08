@@ -84,12 +84,20 @@ fn windowLine(b: *const Board, line: usize, out: *Row) void {
     copyRun(b, line % (@as(usize, b.height) * screen.cell), 0, out[margin..][0..width]);
 }
 
+/// The lines a sprite covers among `lines` (within the screen): from `first` to before `end`,
+/// none when `first >= end`.
+fn spriteLines(s: *const Sprite, lines: Lines) struct { first: i32, end: i32 } {
+    const top: i32 = s.y - s.frame.origin_y;
+    return .{ .first = @max(top, lines.top), .end = @min(top + s.frame.height, lines.bottom) };
+}
+
 /// Draws a sprite over the lines of `rows` it covers.
 fn drawSprite(s: *const Sprite, lines: Lines, rows: *[height]Row) void {
     const f = s.frame;
     const top: i32 = s.y - f.origin_y;
-    const first: i32 = @max(top, lines.top);
-    const end: i32 = @min(top + f.height, lines.bottom);
+    const covered = spriteLines(s, lines);
+    const first = covered.first;
+    const end = covered.end;
     if (first >= end) return;
     const fw: i32 = f.width;
     // The frame's columns on the screen: column c at x0 + c, or mirrored at x0 - c.
@@ -224,15 +232,20 @@ pub const Composer = struct {
     }
 
     /// Composes `p` into `indices` and `rgba`, drawing again only what changed: a board is known
-    /// by its address and revision, a frame by its address. Returns false when nothing was drawn
-    /// again (`p` shows what the last screen composed showed), true otherwise.
+    /// by its address and revision, a frame by its address. Only the lines where something
+    /// changed are mixed and turned into RGBA again: every line when a layer or the backdrop
+    /// changed, else the lines of the sprites that changed, before and after (all the colours'
+    /// lines when the colours changed). Returns false when nothing was drawn again (`p` shows
+    /// what the last screen composed showed), true otherwise.
     pub fn compose(self: *Composer, p: *const Screen) error{OutOfMemory}!bool {
-        var mixed = false;
+        var all = false;
+        var changed: [height]bool = @splat(false);
+        var any = false;
         const back_key: LayerKey = .of(&p.plane_b);
         if (self.back_key == null or !std.meta.eql(self.back_key.?, back_key)) {
             for (&self.back, 0..) |*r, line| layerLine(&p.plane_b, line, r);
             self.back_key = back_key;
-            mixed = true;
+            all = true;
         }
         const front_key: FrontKey = .of(p);
         if (self.front_key == null or !std.meta.eql(self.front_key.?, front_key)) {
@@ -242,41 +255,56 @@ pub const Composer = struct {
                 } else layerLine(&p.plane_a, line, r);
             }
             self.front_key = front_key;
-            mixed = true;
+            all = true;
         }
-        if (self.sprite_lines == null or !std.meta.eql(self.sprite_lines.?, p.sprite_lines) or !sameSprites(self.sprite_key.items, p.sprites)) {
+        const lines: Lines = .{ .top = @min(p.sprite_lines.top, height), .bottom = @min(p.sprite_lines.bottom, height) };
+        const new_lines = self.sprite_lines == null or !std.meta.eql(self.sprite_lines.?, p.sprite_lines);
+        const new_sprites = new_lines or !sameSprites(self.sprite_key.items, p.sprites);
+        if (new_lines) {
+            all = true;
+        } else if (new_sprites) {
+            // The lines the sprites covered, and those they cover.
+            for ([_][]const Sprite{ self.sprite_key.items, p.sprites }) |list| for (list) |*s| {
+                const covered = spriteLines(s, lines);
+                var line = covered.first;
+                while (line < covered.end) : (line += 1) changed[@intCast(line)] = true;
+                any = any or covered.first < covered.end;
+            };
+        }
+        if (new_sprites) {
             try self.sprite_key.resize(self.gpa, p.sprites.len);
             @memcpy(self.sprite_key.items, p.sprites);
             self.sprite_lines = p.sprite_lines;
             @memset(std.mem.sliceAsBytes(&self.sprites), 0);
-            const lines: Lines = .{ .top = @min(p.sprite_lines.top, height), .bottom = @min(p.sprite_lines.bottom, height) };
             for (p.sprites) |*s| drawSprite(s, lines, &self.sprites);
-            mixed = true;
         }
         const backdrop = p.backdrop.index();
         if (self.backdrop != backdrop) {
             self.backdrop = backdrop;
-            mixed = true;
+            all = true;
         }
-        if (mixed) {
-            for (0..height) |line| mixLine(&self.back[line], &self.front[line], &self.sprites[line], backdrop, self.indices[line * width ..][0..width]);
+        for (0..height) |line| {
+            if (!all and !changed[line]) continue;
+            mixLine(&self.back[line], &self.front[line], &self.sprites[line], backdrop, self.indices[line * width ..][0..width]);
         }
-        if (mixed or self.colours == null or !std.meta.eql(self.colours.?, p.colours)) {
-            self.colours = p.colours;
-            var table: [256]u32 = @splat(0);
-            for (p.colours, 0..) |line, i| for (line, 0..) |c, k| {
-                table[i * palettes.size + k] = std.mem.readInt(u32, &palettes.rgba(c), .native);
-            };
+        const recoloured = self.colours == null or !std.meta.eql(self.colours.?, p.colours);
+        if (!all and !any and !recoloured) return false;
+        self.colours = p.colours;
+        var table: [256]u32 = @splat(0);
+        for (p.colours, 0..) |line, i| for (line, 0..) |c, k| {
+            table[i * palettes.size + k] = std.mem.readInt(u32, &palettes.rgba(c), .native);
+        };
+        for (0..height) |line| {
+            if (!all and !recoloured and !changed[line]) continue;
             // Eight pixels a step.
-            var k: usize = 0;
-            while (k < self.indices.len) : (k += 8) {
+            var k: usize = line * width;
+            while (k < (line + 1) * width) : (k += 8) {
                 const w = load(self.indices[k..][0..8]);
                 const out = self.rgba[k..][0..8];
                 inline for (0..8) |j| out[j] = table[@as(u8, @truncate(w >> (8 * j)))];
             }
-            return true;
         }
-        return false;
+        return true;
     }
 
     /// The last picture composed, for the platform to present.
@@ -755,6 +783,56 @@ test "the composition equals the rules applied pixel by pixel" {
         };
         _ = try c.compose(&p);
         try expectRules(c, &p);
+    }
+}
+
+// Layers that stay, sprites that move, appear and go, and colours that change at times: only the
+// lines that changed are composed again, and the picture still equals the rules, in RGBA too.
+test "moving sprites: their lines composed again, the picture equal to the rules" {
+    var prng = std.Random.DefaultPrng.init(3 * 5 * 7 * 11);
+    const r = prng.random();
+    const ta = TestArt.init();
+    var bb = try patterned(&ta, 64, 32);
+    defer bb.deinit();
+    var ba = try patterned(&ta, 40, 28);
+    defer ba.deinit();
+    var images: [3][24 * 24]u8 = undefined;
+    var frames: [3]art.Frame = undefined;
+    for (&frames, &images) |*f, *img| {
+        for (img) |*v| v.* = randomColour(r);
+        f.* = .{ .name = "f", .file = "f.png", .width = 24, .height = 24, .origin_x = 12, .origin_y = 20, .pixels = img };
+    }
+    var sprites: [12]Sprite = undefined;
+    for (&sprites) |*sp| sp.* = .{ .frame = &frames[r.uintLessThan(usize, frames.len)], .x = r.intRangeAtMost(i32, -30, 350), .y = r.intRangeAtMost(i32, -30, 260) };
+    var p: Screen = .{
+        .plane_b = .{ .board = &bb, .x = 5, .y = 9 },
+        .plane_a = .{ .board = &ba, .x = -3 },
+        .sprite_lines = .{ .top = 8, .bottom = 216 },
+        .backdrop = .{ .palette = 1, .colour = 2 },
+    };
+    for (&p.colours, 0..) |*line, i| for (line, 0..) |*col, k| {
+        col.* = .{ .r = @intCast(i), .g = @intCast(k % 8), .b = @intCast(k / 2) };
+    };
+    const c = try Composer.create(testing.allocator);
+    defer c.destroy();
+    var count: usize = 4;
+    for (0..60) |step| {
+        // A sprite moves a little, another jumps, one comes or goes.
+        const k = r.uintLessThan(usize, sprites.len);
+        sprites[k].x += r.intRangeAtMost(i32, -3, 3);
+        sprites[k].y += r.intRangeAtMost(i32, -3, 3);
+        if (step % 3 == 0) sprites[r.uintLessThan(usize, sprites.len)].y = r.intRangeAtMost(i32, -30, 260);
+        if (step % 5 == 0) count = r.uintAtMost(usize, sprites.len);
+        if (step % 17 == 0) p.colours[1][r.uintLessThan(usize, 16)] = .{ .r = r.int(u3), .g = 1, .b = 2 };
+        p.sprites = sprites[0..count];
+        _ = try c.compose(&p);
+        try expectRules(c, &p);
+        const f = c.frame();
+        for (0..height) |line| for (0..width) |x| {
+            const i = pixel(c, x, line);
+            const want = palettes.rgba(p.colours[i / 16][i % 16]);
+            try testing.expectEqualSlices(u8, &want, f.row(@intCast(line))[x * 4 ..][0..4]);
+        };
     }
 }
 
