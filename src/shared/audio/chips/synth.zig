@@ -147,18 +147,28 @@ pub fn Synth(comptime Fm: type, comptime P: type) type {
                     }
                 }
                 if (next_fm >= t) break;
-                s.now = next_fm;
-                // The PSG's level up to the sample's time; a step at that time is the next one's.
-                s.psgTo(next_fm);
-                if (s.fm_count > 0) n += s.mix(out[2 * n ..]);
-                var f: [1]Frame = undefined;
-                s.fm.generate(&f);
-                s.fm_sample = f[0];
-                s.fm_count += 1;
+                // The samples that start before `t` and before the DAC's next write take no write:
+                // the YM2612 makes them at once. The PSG's are made sample by sample with the mix.
+                const end = if (s.dac.nextCycle()) |w| @min(t, w) else t;
+                const count: usize = @intCast(@min((end + Fm.cycles_per_sample - 1) / Fm.cycles_per_sample - s.fm_count, block_samples));
+                var block: [block_samples]Frame = undefined;
+                s.fm.generate(block[0..count]);
+                for (block[0..count]) |f| {
+                    const at = s.fm_count * Fm.cycles_per_sample;
+                    // The PSG's level up to the sample's time; a step at that time is the next one's.
+                    s.psgTo(at);
+                    if (s.fm_count > 0) n += s.mix(out[2 * n ..]);
+                    s.fm_sample = f;
+                    s.fm_count += 1;
+                }
+                s.now = (s.fm_count - 1) * Fm.cycles_per_sample;
             }
             s.now = @max(s.now, t);
             return n;
         }
+
+        /// The most YM2612 samples made at once.
+        const block_samples = 256;
 
         /// Runs the PSG's steps before master cycle `t` (step k is at k x cycles_per_sample) and
         /// adds its level x cycles to `psg_sum` up to `t`. The PSG changes its level only at some

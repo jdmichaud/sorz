@@ -72,6 +72,14 @@ pub const Dac = struct {
         return d.stage != .idle;
     }
 
+    /// The master cycle of the next write, or null when the player has none to make. A pending
+    /// write is due at once.
+    pub fn nextCycle(d: *const Dac) ?u64 {
+        if (d.pending) |p| return p.cycle;
+        if (d.stage == .idle) return null;
+        return d.next;
+    }
+
     /// The next write due at or before master cycle `until`, or null. Each call returns one port
     /// write; an address write is always followed by its data write at the same cycle.
     pub fn nextWrite(d: *Dac, until: u64) ?Write {
