@@ -14,13 +14,14 @@
 //! pad 1's, which network play sends) and the gamepads' buttons; every gamepad plays that player,
 //! so there is no FIRST GAMEPAD row.
 //!
-//! The arrows move, Enter changes (a key or a button: the next one pressed is the new one; one
-//! that another setting has is swapped with it, so that no key does two things), left and right
-//! change a value. Escape saves and leaves, as SAVE AND EXIT does; EXIT WITHOUT SAVING, the
-//! settings key (where the variant has it) and a gamepad's B or BACK leave without saving, giving
-//! back the settings the screen opened with. A gamepad's d-pad and A or START do what the arrows and Enter do. The
-//! arrows, Enter and Escape keep their meaning here whatever the pads' keys are, so the screen is
-//! always usable. The changes apply at once (the keys when the screen closes).
+//! The pads' keys work it as they work the options: the directions move, A, B or C changes (a key
+//! or a button: the next one pressed is the new one; one that another setting has is swapped with
+//! it, so that no key does two things), left and right change a value, and START saves and leaves,
+//! as SAVE AND EXIT does; so do a gamepad's d-pad and buttons. Escape saves and leaves too, and
+//! the arrows move, whatever the pads' keys are, so the screen is always usable. EXIT WITHOUT
+//! SAVING, the settings key (where the variant has it) and a gamepad's BACK leave without saving,
+//! giving back the settings the screen opened with. The changes apply at once (the keys when the
+//! screen closes).
 const std = @import("std");
 const platform = @import("../platform.zig");
 const input = @import("../input.zig");
@@ -123,15 +124,15 @@ pub const Screen = struct {
                     self.takeKey(settings, k);
                     return .stay;
                 }
-                const nav: Nav = switch (k.key) {
+                const nav: Nav = if (self.padButton(settings, k.key)) |b| navOf(b) else switch (k.key) {
                     .up => .up,
                     .down => .down,
                     .left => .left,
                     .right => .right,
-                    .enter, .space => if (k.repeat) return .stay else .choose,
                     .escape => .back,
-                    else => if (self.facts.settings_key and k.key == settings.settings_key and !k.repeat) .leave else return .stay,
+                    else => if (self.facts.settings_key and k.key == settings.settings_key) .leave else return .stay,
                 };
+                if (k.repeat and (nav == .choose or nav == .back or nav == .leave)) return .stay;
                 return self.navigate(settings, nav);
             },
             .controller_button_down => |b| {
@@ -144,9 +145,8 @@ pub const Screen = struct {
                     .dpad_down => .down,
                     .dpad_left => .left,
                     .dpad_right => .right,
-                    .a, .start => .choose,
-                    .b, .back => .leave,
-                    else => return .stay,
+                    .back => .leave,
+                    else => if (std.mem.indexOfScalar(platform.ControllerButton, &settings.layout.buttons, b.button)) |i| navOf(input.face_buttons[i]) else return .stay,
                 };
                 return self.navigate(settings, nav);
             },
@@ -154,8 +154,29 @@ pub const Screen = struct {
         }
     }
 
-    /// `back` saves and leaves (Escape), `leave` leaves without saving.
+    /// `back` saves and leaves (START, Escape), `leave` leaves without saving.
     const Nav = enum { up, down, left, right, choose, back, leave };
+
+    /// What a pad's button does here.
+    fn navOf(b: input.Button) Nav {
+        return switch (b) {
+            .up => .up,
+            .down => .down,
+            .left => .left,
+            .right => .right,
+            .a, .b, .c => .choose,
+            .start => .back,
+        };
+    }
+
+    /// The pad button that `key` presses on this machine: either player's, or the one player's.
+    fn padButton(self: *const Screen, settings: *const Settings, key: platform.Key) ?input.Button {
+        const pads: usize = if (self.facts.one_player) 1 else 2;
+        for (settings.layout.keys[0..pads]) |keys| {
+            if (std.mem.indexOfScalar(platform.Key, &keys, key)) |i| return @fromBackingInt(@as(u3, @intCast(i)));
+        }
+        return null;
+    }
 
     fn navigate(self: *Screen, settings: *Settings, nav: Nav) Result {
         switch (nav) {
@@ -435,11 +456,11 @@ fn pressButton(screen: *Screen, settings: *Settings, b: platform.ControllerButto
     return screen.handle(settings, .{ .time_ns = 0, .payload = .{ .controller_button_down = .{ .controller = id, .button = b } } });
 }
 
-test "rebinding a key swaps it with the setting that had it; Escape saves and leaves" {
+test "rebinding a key swaps it with the setting that had it; Escape and START save and leave" {
     var s: Settings = .{};
     var screen: Screen = .open(&s, .{});
-    // Pad 2's A (row a, column 1): Enter, then X, pad 1's B.
-    for ([_]platform.Key{ .down, .down, .down, .down, .right, .enter }) |k| try testing.expectEqual(Result.stay, press(&screen, &s, k));
+    // Pad 2's A (row a, column 1): A, then X, pad 1's B.
+    for ([_]platform.Key{ .down, .down, .down, .down, .right, .z }) |k| try testing.expectEqual(Result.stay, press(&screen, &s, k));
     try testing.expect(screen.waiting);
     // Arrows and Enter are keys too while it waits; a repeat is not a press.
     _ = screen.handle(&s, .{ .time_ns = 0, .payload = .{ .key_down = .{ .key = .x, .repeat = true } } });
@@ -451,15 +472,21 @@ test "rebinding a key swaps it with the setting that had it; Escape saves and le
     try testing.expect(!screen.waiting);
     try testing.expectEqual(platform.Key.x, s.layout.keys[1][@backingInt(input.Button.a)]);
     try testing.expectEqual(pad2_a, s.layout.keys[0][@backingInt(input.Button.b)]);
-    // Escape while waiting keeps the key; Escape then goes back, saving: the keys stay.
-    _ = press(&screen, &s, .enter);
+    // Escape while waiting keeps the key; Escape then goes back, saving: the keys stay. START
+    // (Enter, pad 1's; Tab, pad 2's) does the same.
+    _ = press(&screen, &s, .c);
     _ = press(&screen, &s, .escape);
     try testing.expectEqual(platform.Key.x, s.layout.keys[1][@backingInt(input.Button.a)]);
     try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .escape));
     try testing.expectEqual(platform.Key.x, s.layout.keys[1][@backingInt(input.Button.a)]);
+    try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .enter));
+    try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .tab));
+    // With one player, pad 2's keys are not its.
+    screen = .open(&s, .{ .one_player = true });
+    try testing.expectEqual(Result.stay, press(&screen, &s, .tab));
 }
 
-test "EXIT WITHOUT SAVING, the settings key and a gamepad's B give back what the screen opened with" {
+test "EXIT WITHOUT SAVING, the settings key and a gamepad's BACK give back what the screen opened with" {
     var s: Settings = .{};
     s.sound.volume = 70;
     const opened = s;
@@ -483,16 +510,19 @@ test "EXIT WITHOUT SAVING, the settings key and a gamepad's B give back what the
     _ = pressButton(&screen, &s, .dpad_up);
     try testing.expectEqual(Row.save_and_exit, screen.row);
     _ = pressButton(&screen, &s, .dpad_up);
+    // The gamepads' A, B or C button (X, A, B by default) acts: DEFAULTS.
     _ = pressButton(&screen, &s, .a);
     try testing.expectEqual(Settings{}, s);
-    try testing.expectEqual(Result.exit_without_saving, pressButton(&screen, &s, .b));
+    try testing.expectEqual(Result.exit_without_saving, pressButton(&screen, &s, .back));
     try testing.expectEqual(opened, s);
 
-    // SAVE AND EXIT keeps them.
+    // SAVE AND EXIT keeps them; so does the gamepads' START.
     screen = .open(&s, .{});
     _ = press(&screen, &s, .up);
     _ = press(&screen, &s, .up);
-    try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .enter));
+    try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .x));
+    screen = .open(&s, .{});
+    try testing.expectEqual(Result.save_and_exit, pressButton(&screen, &s, .start));
 }
 
 test "one player: its keys alone, no FIRST GAMEPAD; without the settings key, no row of it" {
@@ -506,7 +536,7 @@ test "one player: its keys alone, no FIRST GAMEPAD; without the settings key, no
     screen.row = .a;
     _ = press(&screen, &s, .right);
     try testing.expectEqual(@as(u2, 2), screen.column);
-    _ = press(&screen, &s, .enter);
+    _ = press(&screen, &s, .z);
     _ = pressButton(&screen, &s, .y);
     try testing.expectEqual(platform.ControllerButton.y, s.layout.buttons[0]);
     _ = press(&screen, &s, .left);
