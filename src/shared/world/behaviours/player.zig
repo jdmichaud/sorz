@@ -1476,15 +1476,15 @@ pub fn landed(a: Actor) void {
 // Holds ----------------------------------------------------------------------------------------
 
 /// Its reach caught one at the last tick: it holds it from the front when they face each other,
-/// from behind when it faces the other's back; else it lets go.
+/// from behind when it faces the other's back (their whole pixels across); else it lets go.
 fn caught(a: Actor) bool {
     if (!a.mind.caught) return false;
     const h = a.entity.holding orelse return false;
     const held = a.other(h) orelse return false;
     const n = a.numbers();
     const behind = held.facing == a.entity.facing and switch (a.entity.facing) {
-        .right => held.position.x.order(a.entity.position.x) != .lt,
-        .left => held.position.x.order(a.entity.position.x) == .lt,
+        .right => held.position.x.whole() >= a.entity.position.x.whole(),
+        .left => held.position.x.whole() < a.entity.position.x.whole(),
     };
     if (held.facing == a.entity.facing and !behind) {
         a.letGo();
