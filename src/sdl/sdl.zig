@@ -84,6 +84,7 @@ pub extern "c" fn SDL_SetWindowFullscreen(window: *Window, flags: u32) c_int;
 pub extern "c" fn SDL_GetWindowFlags(window: *Window) u32;
 pub extern "c" fn SDL_SetWindowMinimumSize(window: *Window, min_w: c_int, min_h: c_int) void;
 pub extern "c" fn SDL_GetWindowDisplayIndex(window: *Window) c_int;
+pub extern "c" fn SDL_GetWindowPixelFormat(window: *Window) u32;
 pub extern "c" fn SDL_GetKeyboardFocus() ?*Window;
 pub extern "c" fn SDL_GetDisplayUsableBounds(display_index: c_int, rect: *Rect) c_int;
 
@@ -94,6 +95,10 @@ pub const RENDERER_ACCELERATED: u32 = 0x00000002;
 pub const RENDERER_PRESENTVSYNC: u32 = 0x00000004;
 
 pub const TEXTUREACCESS_STREAMING: c_int = 1;
+
+/// `SDL_BLENDMODE_NONE` of the `SDL_BlendMode` enumeration: the texture's pixels replace the
+/// target's.
+pub const BLENDMODE_NONE: c_int = 0;
 
 /// `SDL_PIXELFORMAT_RGBA32`: R, G, B, A bytes in memory order on every endianness
 /// (`SDL_PIXELFORMAT_ABGR8888` on little-endian hosts; a C probe checked the value).
@@ -115,6 +120,10 @@ pub extern "c" fn SDL_GetRendererOutputSize(renderer: *Renderer, w: *c_int, h: *
 pub extern "c" fn SDL_CreateTexture(renderer: *Renderer, format: u32, access: c_int, w: c_int, h: c_int) ?*Texture;
 pub extern "c" fn SDL_DestroyTexture(texture: *Texture) void;
 pub extern "c" fn SDL_UpdateTexture(texture: *Texture, rect: ?*const Rect, pixels: *const anyopaque, pitch: c_int) c_int;
+pub extern "c" fn SDL_LockTexture(texture: *Texture, rect: ?*const Rect, pixels: *?*anyopaque, pitch: *c_int) c_int;
+pub extern "c" fn SDL_UnlockTexture(texture: *Texture) void;
+pub extern "c" fn SDL_SetTextureBlendMode(texture: *Texture, blend_mode: c_int) c_int;
+pub extern "c" fn SDL_ConvertPixels(width: c_int, height: c_int, src_format: u32, src: *const anyopaque, src_pitch: c_int, dst_format: u32, dst: *anyopaque, dst_pitch: c_int) c_int;
 pub extern "c" fn SDL_SetRenderDrawColor(renderer: *Renderer, r: u8, g: u8, b: u8, a: u8) c_int;
 pub extern "c" fn SDL_RenderClear(renderer: *Renderer) c_int;
 pub extern "c" fn SDL_RenderCopy(renderer: *Renderer, texture: *Texture, src: ?*const Rect, dst: ?*const Rect) c_int;

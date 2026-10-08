@@ -1,5 +1,5 @@
 //! `SdlBackend`: the Linux/SDL platform (DESIGN.md). It presents through a window,
-//! a renderer and one streaming RGBA32 texture. It translates SDL's event queue into the
+//! a renderer and one streaming texture. It translates SDL's event queue into the
 //! project's events, with monotonic nanosecond time stamps. The performance counter is the
 //! clock. SDL's queued-audio API implements the bounded PCM queue contract. An event reports the
 //! relative mouse capture. This file has no palette logic and no game knowledge.
@@ -47,6 +47,8 @@ pub const SdlBackend = struct {
     keyboard_focused: bool = false,
     renderer: ?*c.Renderer = null,
     texture: ?*c.Texture = null,
+    /// The texture's pixel format (`textureFormat`).
+    texture_format: u32 = c.PIXELFORMAT_RGBA32,
     resolution: ?platform.Size = null,
     /// The window size that the backend last requested. A different actual size means that the
     /// user resized the window; a later mode change then keeps the user's size.
@@ -340,7 +342,7 @@ pub const SdlBackend = struct {
             // Make the new texture before the change. The old texture stays until the new one
             // exists.
             const renderer = self.renderer orelse return error.DeviceFailure;
-            const fresh = self.createTexture(renderer, width, height) orelse return error.DeviceFailure;
+            const fresh = self.createTexture(renderer, self.window.?, width, height) orelse return error.DeviceFailure;
             if (self.texture) |old| c.SDL_DestroyTexture(old);
             self.texture = fresh;
             self.refitWindow(width, height);
@@ -405,7 +407,7 @@ pub const SdlBackend = struct {
         };
         errdefer c.SDL_DestroyRenderer(created.renderer);
         self.recordRendererInfo(created);
-        const texture = self.createTexture(created.renderer, width, height) orelse return error.DeviceFailure;
+        const texture = self.createTexture(created.renderer, window, width, height) orelse return error.DeviceFailure;
         self.window = window;
         self.renderer = created.renderer;
         self.texture = texture;
@@ -452,15 +454,36 @@ pub const SdlBackend = struct {
         return self.renderer_name_buf[0..self.renderer_name_len];
     }
 
-    fn createTexture(self: *SdlBackend, renderer: *c.Renderer, width: u32, height: u32) ?*c.Texture {
+    fn createTexture(self: *SdlBackend, renderer: *c.Renderer, window: *c.Window, width: u32, height: u32) ?*c.Texture {
         if (self.fail_next_texture) {
             self.fail_next_texture = false;
             return null;
         }
-        return c.SDL_CreateTexture(renderer, c.PIXELFORMAT_RGBA32, c.TEXTUREACCESS_STREAMING, @intCast(width), @intCast(height)) orelse {
+        const format = self.textureFormat(renderer, window);
+        const texture = c.SDL_CreateTexture(renderer, format, c.TEXTUREACCESS_STREAMING, @intCast(width), @intCast(height)) orelse {
             std.log.err("SDL_CreateTexture({d}x{d}) failed: {s}", .{ width, height, c.SDL_GetError() });
             return null;
         };
+        // The frame is opaque: its pixels replace the window's, with no blending.
+        _ = c.SDL_SetTextureBlendMode(texture, c.BLENDMODE_NONE);
+        self.texture_format = format;
+        return texture;
+    }
+
+    /// The texture's pixel format. The frame's own, RGBA32, which `SDL_UpdateTexture` copies as
+    /// it is: an accelerated renderer takes it, or converts it itself, and scales it on the GPU.
+    /// The software renderer scales on the CPU, and converts each pixel of the window on the way
+    /// when the formats differ: its texture takes the window's format when it has it, and the
+    /// frame is converted into it at its own size (`present`), which leaves a plain stretch.
+    fn textureFormat(self: *const SdlBackend, renderer: *c.Renderer, window: *c.Window) u32 {
+        if (!self.software) return c.PIXELFORMAT_RGBA32;
+        const wanted = c.SDL_GetWindowPixelFormat(window);
+        var info: c.RendererInfo = undefined;
+        if (c.SDL_GetRendererInfo(renderer, &info) != 0) return c.PIXELFORMAT_RGBA32;
+        for (info.texture_formats[0..@min(info.num_texture_formats, info.texture_formats.len)]) |f| {
+            if (f == wanted) return wanted;
+        }
+        return c.PIXELFORMAT_RGBA32;
     }
 
     fn destroyPresentation(self: *SdlBackend) void {
@@ -493,11 +516,26 @@ pub const SdlBackend = struct {
         const renderer = self.renderer orelse return error.InvalidResolution;
         const texture = self.texture orelse return error.InvalidResolution;
         // SDL copies the rows into the texture. The backend keeps no reference to the buffer.
-        if (c.SDL_UpdateTexture(texture, null, frame.pixels.ptr, pitch) != 0) return error.DeviceFailure;
+        if (self.texture_format == c.PIXELFORMAT_RGBA32) {
+            if (c.SDL_UpdateTexture(texture, null, frame.pixels.ptr, pitch) != 0) return error.DeviceFailure;
+        } else {
+            var pixels: ?*anyopaque = null;
+            var texture_pitch: c_int = 0;
+            if (c.SDL_LockTexture(texture, null, &pixels, &texture_pitch) != 0) return error.DeviceFailure;
+            const converted = c.SDL_ConvertPixels(@intCast(frame.width), @intCast(frame.height), c.PIXELFORMAT_RGBA32, frame.pixels.ptr, pitch, self.texture_format, pixels.?, texture_pitch);
+            c.SDL_UnlockTexture(texture);
+            if (converted != 0) return error.DeviceFailure;
+        }
         const out = self.outputSize() orelse platform.Size{ .width = res.width, .height = res.height };
-        const dst = fitRect(@intCast(@min(out.width, std.math.maxInt(i32))), @intCast(@min(out.height, std.math.maxInt(i32))), res.width, res.height);
-        _ = c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-        _ = c.SDL_RenderClear(renderer);
+        const out_w: i32 = @intCast(@min(out.width, std.math.maxInt(i32)));
+        const out_h: i32 = @intCast(@min(out.height, std.math.maxInt(i32)));
+        const dst = fitRect(out_w, out_h, res.width, res.height);
+        // The bars beside a frame that does not cover the output are black. A frame that covers
+        // it replaces every pixel: nothing to clear.
+        if (dst.x != 0 or dst.y != 0 or dst.w != out_w or dst.h != out_h) {
+            _ = c.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            _ = c.SDL_RenderClear(renderer);
+        }
         if (c.SDL_RenderCopy(renderer, texture, null, &dst) != 0) return error.DeviceFailure;
         c.SDL_RenderPresent(renderer);
         self.frames_presented += 1;
@@ -996,6 +1034,9 @@ test "present honours channel order and stride and retains nothing" {
     // treat it as paced.
     try std.testing.expect(!backend.vsync);
     try std.testing.expectEqual(platform.Size{ .width = 8, .height = 6 }, backend.outputSize().?);
+    // The software renderer's texture has the window's format: the frame is converted into it.
+    try std.testing.expectEqual(c.SDL_GetWindowPixelFormat(backend.window.?), backend.texture_format);
+    try std.testing.expect(backend.texture_format != c.PIXELFORMAT_RGBA32);
 
     // Rows of 8 pixels, padded to a 40-byte stride. The padding holds a marker that must not
     // reach the screen.
