@@ -1,5 +1,6 @@
 //! Text in the game's font and the colours of its game menu (the content's `fonts/main` and
-//! `menu/one_pad`: palette 0 bright, palette 1 dim), composed alone or over a picture: what the
+//! `menu/one_pad`: palette 0 bright, palette 1 dim; palette 2 the panel's own, plain: a grey
+//! between them), composed alone or over a picture: what the
 //! port draws that the cartridge does not, in the cartridge's look. The browser page's screens are
 //! drawn with it (DESIGN.md 5.3: the loading screen, the page's menu, network play's messages), and
 //! so are the scenes the game puts over its picture (S3: the settings, the other player's absence,
@@ -18,7 +19,12 @@ pub const height = render.height;
 pub const columns = width / 8;
 pub const rows = height / 8;
 
-pub const Tone = enum(u2) { bright = 0, dim = 1 };
+/// The text's tones: bright (the line chosen), plain (legible, not chosen: the panel's own grey),
+/// dim (what cannot be chosen).
+pub const Tone = enum(u2) { bright = 0, dim = 1, plain = 2 };
+
+/// The plain tone's letter: a grey between the menu's white and its dimmed line.
+const plain_letter: art.Colour = .{ .r = 5, .g = 5, .b = 5 };
 
 /// `%`, which the game's font does not have: a tile in the style of the font's digits (1 the
 /// letter, C its shade, 2 the cell's ground), slanted as they are.
@@ -102,6 +108,9 @@ pub const Panel = struct {
         self.rgba = try gpa.alloc(u8, width * height * 4);
         self.screen = .{ .plane_a = .{ .board = &self.board } };
         colours.apply(&self.colours);
+        // The plain tone: the bright line's colours, its letter grey.
+        self.colours[@backingInt(Tone.plain)] = self.colours[@backingInt(Tone.bright)];
+        self.colours[@backingInt(Tone.plain)][1] = plain_letter;
         self.screen.colours = self.colours;
     }
 
