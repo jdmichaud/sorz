@@ -125,7 +125,7 @@ const Operator = struct {
     }
 
     /// The phase's integer part (10 bits of a period, and more above).
-    fn phaseInt(op: *const Operator) u32 {
+    inline fn phaseInt(op: *const Operator) u32 {
         return op.phase >> 10;
     }
 };
@@ -341,6 +341,11 @@ pub const Ym2612 = struct {
     env_counter: u32 = 0,
     total_clocks: u8 = 0,
     active_channels: u32 = all_channels,
+    /// A register was written since the last preparation: the next sample prepares the channels
+    /// (ymfm marks every channel modified at every write).
+    written: bool = true,
+    /// The channels whose registers changed since their data was cached (`channelsWritten`): a
+    /// preparation caches theirs again, and only theirs, as the others' would come out the same.
     modified_channels: u32 = all_channels,
     prepare_count: u32 = 0,
     chans: [channels]Channel = blk: {
@@ -372,6 +377,7 @@ pub const Ym2612 = struct {
         y.regs = @splat(0);
         for ([_]usize{ 0xb4, 0xb5, 0xb6, 0x1b4, 0x1b5, 0x1b6 }) |r| y.regs[r] = 0xc0;
         y.engineWrite(reg_mode, 0);
+        y.modified_channels = all_channels;
         for (&y.chans) |*ch| {
             ch.feedback = .{ 0, 0 };
             ch.feedback_in = 0;
@@ -407,12 +413,16 @@ pub const Ym2612 = struct {
 
     /// The next `out.len` samples: 16-bit-scaled stereo, as ymfm's `generate`.
     pub fn generate(y: *Ym2612, out: []Frame) void {
-        for (out) |*f| f.* = y.sample();
+        var done: usize = 0;
+        while (done < out.len) {
+            const n = y.render(out[done..]);
+            for (out[done..][0..n]) |*f| f.* = y.scale(f.*);
+            done += n;
+        }
     }
 
-    /// One sample, scaled as ymfm scales it.
-    pub fn sample(y: *Ym2612) Frame {
-        const raw = y.sampleRaw();
+    /// A sample before the final scaling, scaled as ymfm scales it.
+    fn scale(y: *const Ym2612, raw: Frame) Frame {
         return switch (y.variant) {
             // The discontinuity adds about 1/64 to the range: ymfm scales by 64/65 too.
             .ym2612 => .{
@@ -426,47 +436,191 @@ pub const Ym2612 = struct {
         };
     }
 
-    /// One sample before the final scaling: the sum of the six channels' 9-bit outputs, the DAC
-    /// replacing channel 6 when it is on. The YM2612 variant applies the DAC's distortion to each
-    /// channel, as its multiplexed output does (Nuked-OPN2's sum of its 24 output cycles, divided
-    /// by its gain of 3, gives the same sums).
+    /// One sample before the final scaling (see `render`).
     pub fn sampleRaw(y: *Ym2612) Frame {
-        y.clock();
-        var out: Frame = .{};
-        switch (y.variant) {
-            .ym2612 => {
-                const last_fm: usize = if (y.dac_enable != 0) 5 else 6;
-                for (0..last_fm) |c| {
-                    // The channel alone (ymfm's `output` of its bit); 0 when it is not active, which
-                    // the DAC moves to `dac_zero`.
-                    if (bitfield(y.active_channels, @intCast(c), 1) == 0) {
-                        out.left += dac_zero;
-                        out.right += dac_zero;
-                        continue;
-                    }
-                    var temp: Frame = .{};
-                    y.chOutput4op(c, &temp);
-                    out.left += dacDiscontinuity(temp.left);
-                    out.right += dacDiscontinuity(temp.right);
-                }
-                if (y.dac_enable != 0) {
-                    const dacval = dacDiscontinuity(y.dacValue());
-                    out.left += if (y.chans[5].cache.output0) dacval else dac_zero;
-                    out.right += if (y.chans[5].cache.output1) dacval else dac_zero;
-                }
-            },
-            .ym3438 => {
-                if (y.dac_enable == 0) {
-                    y.output(&out, all_channels);
-                } else {
-                    const dacval = y.dacValue();
-                    out.left = if (y.chans[5].cache.output0) dacval else 0;
-                    out.right = if (y.chans[5].cache.output1) dacval else 0;
-                    y.output(&out, all_channels ^ (1 << 5));
-                }
-            },
+        var out: [1]Frame = undefined;
+        _ = y.render(&out);
+        return out[0];
+    }
+
+    /// The most samples rendered at once.
+    const block_samples = 128;
+
+    /// What the channels share over a block of samples, made once for all of them: per sample,
+    /// the envelope counter and the LFO's PM and AM values.
+    const Clocks = struct {
+        len: usize = 0,
+        env_counter: [block_samples]u32 = undefined,
+        lfo_pm: [block_samples]i32 = undefined,
+        lfo_am: [block_samples]u8 = undefined,
+    };
+
+    /// Renders the next samples into `out` before the final scaling: the sum of the six channels'
+    /// 9-bit outputs, the DAC replacing channel 6 when it is on. The YM2612 variant applies the
+    /// DAC's distortion to each channel, as its multiplexed output does (Nuked-OPN2's sum of its
+    /// 24 output cycles, divided by its gain of 3, gives the same sums). Returns the number of
+    /// samples, at least one: a block of up to `block_samples`, which ends before a preparation.
+    ///
+    /// ymfm clocks every channel, then outputs every channel, sample after sample. The channels
+    /// share only their clocks (`Clocks`) and the preparation, and no write comes within a block:
+    /// each channel runs through the whole block in turn, with the same results.
+    fn render(y: *Ym2612, out: []Frame) usize {
+        var clocks: Clocks = .{};
+        y.clockShared(&clocks, @min(out.len, block_samples));
+        const raw = out[0..clocks.len];
+        var base: Frame = .{};
+        if (y.dac_enable != 0) {
+            const ch6 = &y.chans[5].cache;
+            const dacval = y.dacValue();
+            base = switch (y.variant) {
+                .ym2612 => .{
+                    .left = if (ch6.output0) dacDiscontinuity(dacval) else dac_zero,
+                    .right = if (ch6.output1) dacDiscontinuity(dacval) else dac_zero,
+                },
+                .ym3438 => .{ .left = if (ch6.output0) dacval else 0, .right = if (ch6.output1) dacval else 0 },
+            };
         }
-        return out;
+        @memset(raw, base);
+        for (0..channels) |c| y.renderChannel(c, &clocks, raw);
+        return raw.len;
+    }
+
+    /// Advances the clocks the channels share by up to `max` samples, into `clocks`: the first
+    /// sample prepares the channels after a write, and every 4096 samples to catch ending notes
+    /// (ymfm's `clock`); the block ends before the next preparation.
+    fn clockShared(y: *Ym2612, clocks: *Clocks, max: usize) void {
+        var due = y.written;
+        if (!due) {
+            due = y.prepare_count >= 4096;
+            y.prepare_count += 1;
+        }
+        if (due) y.prepare();
+        var n: usize = 0;
+        while (true) {
+            // The envelope runs once every 3 samples: the counter's low 2 bits count 0, 1, 2.
+            y.env_counter +%= 1;
+            if (bitfield(y.env_counter, 0, 2) == 3) y.env_counter +%= 1;
+            clocks.env_counter[n] = y.env_counter;
+            clocks.lfo_pm[n] = y.clockLfo();
+            clocks.lfo_am[n] = y.lfo_am;
+            n += 1;
+            if (n == max or y.prepare_count >= 4096) break;
+            y.prepare_count += 1;
+        }
+        clocks.len = n;
+        y.total_clocks +%= @truncate(n);
+    }
+
+    /// Prepares the channels: their data cached again from the registers where they changed, the
+    /// key ons and offs taken, the channels that can be heard found (`active_channels`).
+    fn prepare(y: *Ym2612) void {
+        y.lfo_enable = y.lfoEnable() != 0;
+        y.lfo_rate = y.lfoRate();
+        y.active_channels = 0;
+        for (0..channels) |c| {
+            if (y.chPrepare(c)) y.active_channels |= @as(u32, 1) << @intCast(c);
+        }
+        y.written = false;
+        y.modified_channels = 0;
+        y.prepare_count = 0;
+    }
+
+    /// Runs channel `c` through the block: clocks it, and adds its output to `raw`'s samples when
+    /// it is active and not replaced by the DAC.
+    fn renderChannel(y: *Ym2612, c: usize, clocks: *const Clocks, raw: []Frame) void {
+        const dac = c == 5 and y.dac_enable != 0;
+        if (bitfield(y.active_channels, @intCast(c), 1) != 0 and !dac) {
+            y.runChannel(&y.chans[c], clocks, raw, true);
+            return;
+        }
+        y.runChannel(&y.chans[c], clocks, raw, false);
+        // Not active: 0, which the DAC moves to `dac_zero`.
+        if (y.variant == .ym2612 and !dac) for (raw) |*f| {
+            f.left += dac_zero;
+            f.right += dac_zero;
+        };
+    }
+
+    /// The channel's clock and, with `output`, its output by its algorithm, 9 bits after the shift
+    /// of 5, added to the sides it is panned to (ymfm's `clock` and `output_4op` with rshift 5,
+    /// clipmax 256), for each sample of the block.
+    fn runChannel(y: *Ym2612, ch: *Channel, clocks: *const Clocks, raw: []Frame, comptime output: bool) void {
+        const op = [4]*Operator{ &y.ops[ch.ops[0]], &y.ops[ch.ops[1]], &y.ops[ch.ops[2]], &y.ops[ch.ops[3]] };
+        if (!output and ch.live == 0) {
+            // Nothing to clock, nothing to output: the feedback's history only moves.
+            ch.feedback[0] = if (raw.len == 1) ch.feedback[1] else ch.feedback_in;
+            ch.feedback[1] = ch.feedback_in;
+            return;
+        }
+        const rshift = 5;
+        const clipmax: i32 = 256;
+        const clipmin = -clipmax - 1;
+        const cache = ch.cache;
+        const distort = y.variant == .ym2612;
+        for (raw, 0..) |*f, i| {
+            ch.feedback[0] = ch.feedback[1];
+            ch.feedback[1] = ch.feedback_in;
+            // The operators that are not silent, in their order.
+            if (ch.live != 0) {
+                const env_counter = clocks.env_counter[i];
+                const lfo_raw_pm = clocks.lfo_pm[i];
+                inline for (0..4) |n| {
+                    const bit = @as(u4, 1) << n;
+                    if (ch.live & bit != 0) {
+                        opClock(op[n], env_counter, lfo_raw_pm);
+                        if (opSilent(op[n])) ch.live &= ~bit;
+                    }
+                }
+            }
+            if (!output) continue;
+
+            const am_offset = (@as(u32, clocks.lfo_am[i]) << 1) >> cache.am_shift;
+
+            // O1's feedback.
+            var opmod: i32 = 0;
+            if (cache.feedback != 0) opmod = (@as(i32, ch.feedback[0]) + ch.feedback[1]) >> @intCast(10 - cache.feedback);
+            ch.feedback_in = @truncate(opComputeVolume(op[0], op[0].phaseInt() +% @as(u32, @bitCast(opmod)), am_offset));
+
+            // With both outputs off, only the feedback is computed.
+            if (!cache.output0 and !cache.output1) {
+                if (distort) {
+                    f.left += dac_zero;
+                    f.right += dac_zero;
+                }
+                continue;
+            }
+
+            const algorithm = cache.algorithm;
+            var opout: [8]i16 = @splat(0);
+            opout[1] = ch.feedback_in;
+
+            opmod = opout[bitfield(algorithm, 0, 1)] >> 1;
+            opout[2] = @truncate(opComputeVolume(op[1], op[1].phaseInt() +% @as(u32, @bitCast(opmod)), am_offset));
+            opout[5] = opout[1] +% opout[2];
+
+            opmod = opout[bitfield(algorithm, 1, 3)] >> 1;
+            opout[3] = @truncate(opComputeVolume(op[2], op[2].phaseInt() +% @as(u32, @bitCast(opmod)), am_offset));
+            opout[6] = opout[1] +% opout[3];
+            opout[7] = opout[2] +% opout[3];
+
+            opmod = opout[bitfield(algorithm, 4, 3)] >> 1;
+            var result = opComputeVolume(op[3], op[3].phaseInt() +% @as(u32, @bitCast(opmod)), am_offset);
+            result >>= rshift;
+
+            if (bitfield(algorithm, 7, 1) != 0) result = std.math.clamp(result + (@as(i32, opout[1]) >> rshift), clipmin, clipmax);
+            if (bitfield(algorithm, 8, 1) != 0) result = std.math.clamp(result + (@as(i32, opout[2]) >> rshift), clipmin, clipmax);
+            if (bitfield(algorithm, 9, 1) != 0) result = std.math.clamp(result + (@as(i32, opout[3]) >> rshift), clipmin, clipmax);
+
+            const left = if (cache.output0) result else 0;
+            const right = if (cache.output1) result else 0;
+            if (distort) {
+                f.left += dacDiscontinuity(left);
+                f.right += dacDiscontinuity(right);
+            } else {
+                f.left += left;
+                f.right += right;
+            }
+        }
     }
 
     /// The DAC's 9-bit signed value.
@@ -595,6 +749,24 @@ pub const Ym2612 = struct {
         return null;
     }
 
+    /// The channels whose cached data (`cacheChannelData`, `cacheOperatorData`) can change by a
+    /// write to `regnum`: the channel of an operator's or a channel's register; every channel for
+    /// the LFO; channel 3 for the mode register and its operators' own frequencies. The key ons
+    /// are taken at each preparation, and the frequency latches and the other registers are not
+    /// cached. A mask wider than needed only costs time.
+    fn channelsWritten(regnum: u32) u32 {
+        const index = regnum & 0xff;
+        const part = regnum >> 8;
+        // Bits 0-1 of an operator's or a channel's register are the channel in its part (3: none).
+        const own: u32 = if (index & 3 == 3) 0 else @as(u32, 1) << @intCast((index & 3) + 3 * part);
+        return switch (index) {
+            0x22 => all_channels,
+            0x27, 0xa8...0xaf => 1 << 2,
+            0x30...0x9f, 0xa0...0xa3, 0xb0...0xb7 => own,
+            else => 0,
+        };
+    }
+
     /// Clocks the LFO; returns the raw PM value (ymfm's `clock_noise_and_lfo`).
     fn clockLfo(y: *Ym2612) i32 {
         if (!y.lfo_enable) {
@@ -616,10 +788,6 @@ pub const Ym2612 = struct {
         var pm: i32 = @intCast(bitfield(lfo_counter, 10, 3));
         if (bitfield(lfo_counter, 10 + 3, 1) != 0) pm ^= 7;
         return if (bitfield(lfo_counter, 10 + 4, 1) != 0) -pm else pm;
-    }
-
-    fn lfoAmOffset(y: *const Ym2612, ch: *const Channel) u32 {
-        return (@as(u32, y.lfo_am) << 1) >> ch.cache.am_shift;
     }
 
     fn cacheChannelData(y: *const Ym2612, choffs: u32, cache: *ChCache) void {
@@ -699,14 +867,15 @@ pub const Ym2612 = struct {
 
     // ----- operators (ymfm's fm_operator)
 
-    fn opPrepare(y: *Ym2612, op: *Operator) bool {
-        y.cacheOperatorData(op.choffs, op.opoffs, &op.cache);
+    /// `modified`: the operator's registers changed since its data was cached.
+    fn opPrepare(y: *Ym2612, op: *Operator, modified: bool) bool {
+        if (modified) y.cacheOperatorData(op.choffs, op.opoffs, &op.cache);
         opClockKeystate(op, @intFromBool(op.keyon_live != 0));
         op.keyon_live &= ~@as(u8, 1 << keyon_csm);
         return op.env_state != .release or op.env_attenuation < eg_quiet;
     }
 
-    fn opClock(op: *Operator, env_counter: u32, lfo_raw_pm: i32) void {
+    inline fn opClock(op: *Operator, env_counter: u32, lfo_raw_pm: i32) void {
         if (op.cache.ssg_eg_enable) {
             opClockSsgEgState(op);
         } else {
@@ -727,7 +896,7 @@ pub const Ym2612 = struct {
     }
 
     /// The operator's 14-bit signed output for a phase and an AM offset.
-    fn opComputeVolume(op: *const Operator, phase: u32, am_offset: u32) i32 {
+    inline fn opComputeVolume(op: *const Operator, phase: u32, am_offset: u32) i32 {
         if (op.env_attenuation > eg_quiet) return 0;
         const sin_attenuation: u32 = waveform[phase & (waveform_length - 1)];
         const env_attenuation = opEnvelopeAttenuation(op, am_offset) << 2;
@@ -814,7 +983,7 @@ pub const Ym2612 = struct {
         }
     }
 
-    fn opEnvelopeAttenuation(op: *const Operator, am_offset: u32) u32 {
+    inline fn opEnvelopeAttenuation(op: *const Operator, am_offset: u32) u32 {
         var result: u32 = op.env_attenuation;
         if (op.ssg_inverted != 0) result = (0x200 -% result) & 0x3ff;
         if (op.cache.lfo_am_enable) result += am_offset;
@@ -826,29 +995,15 @@ pub const Ym2612 = struct {
 
     fn chPrepare(y: *Ym2612, c: usize) bool {
         const ch = &y.chans[c];
-        y.cacheChannelData(ch.choffs, &ch.cache);
+        const modified = bitfield(y.modified_channels, @intCast(c), 1) != 0;
+        if (modified) y.cacheChannelData(ch.choffs, &ch.cache);
         var active: u32 = 0;
         ch.live = 0;
         for (ch.ops, 0..) |i, n| {
-            if (y.opPrepare(&y.ops[i])) active |= @as(u32, 1) << @intCast(n);
+            if (y.opPrepare(&y.ops[i], modified)) active |= @as(u32, 1) << @intCast(n);
             if (!opSilent(&y.ops[i])) ch.live |= @as(u4, 1) << @intCast(n);
         }
         return active != 0;
-    }
-
-    fn chClock(y: *Ym2612, c: usize, env_counter: u32, lfo_raw_pm: i32) void {
-        const ch = &y.chans[c];
-        ch.feedback[0] = ch.feedback[1];
-        ch.feedback[1] = ch.feedback_in;
-        // The operators that are not silent, in their order.
-        if (ch.live == 0) return;
-        for (ch.ops, 0..) |i, n| {
-            const bit = @as(u4, 1) << @intCast(n);
-            if (ch.live & bit == 0) continue;
-            const op = &y.ops[i];
-            opClock(op, env_counter, lfo_raw_pm);
-            if (opSilent(op)) ch.live &= ~bit;
-        }
     }
 
     /// Whether the operator is released and at the most attenuation, where its clock changes
@@ -857,93 +1012,16 @@ pub const Ym2612 = struct {
     /// output is 0 (above `eg_quiet`); it leaves the release only by a key on, which sets its
     /// phase to 0 and its SSG-EG inversion afresh (`opStartAttack`), the only state its clock
     /// changes. Its phase is then stale, as nothing reads it.
-    fn opSilent(op: *const Operator) bool {
+    inline fn opSilent(op: *const Operator) bool {
         return op.env_state == .release and op.env_attenuation == 0x3ff;
-    }
-
-    /// The channel's output by its algorithm, 9 bits after the shift of 5, added to the outputs it
-    /// is panned to (ymfm's `output_4op` with rshift 5, clipmax 256).
-    fn chOutput4op(y: *Ym2612, c: usize, out: *Frame) void {
-        const rshift = 5;
-        const clipmax: i32 = 256;
-        const ch = &y.chans[c];
-        const op = [4]*const Operator{ &y.ops[ch.ops[0]], &y.ops[ch.ops[1]], &y.ops[ch.ops[2]], &y.ops[ch.ops[3]] };
-        const am_offset = y.lfoAmOffset(ch);
-
-        // O1's feedback.
-        var opmod: i32 = 0;
-        const feedback = ch.cache.feedback;
-        if (feedback != 0) opmod = (@as(i32, ch.feedback[0]) + ch.feedback[1]) >> @intCast(10 - feedback);
-
-        ch.feedback_in = @truncate(opComputeVolume(op[0], op[0].phaseInt() +% @as(u32, @bitCast(opmod)), am_offset));
-        const op1value: i32 = ch.feedback_in;
-
-        // With both outputs off, only the feedback is computed.
-        if (!ch.cache.output0 and !ch.cache.output1) return;
-
-        const algorithm = ch.cache.algorithm;
-        var opout: [8]i16 = @splat(0);
-        opout[1] = @truncate(op1value);
-
-        opmod = opout[bitfield(algorithm, 0, 1)] >> 1;
-        opout[2] = @truncate(opComputeVolume(op[1], op[1].phaseInt() +% @as(u32, @bitCast(opmod)), am_offset));
-        opout[5] = opout[1] +% opout[2];
-
-        opmod = opout[bitfield(algorithm, 1, 3)] >> 1;
-        opout[3] = @truncate(opComputeVolume(op[2], op[2].phaseInt() +% @as(u32, @bitCast(opmod)), am_offset));
-        opout[6] = opout[1] +% opout[3];
-        opout[7] = opout[2] +% opout[3];
-
-        opmod = opout[bitfield(algorithm, 4, 3)] >> 1;
-        var result = opComputeVolume(op[3], op[3].phaseInt() +% @as(u32, @bitCast(opmod)), am_offset);
-        result >>= rshift;
-
-        const clipmin = -clipmax - 1;
-        if (bitfield(algorithm, 7, 1) != 0) result = std.math.clamp(result + (@as(i32, opout[1]) >> rshift), clipmin, clipmax);
-        if (bitfield(algorithm, 8, 1) != 0) result = std.math.clamp(result + (@as(i32, opout[2]) >> rshift), clipmin, clipmax);
-        if (bitfield(algorithm, 9, 1) != 0) result = std.math.clamp(result + (@as(i32, opout[3]) >> rshift), clipmin, clipmax);
-
-        if (ch.cache.output0) out.left += result;
-        if (ch.cache.output1) out.right += result;
     }
 
     // ----- the engine (ymfm's fm_engine_base)
 
-    /// Advances every channel by one sample (ymfm's `clock`).
-    fn clock(y: *Ym2612) void {
-        y.total_clocks +%= 1;
-        // Prepare after a register change, and every 4096 samples to catch ending notes.
-        var prepare = y.modified_channels != 0;
-        if (!prepare) {
-            prepare = y.prepare_count >= 4096;
-            y.prepare_count += 1;
-        }
-        if (prepare) {
-            y.lfo_enable = y.lfoEnable() != 0;
-            y.lfo_rate = y.lfoRate();
-            y.active_channels = 0;
-            for (0..channels) |c| {
-                if (y.chPrepare(c)) y.active_channels |= @as(u32, 1) << @intCast(c);
-            }
-            y.modified_channels = 0;
-            y.prepare_count = 0;
-        }
-        // The envelope runs once every 3 samples: the counter's low 2 bits count 0, 1, 2.
-        y.env_counter +%= 1;
-        if (bitfield(y.env_counter, 0, 2) == 3) y.env_counter +%= 1;
-        const lfo_raw_pm = y.clockLfo();
-        for (0..channels) |c| y.chClock(c, y.env_counter, lfo_raw_pm);
-    }
-
-    /// Adds the outputs of the active channels of `chanmask`, in the channels' order.
-    fn output(y: *Ym2612, out: *Frame, chanmask: u32) void {
-        var mask = chanmask & y.active_channels;
-        while (mask != 0) : (mask &= mask - 1) y.chOutput4op(@ctz(mask), out);
-    }
-
     fn engineWrite(y: *Ym2612, regnum: u32, data: u8) void {
-        // Every write marks every channel modified: the next sample prepares them again.
-        y.modified_channels = all_channels;
+        // Every write prepares the channels again at the next sample.
+        y.written = true;
+        y.modified_channels |= channelsWritten(regnum);
         if (regnum == reg_mode) {
             // The mode register: ymfm then updates its timers, which this port leaves out.
             _ = y.regsWrite(reg_mode, data);
@@ -1007,18 +1085,18 @@ test "the phase step: F-number, block, multiple and detune" {
     var y = Ym2612.init(.ym3438);
     sineVoice(&y, 4, 1000, 31, 0, 0, 15);
     writeReg(&y, 0, 0x3c, 0x03); // O4: MUL 3
-    y.clock();
+    _ = y.sampleRaw();
     // (fnum << 1 << block) >> 2, times MUL: 8000 * 3.
     try testing.expectEqual(@as(u32, 8000 * 3), y.ops[9].cache.phase_step);
     writeReg(&y, 0, 0x3c, 0x00); // MUL 0 means 1/2
-    y.clock();
+    _ = y.sampleRaw();
     try testing.expectEqual(@as(u32, 4000), y.ops[9].cache.phase_step);
     // DT 3 at key code 17 (block 4, F11 = 0, F10-F8 = 111): +8; DT 7: -8.
     writeReg(&y, 0, 0x3c, 0x31);
-    y.clock();
+    _ = y.sampleRaw();
     try testing.expectEqual(@as(u32, 8000 + 8), y.ops[9].cache.phase_step);
     writeReg(&y, 0, 0x3c, 0x71);
-    y.clock();
+    _ = y.sampleRaw();
     try testing.expectEqual(@as(u32, 8000 - 8), y.ops[9].cache.phase_step);
 }
 
