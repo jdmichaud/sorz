@@ -118,6 +118,9 @@ pub const Turn = struct {
     /// machine's player chooses theirs to join its game): the character select's cursor passes
     /// it and cannot choose it.
     taken: ?@import("setup.zig").Character = null,
+    /// This machine's settings' rules, which the game menu gives the game it starts where the
+    /// variant takes them (`Policies.settings_rules`).
+    rules: @import("setup.zig").Rules = .{},
     setup: *Setup,
     /// The variant's rules (variant.zig), which the scenes ask rather than the variant.
     policies: *const variant.Policies = &variant.original.policies,

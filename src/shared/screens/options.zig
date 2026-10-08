@@ -12,7 +12,8 @@
 //! settings (game.zig: an overlay of this machine that holds the game, which fades in and out as
 //! well), and the options fade back in when they close. A network guest's options (DESIGN.md 9:
 //! the game's rules are player 1's game's) show only what is its own: SOUND TEST, ADVANCED
-//! SETTINGS and EXIT.
+//! SETTINGS and EXIT. Where the settings give the game's rules (variant.zig), the hidden lives line
+//! is not there: the settings' LIVES are the game's.
 const std = @import("std");
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
@@ -88,6 +89,8 @@ pub const Options = struct {
     /// set-up).
     advanced_settings: bool = false,
     own_only: bool = false,
+    /// The game's lives are the settings' rules' (the variant's): no hidden lives line.
+    settings_rules: bool = false,
     values: Values = .{},
 
     pub const Phase = enum(u8) { setup, aim, fade_in, first_line, lines, leave, fade_out, leaving, to_settings, in_settings, from_settings };
@@ -176,6 +179,7 @@ pub const Options = struct {
                 self.values = .of(turn.setup);
                 self.hidden_lines = turn.setup.hidden_lines;
                 self.advanced_settings = turn.policies.advanced_settings;
+                self.settings_rules = turn.policies.settings_rules;
                 self.own_only = turn.guest;
                 self.phase = .aim;
             },
@@ -282,6 +286,7 @@ pub const Options = struct {
     /// Whether the screen has the line now.
     fn has(self: *const Options, l: Line) bool {
         if (self.own_only and l.rules()) return false;
+        if (l == .lives and self.settings_rules) return false;
         if (l == .advanced_settings) return self.advanced_settings;
         return self.hidden_lines or !l.hidden();
     }

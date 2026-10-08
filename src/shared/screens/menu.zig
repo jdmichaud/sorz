@@ -156,14 +156,18 @@ pub const Menu = struct {
             .fade_out => if (self.colours.stepFade()) {
                 self.phase = .leaving;
             },
+            // A game: its players, and its rules, this machine's settings' where the variant takes
+            // them.
             .leaving => switch (self.choice) {
                 .one_player => {
                     turn.setup.players = .one;
+                    turn.setup.rules = if (turn.policies.settings_rules) turn.rules else null;
                     return .one_player;
                 },
                 // Both players here, or this machine's alone: the other machine's joins later.
                 .two_players => {
                     turn.setup.players = if (turn.policies.two_players_here) .two else .one;
+                    turn.setup.rules = if (turn.policies.settings_rules) turn.rules else null;
                     return .two_players;
                 },
                 .options => {

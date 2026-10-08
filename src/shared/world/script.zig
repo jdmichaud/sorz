@@ -59,6 +59,8 @@ pub const Plan = struct {
     levels: content_screens.Levels = .{},
     /// The lives a continue gives (the options' lives).
     lives: u8 = 3,
+    /// The players' blows, and what they throw, land on each other (the original's).
+    friendly_hit: bool = true,
     /// The scores that give a player a life more, by the lives its score gave it already (play's
     /// record's; none: no life more).
     extra_lives: []const u32 = &.{},

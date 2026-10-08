@@ -22,6 +22,17 @@ pub const Score = struct {
 
 pub const high_scores = 10;
 
+/// The game's rules that the port's settings choose outside the original (variant.zig): the lives
+/// a game, a continue and a join give (the one played counted), the continues, and whether the
+/// players' blows and what they throw land on each other (grabbing the other player for a team
+/// move stays). The game menu gives the game the machine's when it starts one; in network play
+/// the guest takes the host's game, and its rules with it.
+pub const Rules = struct {
+    lives: u8 = 3,
+    continues: u8 = 3,
+    friendly_hit: bool = true,
+};
+
 /// A player's part of the game under way.
 pub const Gamer = struct {
     /// Playing (the game menu's choice; not out of the game).
@@ -57,20 +68,21 @@ pub const Progress = struct {
 
     /// A new game: the players of the game menu's choice in play, each with the lives of the
     /// options (1, 3, 5 or 7) and three continues (the original's, set as the character select
-    /// ends), the other player's lives set too, as the original's are. It starts at the options'
-    /// first round (round 1 but by the hidden line).
+    /// ends), or the settings' rules', the other player's lives set too, as the original's are. It
+    /// starts at the options' first round (round 1 but by the hidden line).
     pub fn new(setup: *const Setup) Progress {
         var p: Progress = .{ .round = setup.first_round + 1 };
         for (&p.players, 0..) |*g, k| g.* = .{
             .in_play = k == 0 or setup.players == .two,
             .lives = livesOf(setup),
-            .continues = 3,
+            .continues = if (setup.rules) |r| r.continues else 3,
         };
         return p;
     }
 
-    /// The lives a new game, or a continue, gives: those of the options.
+    /// The lives a new game, or a continue, gives: those of the options, or of the rules.
     pub fn livesOf(setup: *const Setup) u8 {
+        if (setup.rules) |r| return r.lives;
         return 2 * setup.lives + 1;
     }
 };
@@ -95,4 +107,7 @@ pub const Setup = struct {
     high_scores: ?[high_scores]Score = null,
     /// The game under way.
     progress: Progress = .{},
+    /// The rules of the game under way, outside the original; null: the cartridge's (the
+    /// options' lives, three continues, the players' blows landing on each other).
+    rules: ?Rules = null,
 };

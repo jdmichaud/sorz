@@ -457,7 +457,7 @@ export fn gp_key(code_len: u32, down: u32, repeat: u32) u32 {
     backend.keyEvent(key, down != 0, repeat != 0);
     if (game) |g| return @intFromBool(g.usesKey(key));
     for (sorz.input.default_keys) |binding| {
-        if (binding.key == key and binding.pad == 0) return 1;
+        if (binding.key == key and binding.player == 0) return 1;
     }
     return 0;
 }
@@ -606,7 +606,7 @@ export fn gp_inspect() u32 {
             .scale = s.window.scale,
             .fullscreen = s.window.fullscreen,
             .settings_key = @tagName(s.settings_key),
-            .start_key = @tagName(s.key(.{ .pad = .{ .pad = 0, .button = .start } })),
+            .start_key = @tagName(s.key(.{ .player = .{ .player = 0, .button = .start } })),
         },
         .net = if (g.netplay) |np| NetState{
             .role = @tagName(np.role),

@@ -78,7 +78,7 @@ pub const Screens = struct {
         try p.text((columns - line.len) / 2, loading_row, line, .bright);
         const lit = percent * loading_bar / 100;
         for (0..loading_bar) |i| try p.text((columns - loading_bar) / 2 + i, loading_row + 2, "-", if (i < lit) .bright else .dim);
-        return p.finish(null, false);
+        return p.finish(null, false, 255);
     }
 
     /// A message: its lines (split at '\n', each cut at its spaces to fit) centred from row 11, on
@@ -87,7 +87,7 @@ pub const Screens = struct {
         const p = &self.panel;
         p.begin();
         _ = try p.message(text_, 11, under != null);
-        return p.finish(under, false);
+        return p.finish(under, false, 255);
     }
 };
 

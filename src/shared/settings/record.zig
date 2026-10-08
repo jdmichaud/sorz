@@ -1,42 +1,47 @@
 //! The port's settings record (DESIGN.md 7, decision D2). The cartridge has no saves, so the port
-//! stores only its own settings: the keys of both pads and of the settings screen, the
-//! controllers' buttons and which pad the first one plays, the sound's volume, and the window's
-//! scale and full screen (the SDL host's). The game's own options (the level, the controls, the
+//! stores only its own settings: each player's input (the keyboard or a gamepad, its keys, its
+//! gamepad's buttons, its autofire) and the settings screen's key, the sound's volume, the window's
+//! scale and full screen (the SDL host's), and the game's rules outside the original (the lives, the
+//! continues, the friendly hits: setup.zig). The game's own options (the level, the controls, the
 //! sound test, and the hidden lives and round) are the original's: they reset at power-on, as on
-//! the console, so the game from power-on never depends on the record.
+//! the console.
 //!
 //! The record is one JSON object, `settings.json` in the platform's `Storage`, with a version
 //! (DESIGN.md 7: a record of another version is refused, not converted). The game writes it with
 //! every field, in a fixed order, so that a player can read and edit it:
 //!
 //!     {
-//!       "version": 1,
-//!       "keys": {
-//!         "pad1": { "up": "up", "down": "down", ..., "start": "enter" },
-//!         "pad2": { "up": "w", ..., "start": "tab" },
-//!         "settings": "f1"
+//!       "version": 2,
+//!       "players": {
+//!         "player1": { "input": "keyboard", "keys": { "up": "up", ..., "start": "enter" },
+//!                      "buttons": { "a": "x", "b": "a", "c": "b", "start": "start" }, "autofire": false },
+//!         "player2": { "input": "gamepad 1", "keys": { "up": "w", ... }, ... },
+//!         "player3": { "input": "keyboard", "keys": { "up": "none", ... }, ... },
+//!         "player4": { ... }
 //!       },
-//!       "controllers": { "first_pad": 1, "buttons": { "a": "x", "b": "a", "c": "b", "start": "start" } },
+//!       "settings_key": "f1",
 //!       "sound": { "volume": 100, "mute": false },
-//!       "window": { "scale": 3, "fullscreen": false }
+//!       "window": { "scale": 3, "fullscreen": false },
+//!       "rules": { "lives": 3, "continues": 3, "friendly_hit": true }
 //!     }
 //!
-//! Keys are named as `platform.Key` names them (the agent host's `--key` names), controller
-//! buttons as `platform.ControllerButton` does.
+//! Keys are named as `platform.Key` names them (the agent host's `--key` names), "none" for no key,
+//! gamepad buttons as `platform.ControllerButton` does.
 //!
 //! Damaged data has a defined behaviour (`parse`, `load`): a record that does not read as a JSON
 //! object, or that is of another version, gives the defaults; a field that does not read gives
-//! its default, and the rest is kept. The keys are one group and the controller buttons another:
-//! one key for two buttons would press both, so a key used twice gives the group's defaults. A
+//! its default, and the rest is kept. The keys are one group and each player's buttons another:
+//! one key for two buttons would press both, so a key used twice gives the keys' defaults. A
 //! field missing or unknown counts as damaged too, since the game writes every field and no
 //! other. `load` never fails: it reports what it replaced, the game tells the player once, and
 //! the record is written again repaired, with the damaged bytes kept as `settings-damaged.json`.
 const std = @import("std");
 const platform = @import("../platform.zig");
 const input = @import("../input.zig");
+const Rules = @import("../setup.zig").Rules;
 
 /// The record's version: a record of another version is refused.
-pub const version: i64 = 1;
+pub const version: i64 = 2;
 /// The record's name in the storage, and the name a damaged record is kept under.
 pub const name = "settings.json";
 pub const damaged_name = "settings-damaged.json";
@@ -46,6 +51,9 @@ pub const max_len = 64 * 1024;
 /// The volume's range, in percent, and the window scales the record keeps.
 pub const max_volume: u8 = 100;
 pub const max_scale: u8 = 12;
+/// The rules' ranges.
+pub const max_lives: u8 = 9;
+pub const max_continues: u8 = 9;
 
 pub const Settings = struct {
     layout: input.Layout = .{},
@@ -53,6 +61,8 @@ pub const Settings = struct {
     settings_key: platform.Key = .f1,
     sound: Sound = .{},
     window: Window = .{},
+    /// The game's rules outside the original.
+    rules: Rules = .{},
 
     pub const Sound = struct {
         /// 0 to 100, in percent of the game's own level.
@@ -66,19 +76,19 @@ pub const Settings = struct {
         fullscreen: bool = false,
     };
 
-    /// The key of every key setting: the pads' buttons, then the settings screen's.
-    pub const KeySlot = union(enum) { pad: input.Layout.Place, settings };
+    /// The key of every key setting: the players' buttons, then the settings screen's.
+    pub const KeySlot = union(enum) { player: input.Layout.Place, settings };
 
     pub fn key(self: *const Settings, slot: KeySlot) platform.Key {
         return switch (slot) {
-            .pad => |p| self.layout.keys[p.pad][@backingInt(p.button)],
+            .player => |p| self.layout.players[p.player].keys[@backingInt(p.button)],
             .settings => self.settings_key,
         };
     }
 
     pub fn setKey(self: *Settings, slot: KeySlot, k: platform.Key) void {
         switch (slot) {
-            .pad => |p| self.layout.keys[p.pad][@backingInt(p.button)] = k,
+            .player => |p| self.layout.players[p.player].keys[@backingInt(p.button)] = k,
             .settings => self.settings_key = k,
         }
     }
@@ -86,7 +96,7 @@ pub const Settings = struct {
     /// The setting that holds `k`, if any.
     pub fn slotOf(self: *const Settings, k: platform.Key) ?KeySlot {
         if (self.settings_key == k) return .settings;
-        if (self.layout.find(k)) |p| return .{ .pad = p };
+        if (self.layout.find(k)) |p| return .{ .player = p };
         return null;
     }
 
@@ -100,11 +110,11 @@ pub const Settings = struct {
         return true;
     }
 
-    /// Gives the controllers' `face` button the controller button `b`; the face button that had
+    /// Gives player `p`'s gamepad `face` button the gamepad button `b`; the face button that had
     /// it takes the old one. False for a button that cannot be bound (`bindableButton`).
-    pub fn bindButton(self: *Settings, face: usize, b: platform.ControllerButton) bool {
+    pub fn bindButton(self: *Settings, p: usize, face: usize, b: platform.ControllerButton) bool {
         if (!bindableButton(b)) return false;
-        const buttons = &self.layout.buttons;
+        const buttons = &self.layout.players[p].buttons;
         const old = buttons[face];
         for (buttons) |*x| if (x.* == b) {
             x.* = old;
@@ -199,39 +209,47 @@ pub fn parse(gpa: std.mem.Allocator, bytes: []const u8, report: *Report) Setting
     }
     var s: Settings = .{};
     const r: Reader = .{ .report = report };
-    r.unknown(root, &.{ "version", "keys", "controllers", "sound", "window" }, "");
+    r.unknown(root, &.{ "version", "players", "settings_key", "sound", "window", "rules" }, "");
 
-    // The keys: all of them, then one key for one setting.
-    if (r.object(root, "keys", "keys")) |keys| {
-        r.unknown(keys, &.{ "pad1", "pad2", "settings" }, "keys.");
-        inline for (.{ "pad1", "pad2" }, 0..) |pad_name, pad| {
-            if (r.object(keys, pad_name, "keys." ++ pad_name)) |o| {
-                r.unknown(o, &button_names, "keys." ++ pad_name ++ ".");
-                inline for (button_names, 0..) |b, i| {
-                    if (r.keyField(o, b, "keys." ++ pad_name ++ "." ++ b)) |k| s.layout.keys[pad][i] = k;
+    // The players, then one key for one setting.
+    if (r.object(root, "players", "players")) |players| {
+        r.unknown(players, &player_names, "players.");
+        inline for (player_names, 0..) |player_name, i| {
+            const path = "players." ++ player_name;
+            const pi = &s.layout.players[i];
+            if (r.object(players, player_name, path)) |o| {
+                r.unknown(o, &.{ "input", "keys", "buttons", "autofire" }, path ++ ".");
+                if (r.inputField(o, "input", path ++ ".input")) |g| pi.gamepad = g;
+                if (r.object(o, "keys", path ++ ".keys")) |keys| {
+                    r.unknown(keys, &button_names, path ++ ".keys.");
+                    inline for (button_names, 0..) |b, k| {
+                        if (r.keyField(keys, b, path ++ ".keys." ++ b)) |key| pi.keys[k] = key;
+                    }
                 }
+                if (r.object(o, "buttons", path ++ ".buttons")) |buttons| {
+                    r.unknown(buttons, &face_names, path ++ ".buttons.");
+                    inline for (face_names, 0..) |f, k| {
+                        if (r.buttonField(buttons, f, path ++ ".buttons." ++ f)) |b| pi.buttons[k] = b;
+                    }
+                    if (!buttonsDistinct(pi)) {
+                        report.add(path ++ ".buttons", "a button is used twice");
+                        pi.buttons = defaults.layout.players[i].buttons;
+                    }
+                }
+                if (r.boolean(o, "autofire", path ++ ".autofire")) |b| pi.autofire = b;
             }
         }
-        if (r.keyField(keys, "settings", "keys.settings")) |k| s.settings_key = k;
-        if (!keysDistinct(&s)) {
-            report.add("keys", "a key is used twice");
-            s.layout.keys = defaults.layout.keys;
-            s.settings_key = defaults.settings_key;
-        }
+        // A gamepad for one player alone.
+        for (s.layout.players, 0..) |a, i| for (s.layout.players[i + 1 ..]) |*b| if (a.gamepad != null and a.gamepad == b.gamepad) {
+            report.add("players", "a gamepad is two players'");
+            b.gamepad = null;
+        };
     }
-    if (r.object(root, "controllers", "controllers")) |c| {
-        r.unknown(c, &.{ "first_pad", "buttons" }, "controllers.");
-        if (r.integer(c, "first_pad", "controllers.first_pad", 1, 2)) |n| s.layout.first_pad = @intCast(n - 1);
-        if (r.object(c, "buttons", "controllers.buttons")) |o| {
-            r.unknown(o, &face_names, "controllers.buttons.");
-            inline for (face_names, 0..) |f, i| {
-                if (r.buttonField(o, f, "controllers.buttons." ++ f)) |b| s.layout.buttons[i] = b;
-            }
-            if (!buttonsDistinct(&s)) {
-                report.add("controllers.buttons", "a button is used twice");
-                s.layout.buttons = defaults.layout.buttons;
-            }
-        }
+    if (r.keyField(root, "settings_key", "settings_key")) |k| s.settings_key = k;
+    if (!keysDistinct(&s)) {
+        report.add("keys", "a key is used twice");
+        for (&s.layout.players, defaults.layout.players) |*p, d| p.keys = d.keys;
+        s.settings_key = defaults.settings_key;
     }
     if (r.object(root, "sound", "sound")) |o| {
         r.unknown(o, &.{ "volume", "mute" }, "sound.");
@@ -243,9 +261,16 @@ pub fn parse(gpa: std.mem.Allocator, bytes: []const u8, report: *Report) Setting
         if (r.integer(o, "scale", "window.scale", 1, max_scale)) |n| s.window.scale = @intCast(n);
         if (r.boolean(o, "fullscreen", "window.fullscreen")) |b| s.window.fullscreen = b;
     }
+    if (r.object(root, "rules", "rules")) |o| {
+        r.unknown(o, &.{ "lives", "continues", "friendly_hit" }, "rules.");
+        if (r.integer(o, "lives", "rules.lives", 1, max_lives)) |n| s.rules.lives = @intCast(n);
+        if (r.integer(o, "continues", "rules.continues", 0, max_continues)) |n| s.rules.continues = @intCast(n);
+        if (r.boolean(o, "friendly_hit", "rules.friendly_hit")) |b| s.rules.friendly_hit = b;
+    }
     return s;
 }
 
+const player_names = [_][]const u8{ "player1", "player2", "player3", "player4" };
 const button_names = [_][]const u8{ "up", "down", "left", "right", "a", "b", "c", "start" };
 const face_names = [_][]const u8{ "a", "b", "c", "start" };
 
@@ -288,8 +313,19 @@ const Reader = struct {
 
     fn keyField(r: Reader, o: std.json.ObjectMap, field: []const u8, comptime path: []const u8) ?platform.Key {
         const v = r.get(o, field, path) orelse return null;
-        if (v == .string) if (std.meta.stringToEnum(platform.Key, v.string)) |k| if (bindable(k)) return k;
-        r.report.add(path, "not the name of a key (escape is the game's)");
+        if (v == .string) {
+            if (std.mem.eql(u8, v.string, "none")) return input.no_key;
+            if (std.meta.stringToEnum(platform.Key, v.string)) |k| if (bindable(k)) return k;
+        }
+        r.report.add(path, "not the name of a key, or none (escape is the game's)");
+        return null;
+    }
+
+    /// "keyboard", or "gamepad N" (N from 1): the gamepad's place, or null for the keyboard.
+    fn inputField(r: Reader, o: std.json.ObjectMap, field: []const u8, comptime path: []const u8) ??u2 {
+        const v = r.get(o, field, path) orelse return null;
+        if (v == .string) if (inputOf(v.string)) |g| return g;
+        r.report.add(path, "not keyboard or gamepad 1 to gamepad 4");
         return null;
     }
 
@@ -314,36 +350,58 @@ const Reader = struct {
     }
 };
 
+/// An input method's name: "keyboard", "gamepad 1"...
+fn inputOf(text: []const u8) ??u2 {
+    if (std.mem.eql(u8, text, "keyboard")) return @as(?u2, null);
+    for (0..input.Controls.max_controllers) |g| {
+        var buf: [16]u8 = undefined;
+        if (std.mem.eql(u8, text, inputName(@intCast(g), &buf))) return @as(?u2, @intCast(g));
+    }
+    return null;
+}
+
+fn inputName(g: ?u2, buf: *[16]u8) []const u8 {
+    const n = g orelse return "keyboard";
+    return std.fmt.bufPrint(buf, "gamepad {d}", .{@as(u8, n) + 1}) catch unreachable;
+}
+
 fn keysDistinct(s: *const Settings) bool {
-    const all: [17]platform.Key = s.layout.keys[0] ++ s.layout.keys[1] ++ [1]platform.Key{s.settings_key};
-    for (all, 0..) |a, i| for (all[i + 1 ..]) |b| if (a == b) return false;
+    var all: [input.max_players * 8 + 1]platform.Key = undefined;
+    for (s.layout.players, 0..) |p, i| all[i * 8 ..][0..8].* = p.keys;
+    all[all.len - 1] = s.settings_key;
+    for (all, 0..) |a, i| for (all[i + 1 ..]) |b| if (a == b and a != input.no_key) return false;
     return true;
 }
 
-fn buttonsDistinct(s: *const Settings) bool {
-    for (s.layout.buttons, 0..) |a, i| for (s.layout.buttons[i + 1 ..]) |b| if (a == b) return false;
+fn buttonsDistinct(p: *const input.PlayerInput) bool {
+    for (p.buttons, 0..) |a, i| for (p.buttons[i + 1 ..]) |b| if (a == b) return false;
     return true;
 }
 
 /// The record's text: every field, in a fixed order, so that the same settings give the same
 /// bytes.
 pub fn write(s: *const Settings, w: *std.Io.Writer) std.Io.Writer.Error!void {
-    try w.print("{{\n  \"version\": {d},\n  \"keys\": {{\n", .{version});
-    for (s.layout.keys, 0..) |pad, p| {
-        try w.print("    \"pad{d}\": {{ ", .{p + 1});
-        for (pad, button_names, 0..) |k, b, i| try w.print("{s}\"{s}\": \"{s}\"", .{ if (i == 0) "" else ", ", b, @tagName(k) });
-        try w.writeAll(" },\n");
+    try w.print("{{\n  \"version\": {d},\n  \"players\": {{\n", .{version});
+    for (s.layout.players, player_names, 0..) |p, name_, i| {
+        var buf: [16]u8 = undefined;
+        try w.print("    \"{s}\": {{ \"input\": \"{s}\", \"keys\": {{ ", .{ name_, inputName(p.gamepad, &buf) });
+        for (p.keys, button_names, 0..) |k, b, j| try w.print("{s}\"{s}\": \"{s}\"", .{ if (j == 0) "" else ", ", b, keyName(k) });
+        try w.writeAll(" }, \"buttons\": { ");
+        for (p.buttons, face_names, 0..) |b, f, j| try w.print("{s}\"{s}\": \"{s}\"", .{ if (j == 0) "" else ", ", f, @tagName(b) });
+        try w.print(" }}, \"autofire\": {} }}{s}\n", .{ p.autofire, if (i + 1 < player_names.len) "," else "" });
     }
-    try w.print("    \"settings\": \"{s}\"\n  }},\n", .{@tagName(s.settings_key)});
-    try w.print("  \"controllers\": {{ \"first_pad\": {d}, \"buttons\": {{ ", .{@as(u8, s.layout.first_pad) + 1});
-    for (s.layout.buttons, face_names, 0..) |b, f, i| try w.print("{s}\"{s}\": \"{s}\"", .{ if (i == 0) "" else ", ", f, @tagName(b) });
-    try w.writeAll(" } },\n");
+    try w.print("  }},\n  \"settings_key\": \"{s}\",\n", .{keyName(s.settings_key)});
     try w.print("  \"sound\": {{ \"volume\": {d}, \"mute\": {} }},\n", .{ s.sound.volume, s.sound.mute });
-    try w.print("  \"window\": {{ \"scale\": {d}, \"fullscreen\": {} }}\n}}\n", .{ s.window.scale, s.window.fullscreen });
+    try w.print("  \"window\": {{ \"scale\": {d}, \"fullscreen\": {} }},\n", .{ s.window.scale, s.window.fullscreen });
+    try w.print("  \"rules\": {{ \"lives\": {d}, \"continues\": {d}, \"friendly_hit\": {} }}\n}}\n", .{ s.rules.lives, s.rules.continues, s.rules.friendly_hit });
+}
+
+fn keyName(k: platform.Key) []const u8 {
+    return if (k == input.no_key) "none" else @tagName(k);
 }
 
 /// The longest record `write` makes: every key name at its longest.
-pub const max_written = 1024;
+pub const max_written = 4096;
 
 /// The record's bytes in `buf`.
 pub fn encode(s: *const Settings, buf: *[max_written]u8) []const u8 {
@@ -416,12 +474,15 @@ test "the record round-trips, and the defaults are the input's" {
     try testing.expectEqual(input.Layout{}, reread(encode(&s, &buf), &report).layout);
     try testing.expect(report.ok());
 
-    _ = s.bindKey(.{ .pad = .{ .pad = 1, .button = .start } }, .space);
+    _ = s.bindKey(.{ .player = .{ .player = 1, .button = .start } }, .space);
+    _ = s.bindKey(.{ .player = .{ .player = 3, .button = .a } }, .y);
     _ = s.bindKey(.settings, .keypad_minus);
-    _ = s.bindButton(3, .back);
-    s.layout.first_pad = 1;
+    _ = s.bindButton(1, 3, .back);
+    s.layout.assign(1, 2);
+    s.layout.players[0].autofire = true;
     s.sound = .{ .volume = 40, .mute = true };
     s.window = .{ .scale = 5, .fullscreen = true };
+    s.rules = .{ .lives = 9, .continues = 0, .friendly_hit = false };
     const text = encode(&s, &buf);
     const back = reread(text, &report);
     try testing.expect(report.ok());
@@ -429,49 +490,60 @@ test "the record round-trips, and the defaults are the input's" {
     try testing.expectEqual(hash(&s), hash(&back));
     try testing.expect(hash(&s) != hash(&Settings{}));
     try testing.expect(std.mem.indexOf(u8, text, "\"start\": \"space\" }") != null);
-    try testing.expect(std.mem.indexOf(u8, text, "\"settings\": \"keypad_minus\"") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "\"input\": \"gamepad 3\"") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "\"settings_key\": \"keypad_minus\"") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "\"up\": \"none\"") != null);
 
     // The longest names fit the buffer.
-    const long: Settings = .{
-        .layout = .{
-            .keys = .{
-                .{ .right_bracket, .left_bracket, .keypad_minus, .right_shift, .keypad_plus, .page_down, .left_shift, .apostrophe },
-                .{ .right_ctrl, .left_ctrl, .backslash, .semicolon, .backspace, .right_alt, .page_up, .left_alt },
-            },
-            .buttons = .{ .right_shoulder, .left_shoulder, .right_stick, .left_stick },
-        },
-        .settings_key = .digit_0,
+    var longest: platform.Key = .a;
+    for (std.enums.values(platform.Key)) |k| if (@tagName(k).len > @tagName(longest).len) {
+        longest = k;
     };
-    try testing.expectEqual(long, reread(encode(&long, &buf), &report));
-    try testing.expect(report.ok());
+    var long: Settings = .{ .settings_key = longest };
+    for (&long.layout.players) |*p| {
+        p.keys = @splat(longest);
+        p.buttons = @splat(.right_shoulder);
+        p.gamepad = 3;
+    }
+    try testing.expect(encode(&long, &buf).len < max_written);
 }
 
 test "a damaged field gives its default and the rest is kept" {
     var report: Report = .{};
     const s = reread(
-        \\{ "version": 1,
-        \\  "keys": { "pad1": { "up": "i", "down": "k", "left": "j", "right": "l", "a": "q", "b": "e", "c": "r", "start": 7 },
-        \\            "pad2": { "up": "w", "down": "s", "left": "a", "right": "d", "a": "f", "b": "g", "c": "h", "start": "tab" },
-        \\            "settings": "f2" },
-        \\  "controllers": { "first_pad": 3, "buttons": { "a": "y", "b": "a", "c": "b", "start": "start" } },
+        \\{ "version": 2,
+        \\  "players": {
+        \\    "player1": { "input": "gamepad 7", "keys": { "up": "i", "down": "k", "left": "j", "right": "l", "a": "q", "b": "e", "c": "r", "start": 7 },
+        \\                 "buttons": { "a": "y", "b": "a", "c": "b", "start": "start" }, "autofire": true },
+        \\    "player2": { "input": "gamepad 2", "keys": { "up": "w", "down": "s", "left": "a", "right": "d", "a": "f", "b": "g", "c": "h", "start": "tab" },
+        \\                 "buttons": { "a": "x", "b": "a", "c": "b", "start": "start" }, "autofire": false },
+        \\    "player3": { "input": "keyboard", "keys": { "up": "none", "down": "none", "left": "none", "right": "none", "a": "none", "b": "none", "c": "none", "start": "none" },
+        \\                 "buttons": { "a": "x", "b": "a", "c": "b", "start": "start" }, "autofire": false },
+        \\    "player4": { "input": "keyboard", "keys": { "up": "none", "down": "none", "left": "none", "right": "none", "a": "none", "b": "none", "c": "none", "start": "none" },
+        \\                 "buttons": { "a": "x", "b": "a", "c": "b", "start": "start" }, "autofire": false } },
+        \\  "settings_key": "f2",
         \\  "sound": { "volume": "loud", "mute": true },
         \\  "window": { "scale": 2, "fullscreen": "yes", "colour": 1 },
+        \\  "rules": { "lives": 0, "continues": 5, "friendly_hit": false },
         \\  "extra": [] }
     , &report);
-    try testing.expectEqual(platform.Key.i, s.layout.keys[0][0]);
-    try testing.expectEqual(platform.Key.enter, s.layout.keys[0][7]);
+    const p1 = s.layout.players[0];
+    try testing.expectEqual(platform.Key.i, p1.keys[0]);
+    try testing.expectEqual(platform.Key.enter, p1.keys[7]);
+    try testing.expect(p1.gamepad == null and p1.autofire);
+    try testing.expectEqual(@as(?u2, 1), s.layout.players[1].gamepad);
+    try testing.expectEqual(platform.ControllerButton.y, p1.buttons[0]);
     try testing.expectEqual(platform.Key.f2, s.settings_key);
-    try testing.expectEqual(platform.ControllerButton.y, s.layout.buttons[0]);
-    try testing.expectEqual(@as(u1, 0), s.layout.first_pad);
     try testing.expectEqual(Settings.Sound{ .volume = 100, .mute = true }, s.sound);
     try testing.expectEqual(Settings.Window{ .scale = 2, .fullscreen = false }, s.window);
+    try testing.expectEqual(Rules{ .lives = 3, .continues = 5, .friendly_hit = false }, s.rules);
     try testing.expect(!report.ok());
-    var buf: [512]u8 = undefined;
+    var buf: [1024]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     try report.format(&w);
-    try testing.expectEqualStrings("(the record): a field the game does not know; keys.pad1.start: not the name of a key (escape is the game's); " ++
-        "controllers.first_pad: not a whole number from 1 to 2; sound.volume: not a whole number from 0 to 100; " ++
-        "window: a field the game does not know; window.fullscreen: not true or false", w.buffered());
+    try testing.expectEqualStrings("(the record): a field the game does not know; players.player1.input: not keyboard or gamepad 1 to gamepad 4; " ++
+        "players.player1.keys.start: not the name of a key, or none (escape is the game's); sound.volume: not a whole number from 0 to 100; " ++
+        "window: a field the game does not know; window.fullscreen: not true or false; rules.lives: not a whole number from 1 to 9", w.buffered());
 }
 
 test "damaged records give the defaults" {
@@ -479,13 +551,13 @@ test "damaged records give the defaults" {
     const defaults: Settings = .{};
     for ([_]struct { []const u8, Report.Refusal }{
         .{ "", .not_json },
-        .{ "{\"version\": 1, \"keys\": ", .not_json },
+        .{ "{\"version\": 2, \"players\": ", .not_json },
         .{ "\x00\xff garbage", .not_json },
-        .{ "{\"version\": 1, \"version\": 1}", .not_json },
+        .{ "{\"version\": 2, \"version\": 2}", .not_json },
         .{ "[1, 2]", .not_an_object },
         .{ "{}", .other_version },
-        .{ "{\"version\": 2}", .other_version },
-        .{ "{\"version\": \"1\"}", .other_version },
+        .{ "{\"version\": 1}", .other_version },
+        .{ "{\"version\": \"2\"}", .other_version },
     }) |case| {
         try testing.expectEqual(defaults, reread(case[0], &report));
         try testing.expectEqual(case[1], report.refused.?);
@@ -497,26 +569,32 @@ test "damaged records give the defaults" {
     try testing.expectEqual(Report.Refusal.too_long, report.refused.?);
 
     // A version alone: every group is missing, and named.
-    try testing.expectEqual(defaults, reread("{\"version\": 1}", &report));
-    try testing.expectEqual(@as(usize, 4), report.field_count);
-    try testing.expectEqualStrings("keys", report.fields[0].path);
+    try testing.expectEqual(defaults, reread("{\"version\": 2}", &report));
+    try testing.expectEqual(@as(usize, 5), report.field_count);
+    try testing.expectEqualStrings("players", report.fields[0].path);
     try testing.expectEqualStrings("missing", report.fields[0].why);
 }
 
-test "a key used twice gives the keys' defaults; a button used twice the buttons'" {
+test "a key used twice gives the keys' defaults; a button or a gamepad used twice the player's" {
     var report: Report = .{};
     var s: Settings = .{};
-    s.layout.keys[1][0] = .up; // pad 1's up too
-    s.layout.buttons[2] = .x; // A's too
+    s.layout.players[1].keys[0] = .up; // player 1's up too
+    s.layout.players[0].buttons[2] = .x; // A's too
+    s.layout.players[0].gamepad = 0;
+    s.layout.players[2].gamepad = 0;
     s.sound.volume = 30;
     var buf: [max_written]u8 = undefined;
     const back = reread(encode(&s, &buf), &report);
-    try testing.expectEqual(input.Layout{}, back.layout);
+    const defaults: input.Layout = .{};
+    try testing.expectEqual(defaults.players[1].keys, back.layout.players[1].keys);
+    try testing.expectEqual(defaults.players[0].buttons, back.layout.players[0].buttons);
+    try testing.expect(back.layout.players[0].gamepad == 0 and back.layout.players[2].gamepad == null);
     try testing.expectEqual(@as(u8, 30), back.sound.volume);
-    try testing.expectEqualStrings("keys", report.fields[0].path);
-    try testing.expectEqualStrings("controllers.buttons", report.fields[1].path);
+    try testing.expectEqualStrings("players.player1.buttons", report.fields[0].path);
+    try testing.expectEqualStrings("players", report.fields[1].path);
+    try testing.expectEqualStrings("keys", report.fields[2].path);
 
-    // The settings key is one of the keys.
+    // The settings key is one of the keys; no key at all, many times, is no key twice.
     s = .{};
     s.settings_key = .z;
     _ = reread(encode(&s, &buf), &report);
@@ -525,15 +603,19 @@ test "a key used twice gives the keys' defaults; a button used twice the buttons
 
 test "rebinding swaps: no key and no button does two things" {
     var s: Settings = .{};
-    const a1: Settings.KeySlot = .{ .pad = .{ .pad = 0, .button = .a } };
-    const up2: Settings.KeySlot = .{ .pad = .{ .pad = 1, .button = .up } };
-    // Pad 1's A takes W, pad 2's up's key: pad 2's up takes Z, A's old key.
+    const a1: Settings.KeySlot = .{ .player = .{ .player = 0, .button = .a } };
+    const up2: Settings.KeySlot = .{ .player = .{ .player = 1, .button = .up } };
+    const up3: Settings.KeySlot = .{ .player = .{ .player = 2, .button = .up } };
+    // Player 1's A takes W, player 2's up's key: player 2's up takes Z, A's old key.
     try testing.expect(s.bindKey(a1, .w));
     try testing.expectEqual(platform.Key.w, s.key(a1));
     try testing.expectEqual(platform.Key.z, s.key(up2));
     // A key no setting had: nothing else changes.
     try testing.expect(s.bindKey(a1, .space));
     try testing.expectEqual(platform.Key.z, s.key(up2));
+    // Player 3, without keys, takes Z: player 2's up has none.
+    try testing.expect(s.bindKey(up3, .z));
+    try testing.expectEqual(input.no_key, s.key(up2));
     // The settings key swaps as the others do.
     try testing.expect(s.bindKey(.settings, .space));
     try testing.expectEqual(platform.Key.f1, s.key(a1));
@@ -545,12 +627,13 @@ test "rebinding swaps: no key and no button does two things" {
     try testing.expect(!s.bindKey(a1, @fromBackingInt(999)));
     try testing.expect(keysDistinct(&s));
 
-    try testing.expect(s.bindButton(0, .a)); // A takes B's button
-    try testing.expectEqual([4]platform.ControllerButton{ .a, .x, .b, .start }, s.layout.buttons);
-    try testing.expect(s.bindButton(3, .right_shoulder));
-    try testing.expect(!s.bindButton(3, .dpad_up));
-    try testing.expect(!s.bindButton(3, .guide));
-    try testing.expect(buttonsDistinct(&s));
+    try testing.expect(s.bindButton(0, 0, .a)); // A takes B's button
+    try testing.expectEqual([4]platform.ControllerButton{ .a, .x, .b, .start }, s.layout.players[0].buttons);
+    try testing.expectEqual([4]platform.ControllerButton{ .x, .a, .b, .start }, s.layout.players[1].buttons);
+    try testing.expect(s.bindButton(0, 3, .right_shoulder));
+    try testing.expect(!s.bindButton(0, 3, .dpad_up));
+    try testing.expect(!s.bindButton(0, 3, .guide));
+    try testing.expect(buttonsDistinct(&s.layout.players[0]));
 }
 
 test "load: nothing kept, a record kept, a damaged one repaired once and kept aside" {
@@ -567,7 +650,7 @@ test "load: nothing kept, a record kept, a damaged one repaired once and kept as
     try testing.expect(got.found and !got.damaged());
     try testing.expectEqual(s, got.settings);
 
-    const damaged = "{\"version\": 1, \"keys\": 3, \"controllers\": {}, \"sound\": {\"volume\": 20, \"mute\": false}, \"window\": {\"scale\": 0, \"fullscreen\": true}}";
+    const damaged = "{\"version\": 2, \"players\": 3, \"settings_key\": \"f1\", \"sound\": {\"volume\": 20, \"mute\": false}, \"window\": {\"scale\": 0, \"fullscreen\": true}, \"rules\": {}}";
     try storage.save(name, damaged);
     got = load(testing.allocator, storage);
     try testing.expect(got.damaged() and !got.repair_failed);

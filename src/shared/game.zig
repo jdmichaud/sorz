@@ -147,7 +147,7 @@ pub const State = struct {
 
     /// What this machine tells a tick: whether a second pad is there, whether its game takes the
     /// game's rules from another machine's (scene.Turn).
-    pub const Machine = struct { second_pad: bool = true, guest: bool = false, taken: ?setup_mod.Character = null };
+    pub const Machine = struct { second_pad: bool = true, guest: bool = false, taken: ?setup_mod.Character = null, rules: setup_mod.Rules = .{} };
 
     /// One display tick, with the pads of that tick and whether a second pad is there. Returns
     /// what the tick asks of the sound. Every scene but the test pattern needs `assets`.
@@ -165,6 +165,7 @@ pub const State = struct {
             .second_pad = machine.second_pad,
             .guest = machine.guest,
             .taken = machine.taken,
+            .rules = machine.rules,
             .setup = &self.setup,
             .policies = &config.policies,
             .random = &self.random,
@@ -328,8 +329,10 @@ pub const Game = struct {
     /// whether they need drawing again (they changed, or the picture under them did).
     overlay_shown: bool = false,
     overlay_dirty: bool = true,
-    /// The settings' arrow as last drawn (it blinks while they wait for a key).
+    /// The settings' arrow as last drawn (it blinks while they wait for a key), and the light of
+    /// a fading gamepad's message.
     arrow_shown: bool = true,
+    light_shown: u8 = 255,
     /// The settings opened from the options fade in and out as the menus' screens do: their
     /// panel's fade, from their opening, then from their closing (they go once it is over); and
     /// its step as last drawn.
@@ -451,7 +454,7 @@ pub const Game = struct {
             settings_mod.record.damaged_name,
             if (loaded.repair_failed) ", and the repaired one could not be written" else "",
         });
-        self.tell(.damaged);
+        self.tell(if (loaded.report.refused == .other_version) .other_version else .damaged);
     }
 
     /// A notice about the record: for the host (`notice`) and over the picture for a few seconds.
@@ -480,8 +483,8 @@ pub const Game = struct {
         self.writeSettings(&self.settings);
     }
 
-    /// The machine has one player: in network play, and in the browser page always. Pad 1's keys
-    /// and every controller play pad 1 (input.zig).
+    /// The machine has one player: in network play, and in the browser page always. Player 1
+    /// alone plays here (input.zig).
     pub fn setOnePlayer(self: *Game) void {
         self.controls.one_player = true;
     }
@@ -624,7 +627,13 @@ pub const Game = struct {
     fn showSettings(self: *Game, fade_ns: ?u64) void {
         if (self.settingsOpen() or self.panel == null) return;
         self.overlays.remove(.notice);
-        self.overlays.push(.{ .settings = .open(&self.settings, .{ .one_player = self.controls.one_player, .settings_key = self.policies().settings_key }) });
+        self.overlays.remove(.gamepad);
+        self.overlays.push(.{ .settings = .open(&self.settings, .{
+            .players = @intCast(self.controls.players()),
+            .settings_key = self.policies().settings_key,
+            .rules = self.policies().settings_rules and !self.guest,
+            .gamepads = self.controls.connected(),
+        }) });
         self.overlay_dirty = true;
         self.controls.release();
         self.panel_fade = if (fade_ns) |t| .{ .to = .target, .since_ns = t } else null;
@@ -664,8 +673,42 @@ pub const Game = struct {
                 self.overlay_dirty = true;
                 if (result != .stay) self.closeSettings(result, now_ns);
             },
-            else => _ = self.controls.handle(e),
+            else => self.controlEvent(e),
         }
+    }
+
+    /// An event for the controls. A gamepad that comes is told (GAMEPAD N CONNECTED), and the
+    /// settings follow player 1 taking it; while the settings are open, they offer it, and player
+    /// 1 takes it there.
+    fn controlEvent(self: *Game, e: platform.Event) void {
+        _ = self.controls.handle(e);
+        const added = switch (e.payload) {
+            .controller_added => |id| id,
+            .controller_removed => null,
+            else => return,
+        };
+        const slot = if (added) |id| self.controls.slotOf(id) else null;
+        if (self.overlays.find(.settings)) |o| {
+            o.settings.facts.gamepads = self.controls.connected();
+            if (slot) |g| _ = self.settings.layout.came(@intCast(g));
+            self.overlay_dirty = true;
+            return;
+        }
+        self.settings.layout.players[0].gamepad = self.controls.layout.players[0].gamepad;
+        if (slot) |g| {
+            self.overlays.push(.{ .gamepad = .{ .slot = @intCast(g) } });
+            self.overlay_dirty = true;
+        }
+    }
+
+    /// The pad button that attacks by the options' CONTROL, for autofire (B without the content).
+    fn attackButton(self: *const Game) input.Button {
+        const a = if (self.scene_assets) |*a| a else return .b;
+        return switch (a.round.screen.buttons.of(self.state.setup.control).attack) {
+            .a => .a,
+            .b => .b,
+            .c => .c,
+        };
     }
 
     /// The events, the ticks due, the picture.
@@ -705,7 +748,7 @@ pub const Game = struct {
                     } else {
                         _ = self.controls.handle(e);
                     },
-                    else => _ = self.controls.handle(e),
+                    else => self.controlEvent(e),
                 }
             }
         }
@@ -839,7 +882,7 @@ pub const Game = struct {
     /// menu chose SETTINGS opens them, on the machine of the player who chose.
     fn runTick(self: *Game, p: *platform.Platform) bool {
         if (self.overlays.holds()) return false;
-        var pads = self.controls.pads();
+        var pads = self.controls.read(self.state.tick, self.attackButton());
         const session = if (self.netplay) |np| (if (np.inSession()) np else null) else null;
         if (session) |np| {
             pads = np.pads(p, pads.pad1) orelse return false;
@@ -848,7 +891,7 @@ pub const Game = struct {
             const own = pads.pad1;
             pads = .{ .pad1 = .{}, .pad2 = own };
         }
-        const machine: State.Machine = .{ .second_pad = self.secondPad(), .guest = self.guest, .taken = network_play.taken(self) };
+        const machine: State.Machine = .{ .second_pad = self.secondPad(), .guest = self.guest, .taken = network_play.taken(self), .rules = self.settings.rules };
         const turn = self.state.stepWith(pads, machine, if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
         self.redraw = true;
         if (turn.settings) |who| if (self.plays(who)) self.showSettings(if (turn.settings_fade) p.nowNs() else null);
@@ -1023,6 +1066,20 @@ pub const Game = struct {
                 self.overlay_dirty = true;
             }
         }
+        // A gamepad's message fades out over its last part, alone over the picture.
+        var light: u8 = 255;
+        if (self.overlays.find(.gamepad)) |o| {
+            const until = o.gamepad.until_ns orelse now_ns + overlay.gamepad_ns;
+            o.gamepad.until_ns = until;
+            if (now_ns >= until) {
+                self.overlays.remove(.gamepad);
+                self.overlay_dirty = true;
+            } else if (self.overlays.len == 1 and until - now_ns < overlay.gamepad_fade_ns) {
+                light = @intCast((until - now_ns) * 255 / overlay.gamepad_fade_ns);
+            }
+        }
+        if (light != self.light_shown) self.overlay_dirty = true;
+        self.light_shown = light;
         var waiting = false;
         if (self.overlays.find(.settings)) |o| waiting = o.settings.waiting;
         const arrow = !waiting or (now_ns / blink_ns) % 2 == 0;
@@ -1044,7 +1101,7 @@ pub const Game = struct {
             for (self.overlays.slice()) |*o| {
                 try o.draw(p, &self.settings, arrow);
             }
-            _ = try p.finish(under, self.overlays.dims());
+            _ = try p.finish(under, self.overlays.dims(), light);
         }
         self.overlay_shown = true;
         return self.frame();
@@ -1096,13 +1153,13 @@ test "the settings come from the storage: a whole record is kept, a damaged one 
     var store = memory.MemoryStorage.init(testing.allocator);
     defer store.deinit();
     var s: settings_mod.Settings = .{};
-    _ = s.bindKey(.{ .pad = .{ .pad = 0, .button = .start } }, .p);
+    _ = s.bindKey(.{ .player = .{ .player = 0, .button = .start } }, .p);
     try settings_mod.record.save(store.storage(), &s);
     var game = try Game.init(testing.allocator, null, store.storage());
     defer game.deinit();
     try testing.expectEqual(@as(u64, 1), game.loads_done);
     try testing.expectEqual(Notice.none, game.notice);
-    try testing.expectEqual(platform.Key.p, game.controls.layout.keys[0][@backingInt(input.Button.start)]);
+    try testing.expectEqual(platform.Key.p, game.controls.layout.players[0].keys[@backingInt(input.Button.start)]);
     try testing.expect(game.usesKey(.p) and !game.usesKey(.enter));
     // The settings key is the original's alone.
     try testing.expect(!game.usesKey(.f1));

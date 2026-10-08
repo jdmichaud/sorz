@@ -180,16 +180,22 @@ pub const Panel = struct {
     }
 
     /// Composes the picture; over `under`, where the panel is empty (its backdrop), the picture
-    /// under it, at a quarter of its light when `dim`.
-    pub fn finish(self: *Panel, under: ?platform.RgbaFrame, dim: bool) Error![]const u8 {
+    /// under it, at a quarter of its light when `dim`; and the panel's own pixels mixed with it at
+    /// `light` 255ths (a fading message).
+    pub fn finish(self: *Panel, under: ?platform.RgbaFrame, dim: bool, light: u8) Error![]const u8 {
         _ = try self.composer.compose(&self.screen);
         const f = self.composer.frame();
         @memcpy(self.rgba, f.pixels[0 .. width * height * 4]);
         const u = under orelse return self.rgba;
         for (0..height) |y| for (0..width) |x| {
-            if (self.composer.indices[y * width + x] != 0) continue;
             const from = u.pixels[y * u.stride + x * 4 ..][0..4];
             const to = self.rgba[(y * width + x) * 4 ..][0..4];
+            if (self.composer.indices[y * width + x] != 0) {
+                if (light != 255) for (0..3) |c| {
+                    to[c] = @intCast((@as(u16, to[c]) * light + @as(u16, from[c]) * (255 - light)) / 255);
+                };
+                continue;
+            }
             if (dim) {
                 to.* = .{ from[0] / 4, from[1] / 4, from[2] / 4, 255 };
             } else to.* = from.*;
@@ -238,7 +244,7 @@ test "a panel: text bright and dim, a box, a message on strips over a picture, d
     try p.text(2, 1, "a-", .bright);
     try p.text(2, 2, "A", .dim);
     p.arrowAt(0, 1);
-    var rgba = try p.finish(null, false);
+    var rgba = try p.finish(null, false, 255);
     try testing.expectEqual([3]u8{ 255, 255, 255 }, pixelAt(rgba, 16, 8));
     try testing.expectEqual([3]u8{ 49, 49, 49 }, pixelAt(rgba, 16, 16));
     try testing.expectEqual([3]u8{ 255, 255, 255 }, pixelAt(rgba, 0, 8));
@@ -249,15 +255,18 @@ test "a panel: text bright and dim, a box, a message on strips over a picture, d
     const frame: platform.RgbaFrame = .{ .width = width, .height = height, .stride = width * 4, .pixels = under };
     p.begin();
     try testing.expectEqual(@as(usize, 12), try p.message("aa", 11, true));
-    rgba = try p.finish(frame, false);
+    rgba = try p.finish(frame, false, 255);
     try testing.expectEqual([3]u8{ 255, 255, 255 }, pixelAt(rgba, 19 * 8, 11 * 8));
     try testing.expectEqual([3]u8{ 0, 0, 0 }, pixelAt(rgba, 18 * 8, 11 * 8));
     try testing.expectEqual([3]u8{ 0x80, 0x80, 0x80 }, pixelAt(rgba, 17 * 8, 11 * 8));
-    rgba = try p.finish(frame, true);
+    rgba = try p.finish(frame, true, 255);
     try testing.expectEqual([3]u8{ 0x20, 0x20, 0x20 }, pixelAt(rgba, 17 * 8, 11 * 8));
+    // Half faded: the panel's white halfway to the picture's grey.
+    rgba = try p.finish(frame, false, 128);
+    try testing.expectEqual([3]u8{ 0xBF, 0xBF, 0xBF }, pixelAt(rgba, 19 * 8, 11 * 8));
     p.begin();
     try p.box(1, 1, 3, 2);
-    rgba = try p.finish(frame, true);
+    rgba = try p.finish(frame, true, 255);
     try testing.expectEqual([3]u8{ 0, 0, 0 }, pixelAt(rgba, 3 * 8, 2 * 8 + 7));
     try testing.expectEqual([3]u8{ 0x20, 0x20, 0x20 }, pixelAt(rgba, 4 * 8, 2 * 8));
 }

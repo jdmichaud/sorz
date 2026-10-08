@@ -245,6 +245,14 @@ fn playing(m: *Machine) bool {
     return x.phase == .play and m.game.state.scenes.overlay_count == 0;
 }
 
+fn settingsOpen(m: *Machine) bool {
+    return m.game.settingsOpen();
+}
+
+fn settingsClosed(m: *Machine) bool {
+    return !m.game.settingsOpen();
+}
+
 fn inOptions(m: *Machine) bool {
     return switch (m.game.state.scenes.base) {
         .options => |*o| o.phase == .lines and m.game.state.scenes.overlay_count == 0,
@@ -347,15 +355,16 @@ fn ownMenus(f: *Flow, r: *Room) !void {
     try r.press(guest, .up);
     try r.press(guest, .up);
     try f.check(guest.game.state.scenes.base.options.line == .advanced_settings, "ADVANCED SETTINGS");
+    // The options fade out first, then the settings fade in.
     try r.press(guest, .z);
-    try r.step(4);
+    try f.until(r, guest, settingsOpen, 80, "the guest's settings open");
     const screen = guest.game.overlays.find(.settings);
-    try f.check(screen != null and screen.?.settings.facts.one_player, "the guest's settings open, one player's");
+    try f.check(screen != null and screen.?.settings.facts.players == 1, "the guest's settings open, one player's");
     const ticks = host.game.state.tick;
     try r.step(30);
     try f.check(host.game.state.tick >= ticks + 30 and host.game.overlays.find(.peer_settings) == null, "the host not held");
     try r.press(guest, .escape);
-    try f.check(!guest.game.settingsOpen(), "Escape leaves them");
+    try f.until(r, guest, settingsClosed, 80, "Escape leaves them");
     try f.check(!host.inSession() and !guest.inSession(), "no session");
     f.note("\"host\":\"{s}\",\"guest\":\"{s}\"", .{ @tagName(host.scene()), @tagName(guest.scene()) });
 }

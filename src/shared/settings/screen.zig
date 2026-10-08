@@ -4,24 +4,25 @@
 //! play (the extended and network variants, variant.zig), and in the original with the settings
 //! key (F1 by default), in any scene.
 //!
-//! Its rows, in the cartridge's options' style (the chosen row bright, the others dim, the menu's
-//! arrow at the choice): each pad button's key, for player 1 and player 2, and, for A, B, C and
-//! START, the gamepads' button (every gamepad: its directions are always its d-pad and left stick);
-//! the settings key, where the variant has it; which player the first gamepad plays (the second
-//! plays the other); the volume and the sound; the window's scale and full screen; the defaults;
-//! and the two ways out, SAVE AND EXIT and EXIT WITHOUT SAVING. They are this machine's players'
-//! alone: a machine with one player (network play, a browser) shows its keys alone (YOUR KEYS:
-//! pad 1's, which network play sends) and the gamepads' buttons; every gamepad plays that player,
-//! so there is no FIRST GAMEPAD row.
+//! Two pages, in the cartridge's options' style (the chosen row bright, the others dim, the menu's
+//! arrow at the choice). The first: INPUT CONFIGURATION..., the sound and its volume, the window's
+//! scale and full screen; the game's rules where the settings give them (the lives, the
+//! continues, the friendly hits: setup.zig `Rules`); the defaults; and the two ways out, SAVE AND
+//! EXIT and EXIT WITHOUT SAVING. INPUT CONFIGURATION has a column for each player of this machine
+//! (one with network play or a browser): its input method (the keyboard, or a gamepad connected:
+//! a gamepad one player takes goes from the other, who goes back to the keyboard), its keys, or
+//! its gamepad's A, B, C and START (the directions are the gamepad's d-pad and stick), and its
+//! autofire; the settings key where the variant has it; and EXIT, back to the first page.
 //!
-//! The pads' keys work it as they work the options: the directions move, A, B or C changes (a key
-//! or a button: the next one pressed is the new one; one that another setting has is swapped with
-//! it, so that no key does two things), left and right change a value, and START saves and leaves,
-//! as SAVE AND EXIT does; so do a gamepad's d-pad and buttons. Escape saves and leaves too, and
-//! the arrows move, whatever the pads' keys are, so the screen is always usable. EXIT WITHOUT
-//! SAVING, the settings key (where the variant has it) and a gamepad's BACK leave without saving,
-//! giving back the settings the screen opened with. The changes apply at once (the keys when the
-//! screen closes).
+//! The pads' keys work it as they work the options: the directions move (left and right between
+//! the players' columns, or change a value), A, B or C acts (a key or a button: the next one
+//! pressed is the new one; one that another setting has is swapped with it, so that no key does
+//! two things), and START leaves the page: INPUT CONFIGURATION for the first page, the first page
+//! saving, as SAVE AND EXIT does; so do the gamepads' d-pad and buttons. Escape does what START
+//! does, and the arrows move, whatever the pads' keys are, so the screen is always usable. EXIT
+//! WITHOUT SAVING, the settings key (where the variant has it) and a gamepad's BACK leave without
+//! saving, giving back the settings the screen opened with. The changes apply at once (the input
+//! when the screen closes).
 const std = @import("std");
 const platform = @import("../platform.zig");
 const input = @import("../input.zig");
@@ -31,7 +32,31 @@ const panel_mod = @import("../panel.zig");
 const Settings = record.Settings;
 const Panel = panel_mod.Panel;
 
+pub const Page = enum(u8) { main, input };
+
+/// The first page's rows.
 pub const Row = enum(u8) {
+    input_configuration,
+    sound,
+    volume,
+    scale,
+    fullscreen,
+    lives,
+    continues,
+    friendly_hit,
+    defaults,
+    save_and_exit,
+    exit_without_saving,
+
+    fn rule(row: Row) bool {
+        return row == .lives or row == .continues or row == .friendly_hit;
+    }
+};
+
+/// INPUT CONFIGURATION's rows: the input method, a row for each pad button, autofire, the
+/// settings key, EXIT.
+pub const InputRow = enum(u8) {
+    method,
     up,
     down,
     left,
@@ -40,47 +65,42 @@ pub const Row = enum(u8) {
     b,
     c,
     start,
+    autofire,
     settings_key,
-    first_pad,
-    volume,
-    sound,
-    scale,
-    fullscreen,
-    defaults,
-    save_and_exit,
-    exit_without_saving,
+    exit,
 
-    /// The pad button of a key row.
-    fn button(row: Row) ?input.Button {
-        return if (@backingInt(row) < 8) @fromBackingInt(@as(u3, @intCast(@backingInt(row)))) else null;
+    /// The pad button of a button row.
+    fn button(row: InputRow) ?input.Button {
+        const i = @backingInt(row);
+        return if (i >= 1 and i <= 8) @fromBackingInt(@as(u3, @intCast(i - 1))) else null;
     }
 
     /// The index in `input.face_buttons` of a row whose button a gamepad's button presses.
-    fn face(row: Row) ?usize {
+    fn face(row: InputRow) ?usize {
         const b = row.button() orelse return null;
         return std.mem.indexOfScalar(input.Button, &input.face_buttons, b);
     }
 
-    /// The columns of the row: pad 1's key, pad 2's and the gamepads' button for A, B, C and
-    /// START; the two pads' keys for the directions; one value for the others.
-    fn columns(row: Row) u2 {
-        if (row.face() != null) return 3;
-        if (row.button() != null) return 2;
-        return 1;
+    /// A row of the players' columns.
+    fn perPlayer(row: InputRow) bool {
+        return row != .settings_key and row != .exit;
     }
 };
-
-const row_count = std.enums.values(Row).len;
 
 /// The volume's step.
 const volume_step = 10;
 
 /// What the screen shows on this machine.
 pub const Facts = struct {
-    /// One player on the machine: its keys alone, and no FIRST GAMEPAD.
-    one_player: bool = false,
+    /// The players of this machine: their columns in INPUT CONFIGURATION.
+    players: u3 = 2,
     /// The settings key opens the settings (the original): its row, and it leaves them.
     settings_key: bool = true,
+    /// The game's rules are the settings' here (variant.zig): their rows.
+    rules: bool = false,
+    /// The gamepads connected, a bit each by their place (GAMEPAD 1 the first's): the input
+    /// methods a player may take.
+    gamepads: u4 = 0,
 };
 
 /// What an event did: the screen stays open, or it closed, its settings to be written, or given
@@ -89,8 +109,10 @@ pub const Result = enum { stay, save_and_exit, exit_without_saving };
 
 pub const Screen = struct {
     facts: Facts = .{},
-    row: Row = .up,
-    /// In a key row: 0 pad 1, 1 pad 2, 2 the gamepads' button.
+    page: Page = .main,
+    row: Row = .input_configuration,
+    input_row: InputRow = .method,
+    /// INPUT CONFIGURATION's player column.
     column: u2 = 0,
     /// Waiting for the new key (or gamepad button) of the chosen setting.
     waiting: bool = false,
@@ -101,18 +123,13 @@ pub const Screen = struct {
         return .{ .facts = facts, .before = settings.* };
     }
 
-    /// Whether the screen has the row here.
+    /// Whether the first page has the row here.
     fn shows(self: *const Screen, row: Row) bool {
-        return switch (row) {
-            .first_pad => !self.facts.one_player,
-            .settings_key => self.facts.settings_key,
-            else => true,
-        };
+        return !row.rule() or self.facts.rules;
     }
 
-    /// Whether the row has the column here: not player 2's keys with one player.
-    fn hasColumn(self: *const Screen, row: Row, column: u2) bool {
-        return column < row.columns() and !(self.facts.one_player and column == 1);
+    fn showsInput(self: *const Screen, row: InputRow) bool {
+        return row != .settings_key or self.facts.settings_key;
     }
 
     /// Takes one event; `settings` change as the player chooses. When it closes without saving,
@@ -146,7 +163,7 @@ pub const Screen = struct {
                     .dpad_left => .left,
                     .dpad_right => .right,
                     .back => .leave,
-                    else => if (std.mem.indexOfScalar(platform.ControllerButton, &settings.layout.buttons, b.button)) |i| navOf(input.face_buttons[i]) else return .stay,
+                    else => navOf(self.faceOf(settings, b.button) orelse return .stay),
                 };
                 return self.navigate(settings, nav);
             },
@@ -154,7 +171,7 @@ pub const Screen = struct {
         }
     }
 
-    /// `back` saves and leaves (START, Escape), `leave` leaves without saving.
+    /// `back` leaves the page (START, Escape), the first saving; `leave` leaves without saving.
     const Nav = enum { up, down, left, right, choose, back, leave };
 
     /// What a pad's button does here.
@@ -169,54 +186,96 @@ pub const Screen = struct {
         };
     }
 
-    /// The pad button that `key` presses on this machine: either player's, or the one player's.
+    /// The pad button that `key` presses for a player of this machine.
     fn padButton(self: *const Screen, settings: *const Settings, key: platform.Key) ?input.Button {
-        const pads: usize = if (self.facts.one_player) 1 else 2;
-        for (settings.layout.keys[0..pads]) |keys| {
-            if (std.mem.indexOfScalar(platform.Key, &keys, key)) |i| return @fromBackingInt(@as(u3, @intCast(i)));
+        const place = settings.layout.find(key) orelse return null;
+        return if (place.player < self.facts.players) place.button else null;
+    }
+
+    /// The pad button a gamepad's button presses for a player of this machine.
+    fn faceOf(self: *const Screen, settings: *const Settings, b: platform.ControllerButton) ?input.Button {
+        for (settings.layout.players[0..self.facts.players]) |p| {
+            if (std.mem.indexOfScalar(platform.ControllerButton, &p.buttons, b)) |i| return input.face_buttons[i];
         }
         return null;
     }
 
     fn navigate(self: *Screen, settings: *Settings, nav: Nav) Result {
+        if (nav == .leave) return self.leave(settings);
+        return switch (self.page) {
+            .main => self.navigateMain(settings, nav),
+            .input => self.navigateInput(settings, nav),
+        };
+    }
+
+    fn navigateMain(self: *Screen, settings: *Settings, nav: Nav) Result {
         switch (nav) {
-            .up, .down => {
-                var next: usize = @backingInt(self.row);
-                while (true) {
-                    next = if (nav == .up) (next + row_count - 1) % row_count else (next + 1) % row_count;
-                    if (self.shows(@fromBackingInt(@as(u8, @intCast(next))))) break;
-                }
-                self.row = @fromBackingInt(@as(u8, @intCast(next)));
-                while (!self.hasColumn(self.row, self.column)) self.column -= 1;
-            },
-            .left, .right => {
-                const up = nav == .right;
-                if (self.row.columns() > 1) {
-                    // To the next column the row has here, if any.
-                    var c = self.column;
-                    while (if (up) c < 2 else c > 0) {
-                        c = if (up) c + 1 else c - 1;
-                        if (self.hasColumn(self.row, c)) {
-                            self.column = c;
-                            break;
-                        }
-                    }
-                } else change(self.row, settings, up);
-            },
+            .up, .down => self.row = step(Row, self.row, nav == .down, self, shows),
+            .left, .right => change(self.row, settings, nav == .right),
             .choose => switch (self.row) {
+                .input_configuration => {
+                    self.page = .input;
+                    self.input_row = .method;
+                    self.column = 0;
+                },
                 .volume => {},
                 .scale => settings.window.scale = if (settings.window.scale >= record.max_scale) 1 else settings.window.scale + 1,
+                .lives => settings.rules.lives = if (settings.rules.lives >= record.max_lives) 1 else settings.rules.lives + 1,
+                .continues => settings.rules.continues = if (settings.rules.continues >= record.max_continues) 0 else settings.rules.continues + 1,
                 .defaults => settings.* = .{},
                 .save_and_exit => return .save_and_exit,
                 .exit_without_saving => return self.leave(settings),
-                else => if (self.row.button() != null or self.row == .settings_key) {
-                    self.waiting = true;
-                } else change(self.row, settings, true),
+                else => change(self.row, settings, true),
             },
             .back => return .save_and_exit,
-            .leave => return self.leave(settings),
+            .leave => unreachable,
         }
         return .stay;
+    }
+
+    fn navigateInput(self: *Screen, settings: *Settings, nav: Nav) Result {
+        const p = &settings.layout.players[self.column];
+        switch (nav) {
+            .up, .down => self.input_row = step(InputRow, self.input_row, nav == .down, self, showsInput),
+            .left => if (self.input_row.perPlayer() and self.column > 0) {
+                self.column -= 1;
+            },
+            .right => if (self.input_row.perPlayer() and @as(usize, self.column) + 1 < self.facts.players) {
+                self.column += 1;
+            },
+            .choose => switch (self.input_row) {
+                .method => settings.layout.assign(self.column, self.nextMethod(p.gamepad)),
+                .autofire => p.autofire = !p.autofire,
+                .settings_key => self.waiting = true,
+                .exit => self.page = .main,
+                else => if (p.gamepad == null or self.input_row.face() != null) {
+                    self.waiting = true;
+                },
+            },
+            .back => self.page = .main,
+            .leave => unreachable,
+        }
+        return .stay;
+    }
+
+    /// The input method after `now`: the keyboard, then each gamepad connected, in their order.
+    fn nextMethod(self: *const Screen, now: ?u2) ?u2 {
+        var g: usize = if (now) |n| @as(usize, n) + 1 else 0;
+        while (g < input.Controls.max_controllers) : (g += 1) {
+            if (self.facts.gamepads & (@as(u4, 1) << @intCast(g)) != 0) return @intCast(g);
+        }
+        return null;
+    }
+
+    /// The row after `row`, down or up, round the ends, that the page has here.
+    fn step(comptime R: type, row: R, down: bool, self: *const Screen, comptime has: fn (*const Screen, R) bool) R {
+        const count = std.enums.values(R).len;
+        var next: usize = @backingInt(row);
+        while (true) {
+            next = if (down) (next + 1) % count else (next + count - 1) % count;
+            const r: R = @fromBackingInt(@as(u8, @intCast(next)));
+            if (has(self, r)) return r;
+        }
     }
 
     fn leave(self: *Screen, settings: *Settings) Result {
@@ -225,10 +284,9 @@ pub const Screen = struct {
         return .exit_without_saving;
     }
 
-    /// Left and right on a value; Enter on a choice of two.
+    /// Left and right on a value; A, B or C on a choice of two.
     fn change(row: Row, settings: *Settings, up: bool) void {
         switch (row) {
-            .first_pad => settings.layout.first_pad ^= 1,
             .volume => {
                 // By tens; a hand-edited volume goes to the nearest ten in the direction.
                 const v = settings.sound.volume;
@@ -239,70 +297,80 @@ pub const Screen = struct {
             .sound => settings.sound.mute = !settings.sound.mute,
             .scale => settings.window.scale = if (up) @min(settings.window.scale + 1, record.max_scale) else @max(settings.window.scale - 1, 1),
             .fullscreen => settings.window.fullscreen = !settings.window.fullscreen,
+            .lives => settings.rules.lives = if (up) @min(settings.rules.lives + 1, record.max_lives) else @max(settings.rules.lives - 1, 1),
+            .continues => settings.rules.continues = if (up) @min(settings.rules.continues + 1, record.max_continues) else settings.rules.continues -| 1,
+            .friendly_hit => settings.rules.friendly_hit = !settings.rules.friendly_hit,
             else => {},
         }
     }
 
+    /// The key setting waited for.
     fn keySlot(self: *const Screen) Settings.KeySlot {
-        if (self.row == .settings_key) return .settings;
-        return .{ .pad = .{ .pad = @intCast(self.column), .button = self.row.button().? } };
+        if (self.input_row == .settings_key) return .settings;
+        return .{ .player = .{ .player = self.column, .button = self.input_row.button().? } };
+    }
+
+    /// Whether the setting waited for is a gamepad's button (else a key).
+    fn waitsForButton(self: *const Screen, settings: *const Settings) bool {
+        return self.input_row.perPlayer() and settings.layout.players[self.column].gamepad != null;
     }
 
     /// The key pressed while waiting: Escape keeps the old one; a key no setting can take is
     /// ignored. A key pressed while waiting for a gamepad's button keeps the old button.
     fn takeKey(self: *Screen, settings: *Settings, k: platform.Event.KeyEvent) void {
         if (k.repeat) return;
-        if (self.column == 2) {
+        if (self.waitsForButton(settings)) {
             self.waiting = false;
             return;
         }
         if (k.key == .escape or settings.bindKey(self.keySlot(), k.key)) self.waiting = false;
     }
 
-    /// The gamepad's button pressed while waiting: the new button of the gamepads' A, B, C or
-    /// START. While waiting for a key, a button keeps the old key.
+    /// The gamepad's button pressed while waiting: the player's new button for A, B, C or START.
+    /// While waiting for a key, a button keeps the old key.
     fn takeButton(self: *Screen, settings: *Settings, b: platform.ControllerButton) void {
-        if (self.column != 2) {
+        if (!self.waitsForButton(settings)) {
             self.waiting = false;
             return;
         }
-        if (settings.bindButton(self.row.face().?, b)) self.waiting = false;
+        if (settings.bindButton(self.column, self.input_row.face().?, b)) self.waiting = false;
     }
 
     // --- the picture ---------------------------------------------------------------------------
 
-    /// Where the screen's parts are, in cells: the box, the title, the key columns' headers on the
-    /// two rows above the key rows, the other rows below these, and the prompt while it waits.
+    /// Where the screen's parts are, in cells: the box, the title, the rows, the players' columns
+    /// and their headers, and the prompt at the bottom.
     const box_col = 1;
     const box_row = 1;
     const title_row = 2;
-    const header_row = 4;
+    const first_row = 5;
     const label_col = 3;
-    const value_cols = [3]u16{ 10, 20, 30 };
-    const single_col = 23;
-    const first_key_row = 6;
+    const button_col = 5;
+    const value_col = 24;
+    const player_cols = [2]u16{ 18, 29 };
+    const header_row = 4;
+    const method_row = 6;
+    const configuration_row = 8;
     const prompt_row = panel_mod.rows - 3;
 
-    /// The key columns' headers, two rows each: each player's keys, and the gamepads' buttons for
-    /// A, B, C and START. With one player: its keys and the gamepads', the gamepads' column under
-    /// the other rows' values, apart from YOUR KEYS so that the two headers do not read as one.
-    const headers = [3][2][]const u8{ .{ "PLAYER 1", "KEYS" }, .{ "PLAYER 2", "KEYS" }, .{ "", "GAMEPADS" } };
-    const one_player_headers = [3][2][]const u8{ .{ "", "YOUR KEYS" }, .{ "", "" }, .{ "", "GAMEPADS" } };
-    const one_player_cols = [3]u16{ 10, single_col, single_col };
-
-    /// The cell column of a key row's column.
-    fn columnX(self: *const Screen, c: usize) u16 {
-        return if (self.facts.one_player) one_player_cols[c] else value_cols[c];
-    }
-
-    /// The screen's row of `row`: the rows it does not show leave no gap.
+    /// The first page's screen row of `row`: a blank row before the rules and before DEFAULTS.
     fn screenRow(self: *const Screen, row: Row) u16 {
         var n: u16 = 0;
         for (std.enums.values(Row)[0..@backingInt(row)]) |r| n += @intFromBool(self.shows(r));
+        if (@backingInt(row) >= @backingInt(Row.lives)) n += 1;
+        if (@backingInt(row) >= @backingInt(Row.defaults) and self.facts.rules) n += 1;
+        return first_row + n;
+    }
+
+    /// INPUT CONFIGURATION's screen row of `row`: the input method, CONFIGURATION's title and its
+    /// buttons, then a blank row before AUTOFIRE and before EXIT.
+    fn inputScreenRow(self: *const Screen, row: InputRow) u16 {
         return switch (row) {
-            .up, .down, .left, .right, .a, .b, .c, .start => first_key_row + n,
-            .defaults, .save_and_exit, .exit_without_saving => first_key_row + n + 2,
-            else => first_key_row + n + 1,
+            .method => method_row,
+            .autofire => configuration_row + 10,
+            .settings_key => configuration_row + 11,
+            .exit => configuration_row + 12 + @as(u16, @intFromBool(self.facts.settings_key)) + 1,
+            else => configuration_row + @backingInt(row),
         };
     }
 
@@ -310,39 +378,106 @@ pub const Screen = struct {
     /// the panel dims. `arrow`: the arrow shows (it blinks while the screen waits for a key).
     pub fn draw(self: *const Screen, settings: *const Settings, p: *Panel, arrow: bool) Panel.Error!void {
         try p.box(box_col, box_row, panel_mod.columns - 2 * box_col, panel_mod.rows - 2 * box_row);
-        try p.text(label_col, title_row, "SETTINGS", .bright);
-        for (if (self.facts.one_player) one_player_headers else headers, 0..) |lines, c| {
-            for (lines, header_row..) |line, y| try p.text(self.columnX(c), y, line, .dim);
+        switch (self.page) {
+            .main => try self.drawMain(settings, p, arrow),
+            .input => try self.drawInput(settings, p, arrow),
         }
+    }
+
+    fn drawMain(self: *const Screen, settings: *const Settings, p: *Panel, arrow: bool) Panel.Error!void {
+        try p.text(label_col, title_row, "SETTINGS", .bright);
         var buf: [16]u8 = undefined;
         for (std.enums.values(Row)) |row| {
             if (!self.shows(row)) continue;
+            const tone: panel_mod.Tone = if (row == self.row) .bright else .dim;
             const y = self.screenRow(row);
-            const chosen = row == self.row;
-            const tone: panel_mod.Tone = if (chosen) .bright else .dim;
             try p.text(label_col, y, label(row), tone);
-            if (row.button()) |b| {
-                for (0..row.columns()) |c| {
-                    if (!self.hasColumn(row, @intCast(c))) continue;
-                    const here = chosen and c == self.column;
-                    const name = if (c == 2)
-                        buttonName(settings.layout.buttons[row.face().?])
-                    else
-                        keyName(settings.layout.keys[c][@backingInt(b)]);
-                    try p.text(self.columnX(c), y, if (here and self.waiting) "" else name, if (here) .bright else .dim);
-                }
-            } else if (value(row, settings, &buf)) |v| try p.text(single_col, y, v, tone);
+            if (value(row, settings, &buf)) |v| try p.text(value_col, y, v, tone);
         }
         if (arrow) {
-            const y = self.screenRow(self.row);
-            const x: u16 = if (self.row.columns() > 1) self.columnX(self.column) - 1 else if (value(self.row, settings, &buf) != null) single_col - 1 else label_col - 1;
+            const x: i32 = if (value(self.row, settings, &buf) != null) value_col - 1 else label_col - 1;
+            p.arrowAt(x, self.screenRow(self.row));
+        }
+    }
+
+    fn drawInput(self: *const Screen, settings: *const Settings, p: *Panel, arrow: bool) Panel.Error!void {
+        try p.text(label_col, title_row, "INPUT CONFIGURATION", .bright);
+        for (0..self.facts.players) |c| {
+            var buf: [16]u8 = undefined;
+            const header = std.fmt.bufPrint(&buf, "PLAYER {d}", .{c + 1}) catch unreachable;
+            try p.text(player_cols[c], header_row, header, .dim);
+        }
+        try p.text(label_col, configuration_row, "CONFIGURATION", .dim);
+        for (std.enums.values(InputRow)) |row| {
+            if (!self.showsInput(row)) continue;
+            const chosen = row == self.input_row;
+            const y = self.inputScreenRow(row);
+            try p.text(if (row.button() != null) button_col else label_col, y, inputLabel(row), if (chosen) .bright else .dim);
+            if (row == .settings_key) {
+                try p.text(player_cols[0], y, if (chosen and self.waiting) "" else keyName(settings.settings_key), if (chosen) .bright else .dim);
+                continue;
+            }
+            if (!row.perPlayer()) continue;
+            for (0..self.facts.players) |c| {
+                const here = chosen and c == self.column;
+                const text = if (here and self.waiting) "" else self.cell(settings, row, c);
+                try p.text(player_cols[c], y, text, if (here) .bright else .dim);
+            }
+        }
+        if (arrow) {
+            const y = self.inputScreenRow(self.input_row);
+            const x: i32 = if (self.input_row.perPlayer()) player_cols[self.column] - 1 else if (self.input_row == .settings_key) player_cols[0] - 1 else label_col - 1;
             p.arrowAt(x, y);
         }
-        if (self.waiting) try p.text(label_col, prompt_row, if (self.column == 2) "PRESS THE NEW GAMEPAD BUTTON." else "PRESS THE NEW KEY.", .dim);
+        try p.text(label_col, prompt_row, self.prompt(settings), .dim);
+    }
+
+    /// Player `c`'s cell of `row`: its input method, its key or gamepad button, its autofire.
+    fn cell(self: *const Screen, settings: *const Settings, row: InputRow, c: usize) []const u8 {
+        _ = self;
+        const pi = &settings.layout.players[c];
+        return switch (row) {
+            .method => methodName(pi.gamepad),
+            .autofire => if (pi.autofire) "ON" else "OFF",
+            else => if (pi.gamepad == null)
+                keyName(pi.keys[@backingInt(row.button().?)])
+            else if (row.face()) |f| buttonName(pi.buttons[f]) else "",
+        };
+    }
+
+    /// The bottom line: what the screen waits for, or that the chosen player's gamepad is away.
+    fn prompt(self: *const Screen, settings: *const Settings) []const u8 {
+        if (self.waiting) return if (self.waitsForButton(settings)) "PRESS THE NEW GAMEPAD BUTTON." else "PRESS THE NEW KEY.";
+        if (!self.input_row.perPlayer()) return "";
+        const g = settings.layout.players[self.column].gamepad orelse return "";
+        if (self.facts.gamepads & (@as(u4, 1) << g) != 0) return "";
+        return switch (g) {
+            0 => "GAMEPAD 1 IS AWAY: THE KEYS PLAY.",
+            1 => "GAMEPAD 2 IS AWAY: THE KEYS PLAY.",
+            2 => "GAMEPAD 3 IS AWAY: THE KEYS PLAY.",
+            3 => "GAMEPAD 4 IS AWAY: THE KEYS PLAY.",
+        };
     }
 
     fn label(row: Row) []const u8 {
         return switch (row) {
+            .input_configuration => "INPUT CONFIGURATION...",
+            .sound => "SOUND",
+            .volume => "VOLUME",
+            .scale => "WINDOW SCALE",
+            .fullscreen => "FULL SCREEN",
+            .lives => "LIVES",
+            .continues => "CONTINUES",
+            .friendly_hit => "FRIENDLY HIT",
+            .defaults => "DEFAULTS",
+            .save_and_exit => "SAVE AND EXIT",
+            .exit_without_saving => "EXIT WITHOUT SAVING",
+        };
+    }
+
+    fn inputLabel(row: InputRow) []const u8 {
+        return switch (row) {
+            .method => "INPUT METHOD",
             .up => "UP",
             .down => "DOWN",
             .left => "LEFT",
@@ -351,30 +486,36 @@ pub const Screen = struct {
             .b => "B",
             .c => "C",
             .start => "START",
+            .autofire => "AUTOFIRE",
             .settings_key => "SETTINGS KEY",
-            .first_pad => "FIRST GAMEPAD PLAYS",
-            .volume => "VOLUME",
-            .sound => "SOUND",
-            .scale => "WINDOW SCALE",
-            .fullscreen => "FULL SCREEN",
-            .defaults => "DEFAULTS",
-            .save_and_exit => "SAVE AND EXIT",
-            .exit_without_saving => "EXIT WITHOUT SAVING",
+            .exit => "EXIT",
         };
     }
 
     fn value(row: Row, settings: *const Settings, buf: *[16]u8) ?[]const u8 {
         return switch (row) {
-            .settings_key => keyName(settings.settings_key),
-            .first_pad => if (settings.layout.first_pad == 0) "PLAYER 1" else "PLAYER 2",
-            .volume => std.fmt.bufPrint(buf, "{d}", .{settings.sound.volume}) catch unreachable,
             .sound => if (settings.sound.mute) "OFF" else "ON",
+            .volume => std.fmt.bufPrint(buf, "{d}", .{settings.sound.volume}) catch unreachable,
             .scale => std.fmt.bufPrint(buf, "{d}", .{settings.window.scale}) catch unreachable,
             .fullscreen => if (settings.window.fullscreen) "ON" else "OFF",
+            .lives => std.fmt.bufPrint(buf, "{d}", .{settings.rules.lives}) catch unreachable,
+            .continues => std.fmt.bufPrint(buf, "{d}", .{settings.rules.continues}) catch unreachable,
+            .friendly_hit => if (settings.rules.friendly_hit) "ON" else "OFF",
             else => null,
         };
     }
 };
+
+/// An input method's name on the screen.
+pub fn methodName(g: ?u2) []const u8 {
+    const n = g orelse return "KEYB.";
+    return switch (n) {
+        0 => "GAMEPAD 1",
+        1 => "GAMEPAD 2",
+        2 => "GAMEPAD 3",
+        3 => "GAMEPAD 4",
+    };
+}
 
 /// A key's name on the screen, in the game's font (at most 9 characters).
 pub fn keyName(k: platform.Key) []const u8 {
@@ -416,7 +557,7 @@ pub fn keyName(k: platform.Key) []const u8 {
         .backslash => "BACKSLASH",
         .keypad_plus => "KP PLUS",
         .keypad_minus => "KP MINUS",
-        .unknown => "?",
+        .unknown => "-",
         _ => "?",
     };
 }
@@ -456,34 +597,73 @@ fn pressButton(screen: *Screen, settings: *Settings, b: platform.ControllerButto
     return screen.handle(settings, .{ .time_ns = 0, .payload = .{ .controller_button_down = .{ .controller = id, .button = b } } });
 }
 
-test "rebinding a key swaps it with the setting that had it; Escape and START save and leave" {
+test "INPUT CONFIGURATION: a key rebound swaps with the setting that had it; START goes back, then saves" {
     var s: Settings = .{};
     var screen: Screen = .open(&s, .{});
-    // Pad 2's A (row a, column 1): A, then X, pad 1's B.
-    for ([_]platform.Key{ .down, .down, .down, .down, .right, .z }) |k| try testing.expectEqual(Result.stay, press(&screen, &s, k));
-    try testing.expect(screen.waiting);
-    // Arrows and Enter are keys too while it waits; a repeat is not a press.
+    // INPUT CONFIGURATION (A), then player 2's A (row a, column 1): A, then X, player 1's B.
+    try testing.expectEqual(Result.stay, press(&screen, &s, .z));
+    try testing.expectEqual(Page.input, screen.page);
+    for ([_]platform.Key{ .down, .down, .down, .down, .down, .right, .z }) |k| try testing.expectEqual(Result.stay, press(&screen, &s, k));
+    try testing.expect(screen.waiting and screen.input_row == .a and screen.column == 1);
+    // A repeat is not a press.
     _ = screen.handle(&s, .{ .time_ns = 0, .payload = .{ .key_down = .{ .key = .x, .repeat = true } } });
     try testing.expect(screen.waiting);
-    const pad1_b = s.layout.keys[0][@backingInt(input.Button.b)];
-    try testing.expectEqual(platform.Key.x, pad1_b);
-    const pad2_a = s.layout.keys[1][@backingInt(input.Button.a)];
+    const pad2_a = s.layout.players[1].keys[@backingInt(input.Button.a)];
     _ = press(&screen, &s, .x);
     try testing.expect(!screen.waiting);
-    try testing.expectEqual(platform.Key.x, s.layout.keys[1][@backingInt(input.Button.a)]);
-    try testing.expectEqual(pad2_a, s.layout.keys[0][@backingInt(input.Button.b)]);
-    // Escape while waiting keeps the key; Escape then goes back, saving: the keys stay. START
-    // (Enter, pad 1's; Tab, pad 2's) does the same.
+    try testing.expectEqual(platform.Key.x, s.layout.players[1].keys[@backingInt(input.Button.a)]);
+    try testing.expectEqual(pad2_a, s.layout.players[0].keys[@backingInt(input.Button.b)]);
+    // Escape while waiting keeps the key.
     _ = press(&screen, &s, .c);
     _ = press(&screen, &s, .escape);
-    try testing.expectEqual(platform.Key.x, s.layout.keys[1][@backingInt(input.Button.a)]);
-    try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .escape));
-    try testing.expectEqual(platform.Key.x, s.layout.keys[1][@backingInt(input.Button.a)]);
+    try testing.expectEqual(platform.Key.x, s.layout.players[1].keys[@backingInt(input.Button.a)]);
+    // START (Enter, player 1's) goes back to the first page; there, START saves and leaves, as
+    // player 2's (Tab) and Escape do.
+    try testing.expectEqual(Result.stay, press(&screen, &s, .enter));
+    try testing.expectEqual(Page.main, screen.page);
     try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .enter));
     try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .tab));
-    // With one player, pad 2's keys are not its.
-    screen = .open(&s, .{ .one_player = true });
+    try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .escape));
+    // With one player, player 2's keys are not its.
+    screen = .open(&s, .{ .players = 1 });
     try testing.expectEqual(Result.stay, press(&screen, &s, .tab));
+}
+
+test "the input method: the keyboard, then the gamepads connected; a gamepad taken goes from the other" {
+    var s: Settings = .{};
+    var screen: Screen = .open(&s, .{ .gamepads = 0b101 });
+    screen.page = .input;
+    _ = press(&screen, &s, .z);
+    try testing.expectEqual(@as(?u2, 0), s.layout.players[0].gamepad);
+    _ = press(&screen, &s, .z);
+    try testing.expectEqual(@as(?u2, 2), s.layout.players[0].gamepad);
+    _ = press(&screen, &s, .z);
+    try testing.expectEqual(@as(?u2, null), s.layout.players[0].gamepad);
+    _ = press(&screen, &s, .z);
+    // Player 2 takes GAMEPAD 1: player 1 goes back to the keyboard.
+    _ = press(&screen, &s, .right);
+    _ = press(&screen, &s, .f);
+    try testing.expect(s.layout.players[1].gamepad == 0 and s.layout.players[0].gamepad == null);
+    // A gamepad player's buttons: A rebinds its gamepad's A; its directions are the d-pad's.
+    for (0..5) |_| _ = press(&screen, &s, .down);
+    try testing.expectEqual(InputRow.a, screen.input_row);
+    _ = press(&screen, &s, .z);
+    try testing.expect(screen.waiting);
+    _ = pressButton(&screen, &s, .y);
+    try testing.expectEqual(platform.ControllerButton.y, s.layout.players[1].buttons[0]);
+    _ = press(&screen, &s, .up);
+    _ = press(&screen, &s, .z);
+    try testing.expect(!screen.waiting);
+    // Autofire, then EXIT back to the first page.
+    for (0..5) |_| _ = press(&screen, &s, .down);
+    try testing.expectEqual(InputRow.autofire, screen.input_row);
+    _ = press(&screen, &s, .z);
+    try testing.expect(s.layout.players[1].autofire and !s.layout.players[0].autofire);
+    _ = press(&screen, &s, .down);
+    try testing.expectEqual(InputRow.settings_key, screen.input_row);
+    _ = press(&screen, &s, .down);
+    _ = press(&screen, &s, .z);
+    try testing.expectEqual(Page.main, screen.page);
 }
 
 test "EXIT WITHOUT SAVING, the settings key and a gamepad's BACK give back what the screen opened with" {
@@ -494,7 +674,7 @@ test "EXIT WITHOUT SAVING, the settings key and a gamepad's BACK give back what 
     // Up from the first row: the last, EXIT WITHOUT SAVING; up to the volume, changed.
     _ = press(&screen, &s, .up);
     try testing.expectEqual(Row.exit_without_saving, screen.row);
-    for (0..6) |_| _ = press(&screen, &s, .up);
+    for (0..5) |_| _ = press(&screen, &s, .up);
     try testing.expectEqual(Row.volume, screen.row);
     _ = press(&screen, &s, .right);
     try testing.expectEqual(@as(u8, 80), s.sound.volume);
@@ -525,22 +705,28 @@ test "EXIT WITHOUT SAVING, the settings key and a gamepad's BACK give back what 
     try testing.expectEqual(Result.save_and_exit, pressButton(&screen, &s, .start));
 }
 
-test "one player: its keys alone, no FIRST GAMEPAD; without the settings key, no row of it" {
+test "the rules' rows where the settings give the rules: lives 1 to 9, continues 0 to 9, friendly hits" {
     var s: Settings = .{};
-    var screen: Screen = .open(&s, .{ .one_player = true, .settings_key = false });
-    // The rows: the eight keys, the volume, the sound...
-    for (0..9) |_| _ = press(&screen, &s, .down);
-    try testing.expectEqual(Row.sound, screen.row);
-    try testing.expectEqual(@as(u16, 6 + 9 + 1), screen.screenRow(.sound));
-    // A: pad 1's key, then the gamepads' button (no pad 2 column).
-    screen.row = .a;
-    _ = press(&screen, &s, .right);
-    try testing.expectEqual(@as(u2, 2), screen.column);
+    var screen: Screen = .open(&s, .{ .settings_key = false });
+    for (0..5) |_| _ = press(&screen, &s, .down);
+    try testing.expectEqual(Row.defaults, screen.row);
+    screen = .open(&s, .{ .rules = true });
+    for (0..5) |_| _ = press(&screen, &s, .down);
+    try testing.expectEqual(Row.lives, screen.row);
+    for (0..9) |_| _ = press(&screen, &s, .right);
+    try testing.expectEqual(@as(u8, 9), s.rules.lives);
     _ = press(&screen, &s, .z);
-    _ = pressButton(&screen, &s, .y);
-    try testing.expectEqual(platform.ControllerButton.y, s.layout.buttons[0]);
+    try testing.expectEqual(@as(u8, 1), s.rules.lives);
     _ = press(&screen, &s, .left);
-    try testing.expectEqual(@as(u2, 0), screen.column);
+    try testing.expectEqual(@as(u8, 1), s.rules.lives);
+    _ = press(&screen, &s, .down);
+    for (0..5) |_| _ = press(&screen, &s, .left);
+    try testing.expectEqual(@as(u8, 0), s.rules.continues);
+    _ = press(&screen, &s, .down);
+    _ = press(&screen, &s, .z);
+    try testing.expect(!s.rules.friendly_hit);
+    // A blank row before the rules: FRIENDLY HIT on the ninth row.
+    try testing.expectEqual(@as(u16, Screen.first_row + 8), screen.screenRow(.friendly_hit));
 }
 
 test "the screen draws on a panel: the title, the rows, the arrow" {
@@ -548,12 +734,17 @@ test "the screen draws on a panel: the title, the rows, the arrow" {
     try p.init(testing.allocator, &panel_mod.Fixture.font, &panel_mod.Fixture.sheet, &panel_mod.Fixture.colours);
     defer p.deinit();
     var s: Settings = .{};
-    const screen: Screen = .open(&s, .{});
+    var screen: Screen = .open(&s, .{});
     p.begin();
     try screen.draw(&s, &p, true);
-    const rgba = try p.finish(null, false);
-    // Row A's label (the fixture's font has no other letter), dim, at column 3 of row 10...
-    try testing.expectEqualSlices(u8, &.{ 49, 49, 49 }, rgba[(10 * 8 * panel_mod.width + 3 * 8) * 4 ..][0..3]);
-    // ...and the arrow is left of the first row's first key.
-    try testing.expect(p.screen.sprites.len == 1 and p.screen.sprites[0].x == 9 * 8 and p.screen.sprites[0].y == 6 * 8);
+    // The arrow is left of the first row's label.
+    try testing.expect(p.screen.sprites.len == 1 and p.screen.sprites[0].x == 2 * 8 and p.screen.sprites[0].y == 5 * 8);
+    // INPUT CONFIGURATION: row A's label (the fixture's font has no other letter), dim, at column 5
+    // of row 13; the arrow left of player 1's input method.
+    screen.page = .input;
+    p.begin();
+    try screen.draw(&s, &p, true);
+    const rgba = try p.finish(null, false, 255);
+    try testing.expectEqualSlices(u8, &.{ 49, 49, 49 }, rgba[(13 * 8 * panel_mod.width + 5 * 8) * 4 ..][0..3]);
+    try testing.expect(p.screen.sprites[0].x == 17 * 8 and p.screen.sprites[0].y == 6 * 8);
 }

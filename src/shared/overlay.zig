@@ -1,9 +1,9 @@
 //! The machine's own scenes over the game (DESIGN.md 10.4, S3): the settings screen, the notice that
 //! the other player of network play is in their settings, network play's messages, a notice about
-//! the settings record. Each is pushed over the game's scenes and holds them or not by its own rule
-//! (`holds`): the settings hold the game, and so does the other player's (both games of network
-//! play wait while either player is in the settings); network play's waits hold it; a notice does
-//! not.
+//! the settings record, a gamepad's coming. Each is pushed over the game's scenes and holds them or
+//! not by its own rule (`holds`): the settings hold the game, and so does the other player's (both
+//! games of network play wait while either player is in the settings); network play's waits hold
+//! it; a notice does not, nor does a gamepad's message, which fades out as it goes.
 //!
 //! They are this machine's, not the game's: the game's canonical state (game.zig), which both
 //! machines of network play keep the same, has the scenes of the flow and their loads
@@ -27,6 +27,8 @@ pub const Notice = enum {
     unreadable,
     /// The record could not be written.
     not_saved,
+    /// The record was of another version (an older game's): the defaults stand.
+    other_version,
 
     pub fn text(n: Notice) []const u8 {
         return switch (n) {
@@ -34,12 +36,17 @@ pub const Notice = enum {
             .damaged => "THE SETTINGS FILE WAS DAMAGED.",
             .unreadable => "THE SETTINGS FILE CANNOT BE READ.",
             .not_saved => "THE SETTINGS COULD NOT BE SAVED.",
+            .other_version => "THE SETTINGS FILE WAS AN OLD ONE.",
         };
     }
 };
 
 /// How long a notice shows.
 pub const notice_ns: u64 = 5 * std.time.ns_per_s;
+
+/// How long a gamepad's message shows, and the fade out of its last part.
+pub const gamepad_ns: u64 = 3 * std.time.ns_per_s;
+pub const gamepad_fade_ns: u64 = std.time.ns_per_s;
 
 /// What network play tells this machine's player (DESIGN.md 9), in the game's words.
 pub const Message = enum {
@@ -84,7 +91,7 @@ pub const Message = enum {
     }
 };
 
-pub const Kind = enum { settings, peer_settings, network, notice };
+pub const Kind = enum { settings, peer_settings, network, notice, gamepad };
 
 pub const Overlay = union(Kind) {
     settings: settings_mod.screen.Screen,
@@ -94,11 +101,14 @@ pub const Overlay = union(Kind) {
     network: struct { what: Message, until_ns: ?u64 = null },
     /// A notice, until the time it goes (set when first shown).
     notice: struct { what: Notice, until_ns: ?u64 = null },
+    /// A gamepad came: its place (GAMEPAD 1 the first's), until the time it goes (set when
+    /// first shown).
+    gamepad: struct { slot: u2, until_ns: ?u64 = null },
 
     /// Whether it holds the game under it: no tick runs, the picture stays, the sound fades out.
     pub fn holds(o: *const Overlay) bool {
         return switch (o.*) {
-            .notice => false,
+            .notice, .gamepad => false,
             .network => |n| n.what.holds(),
             else => true,
         };
@@ -119,6 +129,7 @@ pub const Overlay = union(Kind) {
                 try p.box(1, panel_mod.rows - 5, panel_mod.columns - 2, 3);
                 try p.text(3, panel_mod.rows - 4, n.what.text(), .bright);
             },
+            .gamepad => |g| _ = try p.message(gamepadText(g.slot), panel_mod.rows - 4, true),
         }
     }
 };
@@ -126,6 +137,16 @@ pub const Overlay = union(Kind) {
 /// What a player sees while the other is in the settings, by the other player.
 pub fn peerText(player: u1) []const u8 {
     return if (player == 1) "PLAYER 2 IS IN THE SETTINGS MENU" else "PLAYER 1 IS IN THE SETTINGS MENU";
+}
+
+/// A gamepad's message, by its place.
+pub fn gamepadText(slot: u2) []const u8 {
+    return switch (slot) {
+        0 => "GAMEPAD 1 CONNECTED",
+        1 => "GAMEPAD 2 CONNECTED",
+        2 => "GAMEPAD 3 CONNECTED",
+        3 => "GAMEPAD 4 CONNECTED",
+    };
 }
 
 /// The overlays over the game, from the bottom: one of each kind at most.
@@ -176,6 +197,9 @@ test "the overlays: one of each kind, the settings hold and dim, a notice does n
     var s: Stack = .{};
     s.push(.{ .notice = .{ .what = .damaged } });
     try std.testing.expect(!s.holds() and !s.dims());
+    s.push(.{ .gamepad = .{ .slot = 1 } });
+    try std.testing.expect(!s.holds() and !s.dims());
+    s.remove(.gamepad);
     s.push(.{ .peer_settings = 1 });
     try std.testing.expect(s.holds() and !s.dims());
     s.push(.{ .settings = .open(&.{}, .{}) });

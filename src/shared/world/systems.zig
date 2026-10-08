@@ -431,14 +431,21 @@ fn keepOnGround(e: *Entity) void {
 // Hits --------------------------------------------------------------------------------------------
 
 /// Whether a blow of `attacker`'s team lands on `target`'s team: the players' blows land on the
-/// enemies, on the neutral entities (the breakables) and on the other player (the original's
-/// two players strike each other); the enemies' on the players.
-pub fn blowsLand(attacker: entity.Team, target: entity.Team) bool {
+/// enemies, on the neutral entities (the breakables) and, `friendly`, on the other player (the
+/// original's two players strike each other; the rules may say not); the enemies' on the players.
+pub fn blowsLand(attacker: entity.Team, target: entity.Team, friendly: bool) bool {
     return switch (attacker) {
-        .player => true,
+        .player => friendly or target != .player,
         .enemy => target == .player,
         .neutral => false,
     };
+}
+
+/// Whether the players' blows, and what they throw, land on each other: the rules' (the round's
+/// plan), the original's without a plan.
+fn friendlyHit(t: *const Tick) bool {
+    const plan = t.plan orelse return true;
+    return plan.friendly_hit;
 }
 
 /// The blows that meet `x` at its turn land: the missiles' first (the original's enemies look at
@@ -596,7 +603,7 @@ fn blow(t: *Tick, ah: Handle, th: Handle) bool {
     if (t.power(a) == 0) return false;
     const target = t.world.get(th) orelse return false;
     const body = target.boxes.body orelse return false;
-    if (!blowsLand(a.team, target.team)) return false;
+    if (!blowsLand(a.team, target.team, friendlyHit(t))) return false;
     if (!meet(a, &t.kindOf(a).definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return false;
     return strike(t, ah, th);
 }
@@ -634,7 +641,8 @@ fn strike(t: *Tick, ah: Handle, th: Handle) bool {
 /// A missile (`Missile`: a body thrown, a weapon swung or thrown) strikes with its attack box
 /// `target` when it meets its body and is of a team the blows of the one who threw or swings it
 /// land on (a player's on the enemies and the breakables; with `on_players`, the players but its
-/// thrower too; with `on_enemies`, the enemies): the struck one's behaviour takes the blow, its
+/// thrower too, the other player only when the players' blows land on each other; with
+/// `on_enemies`, the enemies): the struck one's behaviour takes the blow, its
 /// damage and its reaction the missile's (knocking down, or the pepper's sneeze).
 fn missileOn(t: *Tick, ah: Handle, th: Handle) bool {
     const a = t.world.get(ah) orelse return false;
@@ -645,7 +653,7 @@ fn missileOn(t: *Tick, ah: Handle, th: Handle) bool {
     const body = target.boxes.body orelse return false;
     const by_team = if (t.world.getConst(m.by)) |b| b.team else a.team;
     const lands = switch (target.team) {
-        .player => m.on_players or by_team == .enemy,
+        .player => (m.on_players and (by_team != .player or friendlyHit(t))) or by_team == .enemy,
         .enemy => m.on_enemies or by_team == .player,
         .neutral => by_team == .player,
     };
@@ -712,7 +720,8 @@ fn grab(t: *Tick, gh: Handle, th: Handle) bool {
     const reach = g.boxes.attack orelse return false;
     if (t.power(g) != 0) return false;
     const o = t.world.get(th) orelse return false;
-    if (o.holder != null or o.holding != null or !blowsLand(g.team, o.team)) return false;
+    // A player grabs the other player (their team move) whatever the rules say of their blows.
+    if (o.holder != null or o.holding != null or !blowsLand(g.team, o.team, true)) return false;
     const ob = o.boxes.body orelse return false;
     if (!meet(g, &t.kindOf(g).definition.boxes[reach], o, &t.kindOf(o).definition.boxes[ob])) return false;
     if (!t.grabbable(th, gh)) return false;

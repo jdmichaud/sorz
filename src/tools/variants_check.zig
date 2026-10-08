@@ -147,6 +147,10 @@ fn settingsOpen(r: *const Run) bool {
     return r.game.settingsOpen();
 }
 
+fn settingsClosed(r: *const Run) bool {
+    return !r.game.settingsOpen();
+}
+
 /// From power-on to the game menu: START on the intro, then on the title.
 fn toMenu(f: *Flow, r: *Run) !void {
     while (r.updates < 500) try r.update();
@@ -253,25 +257,30 @@ fn extended(f: *Flow, r: *Run) !void {
     // F1 is no key of the extended game.
     try r.press(.f1);
     try f.check(!settingsOpen(r), "no settings key");
-    const tick = r.game.state.tick;
+    // The options fade out, then the settings fade in, without the pause's jingle.
     try r.press(.z);
-    try f.check(settingsOpen(r), "ADVANCED SETTINGS opens the settings");
+    try f.until(r, settingsOpen, 80, "ADVANCED SETTINGS opens the settings");
+    try f.check(r.game.jingle_at == null, "no pause's jingle from the options");
     const screen = &r.game.overlays.find(.settings).?.settings;
-    try f.check(!screen.facts.one_player and !screen.facts.settings_key, "both players' keys, no settings key");
+    try f.check(screen.facts.players == 2 and !screen.facts.settings_key and screen.facts.rules, "both players' columns, no settings key, the rules");
+    const tick = r.game.state.tick;
     for (0..30) |_| try r.update();
-    try f.check(r.game.state.tick <= tick + 2, "the settings hold the game");
-    // A change, then EXIT WITHOUT SAVING (up from the first row: the last): given back.
+    try f.check(r.game.state.tick == tick, "the settings hold the game");
+    // INPUT CONFIGURATION, a key changed (player 1's up), START back; then EXIT WITHOUT SAVING
+    // (up from the first row: the last): given back, as the settings fade out.
     const before = r.game.settings;
+    try r.press(.z);
     try r.press(.down);
-    try r.press(.enter);
+    try r.press(.z);
     try r.press(.q);
     try f.check(!std.meta.eql(before, r.game.settings), "a key changed");
-    try r.press(.up);
+    try r.press(.enter);
     try r.press(.up);
     const saves = r.game.saves_written;
-    try r.press(.enter);
-    try f.check(!settingsOpen(r) and std.meta.eql(before, r.game.settings) and r.game.saves_written == saves, "EXIT WITHOUT SAVING gives the settings back");
-    try f.until(r, inOptions, 10, "OPTIONS go on");
+    try r.press(.z);
+    try f.until(r, settingsClosed, 80, "the settings fade out");
+    try f.check(std.meta.eql(before, r.game.settings) and r.game.saves_written == saves, "EXIT WITHOUT SAVING gives the settings back");
+    try f.until(r, inOptions, 80, "OPTIONS go on");
     try f.check(optionsOf(r).?.line == .advanced_settings, "the cursor on ADVANCED SETTINGS");
     // EXIT, the menu, 1 PLAYER, the round: START opens the settings in place of the pause.
     try r.press(.down);
@@ -305,10 +314,12 @@ fn page(f: *Flow, r: *Run) !void {
     try f.until(r, inOptions, 400, "OPTIONS");
     try optionsUp(r, 2);
     try r.press(.z);
+    try f.until(r, settingsOpen, 80, "ADVANCED SETTINGS opens the settings");
     const screen = &r.game.overlays.find(.settings);
-    try f.check(screen.* != null and screen.*.?.settings.facts.one_player, "the settings: one player's");
+    try f.check(screen.* != null and screen.*.?.settings.facts.players == 1, "the settings: one player's");
     try r.press(.escape);
-    try f.check(!settingsOpen(r), "Escape leaves");
+    try f.until(r, settingsClosed, 80, "Escape leaves");
+    try f.until(r, inOptions, 80, "OPTIONS go on");
     try r.press(.down);
     try r.update();
     try r.press(.enter);

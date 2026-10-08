@@ -7,8 +7,10 @@
 //!   2 PLAYERS, OPTIONS), its options, its pause on START; the port's settings by the settings key
 //!   (F1) alone. It is the variant that the checks against sor-remaster compare.
 //! - **extended**, the default: the port's liberties: ADVANCED SETTINGS in OPTIONS, before EXIT,
-//!   START during play opening the settings in place of the pause, and the same character for
-//!   both players (PLAN item 20: its rule, and the content's colours for the second).
+//!   START during play opening the settings in place of the pause, the same character for both
+//!   players (PLAN item 20: its rule, and the content's colours for the second), and the game's
+//!   rules from the settings (the lives, the continues, the friendly hits) in place of the
+//!   options' hidden lives.
 //! - **network**: network play and the browser, one player a machine. Each machine runs its own
 //!   front end; its game menu is 2 PLAYERS and OPTIONS: 2 PLAYERS goes to the character select
 //!   with this machine's player alone, and the other machine's player joins there or in the round
@@ -67,6 +69,9 @@ pub const Policies = struct {
     start_opens_settings: bool = false,
     /// The settings key opens the settings, in any scene.
     settings_key: bool = true,
+    /// The game's rules are the settings' (setup.zig `Rules`: the lives, the continues, the
+    /// friendly hits), which replace the options' hidden lives; else the cartridge's.
+    settings_rules: bool = false,
     /// Whether character `wanted` is taken for a player, the other player's cursor on `other` at
     /// the character select (two players): their cursor then passes it.
     characterTaken: *const fn (other: Character, wanted: Character) bool = takenByTheOther,
@@ -86,6 +91,7 @@ pub const extended: Config = .{ .graph = &flow.extended, .policies = .{
     .advanced_settings = true,
     .start_opens_settings = true,
     .settings_key = false,
+    .settings_rules = true,
     .characterTaken = neverTaken,
     .duplicate_colours = "duplicate",
 } };
@@ -96,6 +102,7 @@ pub const network: Config = .{ .graph = &flow.network, .policies = .{
     .advanced_settings = true,
     .start_opens_settings = true,
     .settings_key = false,
+    .settings_rules = true,
 } };
 
 // --- the policies -------------------------------------------------------------------------------

@@ -532,16 +532,20 @@ function multiple(view) {
 
 // The record the browser keeps for the page (base64 under `sorz:settings.json`): pad 1's Start on
 // P, the volume at 30, the scale at 1, as the game writes a record.
+const buttons = { a: 'x', b: 'a', c: 'b', start: 'start' };
+const noKeys = { up: 'none', down: 'none', left: 'none', right: 'none', a: 'none', b: 'none', c: 'none', start: 'none' };
 const keptRecord = JSON.stringify({
-  version: 1,
-  keys: {
-    pad1: { up: 'up', down: 'down', left: 'left', right: 'right', a: 'z', b: 'x', c: 'c', start: 'p' },
-    pad2: { up: 'w', down: 's', left: 'a', right: 'd', a: 'f', b: 'g', c: 'h', start: 'tab' },
-    settings: 'f1',
+  version: 2,
+  players: {
+    player1: { input: 'keyboard', keys: { up: 'up', down: 'down', left: 'left', right: 'right', a: 'z', b: 'x', c: 'c', start: 'p' }, buttons, autofire: false },
+    player2: { input: 'keyboard', keys: { up: 'w', down: 's', left: 'a', right: 'd', a: 'f', b: 'g', c: 'h', start: 'tab' }, buttons, autofire: false },
+    player3: { input: 'keyboard', keys: noKeys, buttons, autofire: false },
+    player4: { input: 'keyboard', keys: noKeys, buttons, autofire: false },
   },
-  controllers: { first_pad: 1, buttons: { a: 'x', b: 'a', c: 'b', start: 'start' } },
+  settings_key: 'f1',
   sound: { volume: 30, mute: false },
   window: { scale: 1, fullscreen: false },
+  rules: { lives: 3, continues: 3, friendly_hit: true },
 }, null, 2);
 
 // Part `settings`: the record kept before the page loads is the game's at the start, and the page
@@ -658,20 +662,26 @@ async function flowCheck(browser) {
     const inOptions = await page.evaluate('sorz.inspect()');
     await holdAt(pages, 0, keyEvents.up, 900, 2);
     await holdAt(pages, 0, keyEvents.up, 910, 2);
-    // A on ADVANCED SETTINGS: the settings hold the game from then on (no tick runs).
+    // A on ADVANCED SETTINGS: the options fade out (64 ticks), then the settings hold the game
+    // from then on (no tick runs) and fade in (in time: a second).
     await stepUntil(pages, (t) => t[0] >= 920);
     await page.send('Input.dispatchKeyEvent', { type: 'keyDown', ...keyEvents.z });
     await page.evaluate('sorz.step(2)');
     await page.send('Input.dispatchKeyEvent', { type: 'keyUp', ...keyEvents.z });
-    await page.evaluate('sorz.step(3)');
+    await page.evaluate('sorz.step(70)');
     const held = await page.evaluate('sorz.inspect()');
+    await new Promise((r) => setTimeout(r, 1300));
     await page.evaluate('sorz.step(30)');
     const still = await page.evaluate('sorz.inspect()');
     const settingsPixels = Buffer.from(await page.evaluate(canvasBase64), 'base64');
     if (options.keep) await page.screenshot(path.join(options.keep, 'page-flow-settings.png'));
     const settingsTitle = whiteIn(settingsPixels, 2);
-    // Escape saves and leaves: OPTIONS go on.
+    // Escape saves and leaves: the settings fade out (in time), then OPTIONS go on.
     await tap(page, keyEvents.escape);
+    for (let i = 0; i < 100 && (await page.evaluate('sorz.inspect()')).settings_open; i++) {
+      await page.evaluate('sorz.step(1)');
+      await new Promise((r) => setTimeout(r, 20));
+    }
     await page.evaluate('sorz.step(5)');
     const after = await page.evaluate('sorz.inspect()');
     const errors = page.console.filter((m) => m.type === 'error' || m.type === 'exception');

@@ -443,6 +443,7 @@ pub const Round = struct {
             .level = @intCast(@min(setup.level, 3)),
             .levels = a.screen.levels,
             .lives = setup_mod.Progress.livesOf(setup),
+            .friendly_hit = if (setup.rules) |r| r.friendly_hit else true,
             .extra_lives = a.screen.status_bar.extra_lives,
             // The demo's pads are read as they are (the cartridge's first layout).
             .buttons = a.screen.buttons.of(if (self.demo) 0 else setup.control),
@@ -885,7 +886,8 @@ pub const Round = struct {
             return null;
         };
         self.joining = character;
-        return .{ .player = 1, .kind = kind, .lives = a.screen.status_bar.join.lives, .colours = playerColours(turn, 1, character, kind, a) };
+        const lives = if (turn.setup.rules) |r| r.lives else a.screen.status_bar.join.lives;
+        return .{ .player = 1, .kind = kind, .lives = lives, .colours = playerColours(turn, 1, character, kind, a) };
     }
 
     /// The colours player `k` playing `character` (of kind `kind`) is drawn with: the variant's

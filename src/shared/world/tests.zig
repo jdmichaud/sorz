@@ -334,7 +334,9 @@ test "a blow lands: its frame's attack box meets a body, the damage, the reactio
     try testing.expectEqual(@as(i16, 14), w.get(other).?.health);
     // The pawn's blow lands on enemies only once a blow: the second partner was not struck by
     // the first, nor the first by the second.
-    try testing.expect(systems.blowsLand(.enemy, .player) and !systems.blowsLand(.enemy, .enemy));
+    try testing.expect(systems.blowsLand(.enemy, .player, true) and !systems.blowsLand(.enemy, .enemy, true));
+    try testing.expect(systems.blowsLand(.player, .player, true) and !systems.blowsLand(.player, .player, false));
+    try testing.expect(systems.blowsLand(.player, .enemy, false));
 }
 
 test "the sparring partner draws its wait, closes in, punches, and the pawn reels" {
