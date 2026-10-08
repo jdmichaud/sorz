@@ -1,8 +1,9 @@
 //! The acrobats who fight as a trio (round 3's): the acrobat's art and attacks (acrobat.zig's
 //! `Attacks`) and every enemy's common states. The first out of hiding leads (role 2) and brings
 //! the two others (roles 1 and 0), trio acrobats of their own, beside it (`role_1_beside`,
-//! `role_0_beside` ahead), each with its target, health and colours, kept on the screen; the
-//! three charge at once.
+//! `role_0_beside` ahead), each with its target, health and colours, kept on the screen, drawn
+//! in front of the planes in one round (`front_round`: round 5's deck); the three charge at
+//! once.
 //!
 //! Each takes its place (`take_place`) on its side of the screen's middle, at its target's depth:
 //! the leader `leader_out` out from the middle on the side it is on, the others `role_1_out` and
@@ -110,6 +111,8 @@ pub const Numbers = enemy.Numbers(struct {
     /// The others brought ahead of the leader: role 1's, role 0's.
     role_1_beside: i16,
     role_0_beside: i16,
+    /// The round whose others the leader brings drawn in front of the planes.
+    front_round: u8,
     /// The screen's middle (from the camera's left edge), and the places out from it.
     middle: i16,
     leader_out: i16,
@@ -228,6 +231,9 @@ fn start(a: Actor) void {
         o.flags.harmless = true;
         o.health = a.entity.health;
         o.palette = a.entity.palette;
+        if (a.tick.plan) |p| if (p.round.number == n.front_round) {
+            o.flags.in_front = true;
+        };
         o.mind = .{ .acrobat_trio = .{ .state = .charge, .role = role, .leader = a.handle, .body = .{ .target = a.mind.body.target } } };
         a.mind.others[@intFromBool(role == 0)] = h;
     }

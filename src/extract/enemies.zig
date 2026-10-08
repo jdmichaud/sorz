@@ -595,6 +595,9 @@ pub fn acrobatTrio(arena: std.mem.Allocator, rom: []const u8) Error!entity.Defin
     var d = try acrobatOf(arena, rom, 0x2A);
     try d.number("role_1_beside", try moveq(rom, 0xF83E, 0), "ROM 0x0F83E: moveq #N,d0 (role 1's place ahead of the leader)");
     try d.number("role_0_beside", try moveq(rom, 0xF84C, 0), "ROM 0x0F84C: moveq #N,d0 (role 0's)");
+    // Its others drawn in front in one round (0xF850: cmpi.w #N,($FF02), then bset #4,(1,a1)).
+    if (u16be(rom, 0xF854) != 0xFF02 or u32be(rom, 0xF858) != 0x08E90004 or u16be(rom, 0xF85C) != 1) return error.BadData;
+    try d.number("front_round", (try immediate(rom, 0xF850, &.{ 0x0C, 0x78 }, 2)) + 1, "ROM 0x0F850: cmpi.w #N,($FF02) (the round's number less one)");
     if (u32be(rom, 0xF93C) != 0x3038E002 or u32be(rom, 0xF996) != 0x3038E002 or u32be(rom, 0xFA0C) != 0x3038E002) return error.BadData;
     const middle = try immediate(rom, 0xF940, &.{ 0x06, 0x40 }, 2);
     if (try immediate(rom, 0xF99A, &.{ 0x06, 0x40 }, 2) != middle or try immediate(rom, 0xFA10, &.{ 0x06, 0x40 }, 2) != middle) return error.BadData;
