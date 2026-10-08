@@ -1,6 +1,6 @@
 //! The machine's own scenes over the game (DESIGN.md 10.4, S3): the settings screen, the notice that
 //! the other player of network play is in their settings, network play's messages, a notice about
-//! the settings record, a gamepad's coming. Each is pushed over the game's scenes and holds them or
+//! the settings record, a gamepad's coming or going. Each is pushed over the game's scenes and holds them or
 //! not by its own rule (`holds`): the settings hold the game, and so does the other player's (both
 //! games of network play wait while either player is in the settings); network play's waits hold
 //! it; a notice does not, nor does a gamepad's message, which fades out as it goes.
@@ -98,8 +98,9 @@ pub const Overlay = union(Kind) {
     network: struct { what: Message, until_ns: ?u64 = null },
     /// A notice, until the time it goes (set when first shown).
     notice: struct { what: Notice, until_ns: ?u64 = null },
-    /// A gamepad came: its label (input.zig), until the time it goes (set when first shown).
-    gamepad: struct { label: u16, until_ns: ?u64 = null },
+    /// A gamepad came, or went: its label (input.zig), until the time the message goes (set
+    /// when first shown).
+    gamepad: struct { label: u16, connected: bool = true, until_ns: ?u64 = null },
 
     /// Whether it holds the game under it: no tick runs, the picture stays, the sound fades out.
     pub fn holds(o: *const Overlay) bool {
@@ -127,7 +128,7 @@ pub const Overlay = union(Kind) {
             },
             .gamepad => |g| {
                 var buf: [32]u8 = undefined;
-                _ = try p.message(gamepadText(g.label, &buf), panel_mod.rows - 4, true);
+                _ = try p.message(gamepadText(g.label, g.connected, &buf), panel_mod.rows - 4, true);
             },
         }
     }
@@ -138,9 +139,9 @@ pub fn peerText(player: u1) []const u8 {
     return if (player == 1) "PLAYER 2 IS IN THE SETTINGS MENU" else "PLAYER 1 IS IN THE SETTINGS MENU";
 }
 
-/// A gamepad's message, by its label.
-pub fn gamepadText(label: u16, buf: *[32]u8) []const u8 {
-    return std.fmt.bufPrint(buf, "GAMEPAD {d} CONNECTED", .{label}) catch unreachable;
+/// A gamepad's message, by its label: it came, or went.
+pub fn gamepadText(label: u16, connected: bool, buf: *[32]u8) []const u8 {
+    return std.fmt.bufPrint(buf, "GAMEPAD {d} {s}", .{ label, if (connected) "CONNECTED" else "DISCONNECTED" }) catch unreachable;
 }
 
 /// The overlays over the game, from the bottom: one of each kind at most.
@@ -192,6 +193,8 @@ test "the overlays: one of each kind, the settings hold and dim, a notice does n
     s.push(.{ .notice = .{ .what = .damaged } });
     try std.testing.expect(!s.holds() and !s.dims());
     s.push(.{ .gamepad = .{ .label = 12 } });
+    var buf: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("GAMEPAD 12 DISCONNECTED", gamepadText(12, false, &buf));
     try std.testing.expect(!s.holds() and !s.dims());
     s.remove(.gamepad);
     s.push(.{ .peer_settings = 1 });

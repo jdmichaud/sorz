@@ -693,12 +693,15 @@ pub const Game = struct {
 
     /// An event for the controls. A gamepad that comes is known by its model, as the platform
     /// names it (input.zig `Controls.add`); one seen for the first time is kept in the settings
-    /// and their record. It is told (GAMEPAD N CONNECTED), and the settings follow player 1
-    /// taking it; while the settings are open, they offer it, and player 1 takes it there.
+    /// and their record. It is told (GAMEPAD N CONNECTED, and DISCONNECTED as it goes), and the
+    /// settings follow player 1 taking it; while the settings are open, they offer it, and player
+    /// 1 takes it there.
     fn controlEvent(self: *Game, e: platform.Event, p: *platform.Platform) void {
+        var gone: ?u16 = null;
         const got: ?input.Controls.Added = switch (e.payload) {
             .controller_added => |id| self.controls.add(id, p.controllerInfo(id) orelse .{}),
-            .controller_removed => blk: {
+            .controller_removed => |id| blk: {
+                if (self.controls.slotOf(id)) |slot| gone = self.controls.labels[slot];
                 _ = self.controls.handle(e);
                 break :blk null;
             },
@@ -720,6 +723,10 @@ pub const Game = struct {
         if (got) |g| {
             if (g.new) self.knowGamepad(g.label, null);
             self.overlays.push(.{ .gamepad = .{ .label = g.label } });
+            self.overlay_dirty = true;
+        }
+        if (gone) |label| {
+            self.overlays.push(.{ .gamepad = .{ .label = label, .connected = false } });
             self.overlay_dirty = true;
         }
     }

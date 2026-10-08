@@ -34,6 +34,7 @@ const usage =
     \\  --frames N       run N frames, a display tick each (default 120)
     \\  --button FRAME:NAME[:HOLD]  press the button NAME of a gamepad connected at the first frame
     \\                   (a platform.ControllerButton, as `a` or `dpad_left`), as --key does
+    \\  --unplug FRAME, --plug FRAME  disconnect that gamepad at FRAME, connect it again
     \\  --key FRAME:NAME[:HOLD]  press the key NAME (a platform.Key, as `enter` or `left`) at
     \\                   frame FRAME, release it HOLD frames later (default 1); repeats
     \\  --shot FRAME:PATH  write the picture presented at frame FRAME as a PNG file; repeats
@@ -111,6 +112,8 @@ pub fn main(init: std.process.Init) !void {
     defer presses.deinit(gpa);
     var buttons: std.ArrayList(ButtonPress) = .empty;
     defer buttons.deinit(gpa);
+    var plugs: std.ArrayList(struct { frame: u64, in: bool }) = .empty;
+    defer plugs.deinit(gpa);
     var shots: std.ArrayList(Shot) = .empty;
     defer shots.deinit(gpa);
     var wav_path: ?[]const u8 = null;
@@ -150,6 +153,9 @@ pub fn main(init: std.process.Init) !void {
             try presses.append(gpa, parsePress(args.next() orelse return fail(io)) orelse return fail(io));
         } else if (std.mem.eql(u8, arg, "--button")) {
             try buttons.append(gpa, parseButton(args.next() orelse return fail(io)) orelse return fail(io));
+        } else if (std.mem.eql(u8, arg, "--unplug") or std.mem.eql(u8, arg, "--plug")) {
+            const frame = std.fmt.parseInt(u64, args.next() orelse return fail(io), 10) catch return fail(io);
+            try plugs.append(gpa, .{ .frame = frame, .in = std.mem.eql(u8, arg, "--plug") });
         } else if (std.mem.eql(u8, arg, "--shot")) {
             try shots.append(gpa, parseShot(args.next() orelse return fail(io)) orelse return fail(io));
         } else if (std.mem.eql(u8, arg, "--wav")) {
@@ -297,6 +303,9 @@ pub fn main(init: std.process.Init) !void {
             if (press.frame +| press.hold == frame) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .key_up = .{ .key = press.key } } });
         }
         if (frame == 0 and buttons.items.len != 0) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .controller_added = pad } });
+        for (plugs.items) |plug| if (plug.frame == frame) {
+            try backend.inject(.{ .time_ns = backend.clock_ns, .payload = if (plug.in) .{ .controller_added = pad } else .{ .controller_removed = pad } });
+        };
         for (buttons.items) |press| {
             if (press.frame == frame) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .controller_button_down = .{ .controller = pad, .button = press.button } } });
             if (press.frame +| press.hold == frame) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .controller_button_up = .{ .controller = pad, .button = press.button } } });
