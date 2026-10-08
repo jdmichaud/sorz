@@ -378,6 +378,8 @@ fn hostNetworkPlay(f: *Flow, r: *Room, host: *Machine) !void {
             return m.game.overlays.find(.net_options) != null;
         }
     }.open, 200, "the network options");
+    try r.step(90);
+    try shot(r, host, "network_options.png");
     try r.press(host, .enter);
     try f.until(r, host, inSelect, 600, "the host's select");
     try f.check(host.np().open and selectOf(host).?.players == .one, "the session open, the host alone at its select");
@@ -423,8 +425,9 @@ fn ownMenus(f: *Flow, r: *Room) !void {
     try hostNetworkPlay(f, r, host);
     try r.step(30);
     try f.check(client.game.state.scenes.base.menu.dimmed == 0, "JOIN and OBSERVE lit once the session is open");
+    try shot(r, host, "roster.png");
     const roster = host.game.overlays.find(.roster);
-    try f.check(roster != null and roster.?.roster.len == 1 and std.mem.eql(u8, &roster.?.roster.entries[0].name, "BAA") and roster.?.roster.entries[0].doing == .menu, "the host lists BAA (MENU)");
+    try f.check(roster != null and roster.?.roster.len == 1 and std.mem.eql(u8, &roster.?.roster.entries[0].name, "BAA") and roster.?.roster.entries[0].doing == .menu, "the host lists BAA - MENU");
     // The client's OPTIONS: its own lines alone; ADVANCED SETTINGS, one player's; the host not
     // held.
     while (menuChoice(client) != .options) try r.press(client, .down);

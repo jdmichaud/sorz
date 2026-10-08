@@ -44,9 +44,19 @@ const percent_tile: art.Tile = tile: {
     };
     break :tile t;
 };
+const percent_clear = withoutGround(percent_tile);
 
 /// A cell of the font's ground alone (the menu's black): a panel's box, a strip under a message.
 const ground_tile: art.Tile = @splat(2);
+
+/// `t` without the font's ground: the picture under it shows there.
+fn withoutGround(t: art.Tile) art.Tile {
+    var out = t;
+    for (&out) |*px| if (px.* == 2) {
+        px.* = 0;
+    };
+    return out;
+}
 
 /// The longest line of a message; a longer one is cut at its spaces.
 pub const message_columns = 36;
@@ -55,6 +65,8 @@ pub const Panel = struct {
     gpa: std.mem.Allocator,
     font: *const art.Font,
     sheet: *const art.TileSheet,
+    /// The sheet's tiles without the font's ground (`textClear`).
+    clear: []art.Tile,
     arrow: art.Frame,
     board: render.Board,
     composer: *render.Composer,
@@ -76,10 +88,14 @@ pub const Panel = struct {
             .font = font,
             .sheet = sheet,
             .arrow = .{ .name = "arrow", .file = "", .width = 8, .height = 8, .origin_x = 0, .origin_y = 0, .pixels = &sheet.tiles[g.tile] },
-            .board = try render.Board.init(gpa, columns, rows),
+            .clear = try gpa.alloc(art.Tile, sheet.tiles.len),
+            .board = undefined,
             .composer = undefined,
             .rgba = &.{},
         };
+        errdefer gpa.free(self.clear);
+        for (sheet.tiles, self.clear) |t, *c| c.* = withoutGround(t);
+        self.board = try render.Board.init(gpa, columns, rows);
         errdefer self.board.deinit();
         self.composer = try render.Composer.create(gpa);
         errdefer self.composer.destroy();
@@ -90,6 +106,7 @@ pub const Panel = struct {
     }
 
     pub fn deinit(self: *Panel) void {
+        self.gpa.free(self.clear);
         self.gpa.free(self.rgba);
         self.composer.destroy();
         self.board.deinit();
@@ -119,6 +136,16 @@ pub const Panel = struct {
     /// its capital, a separator of a file's name (`/`, `_`) as the dash, `%` as the panel's own
     /// tile, and a character the font does not have as a blank; a blank keeps what is under it.
     pub fn text(self: *Panel, col: usize, row: usize, s: []const u8, tone: Tone) Error!void {
+        return self.write(col, row, s, tone, false);
+    }
+
+    /// `s` as `text` draws it, without the font's ground: over a picture, the picture shows
+    /// around the letters.
+    pub fn textClear(self: *Panel, col: usize, row: usize, s: []const u8, tone: Tone) Error!void {
+        return self.write(col, row, s, tone, true);
+    }
+
+    fn write(self: *Panel, col: usize, row: usize, s: []const u8, tone: Tone, clear: bool) Error!void {
         const look: render.Look = .{ .palette = @backingInt(tone) };
         for (s, 0..) |ch, i| {
             if (col + i >= columns or row >= rows) break;
@@ -128,12 +155,12 @@ pub const Panel = struct {
                 else => std.ascii.toUpper(ch),
             };
             if (c == '%') {
-                self.board.put(x, @intCast(row), &percent_tile, look) catch return error.OutOfMemory;
+                self.board.put(x, @intCast(row), if (clear) &percent_clear else &percent_tile, look) catch return error.OutOfMemory;
                 continue;
             }
             if (c == ' ') continue;
             const g = self.font.glyphAt(&.{c}) orelse continue;
-            self.board.put(x, @intCast(row), &self.sheet.tiles[g.tile], look) catch return error.OutOfMemory;
+            self.board.put(x, @intCast(row), if (clear) &self.clear[g.tile] else &self.sheet.tiles[g.tile], look) catch return error.OutOfMemory;
         }
     }
 
