@@ -31,11 +31,13 @@
 //!   check and name the first field that differs.
 //! - server: the host's START SERVER: its screen stays, its lobby, which lists the client; the
 //!   client's JOIN lit, OBSERVE dimmed (no game to watch); the client's JOIN and character wait
-//!   for the host's game, its own select naming it player 2; STOP SERVER: the client back at its
-//!   menu, told, and turned away; START GAME: the server again, the host at its select, and the
-//!   client back in joins it there; Escape on the host: its lobby again, the client back at its
-//!   menu, still connected; EXIT: the menu, the server running; Escape in 1 PLAYER's game, the
-//!   server running: the lobby; with it stopped, a local game: the menu.
+//!   for the host's game, its own select naming it player 2; START GAME: once the host's select
+//!   shows, the client joins it, its cursor and choice kept, not faded; Escape on the host: its
+//!   lobby again, the client keeping the select, its own again; STOP SERVER: the client back at
+//!   its menu, told, and turned away; START GAME: the server again, the client back in joins the
+//!   host's select; Escape: the client keeps the select; EXIT: the menu, the server running;
+//!   Escape in 1 PLAYER's game, the server running: the lobby; with it stopped, a local game:
+//!   the menu.
 //! - left: in round 1 with a client, Escape on the host: its lobby over the game, which runs on
 //!   for the client; player 1 dies out of it at one tick on both machines (the same game); RETURN
 //!   TO GAME: player 1 drops back in on both; JOIN IN PROGRESS off: no way back; EXIT shows the
@@ -490,6 +492,32 @@ fn server(f: *Flow, r: *Room) !void {
     }.waits, 300, "the client waits for the host's game");
     try shot(r, host, "lobby.png");
     try shot(r, client, "client_waiting.png");
+    const waited = selectOf(client).?.cursors[0].place;
+    // START GAME: the host's select; once it shows, the waiting client joins it there, its cursor
+    // and its choice as they were, its screen not faded.
+    try pressOption(r, host, .game, .z);
+    try f.until(r, client, inSession, 900, "the waiting client joins at the host's select");
+    try f.check(selectOf(client).?.settled() and selectOf(client).?.players == .two, "the client's select shows, two players: no fade");
+    try f.check(selectOf(host).?.cursors[1].place == waited and selectOf(host).?.cursors[1].chosen, "the client's cursor and choice kept");
+    try r.step(60);
+    try shot(r, host, "host_joined.png");
+    try shot(r, client, "client_joined.png");
+    // Escape on the host: its lobby again, its server running; the client keeps the select, its
+    // own again (its cursor player 2's, chosen: it waits for player 1), still in the host's lobby.
+    try r.press(host, .escape);
+    try f.until(r, host, struct {
+        fn back(m: *Machine) bool {
+            const l = lobby(m) orelse return false;
+            return l.serving and l.client_count == 1 and l.clients[0].doing == .select;
+        }
+    }.back, 300, "the host back in its lobby, the client listed at its select");
+    try f.until(r, client, struct {
+        fn kept(m: *Machine) bool {
+            const sel = selectOf(m) orelse return false;
+            return !m.inSession() and sel.players == .one and sel.seat == 1 and m.message() == .waiting_for_player_1;
+        }
+    }.kept, 600, "the client keeps the select, its choice made: it waits for player 1");
+    try f.check(selectOf(client).?.cursors[0].place == waited and selectOf(client).?.cursors[0].chosen and client.np().welcomed(), "its cursor and choice as they were, still connected");
     // STOP SERVER, in the lobby: the client back at its menu, told; turned away while the server
     // is stopped; the lobby stays, empty.
     try pressOption(r, host, .server, .z);
@@ -508,29 +536,20 @@ fn server(f: *Flow, r: *Room) !void {
     while (menuChoice(client) != .join) try r.press(client, .down);
     try r.press(client, .z);
     try f.until(r, client, inSession, 900, "the client joins at the host's select");
-    try r.step(60);
-    try shot(r, host, "host_joined.png");
-    try shot(r, client, "client_joined.png");
     try f.check(selectOf(host).?.players == .two, "two players at the host's select");
-    // Escape on the host: its lobby again, its server running; the client back at its menu, told,
-    // still in the host's lobby.
+    // Escape on the host: its lobby again; the client keeps the select.
     try r.press(host, .escape);
-    try f.until(r, host, struct {
-        fn back(m: *Machine) bool {
-            const l = lobby(m) orelse return false;
-            return l.serving and l.client_count == 1 and l.clients[0].doing == .menu;
-        }
-    }.back, 300, "the host back in its lobby, the client listed at its menu");
     try f.until(r, client, struct {
-        fn back(m: *Machine) bool {
-            return choosing(m) and m.message() == .player_1_left;
+        fn kept(m: *Machine) bool {
+            const sel = selectOf(m) orelse return false;
+            return !m.inSession() and sel.seat == 1;
         }
-    }.back, 600, "the client back at its menu, told");
-    try f.check(client.np().welcomed() and !client.inSession() and !host.inSession(), "the client still in the host's lobby, no session");
-    // EXIT: the host's menu, its server running; JOIN still lit on the client.
+    }.kept, 600, "the client keeps the select");
+    try f.check(lobby(host) != null and !host.inSession(), "the host in its lobby, no session");
+    // EXIT: the host's menu, its server running, the client still in its lobby.
     try pressOption(r, host, .exit, .z);
     try f.until(r, host, choosing, 600, "the host's menu");
-    try f.check(host.np().open and joinLit(client), "the server still running, the client's JOIN lit");
+    try f.check(host.np().open and client.np().welcomed(), "the server still running, the client in its lobby");
     // Escape in 1 PLAYER's game, the server running: the lobby again. STOP SERVER, EXIT, and
     // Escape in a local game: back to the menu, the program running.
     while (menuChoice(host) != .one_player) try r.press(host, .down);

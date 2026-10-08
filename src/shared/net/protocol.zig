@@ -30,8 +30,9 @@
 //! | 16 away       | seconds u8: a player's connection is down, the seconds left  | 2            |
 //! |               | before it leaves the game (0: it is back, or it left)        |              |
 //! | 17 name       | name [3]: the client's player's, given again                 | 4            |
-//! | 18 where      | place u8: the client's player in its own menu (0) or at its  | 2            |
-//! |               | character select, to join (1)                                |              |
+//! | 18 where      | at u8: the client's player in its own menu (0) or at its     | 3            |
+//! |               | character select, to join (1); cursor u8 (its cursor's       |              |
+//! |               | character there, 0-2, 255 none)                              |              |
 //! | 19 event      | tick u32, what u8 (1 player 1 leaves, 2 player 1 comes       | 7            |
 //! |               | back), character u8 (0-2; 255 for a leave)                   |              |
 //!
@@ -137,8 +138,14 @@ pub const DataId = [32]u8;
 /// A player's name: three letters.
 pub const Name = [3]u8;
 
-/// Where a client's player is in its own game: its menu, or its character select, to join.
-pub const Where = enum(u8) { menu = 0, select = 1 };
+/// Where a client's player is in its own game: its menu, or its character select, to join, its
+/// cursor on `cursor` there (a join at the host's select keeps it).
+pub const Where = struct {
+    at: At = .menu,
+    cursor: u8 = no_character,
+
+    pub const At = enum(u8) { menu = 0, select = 1 };
+};
 
 pub const Hello = struct {
     protocol: u16 = version,
@@ -334,7 +341,10 @@ pub fn encode(m: Message, out: []u8) []u8 {
         .settings, .observe => |yes| w.byte(@intFromBool(yes)),
         .away => |seconds| w.byte(seconds),
         .name => |n| w.bytes(&n),
-        .where => |x| w.byte(@backingInt(x)),
+        .where => |x| {
+            w.byte(@backingInt(x.at));
+            w.byte(x.cursor);
+        },
         .event => |e| {
             w.int(u32, e.tick);
             w.byte(@backingInt(e.what));
@@ -443,9 +453,10 @@ pub fn decode(bytes: []const u8) DecodeError!Message {
         .away => .{ .away = try r.byte() },
         .name => .{ .name = (try r.bytes(3))[0..3].* },
         .where => blk: {
-            const x = try r.byte();
-            if (x > @backingInt(Where.select)) return error.Malformed;
-            break :blk .{ .where = @fromBackingInt(x) };
+            const at = try r.byte();
+            const cursor = try r.byte();
+            if (at > @backingInt(Where.At.select) or !isCharacter(cursor)) return error.Malformed;
+            break :blk .{ .where = .{ .at = @fromBackingInt(at), .cursor = cursor } };
         },
         .event => blk: {
             const tick = try r.int(u32);
@@ -539,8 +550,8 @@ test "every message round trips, and its truncations are malformed" {
     try roundTrip(.{ .observe = false });
     try roundTrip(.{ .away = 5 });
     try roundTrip(.{ .name = "ZED".* });
-    try roundTrip(.{ .where = .select });
-    try roundTrip(.{ .where = .menu });
+    try roundTrip(.{ .where = .{ .at = .select, .cursor = 2 } });
+    try roundTrip(.{ .where = .{} });
     try roundTrip(.{ .event = .{ .tick = 900, .what = .leave } });
     try roundTrip(.{ .event = .{ .tick = 1200, .what = .back, .character = 1 } });
     try roundTrip(.{ .status = .{ .game = .play, .character = 0, .open = true, .join_in_progress = true } });
@@ -598,7 +609,8 @@ test "fields out of range are malformed" {
     try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 1, 1 }));
     try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 2, no_character }));
     try testing.expectError(error.Malformed, decode(&.{ 14, 2 }));
-    try testing.expectError(error.Malformed, decode(&.{ 18, 2 }));
+    try testing.expectError(error.Malformed, decode(&.{ 18, 2, 0 }));
+    try testing.expectError(error.Malformed, decode(&.{ 18, 1, 3 }));
     // Ticks: none, or more than a message may carry, or an odd byte.
     try testing.expectError(error.Malformed, decode(&.{ 15, 0, 0, 0, 0, 0 }));
     try testing.expectError(error.Malformed, decode(&.{ 15, 0, 0, 0, 0, 1, 7 }));

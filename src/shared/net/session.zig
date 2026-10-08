@@ -193,7 +193,7 @@ pub const Session = struct {
     peer_name: protocol.Name = .{ ' ', ' ', ' ' },
     /// Where the client's player is in its own game (the host's, from `where`), and where the
     /// client last said (the client's; null: not said on this connection).
-    peer_where: protocol.Where = .menu,
+    peer_where: protocol.Where = .{},
     where_said: ?protocol.Where = null,
     /// A change of the game at a tick to come (the host's player leaving or coming back): the
     /// host's, as it scheduled it; the client's, as it heard it.
@@ -336,7 +336,7 @@ pub const Session = struct {
         self.connected = true;
         self.welcomed = false;
         self.where_said = null;
-        self.peer_where = .menu;
+        self.peer_where = .{};
         self.close_requested = false;
         self.last_heard_ns = now_ns;
         self.last_ping_ns = now_ns;
@@ -758,7 +758,7 @@ pub const Session = struct {
     /// each connection, once welcomed).
     pub fn sayWhere(self: *Session, x: protocol.Where) void {
         if (self.config.role != .guest or !self.welcomed) return;
-        if (self.where_said == x) return;
+        if (self.where_said) |was| if (std.meta.eql(was, x)) return;
         self.where_said = x;
         self.send(.{ .where = x });
     }

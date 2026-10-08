@@ -222,11 +222,11 @@ pub const State = struct {
         };
     }
 
-    /// The second player joins (`joining` said `now`): at the character select, or in the round
-    /// as `character`.
-    pub fn join(self: *State, character: ?setup_mod.Character, assets: *const scene.Assets) void {
+    /// The second player joins (`joining` said `now`): at the character select (its cursor where
+    /// it was at its own select, `cursor`, its choice kept), or in the round as `character`.
+    pub fn join(self: *State, character: ?setup_mod.Character, cursor: ?setup_mod.Character, assets: *const scene.Assets) void {
         switch (self.scenes.base) {
-            .select => |*s| s.join(&self.setup, &assets.select),
+            .select => |*s| s.join(&self.setup, &assets.select, cursor orelse character, character != null),
             .round => |*r| _ = r.dropIn(1, character.?),
             else => {},
         }

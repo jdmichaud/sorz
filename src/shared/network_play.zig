@@ -90,9 +90,10 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     np.setStatus(p, statusOf(&g.state));
     if (!np.inSession()) if (np.joinAsked()) |ask| {
         const character: ?Character = if (ask.character == protocol.no_character) null else @fromBackingInt(@as(u8, ask.character));
+        const cursor: ?Character = if (ask.cursor == protocol.no_character) null else @fromBackingInt(@as(u8, ask.cursor));
         switch (g.state.joining(character)) {
             .now => {
-                g.state.join(character, assets);
+                g.state.join(character, cursor, assets);
                 var buf: [Game.join_max]u8 = undefined;
                 const form = g.joinForm(&buf);
                 np.begin(p, ask.peer, form);
@@ -116,8 +117,10 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
 /// else with one player.
 pub fn statusOf(s: *const State) protocol.Status {
     if (!s.inGame()) return .{ .place = true };
+    // The select takes a second player once it shows (faded in): a client at its own select sees
+    // the host's player come, its screen as it was.
     if (s.scenes.next == null) switch (s.scenes.base) {
-        .select => |*sel| if (sel.joinable()) return .{ .game = .select, .place = true },
+        .select => |*sel| if (sel.joinable()) return if (sel.settled()) .{ .game = .select, .place = true } else .{ .place = true },
         else => {},
     };
     const c = s.setup.characters[0] orelse return .{ .place = true };
@@ -133,7 +136,7 @@ pub fn statusOf(s: *const State) protocol.Status {
 /// watches ends, playing on to its own front end; its player, at its own select, wants to join:
 /// it asks when it can.
 fn guest(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
-    np.sayWhere(p, if (wantsToJoin(&g.state)) .select else .menu);
+    np.sayWhere(p, whereOf(&g.state));
     if (np.observing()) {
         if (g.startPressed()) {
             np.stopObserve(p);
@@ -154,6 +157,16 @@ fn guest(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
         .play => if (chosen) |c| if (st.place and (st.same_character or @backingInt(c) != st.character)) np.askJoin(p, @backingInt(c)),
         .none => {},
     }
+}
+
+/// Where this machine's player is in its own game, for the host's lists and its join: its
+/// select to join, its cursor there; else its menu.
+fn whereOf(s: *const State) protocol.Where {
+    if (!wantsToJoin(s)) return .{};
+    return switch (s.scenes.base) {
+        .select => |*sel| .{ .at = .select, .cursor = @backingInt(sel.cursors[0].place) },
+        else => .{ .at = .select },
+    };
 }
 
 /// Whether this machine's player wants to join another's game: its JOIN led it to its character
@@ -230,6 +243,29 @@ pub fn backToMenu(g: *Game, p: *platform.Platform) void {
     g.rebuild(p);
 }
 
+/// The client's game at the select it shared with the host's player, who left it: the select
+/// its own again (its cursor as it was, player 2's), with its own set-up and variant. False when
+/// it is not at that select.
+fn toOwnSelect(g: *Game) bool {
+    if (g.state.scenes.next != null) return false;
+    const sel = switch (g.state.scenes.base) {
+        .select => |*s| s,
+        else => return false,
+    };
+    const a = if (g.scene_assets) |*x| &x.select else return false;
+    if (!sel.keepSecond(a)) return false;
+    var own = g.own_setup orelse g.state.setup;
+    own.progress = .{};
+    own.players = .one;
+    own.characters = .{ if (sel.cursors[0].chosen) sel.cursors[0].place else null, null };
+    own.same_character = null;
+    g.state.setup = own;
+    g.state.start = g.start();
+    g.own_setup = null;
+    g.redraw = true;
+    return true;
+}
+
 /// The session ended: the game went on to its end on both machines (each plays on to its own
 /// front end), or the other left: the host's game goes on without player 2, its observers getting
 /// it again; a client goes back to its own menu.
@@ -250,7 +286,8 @@ fn ended(g: *Game, p: *platform.Platform, np: *net.Netplay, why: net.session.End
         },
         .guest => {
             if (!g.state.inGame() and g.own_setup == null) return;
-            backToMenu(g, p);
+            // The host's player left the select they shared: the client keeps it, its own again.
+            if (!toOwnSelect(g)) backToMenu(g, p);
             g.tellNetwork(.player_1_left);
         },
     }
@@ -274,7 +311,8 @@ fn waits(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     } else if (np.role == .guest and np.observing() and g.away_seconds != 0) {
         message = .player_2_away;
         seconds = g.away_seconds;
-    } else if (np.role == .guest and !np.inSession() and (np.joining() or np.observeWanted())) {
+    } else if (np.role == .guest and !np.inSession() and (np.observeWanted() or (np.joining() and !wantsToJoin(&g.state)))) {
+        // A join from the client's own select comes at once, its screen as it is.
         message = .joining;
     } else if (np.role == .guest and !np.inSession() and wantsToJoin(&g.state) and choice(&g.state) != null) {
         message = .waiting_for_player_1;
@@ -285,7 +323,10 @@ fn waits(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
 test "the host's status: its front end, a select one may join, play with player 1's character; room" {
     var s: State = .{};
     try std.testing.expectEqual(protocol.Status{ .place = true }, statusOf(&s));
+    // The select offered once it shows.
     s.scenes.base = .{ .select = .{} };
+    try std.testing.expectEqual(protocol.Status.Game.none, statusOf(&s).game);
+    s.scenes.base.select.phase = .first_half;
     try std.testing.expectEqual(protocol.Status.Game.select, statusOf(&s).game);
     s.scenes.base.select.phase = .wait;
     s.setup.characters[0] = .blaze;

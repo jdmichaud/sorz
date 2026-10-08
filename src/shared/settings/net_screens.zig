@@ -298,11 +298,12 @@ pub const NetOptions = struct {
         if (self.serving) {
             const top = self.rowOf(.exit) + 2;
             try p.text(label_col, top, "CONNECTED", .bright);
-            // The host's player out of the game its clients play on: in its lobby.
-            try p.text(label_col, top + 1, if (self.in_game) "LOCAL - LOBBY" else netplay.local_line, .dim);
+            // The host's player out of the game its clients play on: in its lobby. Legible, not
+            // lines to choose: plain.
+            try p.text(label_col, top + 1, if (self.in_game) "LOCAL - LOBBY" else netplay.local_line, .plain);
             for (self.clients[0..self.client_count], 0..) |*c, i| {
                 var buf: [24]u8 = undefined;
-                try p.text(label_col, top + 2 + i, c.line(&buf), .dim);
+                try p.text(label_col, top + 2 + i, c.line(&buf), .plain);
             }
         }
         if (self.editing != null) return;

@@ -583,11 +583,12 @@ pub const Netplay = struct {
         self.sendStatus(p);
     }
 
-    /// The host: a client that asks to join while a place is free, and its character.
-    pub fn joinAsked(self: *const Netplay) ?struct { peer: *Peer, character: u8 } {
+    /// The host: a client that asks to join while a place is free, its character, and its
+    /// cursor's place at its own select (`no_character`: none).
+    pub fn joinAsked(self: *const Netplay) ?struct { peer: *Peer, character: u8, cursor: u8 } {
         if (self.role != .host or !self.open or self.player != null) return null;
         for (self.peers.items) |peer| if (peer.session.phase == .lobby) if (peer.session.join_asked) |c| {
-            return .{ .peer = peer, .character = c };
+            return .{ .peer = peer, .character = c, .cursor = peer.session.peer_where.cursor };
         };
         return null;
     }
@@ -647,7 +648,7 @@ pub const Netplay = struct {
             if (n == out.len) break;
             if (!peer.session.welcomed and peer != self.player) continue;
             const s = &peer.session;
-            out[n] = .{ .name = s.peer_name, .doing = if (peer == self.player) .player else if (s.phase == .observing) .observing else if (s.peer_where == .select) .select else .menu };
+            out[n] = .{ .name = s.peer_name, .doing = if (peer == self.player) .player else if (s.phase == .observing) .observing else if (s.peer_where.at == .select) .select else .menu };
             n += 1;
         }
         return out[0..n];

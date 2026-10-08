@@ -375,10 +375,14 @@ pub const Select = struct {
                 } else self.phase = .first_half;
             },
             .wait => {
-                self.wait_left -= 1;
-                if (self.wait_left == 0) {
-                    self.colours.startFade(.black);
-                    self.phase = .fade_out;
+                // A client's own select (network play's) leads to no round of its own: its player
+                // chose, and waits there for the host's game.
+                if (self.seat == 0) {
+                    self.wait_left -= 1;
+                    if (self.wait_left == 0) {
+                        self.colours.startFade(.black);
+                        self.phase = .fade_out;
+                    }
                 }
             },
             .fade_out => if (self.colours.stepFade()) {
@@ -456,16 +460,42 @@ pub const Select = struct {
         };
     }
 
-    /// A second player comes to the select (`joinable`): its cursor on the first portrait from
-    /// Blaze's that player 1's is not on, its frame lit; two players choose from now on.
-    pub fn join(self: *Select, setup: *Setup, a: *const Assets) void {
+    /// Whether it shows, faded in: its players choose.
+    pub fn settled(self: *const Select) bool {
+        return self.phase == .first_half or self.phase == .second_half;
+    }
+
+    /// A second player comes to the select (`joinable`): its cursor where it was (`at`: network
+    /// play's client's, at its own select, `chosen` there), else on the first portrait from
+    /// Blaze's; not on player 1's unless both may choose one: a choice made keeps its portrait,
+    /// player 1's cursor (its choice not made) moving on, else the newcomer's moves on; its frame
+    /// lit; two players choose from now on.
+    pub fn join(self: *Select, setup: *Setup, a: *const Assets, at: ?Character, chosen: bool) void {
         setup.players = .two;
         // Before its set-up, the set-up does it all.
         if (self.phase == .setup) return;
         self.players = .two;
-        var place: Character = .blaze;
-        if (place == self.cursors[0].place) place = next(place, true);
-        self.cursors[1] = .{ .place = place };
+        var place: Character = at orelse .blaze;
+        var keep = at != null and chosen;
+        const same = setup.same_character orelse false;
+        if (!same and place == self.cursors[0].place) {
+            if (keep and !self.cursors[0].chosen) {
+                const to = next(place, true);
+                self.cursors[0].place = to;
+                switch (self.phase) {
+                    .placing, .fade_in => self.colours.aim(a.lit(to)),
+                    else => {
+                        self.portraits[@backingInt(to)].cursor = true;
+                        self.colours.show(a.lit(to));
+                    },
+                }
+            } else {
+                place = next(place, true);
+                keep = false;
+            }
+        }
+        self.cursors[1] = .{ .place = place, .chosen = keep };
+        if (keep) setup.characters[1] = place;
         switch (self.phase) {
             // The fade in takes the frame lit, and lights its portrait at its end.
             .placing, .fade_in => self.colours.aim(a.lit(place)),
@@ -494,6 +524,31 @@ pub const Select = struct {
         }
         self.cursors[1] = .{ .place = .blaze };
         self.list();
+    }
+
+    /// Player 1 goes and player 2 stays, alone (network play's client whose host's player left
+    /// the select they shared): its cursor, as it was, the only one, named player 2's; chosen, it
+    /// waits. False past the choice (the select fading out).
+    pub fn keepSecond(self: *Select, a: *const Assets) bool {
+        if (self.players != .two) return false;
+        switch (self.phase) {
+            .setup, .fade_out, .leaving => return false,
+            else => {},
+        }
+        const first = self.cursors[0].place;
+        if (first != self.cursors[1].place) {
+            self.portraits[@backingInt(first)].cursor = false;
+            switch (self.phase) {
+                .placing, .fade_in => self.colours.aim(a.dim(first)),
+                else => self.colours.show(a.dim(first)),
+            }
+        }
+        self.cursors[0] = self.cursors[1];
+        self.cursors[1] = .{ .place = .blaze };
+        self.players = .one;
+        self.seat = 1;
+        self.list();
+        return true;
     }
 
     /// The character the only player chose (a guest's own select, before it joins).
