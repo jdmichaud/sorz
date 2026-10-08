@@ -659,7 +659,19 @@ pub const SdlBackend = struct {
                 const sign: i32 = if (ev.wheel.direction == c.MOUSEWHEEL_FLIPPED) -1 else 1;
                 break :blk .{ .mouse_wheel = .{ .dx = ev.wheel.x * sign, .dy = ev.wheel.y * sign } };
             },
+            // A joystick SDL has no gamepad mapping for (a Mega Drive pad, say) gets the generic
+            // one (`genericMapping`), and is opened as a gamepad: SDL tells nothing more of it.
+            // One it maps comes as CONTROLLERDEVICEADDED.
+            c.JOYDEVICEADDED => blk: {
+                const index = ev.cdevice.which;
+                if (c.SDL_IsGameController(index) != 0) return 0;
+                if (!addGenericMapping(index)) return 0;
+                const id = self.openController(index) orelse return 0;
+                break :blk .{ .controller_added = id };
+            },
             c.CONTROLLERDEVICEADDED => blk: {
+                // Opened already (with the generic mapping): not twice.
+                if (c.SDL_GameControllerFromInstanceID(c.SDL_JoystickGetDeviceInstanceID(ev.cdevice.which)) != null) return 0;
                 const id = self.openController(ev.cdevice.which) orelse return 0;
                 break :blk .{ .controller_added = id };
             },
@@ -697,6 +709,20 @@ pub const SdlBackend = struct {
             count += 1;
         }
         return count;
+    }
+
+    /// Gives the joystick at `index` the generic gamepad mapping, from its GUID and its counts of
+    /// axes, buttons and hats. False when SDL refuses it.
+    fn addGenericMapping(index: i32) bool {
+        const joystick = c.SDL_JoystickOpen(index) orelse return false;
+        defer c.SDL_JoystickClose(joystick);
+        var guid: [33]u8 = undefined;
+        c.SDL_JoystickGetGUIDString(c.SDL_JoystickGetDeviceGUID(index), &guid, guid.len);
+        var buf: [max_mapping]u8 = undefined;
+        const mapping = genericMapping(&buf, std.mem.sliceTo(&guid, 0), @intCast(@max(c.SDL_JoystickNumAxes(joystick), 0)), @intCast(@max(c.SDL_JoystickNumButtons(joystick), 0)), c.SDL_JoystickNumHats(joystick) > 0);
+        if (c.SDL_GameControllerAddMapping(mapping.ptr) < 0) return false;
+        std.log.info("the joystick {s} has no gamepad mapping: the generic one ({s})", .{ guid[0..32], mapping });
+        return true;
     }
 
     fn controllerId(instance: c.JoystickID) platform.ControllerId {
@@ -956,6 +982,47 @@ fn patternByte(x: u32, y: u32, channel: u32) u8 {
         2 => @truncate((x ^ y) * 90 + 7),
         else => 255,
     };
+}
+
+/// The longest generic mapping: the GUID, the name, and each button's, axis' and hat's part.
+const max_mapping = 512;
+
+/// The generic gamepad mapping of a joystick SDL has none for (SDL's mapping format: the GUID, a
+/// name, then each gamepad part and the joystick's input that gives it): its buttons in turn A, B,
+/// X, Y, the shoulders, the sticks' clicks, BACK and START (START the tenth, the generic pads'
+/// usual, or the last of fewer), then GUIDE; its axes the left stick then the right, then the
+/// triggers; its first hat the d-pad. The player binds the game's buttons to whichever it has in
+/// the settings' INPUT CONFIGURATION.
+fn genericMapping(buf: *[max_mapping]u8, guid: []const u8, axes: usize, buttons: usize, hat: bool) [:0]const u8 {
+    const in_turn = [_][]const u8{ "a", "b", "x", "y", "leftshoulder", "rightshoulder", "leftstick", "rightstick", "back" };
+    const axis_names = [_][]const u8{ "leftx", "lefty", "rightx", "righty", "lefttrigger", "righttrigger" };
+    var w: std.Io.Writer = .fixed(buf[0 .. buf.len - 1]);
+    w.print("{s},generic gamepad,", .{guid}) catch unreachable;
+    const start = if (buttons >= 10) 9 else buttons -| 1;
+    var next: usize = 0;
+    for (0..@min(buttons, 11)) |b| {
+        const name = if (b == start) "start" else if (b == 10) "guide" else blk: {
+            if (next == in_turn.len) continue;
+            next += 1;
+            break :blk in_turn[next - 1];
+        };
+        w.print("{s}:b{d},", .{ name, b }) catch unreachable;
+    }
+    for (axis_names[0..@min(axes, axis_names.len)], 0..) |name, a| w.print("{s}:a{d},", .{ name, a }) catch unreachable;
+    if (hat) w.writeAll("dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8,") catch unreachable;
+    const n = w.buffered().len;
+    buf[n] = 0;
+    return buf[0..n :0];
+}
+
+test "the generic mapping: a Mega Drive pad's ten buttons and three axes; a small pad's last button START" {
+    var buf: [max_mapping]u8 = undefined;
+    try std.testing.expectEqualStrings("03001a0da30c00002400000011010000,generic gamepad,a:b0,b:b1,x:b2,y:b3,leftshoulder:b4," ++
+        "rightshoulder:b5,leftstick:b6,rightstick:b7,back:b8,start:b9,leftx:a0,lefty:a1,rightx:a2,", genericMapping(&buf, "03001a0da30c00002400000011010000", 3, 10, false));
+    try std.testing.expectEqualStrings("g,generic gamepad,a:b0,b:b1,x:b2,start:b3,leftx:a0,lefty:a1,dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8,", genericMapping(&buf, "g", 2, 4, true));
+    try std.testing.expectEqualStrings("g,generic gamepad,", genericMapping(&buf, "g", 0, 0, false));
+    // Many buttons: GUIDE the eleventh, none past it.
+    try std.testing.expect(std.mem.endsWith(u8, genericMapping(&buf, "g", 8, 16, true), "back:b8,start:b9,guide:b10,leftx:a0,lefty:a1,rightx:a2,righty:a3,lefttrigger:a4,righttrigger:a5,dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8,"));
 }
 
 test "every named key has a scancode" {
@@ -1317,6 +1384,47 @@ test "translation: window state, quit and controller events" {
     // An addition that SDL cannot open makes no event, not an unusable id.
     ev.cdevice = .{ .type = c.CONTROLLERDEVICEADDED, .timestamp = 0, .which = 99 };
     try std.testing.expectEqual(@as(usize, 0), backend.translate(&ev, &out));
+}
+
+// A pad SDL has no mapping for, as a virtual joystick of a Mega Drive pad's three axes and ten
+// buttons: the generic mapping opens it as a gamepad, its tenth button START, its first axis the
+// stick across.
+test "a joystick without a gamepad mapping is opened with the generic one" {
+    var backend = try startedBackend(1);
+    defer backend.deinit();
+    var p = backend.asPlatform();
+    const caps = try p.start();
+    if (!caps.controllers) return error.SkipZigTest;
+    const index = c.SDL_JoystickAttachVirtual(0, 3, 10, 0);
+    if (index < 0) return error.SkipZigTest;
+    defer _ = c.SDL_JoystickDetachVirtual(index);
+    try std.testing.expect(c.SDL_IsGameController(index) == 0);
+    var out: [8]platform.Event = undefined;
+    var added: ?platform.ControllerId = null;
+    for (0..4) |_| {
+        const n = p.pollEvents(&out);
+        for (out[0..n]) |e| if (e.payload == .controller_added) {
+            try std.testing.expect(added == null);
+            added = e.payload.controller_added;
+        };
+    }
+    const id = added orelse return error.NoControllerAdded;
+    const handle = c.SDL_GameControllerFromInstanceID(@bitCast(@backingInt(id))) orelse return error.NotOpened;
+    const joystick = c.SDL_GameControllerGetJoystick(handle).?;
+    _ = c.SDL_JoystickSetVirtualButton(joystick, 9, 1);
+    _ = c.SDL_JoystickSetVirtualAxis(joystick, 0, 32767);
+    c.SDL_JoystickUpdate();
+    var start = false;
+    var across = false;
+    for (0..4) |_| {
+        const n = p.pollEvents(&out);
+        for (out[0..n]) |e| switch (e.payload) {
+            .controller_button_down => |b| start = start or (b.button == .start and b.controller == id),
+            .controller_axis => |a| across = across or (a.axis == .left_x and a.value > 16384),
+            else => {},
+        };
+    }
+    try std.testing.expect(start and across);
 }
 
 test "a failed start leaves a backend that deinit cleans up" {

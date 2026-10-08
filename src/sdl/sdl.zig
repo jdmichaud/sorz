@@ -142,6 +142,7 @@ pub const MOUSEMOTION: u32 = 0x400;
 pub const MOUSEBUTTONDOWN: u32 = 0x401;
 pub const MOUSEBUTTONUP: u32 = 0x402;
 pub const MOUSEWHEEL: u32 = 0x403;
+pub const JOYDEVICEADDED: u32 = 0x605;
 pub const CONTROLLERAXISMOTION: u32 = 0x650;
 pub const CONTROLLERBUTTONDOWN: u32 = 0x651;
 pub const CONTROLLERBUTTONUP: u32 = 0x652;
@@ -317,6 +318,26 @@ pub extern "c" fn SDL_GameControllerClose(controller: *GameController) void;
 pub extern "c" fn SDL_GameControllerFromInstanceID(id: JoystickID) ?*GameController;
 pub extern "c" fn SDL_GameControllerGetJoystick(controller: *GameController) ?*Joystick;
 pub extern "c" fn SDL_JoystickInstanceID(joystick: *Joystick) JoystickID;
+pub extern "c" fn SDL_IsGameController(joystick_index: c_int) Bool;
+pub extern "c" fn SDL_GameControllerAddMapping(mapping: [*:0]const u8) c_int;
+
+/// `SDL_JoystickGUID`: 16 bytes.
+pub const JoystickGUID = extern struct { data: [16]u8 };
+
+pub extern "c" fn SDL_JoystickOpen(device_index: c_int) ?*Joystick;
+pub extern "c" fn SDL_JoystickClose(joystick: *Joystick) void;
+pub extern "c" fn SDL_JoystickGetDeviceGUID(device_index: c_int) JoystickGUID;
+pub extern "c" fn SDL_JoystickGetDeviceInstanceID(device_index: c_int) JoystickID;
+pub extern "c" fn SDL_JoystickGetGUIDString(guid: JoystickGUID, out: [*]u8, len: c_int) void;
+pub extern "c" fn SDL_JoystickNumAxes(joystick: *Joystick) c_int;
+pub extern "c" fn SDL_JoystickNumButtons(joystick: *Joystick) c_int;
+pub extern "c" fn SDL_JoystickNumHats(joystick: *Joystick) c_int;
+/// A virtual joystick (the tests' stand-in for a pad SDL does not map).
+pub extern "c" fn SDL_JoystickAttachVirtual(kind: c_int, naxes: c_int, nbuttons: c_int, nhats: c_int) c_int;
+pub extern "c" fn SDL_JoystickDetachVirtual(device_index: c_int) c_int;
+pub extern "c" fn SDL_JoystickSetVirtualButton(joystick: *Joystick, button: c_int, value: u8) c_int;
+pub extern "c" fn SDL_JoystickSetVirtualAxis(joystick: *Joystick, axis: c_int, value: i16) c_int;
+pub extern "c" fn SDL_JoystickUpdate() void;
 
 // --- audio -----------------------------------------------------------------------------------
 
