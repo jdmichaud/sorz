@@ -653,7 +653,7 @@ pub fn Of(comptime M: type) type {
                 if (!shake_first) landingShake(a);
                 e.velocity.x = .{ .raw = e.velocity.x.raw >> 1 };
                 e.velocity.height = .parts(@intCast(second.whole()), e.velocity.height.frac());
-                a.takeDamage(m.holder, damage);
+                a.takeDamage(m.attacker, damage);
                 if (e.health <= 0) return beatenCry(a);
                 if (shake_first) a.sound(.thud);
                 return;
@@ -714,7 +714,7 @@ pub fn Of(comptime M: type) type {
                 } else if (left == n.vault_over_at) {
                     step = 1;
                 } else if (left == n.vault_down_at) {
-                    a.takeDamage(m.holder, n.vault_damage);
+                    a.takeDamage(m.attacker, n.vault_damage);
                     if (e.health <= 0) beatenCry(a);
                     landingShake(a);
                     a.animate(.lifted);
