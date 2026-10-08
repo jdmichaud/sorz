@@ -316,9 +316,18 @@ fn startOpensSettings(f: *Flow, r: *Run) !void {
     const tick = r.game.state.tick;
     for (0..30) |_| try r.update();
     try f.check(r.game.state.tick == tick, "the settings hold the game");
+    // FRIENDLY HIT changed there (where the settings give the rules): the game under way takes
+    // it as the settings close (Escape: they leave saving).
+    const before = r.game.state.setup.rules;
+    if (before) |b| {
+        r.game.overlays.find(.settings).?.settings.row = .friendly_hit;
+        try r.press(.z);
+        try f.check(r.game.settings.rules.friendly_hit != b.friendly_hit, "FRIENDLY HIT changed");
+    }
     try r.press(.escape);
     for (0..4) |_| try r.update();
     try f.check(!settingsOpen(r) and roundOf(r).?.phase == .play and r.game.state.tick > tick, "play goes on");
+    if (before) |b| try f.check(r.game.state.setup.rules.?.friendly_hit != b.friendly_hit, "the game under way takes FRIENDLY HIT");
 }
 
 fn page(f: *Flow, r: *Run) !void {

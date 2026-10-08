@@ -659,11 +659,20 @@ pub const Game = struct {
     }
 
     /// The settings screen closed: the controls take the keys; SAVE AND EXIT writes the record
-    /// (left without saving, the screen gave back the settings it opened with). Faded in, they
-    /// fade out from `now_ns` before they go (null: at once).
+    /// (left without saving, the screen gave back the settings it opened with). A game under way
+    /// with the settings' rules takes them as they are now (FRIENDLY HIT at once, the lives and the
+    /// continues at the next continue); in the host's network session, at a tick both machines
+    /// share (network_play.zig). Faded in, they fade out from `now_ns` before they go (null: at
+    /// once).
     fn closeSettings(self: *Game, how: settings_mod.screen.Result, now_ns: ?u64) void {
         self.overlay_dirty = true;
         self.controls.layout = self.settings.layout;
+        if (self.state.setup.rules) |rules| if (!std.meta.eql(rules, self.settings.rules)) {
+            const session = if (self.netplay) |np| np.inSession() else false;
+            if (!session) {
+                self.state.setup.rules = self.settings.rules;
+            } else if (!self.isClient()) self.net.pending_rules = self.settings.rules;
+        };
         if (how == .save_and_exit) self.writeSettings(&self.settings);
         if (self.settings_fade) if (now_ns) |t| {
             self.panel_fade = .{ .to = .black, .since_ns = t };

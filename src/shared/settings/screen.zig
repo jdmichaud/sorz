@@ -22,11 +22,12 @@
 //! the players' columns, or change a value), A, B or C acts (a key or a button: the next one
 //! pressed is the new one; one that another setting has is swapped with it, so that no key does
 //! two things), and START leaves the page: INPUT CONFIGURATION for the first page, the first page
-//! saving, as SAVE AND EXIT does; so do the gamepads' d-pad and buttons. Escape does what START
-//! does, and the arrows move, whatever the pads' keys are, so the screen is always usable. EXIT
-//! WITHOUT SAVING, the settings key (where the variant has it) and a gamepad's BACK leave without
-//! saving, giving back the settings the screen opened with. The changes apply at once (the input
-//! when the screen closes).
+//! saving, as SAVE AND EXIT does (on EXIT WITHOUT SAVING, without saving, as A there); so do the
+//! gamepads' d-pad and buttons. Escape does what START does, and the arrows move, whatever the
+//! pads' keys are, so the screen is always usable. EXIT WITHOUT SAVING, the settings key (where
+//! the variant has it) and a gamepad's BACK leave without saving, giving back the settings the
+//! screen opened with. The changes apply at once (the input, and the rules of a game under way,
+//! when the screen closes: game.zig).
 //!
 //! The screen turns its page once the game has faded it out (`pending`, `turnPage`: game.zig fades
 //! the panel out, then in on the next page), and takes no event until then.
@@ -255,7 +256,8 @@ pub const Screen = struct {
                 .exit_without_saving => return self.leave(settings),
                 else => change(self.row, settings, true),
             },
-            .back => return .save_and_exit,
+            // START leaves saving; on EXIT WITHOUT SAVING, it does what that line says.
+            .back => return if (self.row == .exit_without_saving) self.leave(settings) else .save_and_exit,
             .leave => unreachable,
         }
         return .stay;
@@ -884,6 +886,24 @@ test "EXIT WITHOUT SAVING, the settings key and a gamepad's BACK give back what 
     try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .x));
     screen = .open(&s, .{});
     try testing.expectEqual(Result.save_and_exit, pressButton(&screen, &s, .start));
+}
+
+test "EXIT WITHOUT SAVING gives back the settings, with A or START there; START elsewhere saves" {
+    var s: Settings = .{};
+    for ([_]platform.Key{ .z, .enter, .escape }) |k| {
+        var screen: Screen = .open(&s, .{ .rules = true });
+        screen.row = .friendly_hit;
+        _ = press(&screen, &s, .z);
+        try testing.expect(!s.rules.friendly_hit);
+        screen.row = .exit_without_saving;
+        try testing.expectEqual(Result.exit_without_saving, press(&screen, &s, k));
+        try testing.expect(s.rules.friendly_hit);
+    }
+    var screen: Screen = .open(&s, .{ .rules = true });
+    screen.row = .friendly_hit;
+    _ = press(&screen, &s, .z);
+    try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .enter));
+    try testing.expect(!s.rules.friendly_hit);
 }
 
 test "the rules' rows where the settings give the rules: lives 1 to 9, continues 0 to 9, friendly hits" {

@@ -33,8 +33,10 @@
 //! | 18 where      | at u8: the client's player in its own menu (0) or at its     | 3            |
 //! |               | character select, to join (1); cursor u8 (its cursor's       |              |
 //! |               | character there, 0-2, 255 none)                              |              |
-//! | 19 event      | tick u32, what u8 (1 player 1 leaves, 2 player 1 comes       | 7            |
-//! |               | back), character u8 (0-2; 255 for a leave)                   |              |
+//! | 19 event      | tick u32, what u8 (1 player 1 leaves, 2 player 1 comes       | 10           |
+//! |               | back, 3 the rules change), character u8 (0-2 for a coming    |              |
+//! |               | back, else 255), lives u8, continues u8, friendly hit u8     |              |
+//! |               | (0/1; the rules', 0 for the others)                          |              |
 //!
 //! The guest opens with `hello`; the host answers `welcome` (after pings that measure the round
 //! trip and give the input delay) or `reject`. Welcomed, the two machines play their own games:
@@ -63,7 +65,7 @@
 //! until it starts it again. A player who leaves the game but not the program says `bye` (`ended`):
 //! the session ends, the connection stays. `event` changes the game in a session at a tick the
 //! host chooses, ahead of its pads for that tick: its player leaving the game (Escape, the game
-//! going on for its client) or coming back.
+//! going on for its client) or coming back, or the game's rules (its settings).
 const std = @import("std");
 
 pub const version: u16 = 4;
@@ -241,10 +243,15 @@ pub const Message = union(Kind) {
 pub const Event = struct {
     tick: u32,
     what: What,
-    /// The character player 1 comes back as (`no_character` for a leave).
+    /// The character player 1 comes back as (`no_character` for the others).
     character: u8 = no_character,
+    /// The rules' (`rules`; 0 for the others): the lives (1 to 9), the continues (0 to 9), the
+    /// friendly hits.
+    lives: u8 = 0,
+    continues: u8 = 0,
+    friendly_hit: bool = false,
 
-    pub const What = enum(u8) { leave = 1, back = 2 };
+    pub const What = enum(u8) { leave = 1, back = 2, rules = 3 };
 };
 
 pub const DecodeError = error{Malformed};
@@ -349,6 +356,9 @@ pub fn encode(m: Message, out: []u8) []u8 {
             w.int(u32, e.tick);
             w.byte(@backingInt(e.what));
             w.byte(e.character);
+            w.byte(e.lives);
+            w.byte(e.continues);
+            w.byte(@intFromBool(e.friendly_hit));
         },
         .ticks => |t| {
             std.debug.assert(t.pads.len >= 2 and t.pads.len <= 2 * max_pads and t.pads.len % 2 == 0);
@@ -462,8 +472,14 @@ pub fn decode(bytes: []const u8) DecodeError!Message {
             const tick = try r.int(u32);
             const what = try r.byte();
             const character = try r.byte();
-            if (what < 1 or what > 2 or !isCharacter(character) or (what == 2) == (character == no_character)) return error.Malformed;
-            break :blk .{ .event = .{ .tick = tick, .what = @fromBackingInt(what), .character = character } };
+            const lives = try r.byte();
+            const continues = try r.byte();
+            const friendly = try r.byte();
+            if (what < 1 or what > 3 or !isCharacter(character) or (what == 2) == (character == no_character) or friendly > 1) return error.Malformed;
+            // The rules within their bounds; the others carry none.
+            const rules_ok = if (what == 3) lives >= 1 and lives <= 9 and continues <= 9 else lives == 0 and continues == 0 and friendly == 0;
+            if (!rules_ok) return error.Malformed;
+            break :blk .{ .event = .{ .tick = tick, .what = @fromBackingInt(what), .character = character, .lives = lives, .continues = continues, .friendly_hit = friendly == 1 } };
         },
         .ticks => blk: {
             const first = try r.int(u32);
@@ -554,6 +570,7 @@ test "every message round trips, and its truncations are malformed" {
     try roundTrip(.{ .where = .{} });
     try roundTrip(.{ .event = .{ .tick = 900, .what = .leave } });
     try roundTrip(.{ .event = .{ .tick = 1200, .what = .back, .character = 1 } });
+    try roundTrip(.{ .event = .{ .tick = 1300, .what = .rules, .lives = 5, .continues = 0, .friendly_hit = true } });
     try roundTrip(.{ .status = .{ .game = .play, .character = 0, .open = true, .join_in_progress = true } });
     try roundTrip(.{ .ticks = .{ .first = 300, .pads = &.{ 1, 2, 3, 4 } } });
     try roundTrip(.{ .join = no_character });
@@ -605,9 +622,12 @@ test "fields out of range are malformed" {
     }
     try testing.expectError(error.Malformed, decode(&.{ 11, 0, no_character, 32 }));
     // An event of no kind, a leave with a character, a coming back without one.
-    try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 3, no_character }));
-    try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 1, 1 }));
-    try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 2, no_character }));
+    try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 4, no_character, 0, 0, 0 }));
+    try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 1, 1, 0, 0, 0 }));
+    try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 2, no_character, 0, 0, 0 }));
+    // Rules out of their bounds, or carried by another change.
+    try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 3, no_character, 0, 3, 1 }));
+    try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 1, no_character, 3, 0, 0 }));
     try testing.expectError(error.Malformed, decode(&.{ 14, 2 }));
     try testing.expectError(error.Malformed, decode(&.{ 18, 2, 0 }));
     try testing.expectError(error.Malformed, decode(&.{ 18, 1, 3 }));

@@ -87,6 +87,9 @@ pub const NetPlay = struct {
     away_seconds: u8 = 0,
     /// START held at the last update (an observer leaves with a new press).
     start_held: bool = false,
+    /// The host's settings changed the rules of the game its client plays: they change at a tick
+    /// both machines share, once the session takes the change (`protocol.Event`).
+    pending_rules: ?setup_mod.Rules = null,
 
     /// Whether the lobby is over a game the host's player left: the game runs on under it (it
     /// does not hold), silent, its pad playing nothing.
@@ -208,6 +211,14 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
         },
         .lobby => {},
     }
+    // The rules its settings changed, in the game its client plays.
+    if (g.net.pending_rules) |rules| {
+        if (!np.inSession()) {
+            g.net.pending_rules = null;
+        } else if (np.schedule(p, .{ .tick = 0, .what = .rules, .lives = rules.lives, .continues = rules.continues, .friendly_hit = rules.friendly_hit })) {
+            g.net.pending_rules = null;
+        }
+    }
     np.setStatus(p, statusOf(&g.state, g.net.local_two));
     if (np.joinAsked()) |ask_| {
         const character: ?Character = if (ask_.character == protocol.no_character) null else @fromBackingInt(@as(u8, ask_.character));
@@ -328,7 +339,7 @@ pub fn lobbyAction(g: *Game, p: *platform.Platform, x: *NetOptions, result: sett
             // Player 1 drops back in at a tick both machines share.
             .return_to_game => {
                 const c = g.state.setup.characters[0] orelse return false;
-                if (!np.schedule(p, .back, @backingInt(c))) return false;
+                if (!np.schedule(p, .{ .tick = 0, .what = .back, .character = @backingInt(c) })) return false;
                 g.net.host = .game;
                 return true;
             },
@@ -554,7 +565,7 @@ pub fn escape(g: *Game, p: *platform.Platform) bool {
         .host => switch (g.net.host) {
             .game => {
                 if (np.phase() == .playing and g.state.inRounds()) {
-                    if (np.schedule(p, .leave, protocol.no_character)) {
+                    if (np.schedule(p, .{ .tick = 0, .what = .leave })) {
                         g.net.host = .left;
                         openLobby(g, p, true);
                     }
@@ -636,8 +647,9 @@ pub fn facts(g: *const Game) scene.Net {
 
 /// A change of the game in the session before this tick (`protocol.Event`), on both machines:
 /// the host's player leaving it (its fighter dies, out) or coming back (it drops in: in a round
-/// alone; between two, the host is back in its lobby, out still). The host's observers take the
-/// game again.
+/// alone; between two, the host is back in its lobby, out still), or the game's rules (the
+/// host's settings: FRIENDLY HIT at once, the lives and continues at the next continue). The
+/// host's observers take the game again.
 pub fn applyEvent(g: *Game, p: *platform.Platform, np: *net.Netplay, e: protocol.Event) void {
     const a = if (g.scene_assets) |*x| x else return;
     switch (e.what) {
@@ -653,6 +665,9 @@ pub fn applyEvent(g: *Game, p: *platform.Platform, np: *net.Netplay, e: protocol
                 g.net.host = .left;
                 openLobby(g, p, true);
             }
+        },
+        .rules => if (g.state.setup.rules != null) {
+            g.state.setup.rules = .{ .lives = e.lives, .continues = e.continues, .friendly_hit = e.friendly_hit };
         },
     }
     if (np.role == .host) {

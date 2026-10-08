@@ -61,6 +61,8 @@
 //! - local_two: the server open, the host's 2 PLAYERS: both pads play, the client's JOIN dimmed,
 //!   OBSERVE lit.
 //! - lobby_silence: the host's lobby over the game its client plays: its sound is silence.
+//! - rules: in round 1 with a client, the host's settings change FRIENDLY HIT: both games take it
+//!   at one tick, and stay the same.
 //! - left: in round 1 with a client, Escape on the host: its lobby over the game, which runs on
 //!   for the client; player 1 dies out of it at one tick on both machines (the same game); RETURN
 //!   TO GAME: player 1 drops back in on both; JOIN IN PROGRESS off: no way back; EXIT shows the
@@ -1303,6 +1305,27 @@ fn lobbySilence(f: *Flow, r: *Room) !void {
     try f.check(pair.host.game.net.host == .left and pair.host.backend.audio.pcm.items.len != 0 and loud == 0, "the host's lobby over the game: silence");
 }
 
+/// In round 1 with a client, the host's settings change FRIENDLY HIT: both games take it at one
+/// tick, and stay the same.
+fn rulesChange(f: *Flow, r: *Room) !void {
+    const pair = try inRoundTogether(f, r);
+    const host = pair.host;
+    const was = host.game.state.setup.rules.?.friendly_hit;
+    try r.press(host, .enter);
+    try f.until(r, host, settingsOpen, 80, "the host's settings open");
+    host.game.overlays.find(.settings).?.settings.row = .friendly_hit;
+    try r.press(host, .z);
+    try r.press(host, .escape);
+    try f.until(r, host, settingsClosed, 80, "the host's settings close, saving");
+    try f.until(r, host, struct {
+        fn taken(m: *Machine) bool {
+            return m.game.net.pending_rules == null and !m.np().eventDue();
+        }
+    }.taken, 300, "the change made on both");
+    try f.check(host.game.state.setup.rules.?.friendly_hit != was and pair.guest.game.state.setup.rules.?.friendly_hit != was, "FRIENDLY HIT changed in both games");
+    try sameFor(f, r, host, pair.guest, 120);
+}
+
 fn difference(f: *Flow, r: *Room) !void {
     const host = try r.add(.host);
     const guest = try r.add(.guest);
@@ -1387,6 +1410,7 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "stop_left", .run = stopLeft },
         .{ .name = "local_two", .run = localTwo },
         .{ .name = "lobby_silence", .run = lobbySilence },
+        .{ .name = "rules", .run = rulesChange },
     }) |e| {
         if (only.items.len != 0) {
             var wanted = false;

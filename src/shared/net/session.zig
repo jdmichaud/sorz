@@ -1014,12 +1014,14 @@ pub const Session = struct {
         };
     }
 
-    /// The host changes the game at the first tick whose pads it has not sent (`what`: its player
-    /// leaves, or comes back as `character`): the client hears it before those pads. Returns the
-    /// tick, or null when no session runs or a change is still to come.
-    pub fn schedule(self: *Session, what: protocol.Event.What, character: u8) ?u32 {
+    /// The host changes the game at the first tick whose pads it has not sent (`change`, its tick
+    /// set here: its player leaves, or comes back, or the rules change): the client hears it
+    /// before those pads. Returns the tick, or null when no session runs or a change is still to
+    /// come.
+    pub fn schedule(self: *Session, change: protocol.Event) ?u32 {
         if (self.config.role != .host or self.phase != .playing or self.event != null) return null;
-        const e: protocol.Event = .{ .tick = self.local_count, .what = what, .character = character };
+        var e = change;
+        e.tick = self.local_count;
         self.event = e;
         self.send(.{ .event = e });
         return e.tick;
@@ -1820,10 +1822,10 @@ test "an event: the host schedules its player's leave ahead of its pads; both ma
     defer guest.deinit();
     try startPair(&host, &guest);
     try runBoth(&host, &guest, 10);
-    const at = host.schedule(.leave, protocol.no_character).?;
+    const at = host.schedule(.{ .tick = 0, .what = .leave }).?;
     try testing.expect(at > host.next);
     // One change at a time.
-    try testing.expectEqual(@as(?u32, null), host.schedule(.back, 1));
+    try testing.expectEqual(@as(?u32, null), host.schedule(.{ .tick = 0, .what = .back, .character = 1 }));
     var seen: [2]?u32 = .{ null, null };
     for (0..10) |_| {
         const t = host.next;

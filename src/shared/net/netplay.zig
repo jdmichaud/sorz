@@ -776,14 +776,19 @@ pub const Netplay = struct {
         return merged;
     }
 
-    /// The host changes the game in its session (its player leaves, or comes back as
-    /// `character`) at a tick to come, on both machines; false when it cannot now.
-    pub fn schedule(self: *Netplay, p: *platform.Platform, what: protocol.Event.What, character: u8) bool {
+    /// The host changes the game in its session (its player leaves, or comes back, or the rules
+    /// change: `change`, its tick set by the session) at a tick to come, on both machines; false
+    /// when it cannot now.
+    pub fn schedule(self: *Netplay, p: *platform.Platform, change: protocol.Event) bool {
         if (self.role != .host) return false;
         const s = self.main() orelse return false;
-        const at = s.schedule(what, character) orelse return false;
+        const at = s.schedule(change) orelse return false;
         self.flushAll(p);
-        if (self.log_enabled) log.info("player 1 {s} at tick {d}", .{ if (what == .leave) "leaves the game" else "comes back", at });
+        if (self.log_enabled) log.info("{s} at tick {d}", .{ switch (change.what) {
+            .leave => "player 1 leaves the game",
+            .back => "player 1 comes back",
+            .rules => "the rules change",
+        }, at });
         return true;
     }
 
