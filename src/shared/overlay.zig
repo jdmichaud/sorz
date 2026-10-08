@@ -69,6 +69,8 @@ pub const Message = enum {
     desynced,
     /// The host cannot listen at its port (a notice).
     cannot_host,
+    /// The host stopped its server: the client is back at its menu (a notice).
+    host_stopped,
 
     pub fn text(m: Message) []const u8 {
         return switch (m) {
@@ -82,6 +84,7 @@ pub const Message = enum {
             .other_game => "THE OTHER GAME IS NOT THIS ONE",
             .desynced => "THE TWO GAMES DIFFER\nTHE GAME STOPPED",
             .cannot_host => "THIS MACHINE CANNOT HOST\nITS PORT IS TAKEN",
+            .host_stopped => "THE HOST STOPPED",
         };
     }
 
@@ -95,7 +98,7 @@ pub const Message = enum {
     pub fn holds(m: Message) bool {
         return switch (m) {
             .waiting_for_player_1, .joining, .player_1_away, .player_2_away, .desynced => true,
-            .player_1_left, .player_2_left, .busy, .other_game, .cannot_host => false,
+            .player_1_left, .player_2_left, .busy, .other_game, .cannot_host, .host_stopped => false,
         };
     }
 };

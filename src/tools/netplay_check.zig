@@ -29,6 +29,10 @@
 //!   invitation over its part), and the client, back, goes to its own menu.
 //! - difference: a bit of the client's state flipped in a session: both games stop at the next
 //!   check and name the first field that differs.
+//! - server: the host's START SERVER, its player at its menu: the client's JOIN lit, OBSERVE
+//!   dimmed (no game to watch); the client's JOIN and character wait for the host's game; STOP
+//!   SERVER: the client back at its menu, told, and turned away; START GAME: the server again, the
+//!   host at its select, and the client back in joins it there.
 //!
 //! Prints a JSON line per flow, and exits with 1 when a step fails; with `--pictures`, two pictures
 //! that differ are written there (host.png, guest.png), and the host's at a few steps, its own
@@ -403,6 +407,72 @@ fn clientJoins(f: *Flow, r: *Room, c: *Machine) !void {
     try r.press(c, .z);
 }
 
+/// A client's JOIN can be chosen: welcomed, a place free, the line lit.
+fn joinLit(m: *Machine) bool {
+    const menu = switch (m.game.state.scenes.base) {
+        .menu => |*x| x,
+        else => return false,
+    };
+    return m.np().welcomed() and m.np().hostStatus().place and menu.dimmed & 2 == 0;
+}
+
+/// The host's network options opened from its menu, and `key` (A, or Enter: START) on `row`.
+fn hostOption(f: *Flow, r: *Room, host: *Machine, row: sorz.settings.net_screens.NetOptions.Row, key: platform.Key) !void {
+    try f.until(r, host, choosing, 600, "the host at its menu");
+    while (menuChoice(host) != .network_play) try r.press(host, .down);
+    try r.press(host, .z);
+    try f.until(r, host, struct {
+        fn open(m: *Machine) bool {
+            return m.game.overlays.find(.net_options) != null;
+        }
+    }.open, 200, "the network options");
+    while (host.game.overlays.find(.net_options).?.net_options.row != row) try r.press(host, .down);
+    try r.press(host, key);
+}
+
+fn server(f: *Flow, r: *Room) !void {
+    const host = try r.add(.host);
+    const client = try r.add(.guest);
+    try toMenu(f, r, host);
+    // START SERVER (with START, Enter): the session open, the host's player at its menu while the
+    // client comes.
+    try hostOption(f, r, host, .server, .enter);
+    try f.until(r, host, choosing, 600, "the host back at its menu");
+    try f.check(host.np().open and host.game.state.scenes.base == .menu, "the server started, the host at its menu");
+    try toMenu(f, r, client);
+    try f.until(r, client, joinLit, 300, "the client's JOIN lit");
+    try f.check(client.game.state.scenes.base.menu.dimmed == 0b0100, "OBSERVE dimmed: the host has no game to watch");
+    // JOIN, a character on its own select: it waits for the host's game.
+    while (menuChoice(client) != .join) try r.press(client, .down);
+    try r.press(client, .z);
+    try f.until(r, client, inSelect, 600, "the client's own select");
+    try r.press(client, .z);
+    try f.until(r, client, struct {
+        fn waits(m: *Machine) bool {
+            return m.message() == .waiting_for_player_1;
+        }
+    }.waits, 300, "the client waits for the host's game");
+    try shot(r, host, "server_started.png");
+    // STOP SERVER: the client back at its menu, told; turned away while the server is stopped.
+    try hostOption(f, r, host, .server, .z);
+    try f.until(r, client, struct {
+        fn back(m: *Machine) bool {
+            return choosing(m) and m.message() == .host_stopped;
+        }
+    }.back, 600, "the client back at its menu, told the host stopped");
+    try f.check(host.np().peers.items.len == 0 and !host.np().open, "the host let its client go");
+    try r.step(150);
+    try f.check(!client.np().welcomed() and client.game.state.scenes.base.menu.dimmed & 0b0110 == 0b0110, "the client turned away: JOIN and OBSERVE dimmed");
+    // START GAME: the server again, the host at its select; the client back in joins it there.
+    try hostOption(f, r, host, .game, .z);
+    try f.until(r, host, inSelect, 600, "the host's select");
+    try f.until(r, client, joinLit, 300, "the client's JOIN lit again");
+    while (menuChoice(client) != .join) try r.press(client, .down);
+    try r.press(client, .z);
+    try f.until(r, client, inSession, 900, "the client joins at the host's select");
+    try f.check(selectOf(host).?.players == .two, "two players at the host's select");
+}
+
 fn ownMenus(f: *Flow, r: *Room) !void {
     const host = try r.add(.host);
     const client = try r.addNamed(.guest, null);
@@ -743,6 +813,7 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "round", .run = inRound },
         .{ .name = "away", .run = away },
         .{ .name = "difference", .run = difference },
+        .{ .name = "server", .run = server },
     }) |e| {
         if (only.items.len != 0) {
             var wanted = false;

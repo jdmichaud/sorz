@@ -3,13 +3,16 @@
 //! a client's name entry.
 //!
 //! - **The network options**: PLAYERS (2, the only number today), PORT (the native host's, which
-//!   it listens at from START on: fixed once it listens; none on a page), OBSERVERS (whether the
-//!   session takes them), SAME CHARACTER (whether the two players may choose one character), START
-//!   (the session opens) and EXIT (it does not). Up and down move, left, right, A, B or C change a
-//!   value, A, B or C on START or EXIT act; START opens the session from any line; Escape, the
-//!   settings key's place, and a gamepad's BACK leave as EXIT does. A, B or C on PORT edits it, a
-//!   digit at a time: left and right move between the digits, up and down change the one there,
-//!   A, B, C or START keep the port (1 to 65535), Escape or BACK leave it as it was.
+//!   it listens at once its server starts: fixed from then on; none on a page), OBSERVERS (whether
+//!   the session takes them), SAME CHARACTER (whether the two players may choose one character);
+//!   then START SERVER (the session opens, the host's player stays at its menu while clients
+//!   come), or STOP SERVER while it runs (its clients go), START GAME (the session opens if it is
+//!   not, and the host's player goes to the character select) and EXIT. Up and down move, left,
+//!   right, A, B or C change a value, A, B, C or START on an action act; START on a value is START
+//!   GAME; Escape, the settings key's place, and a gamepad's BACK leave as EXIT does. A, B or C
+//!   on PORT edits it, a digit at a time: left and right move between the digits, up and down
+//!   change the one there, A, B, C or START keep the port (1 to 65535), Escape or BACK leave it as
+//!   it was.
 //! - **The name entry**: ENTER YOUR NAME, three letters (A to Z, then 0 to 9): up and down change
 //!   the letter under the cursor, left and right move it; A, B, C or START keeps the name, Escape
 //!   or BACK leaves it as it was.
@@ -97,10 +100,14 @@ pub const NetOptions = struct {
     /// The digit of the port edited (0 the first of five), and the port before the edit.
     editing: ?u3 = null,
     port_before: u16 = 0,
+    /// The host's server runs (its line is STOP SERVER), and what the screen was left with.
+    serving: bool = false,
+    action: Action = .start_game,
     /// The players of this machine, whose keys work the screen.
     players: usize = 1,
 
-    pub const Row = enum(u8) { players, port, observers, same_character, start, exit };
+    pub const Row = enum(u8) { players, port, observers, same_character, server, game, exit };
+    pub const Action = enum { start_server, stop_server, start_game };
 
     const digits = 5;
 
@@ -136,18 +143,31 @@ pub const NetOptions = struct {
             .down => self.move(1),
             .left, .right => self.change(),
             .choose => switch (self.row) {
-                .start => return .done,
-                .exit => return .cancel,
+                .server, .game, .exit => return self.act(self.row),
                 .port => {
                     self.port_before = self.port.?;
                     self.editing = 0;
                 },
                 else => self.change(),
             },
-            .start => return .done,
+            // On an action, START is A there; on a value, START GAME.
+            .start => return self.act(switch (self.row) {
+                .server, .exit => self.row,
+                else => .game,
+            }),
             .back => return .cancel,
         }
         return .stay;
+    }
+
+    /// The action of line `r` (START SERVER or STOP SERVER, START GAME, EXIT).
+    fn act(self: *NetOptions, r: Row) Result {
+        switch (r) {
+            .server => self.action = if (self.serving) .stop_server else .start_server,
+            .game => self.action = .start_game,
+            else => return .cancel,
+        }
+        return .done;
     }
 
     /// Whether the cursor takes line `r`: not PLAYERS (two today), PORT when there is one to
@@ -190,12 +210,12 @@ pub const NetOptions = struct {
         return @intCast(@min(v, std.math.maxInt(u16)));
     }
 
-    /// The panel's row of line `r` (PORT's none without a port; START and EXIT after a blank).
+    /// The panel's row of line `r` (PORT's none without a port; the actions after a blank).
     fn rowOf(self: *const NetOptions, r: Row) usize {
         var row: usize = first_row;
         for (std.enums.values(Row)) |x| {
             if (x == .port and self.port == null) continue;
-            if (x == .start) row += 1;
+            if (x == .server) row += 1;
             if (x == r) return row;
             row += 1;
         }
@@ -212,7 +232,8 @@ pub const NetOptions = struct {
             .{ .port, "PORT", port_text },
             .{ .observers, "OBSERVERS", if (self.observers) "YES" else "NO" },
             .{ .same_character, "SAME CHARACTER", if (self.same_character) "YES" else "NO" },
-            .{ .start, "START", null },
+            .{ .server, if (self.serving) "STOP SERVER" else "START SERVER", null },
+            .{ .game, "START GAME", null },
             .{ .exit, "EXIT", null },
         };
         for (rows) |r| {
@@ -232,7 +253,8 @@ pub const NetOptions = struct {
             if (r[2]) |v| try p.text(value_col, row, v, tone);
         }
         if (self.editing != null) return;
-        if (arrow) p.arrowAt(if (self.row == .start or self.row == .exit) label_col - 1 else value_col - 1, @intCast(self.rowOf(self.row)));
+        const action = self.row == .server or self.row == .game or self.row == .exit;
+        if (arrow) p.arrowAt(if (action) label_col - 1 else value_col - 1, @intCast(self.rowOf(self.row)));
     }
 };
 
@@ -283,7 +305,7 @@ fn key(k: platform.Key) platform.Event {
     return .{ .time_ns = 0, .payload = .{ .key_down = .{ .key = k } } };
 }
 
-test "the network options: values changed, START opens, EXIT or Escape do not" {
+test "the network options: values changed, START SERVER or GAME, STOP SERVER; EXIT or Escape leave" {
     const s: Settings = .{};
     var o: NetOptions = .{};
     try testing.expectEqual(Result.stay, o.handle(&s, key(.z)));
@@ -293,10 +315,27 @@ test "the network options: values changed, START opens, EXIT or Escape do not" {
     try testing.expect(o.same_character);
     _ = o.handle(&s, key(.down));
     try testing.expectEqual(Result.done, o.handle(&s, key(.x)));
+    try testing.expectEqual(NetOptions.Action.start_server, o.action);
+    o.serving = true;
+    try testing.expectEqual(Result.done, o.handle(&s, key(.x)));
+    try testing.expectEqual(NetOptions.Action.stop_server, o.action);
+    _ = o.handle(&s, key(.down));
+    try testing.expectEqual(Result.done, o.handle(&s, key(.x)));
+    try testing.expectEqual(NetOptions.Action.start_game, o.action);
     _ = o.handle(&s, key(.down));
     try testing.expectEqual(Result.cancel, o.handle(&s, key(.c)));
     try testing.expectEqual(Result.cancel, o.handle(&s, key(.escape)));
+    o.row = .observers;
+    o.action = .stop_server;
     try testing.expectEqual(Result.done, o.handle(&s, key(.enter)));
+    try testing.expectEqual(NetOptions.Action.start_game, o.action);
+    // START on an action is A there.
+    o.row = .server;
+    o.serving = false;
+    try testing.expectEqual(Result.done, o.handle(&s, key(.enter)));
+    try testing.expectEqual(NetOptions.Action.start_server, o.action);
+    o.row = .exit;
+    try testing.expectEqual(Result.cancel, o.handle(&s, key(.enter)));
     // PLAYERS is not a line the cursor takes, nor PORT without one.
     o.row = .observers;
     _ = o.handle(&s, key(.up));

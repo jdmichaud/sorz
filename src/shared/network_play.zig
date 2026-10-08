@@ -3,8 +3,10 @@
 //!
 //! - **The host** (the native game's NETWORK PLAY, the first page of a server) plays its own game
 //!   and says what it is (`statusOf`: its front end, a character select a second player may join,
-//!   or play, with player 1's character); its session is open from the network options' START
-//!   until its game goes back to its menu. When a client asks to join, its game takes it at the
+//!   or play, with player 1's character, and whether its game has room for a second player); its
+//!   session is open from the network options' START SERVER or START GAME on, from game to game,
+//!   until STOP SERVER, which sends its clients back to their menus. When a client asks to join,
+//!   its game takes it at the
 //!   next tick it can (`State.joining`): the select's second cursor, or the round's drop-in, at
 //!   once; between two rounds, later; in play without a character, the client is asked to choose
 //!   first. Its game's canonical form then crosses (`Netplay.begin`), its sound as it plays beside
@@ -18,8 +20,9 @@
 //!   when the host plays (that character taken, unless the host allows the same character:
 //!   `Turn.taken`); once the host has a game when it has none (it waits, its choice made). It loads
 //!   the host's game when it comes (`Game.load`). OBSERVE loads the host's game as it comes, and
-//!   runs the host's ticks; START leaves it. When the host leaves, or the session is given up,
-//!   the client goes back to its own menu.
+//!   runs the host's ticks; START leaves it, and so does the game's end (the observer plays on to
+//!   its own front end). When the host leaves or stops its server, or the session is given up,
+//!   the client goes back to its own menu, told why.
 //! - **The session's end**: the host and its player end it at the same tick, the one their game
 //!   ends at; each plays on to its own front end.
 //!
@@ -43,17 +46,26 @@ const Message = overlay.Message;
 /// and their messages.
 pub fn update(g: *Game, p: *platform.Platform) void {
     const np = g.netplay orelse return;
+    var stopped = false;
     for (np.pending()) |n| switch (n) {
         // A session starts: what was said of the last one is over.
         .started => |st| if (!st.resumed) g.tellNetwork(null),
         .joined => if (np.role == .guest) load(g, p, np),
         .observing => if (np.role == .guest) load(g, p, np),
         .ended => |why| ended(g, p, np, why),
-        .refused => |r| if (np.role == .guest) g.tellNetwork(if (r == .busy) .busy else .other_game),
+        // A stopped host's refusal: the client tries again, quietly.
+        .refused => |r| if (np.role == .guest and r != .stopped) g.tellNetwork(if (r == .busy) .busy else .other_game),
+        .left => |r| stopped = stopped or (np.role == .guest and r == .stopped),
         .away => |seconds| g.away_seconds = seconds,
         else => {},
     };
     np.clearNotes();
+    // The host stopped its server: the client back to its menu from its select or a game it
+    // watched, told why.
+    if (stopped) {
+        if (wantsToJoin(&g.state) or g.state.inGame()) backToMenu(g, p);
+        g.tellNetwork(.host_stopped);
+    }
     switch (np.role) {
         .host => host(g, p, np),
         .guest => guest(g, p, np),
@@ -61,18 +73,9 @@ pub fn update(g: *Game, p: *platform.Platform) void {
     waits(g, p, np);
 }
 
-/// The host's game: its status, the join asked of it (taken now when it can be), the observers;
-/// its session closes as its game goes back to its menu.
+/// The host's game: its status, the join asked of it (taken now when it can be), the observers.
 fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     const assets = if (g.scene_assets) |*a| a else return;
-    if (np.open) {
-        if (g.state.inGame()) {
-            g.net_game = true;
-        } else if (g.net_game) {
-            np.closeSession(p);
-            g.net_game = false;
-        }
-    }
     np.setStatus(p, statusOf(&g.state));
     if (!np.inSession()) if (np.joinAsked()) |ask| {
         const character: ?Character = if (ask.character == protocol.no_character) null else @fromBackingInt(@as(u8, ask.character));
@@ -97,24 +100,35 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     }
 }
 
-/// What the host's game is, as its clients hear it.
+/// What the host's game is, as its clients hear it, and whether it has room for a second player
+/// (`place`): in a round, while player 2 has no fighter; between two, while it is not in play;
+/// else with one player.
 pub fn statusOf(s: *const State) protocol.Status {
-    if (!s.inGame()) return .{};
+    if (!s.inGame()) return .{ .place = true };
     if (s.scenes.next == null) switch (s.scenes.base) {
-        .select => |*sel| if (sel.joinable()) return .{ .game = .select },
+        .select => |*sel| if (sel.joinable()) return .{ .game = .select, .place = true },
         else => {},
     };
-    const c = s.setup.characters[0] orelse return .{};
-    return .{ .game = .play, .character = @backingInt(c) };
+    const c = s.setup.characters[0] orelse return .{ .place = true };
+    const place = switch (s.scenes.base) {
+        .round => |*r| r.play.world.players[1].entity == null,
+        .round_clear, .next_round => !s.setup.progress.players[1].in_play,
+        else => s.setup.players == .one,
+    };
+    return .{ .game = .play, .character = @backingInt(c), .place = place };
 }
 
-/// The client's game: an observer leaves with START; its player, at its own select, wants to
-/// join: it asks when it can.
+/// The client's game: an observer leaves with START, back to its menu, or as the game it
+/// watches ends, playing on to its own front end; its player, at its own select, wants to join:
+/// it asks when it can.
 fn guest(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     if (np.observing()) {
         if (g.startPressed()) {
             np.stopObserve(p);
             backToMenu(g, p);
+        } else if (!g.state.inGame()) {
+            np.stopObserve(p);
+            g.state.start = g.start();
         }
         return;
     }
@@ -183,7 +197,11 @@ fn backToMenu(g: *Game, p: *platform.Platform) void {
 /// front end), or the other left: the host's game goes on without player 2, its observers getting
 /// it again; a client goes back to its own menu.
 fn ended(g: *Game, p: *platform.Platform, np: *net.Netplay, why: net.session.End) void {
-    if (why == .game_over) return;
+    // Each plays on to its own front end: the client in its own variant again.
+    if (why == .game_over) {
+        if (np.role == .guest) g.state.start = g.start();
+        return;
+    }
     switch (np.role) {
         .host => {
             if (g.scene_assets) |*a| g.state.dropOut(1, a);
@@ -225,18 +243,21 @@ fn waits(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     g.showWait(message, seconds);
 }
 
-test "the host's status: its front end, a select one may join, play with player 1's character" {
+test "the host's status: its front end, a select one may join, play with player 1's character; room" {
     var s: State = .{};
-    try std.testing.expectEqual(protocol.Status{}, statusOf(&s));
+    try std.testing.expectEqual(protocol.Status{ .place = true }, statusOf(&s));
     s.scenes.base = .{ .select = .{} };
     try std.testing.expectEqual(protocol.Status.Game.select, statusOf(&s).game);
     s.scenes.base.select.phase = .wait;
     s.setup.characters[0] = .blaze;
-    try std.testing.expectEqual(protocol.Status{ .game = .play, .character = 2 }, statusOf(&s));
+    try std.testing.expectEqual(protocol.Status{ .game = .play, .character = 2, .place = true }, statusOf(&s));
     s.scenes.base = .{ .round = .{} };
-    try std.testing.expectEqual(protocol.Status{ .game = .play, .character = 2 }, statusOf(&s));
+    try std.testing.expectEqual(protocol.Status{ .game = .play, .character = 2, .place = true }, statusOf(&s));
+    // Player 2 in the round: no room.
+    s.scenes.base.round.play.world.players[1].entity = .{ .index = 1, .generation = 0 };
+    try std.testing.expect(!statusOf(&s).place);
     s.scenes.base = .{ .high_scores = .{} };
-    try std.testing.expectEqual(protocol.Status{}, statusOf(&s));
+    try std.testing.expectEqual(protocol.Status{ .place = true }, statusOf(&s));
 }
 
 test "the client wants to join from its own select, in the network variant alone" {

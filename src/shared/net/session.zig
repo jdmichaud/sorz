@@ -399,8 +399,9 @@ pub const Session = struct {
             .welcome => |w| self.onWelcome(w),
             .reject => |r| blk: {
                 if (self.config.role != .guest or self.welcomed) break :blk .unexpected;
-                // A host still busy with this guest's broken connection: the guest tries again.
-                if (!(r == .busy and self.phase == .playing)) self.phase = .ended;
+                // A host still busy with this guest's broken connection, or whose server is
+                // stopped: the guest tries again.
+                if (!(r == .busy and self.phase == .playing) and r != .stopped) self.phase = .ended;
                 self.close_requested = true;
                 self.note(.{ .refused = r });
                 break :blk .refused;

@@ -107,9 +107,11 @@ pub const Lag = enum { none, middle, load };
 /// This machine's part in network play as its menus see it (game.zig gives it).
 pub const Net = struct {
     role: variant.NetRole = .none,
-    /// The host: its session is open (the network options' START), and whether the two players
-    /// may choose one character there.
+    /// The host: its session is open (its server started), its network options closed with START
+    /// GAME (its player goes to the select), and whether the two players may choose one character
+    /// there.
     hosting: bool = false,
+    start_game: bool = false,
     same_character: bool = false,
     /// A client: the host takes a player now (JOIN), or an observer (OBSERVE); its player's name
     /// is given.

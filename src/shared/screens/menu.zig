@@ -186,9 +186,10 @@ pub const Menu = struct {
             .fade_out => if (self.colours.stepFade()) {
                 self.phase = .leaving;
             },
-            // The network options closed (no tick runs while they are open): the session open,
-            // the host's player goes to the character select alone; else back to the menu.
-            .network => if (turn.net.hosting) {
+            // The network options closed (no tick runs while they are open): with START GAME, the
+            // session open, the host's player goes to the character select alone; else (the
+            // server started or stopped, or nothing) back to the menu.
+            .network => if (turn.net.start_game and turn.net.hosting) {
                 turn.setup.players = .one;
                 turn.setup.rules = if (turn.policies.settings_rules) turn.rules else null;
                 turn.setup.same_character = turn.net.same_character;

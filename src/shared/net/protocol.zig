@@ -53,7 +53,9 @@
 //! observers and whether two players may choose one character. A client that asks to watch
 //! (`observe`) gets the host's game (`game` with `observe`), then each tick's pads (`ticks`) as
 //! the host's game runs them, and the game again whenever it changes otherwise; `away` counts a
-//! player's dropped connection down for those who wait for it.
+//! player's dropped connection down for those who wait for it. The host that stops its server
+//! says `bye` (`stopped`) to its clients, and turns away those that come (`reject`, `stopped`)
+//! until it starts it again.
 const std = @import("std");
 
 pub const version: u16 = 4;
@@ -100,6 +102,8 @@ pub const RejectReason = enum(u8) {
     busy = 4,
     /// A message that is not of the protocol, or out of place.
     malformed = 5,
+    /// The host stopped its server: no client until it starts it again (the client tries again).
+    stopped = 6,
     _,
 };
 
@@ -108,6 +112,8 @@ pub const ByeReason = enum(u8) {
     quit = 1,
     /// The session stopped at a state mismatch.
     desync = 2,
+    /// The host stopped its server: its clients go back to their menus.
+    stopped = 3,
     _,
 };
 
@@ -144,7 +150,7 @@ pub const characters = 3;
 pub const Status = struct {
     game: Game = .none,
     character: u8 = no_character,
-    /// The host's session is open (NETWORK PLAY's START), a player's place is free in it, it
+    /// The host's session is open (its server started), a player's place is free in it, it
     /// takes observers, two players may choose one character.
     open: bool = false,
     place: bool = false,
@@ -488,7 +494,9 @@ test "every message round trips, and its truncations are malformed" {
     try roundTrip(.{ .join = no_character });
     try roundTrip(.{ .join = 2 });
     try roundTrip(.{ .reject = .data });
+    try roundTrip(.{ .reject = .stopped });
     try roundTrip(.{ .bye = .quit });
+    try roundTrip(.{ .bye = .stopped });
     try roundTrip(.{ .settings = true });
     try roundTrip(.{ .settings = false });
     try roundTrip(.{ .ping = .{ .seq = 5, .time_ns = 123456789 } });

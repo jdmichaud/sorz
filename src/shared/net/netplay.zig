@@ -82,8 +82,10 @@ pub const Netplay = struct {
     peers: std.ArrayList(*Peer) = .empty,
     /// The host: the client that plays (in a session), if any.
     player: ?*Peer = null,
-    /// The host's session is open (NETWORK PLAY's START), and what it takes.
+    /// The host's session is open (its server started, or its game: the network options), and
+    /// what it takes; stopped (STOP SERVER), it turns clients away until it opens again.
     open: bool = false,
+    stopped: bool = false,
     observers: bool = false,
     same_character: bool = false,
     listening: bool = false,
@@ -195,8 +197,9 @@ pub const Netplay = struct {
             try p.netListen(self.address);
             self.listening = true;
             if (self.log_enabled) log.info("hosting at {s}", .{self.address});
-        }
+        } else if (self.stopped and self.log_enabled) log.info("the server started again", .{});
         self.open = true;
+        self.stopped = false;
         self.observers = observers;
         self.same_character = same_character;
         self.sendStatus(p);
@@ -227,14 +230,20 @@ pub const Netplay = struct {
         self.address = address;
     }
 
-    /// The host's session closes (its game went back to the menu): its clients stay, apart.
-    pub fn closeSession(self: *Netplay, p: *platform.Platform) void {
-        if (!self.open) return;
+    /// The host stops its server (STOP SERVER, its game at its menu): each client is told and let
+    /// go, and those that come are turned away (`stopped`) until the session opens again.
+    pub fn stopSession(self: *Netplay, p: *platform.Platform) void {
+        if (self.role != .host) return;
         self.open = false;
-        for (self.peers.items) |peer| if (peer.session.phase == .observing) {
-            peer.session.phase = .lobby;
-        };
-        self.sendStatus(p);
+        self.stopped = true;
+        while (self.peers.items.len != 0) {
+            const peer = self.peers.items[0];
+            peer.session.leave(.stopped);
+            self.flush(p, peer);
+            if (peer.connection) |id| p.netClose(id);
+            self.removePeer(peer);
+        }
+        if (self.log_enabled) log.info("the server stopped: its clients let go", .{});
     }
 
     fn connect(self: *Netplay, p: *platform.Platform) void {
@@ -253,6 +262,12 @@ pub const Netplay = struct {
         switch (e.payload) {
             .net_connected => |c| switch (self.role) {
                 .host => {
+                    if (self.stopped) {
+                        var buf: [protocol.max_len]u8 = undefined;
+                        p.netSend(c.connection, protocol.encode(.{ .reject = .stopped }, &buf)) catch {};
+                        p.netClose(c.connection);
+                        return true;
+                    }
                     if (self.peers.items.len >= max_clients) {
                         var buf: [protocol.max_len]u8 = undefined;
                         p.netSend(c.connection, protocol.encode(.{ .reject = .busy }, &buf)) catch {};
@@ -277,8 +292,7 @@ pub const Netplay = struct {
                     }
                     host.connection = c.connection;
                     self.connecting = null;
-                    self.refused_logged = false;
-                    if (self.log_enabled) log.info("connected to the host", .{});
+                    if (self.log_enabled and !self.refused_logged) log.info("connected to the host", .{});
                     host.session.connectedAt(self.now_ns);
                     self.flush(p, host);
                 },
@@ -339,7 +353,7 @@ pub const Netplay = struct {
             } else if (reason == .refused) {
                 if (!self.refused_logged) log.info("no host at {s} yet; trying every second", .{self.address});
                 self.refused_logged = true;
-            } else log.info("the connection ended ({s})", .{@tagName(reason)});
+            } else if (!self.refused_logged) log.info("the connection ended ({s})", .{@tagName(reason)});
         }
         self.takeNotes(peer);
         switch (self.role) {
@@ -428,6 +442,15 @@ pub const Netplay = struct {
         var ended = false;
         for (peer.session.notes.items) |n| {
             self.logNote(peer, n);
+            // A stopped host's refusal is said once; the client tries again quietly.
+            if (self.role == .guest) switch (n) {
+                .refused => |r| if (r == .stopped) {
+                    if (self.log_enabled and !self.refused_logged) log.info("the host stopped its server; trying every second", .{});
+                    self.refused_logged = true;
+                },
+                .welcomed => self.refused_logged = false,
+                else => {},
+            };
             if (!for_game) continue;
             switch (n) {
                 .started => |s| {
@@ -464,7 +487,7 @@ pub const Netplay = struct {
             .refused => |r| {
                 if (s.phase == .playing) {
                     log.info("the host still has the old connection; trying again", .{});
-                } else log.err("refused: {s}", .{refusal(r)});
+                } else if (r != .stopped) log.err("refused: {s}", .{refusal(r)});
             },
             .desync => |t| log.err("the games differ at tick {d}: {s}", .{ t, if (s.phase == .desynced and self.role == .guest and s.observe_asked == false) "the game stops" else "both stop; comparing their states" }),
             .diagnosed => |d| if (d) |x| log.err("first difference: {f}", .{x}) else log.err("the states could not be compared", .{}),
@@ -492,6 +515,7 @@ pub const Netplay = struct {
             .data => "other game data (each player needs the same ROM or game directory)",
             .busy => "the host has too many clients",
             .malformed => "a message out of the protocol",
+            .stopped => "the host stopped its server",
             _ => "unknown reason",
         };
     }
@@ -511,7 +535,8 @@ pub const Netplay = struct {
     fn statusFor(self: *const Netplay) protocol.Status {
         var s = self.status;
         s.open = self.open;
-        s.place = self.open and self.player == null;
+        // The game says whether it has room for a second player (`status.place`).
+        s.place = self.open and self.player == null and self.status.place;
         s.observers = self.open and self.observers;
         s.same_character = self.same_character;
         return s;

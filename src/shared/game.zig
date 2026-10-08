@@ -344,11 +344,11 @@ pub const Game = struct {
     /// The player this machine's pad plays outside a session: player 1 (kept for a game loaded
     /// from another machine's, network_play.zig).
     seat: u1 = 0,
-    /// The host's session had a game (it closes as the game goes back to the menu), the network
-    /// options last chosen, and a client's count of a player's dropped connection (the seconds
-    /// left, as the host said).
-    net_game: bool = false,
+    /// The host's network options last chosen, whether they closed with START GAME (the menu's
+    /// player goes to the select), and a client's count of a player's dropped connection (the
+    /// seconds left, as the host said).
     net_choice: struct { observers: bool = true, same_character: bool = false } = .{},
+    net_start_game: bool = false,
     away_seconds: u8 = 0,
     /// START held at the last tick (an observer leaves with it).
     start_held: bool = false,
@@ -514,11 +514,11 @@ pub const Game = struct {
         // A client has one player; a host keeps its machine's (its own games may have two).
         if (options.role == .guest) self.setOnePlayer();
         self.guest = options.role == .guest;
-        self.net_game = false;
     }
 
-    /// The host's session opens (the network options' START, or a check's call): it listens (at
-    /// `port`, when it does not yet), and takes a player and, with `observers`, observers.
+    /// The host's session opens (the network options' START SERVER or START GAME, or a check's
+    /// call): it listens (at `port`, when it does not yet), and takes a player and, with
+    /// `observers`, observers.
     pub fn openNetwork(self: *Game, p: *platform.Platform, observers: bool, same_character: bool, port: ?u16) void {
         const np = self.netplay orelse return;
         self.net_choice = .{ .observers = observers, .same_character = same_character };
@@ -529,12 +529,19 @@ pub const Game = struct {
         };
     }
 
+    /// The host stops its server (the network options' STOP SERVER): its clients go.
+    pub fn stopNetwork(self: *Game, p: *platform.Platform) void {
+        const np = self.netplay orelse return;
+        np.stopSession(p);
+    }
+
     /// This machine's part in network play, for its menus.
     fn netFacts(self: *const Game) scene.Net {
         const np = self.netplay orelse return .{};
         var n: scene.Net = .{
             .role = if (np.role == .host) .host else .client,
             .hosting = np.open,
+            .start_game = self.net_start_game,
             .same_character = self.net_choice.same_character,
             .named = self.settings.named(),
             .name = self.settings.name,
@@ -542,7 +549,8 @@ pub const Game = struct {
         if (np.role == .guest and np.welcomed()) {
             const st = np.hostStatus();
             n.can_join = st.open and st.place;
-            n.can_observe = st.open and st.observers;
+            // A game to watch: the host's at its select or in play.
+            n.can_observe = st.open and st.observers and st.game != .none;
         }
         return n;
     }
@@ -558,8 +566,10 @@ pub const Game = struct {
                     .same_character = self.net_choice.same_character,
                     .port = np.port(),
                     .port_fixed = np.portFixed(),
+                    .serving = np.open,
                     .players = players,
                 };
+                self.net_start_game = false;
                 self.openModal(.{ .net_options = options.open() }, p.nowNs());
             },
             .name => self.openModal(.{ .name_entry = .open(self.settings.name, players) }, null),
@@ -788,7 +798,14 @@ pub const Game = struct {
                 if (self.overlays.find(.net_options)) |o| {
                     switch (o.net_options.handle(&self.settings, e)) {
                         .stay => return,
-                        .done => self.openNetwork(p, o.net_options.observers, o.net_options.same_character, o.net_options.port),
+                        .done => {
+                            const x = &o.net_options;
+                            switch (x.action) {
+                                .start_server, .start_game => self.openNetwork(p, x.observers, x.same_character, x.port),
+                                .stop_server => self.stopNetwork(p),
+                            }
+                            self.net_start_game = x.action == .start_game;
+                        },
                         .cancel => {},
                     }
                 } else if (self.overlays.find(.name_entry)) |o| {
