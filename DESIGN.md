@@ -434,22 +434,28 @@ are its own, driven by its player alone. The host and its clients:
   PLAYERS, NETWORK PLAY, OPTIONS), or the first page connected to a server (its menu: 1 PLAYER,
   NETWORK PLAY, OPTIONS). NETWORK PLAY opens the network options: PLAYERS (2, the only number
   today), PORT (the native host's), OBSERVERS (yes or no), SAME CHARACTER (whether two players may
-  choose one character), then START SERVER, START GAME and EXIT. START SERVER opens the session:
+  choose one character), JOIN IN PROGRESS (whether a player may join a game under way, past its
+  select: so that no one leaves and comes back for new lives), then START SERVER, START GAME and
+  EXIT. START SERVER opens the session:
   the native host listens on every interface (0.0.0.0) at its port, and serves there the page and
   the game's files (section 5.3); the network options stay, the host's lobby: they list who is
   connected while clients come. START GAME opens the session if it is not open, and the host's
   player goes to the character select as player 1, and plays alone until a player joins. The
   session stays open from game to game; while it is, STOP SERVER (in the lobby) closes it: its
   clients go back to their menus, told THE HOST STOPPED, and the clients that come are turned away
-  (they try again every second) until the session opens again. The lobby, and the host's front
-  end screens at the bottom left in white over the picture, list who is connected: LOCAL - PLAYER
-  1, and each client by its name and what it does (MENU, SELECT: at its own character select to
-  join, PLAYER 2, OBSERVING).
+  (they try again every second) until the session opens again. The lobby (in a grey between the
+  menu's bright and dim tones: legible, not a line to choose), and the host's front end screens at
+  the bottom left in white over the picture, list who is connected: LOCAL - PLAYER 1, and each
+  client by its name and what it does (MENU, SELECT: at its own character select to join, PLAYER
+  2, OBSERVING).
 - **A client** is a page of that host or server (not the first), or `--join`: it connects as it
   starts, and its player gives a name of three letters, kept in the settings. Its menu: JOIN, when
   the host's session is open and a player's place is free; OBSERVE, when it is open, the host
   takes observers and has a game; OPTIONS. A line it cannot take is dimmed. With the host at its
-  menu, JOIN's player chooses a character and waits for the host's game.
+  menu, JOIN's player chooses a character and waits for the host's game; its own select names its
+  cursor 2PLAYER, the player it joins as. The host's select takes it once it shows: the client
+  sees player 1's cursor come, its own screen, cursor and choice as they were (a choice made keeps
+  its portrait, player 1's cursor moving on).
 - **JOIN** goes to the client's own character select, and joins the host's game as player 2: at
   the host's select, the two meet there and each sees the other's cursor; in play, the client's
   player chooses a character on its own machine while the host plays on, and drops in once chosen,
@@ -464,7 +470,14 @@ are its own, driven by its player alone. The host and its clients:
   in time, dies in the game as at the time over, and is out of it.
 - Escape in a game leaves it, not the program: the host's player goes back to its menu, or to its
   lobby while its server runs; a client's player to its menu. The other machines are told (the
-  session ends, the connections stay). At the front end, Escape quits.
+  session ends, the connections stay); a client at the select they shared keeps it, its own
+  again. At the front end, Escape quits.
+- The host's player who leaves a round its client plays: the game runs on for the client, on the
+  host's machine under its lobby (silent there). Player 1 leaves it at a tick both machines make
+  the change at (the host sends it ahead of its pads for that tick): its fighter dies as at the
+  time over, and it is out. The lobby's RETURN TO GAME drops player 1 back in the same way, when
+  JOIN IN PROGRESS allows it; EXIT shows the game, its player watching. The game over, or no
+  client left in it, the host's menu comes back under the lobby.
 
 **The join.** The host's game holds for a moment while its state crosses (its canonical form,
 section 6); the client loads it, and from that tick on both run the same game in lockstep.
