@@ -49,7 +49,7 @@ const usage =
     \\                   player (pad 1's keys and every gamepad), the page's own volume
     \\  --netplay, --join  network play over WebSockets, as the host (player 1) or the guest
     \\                   (player 2): each game plays its own front end with its keys (--key by
-    \\                   update), and the guest's 2 PLAYERS and character join the host's game;
+    \\                   update), and the guest's JOIN and character join the host's game;
     \\                   --frames counts the updates, --until-session N ends the run once the
     \\                   session ran N ticks; prints the game's hashes and its network play
     \\  --delay N        the host's input delay, 2 to 6 (default: from the round trip)

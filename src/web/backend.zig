@@ -348,7 +348,7 @@ pub const WebBackend = struct {
     // them, sends and closes, and reports each connection's opening, messages and end through
     // the module's `gp_net_*` exports, which call the functions below.
 
-    /// A page cannot listen: a relay's guest arrives on the host's page as a connection that the
+    /// A page cannot listen: a relay's client arrives on the host's page as a connection that the
     /// page reports (`netConnected` with `incoming`), for a session started without an address.
     fn netListen(_: *anyopaque, _: []const u8) platform.NetError!void {
         return error.Unsupported;
@@ -380,7 +380,7 @@ pub const WebBackend = struct {
         self.host.net_close(@backingInt(connection));
     }
 
-    /// The page opened a connection: one the game asked for, or (`incoming`) a relay's guest.
+    /// The page opened a connection: one the game asked for, or (`incoming`) a relay's client.
     pub fn netConnected(self: *WebBackend, id: u32, incoming: bool) void {
         self.push(.{ .net_connected = .{ .connection = @fromBackingInt(id), .incoming = incoming } });
     }

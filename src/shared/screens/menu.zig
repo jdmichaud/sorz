@@ -1,12 +1,20 @@
 //! The game menu, after the title: the cartridge's 1 PLAYER, 2 PLAYERS, OPTIONS, or the lines of
-//! another variant (variant.zig: 2 PLAYERS and OPTIONS in network play), one under the other from
-//! the cartridge's first line. It fades in; the arrow (the font's `->`) blinks left of the chosen
-//! line, up and down move it ("menu move") from the fade's start; once the fade is done, A, B, C or
-//! START chooses ("menu choose"), and after a tick the menu fades out, then leaves for the
-//! character select or the options. Without a second pad, 2 PLAYERS is dimmed (the colours
-//! `menu/one_pad`) and the arrow skips it (network play's second player is the network's: it is
-//! never dimmed there). Choosing OPTIONS with pad 2 holding exactly A, B, C and right at the end of
-//! the fade opens the options' hidden lines. Pad 1 drives it: each machine's menu is its own.
+//! another variant for this machine's part in network play (variant.zig, DESIGN.md 9: the host's
+//! NETWORK PLAY; a client's NAME, JOIN and OBSERVE), one under the other from the cartridge's
+//! first line, the port's lines written in the font. It fades in; the arrow (the font's `->`)
+//! blinks left of the chosen line, up and down move it ("menu move") from the fade's start; once
+//! the fade is done, A, B, C or START chooses ("menu choose"), and after a tick the menu fades
+//! out, then leaves for the character select or the options. Without a second pad, 2 PLAYERS is
+//! dimmed (the colours `menu/one_pad`) and the arrow skips it (network play's second player is the
+//! network's: it is never dimmed there); so are a client's JOIN and OBSERVE while the host takes
+//! no player or no observer. Choosing OPTIONS with pad 2 holding exactly A, B, C and right at the
+//! end of the fade opens the options' hidden lines. Pad 1 drives it: each machine's menu is its
+//! own.
+//!
+//! NETWORK PLAY fades out and asks this machine for its network options (an overlay, game.zig): if
+//! they opened the session, the menu leaves for the character select, the host's player alone;
+//! else it fades in again. NAME asks for the name entry (a client without a name is asked at
+//! once); OBSERVE asks to watch the host's game, which this machine then loads in its place.
 const std = @import("std");
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
@@ -47,8 +55,13 @@ pub const Menu = struct {
     hidden: bool = false,
     /// The arrow as the picture shows it at this tick: the tick before's (null: hidden).
     shown_arrow: ?Line = null,
+    /// The lines dimmed (a bit each, by their place), and the name shown on NAME.
+    dimmed: u8 = 0,
+    name: [3]u8 = .{ ' ', ' ', ' ' },
+    /// The player moved the arrow (a client's arrow, until then, goes back to JOIN as it lights).
+    moved: bool = false,
 
-    pub const Phase = enum(u8) { setup, fade_in, choosing, chosen, fade_out, leaving };
+    pub const Phase = enum(u8) { setup, fade_in, choosing, chosen, fade_out, leaving, network, observing };
 
     pub const Assets = struct {
         one_player: *const art.TileMap,
@@ -70,12 +83,13 @@ pub const Menu = struct {
             .choose = "menu choose",
         };
 
-        /// The cartridge's art of a line.
-        pub fn map(a: *const Assets, l: Line) *const art.TileMap {
+        /// The cartridge's art of a line (none for the port's, written in the font).
+        pub fn map(a: *const Assets, l: Line) ?*const art.TileMap {
             return switch (l) {
                 .one_player => a.one_player,
                 .two_players => a.two_players,
                 .options => a.options,
+                else => null,
             };
         }
 
@@ -118,13 +132,21 @@ pub const Menu = struct {
             .setup => {
                 turn.releasePads();
                 turn.setup.hidden_lines = false;
-                const lines = turn.policies.menuLines();
+                const lines = turn.policies.menuLines(turn.net.role);
                 @memcpy(self.lines[0..lines.len], lines);
                 self.line_count = @intCast(lines.len);
                 self.choice = lines[0];
                 self.previous = lines[0];
                 self.all_lines = turn.second_pad;
-                self.colours.aim(if (turn.second_pad) a.two_pads else a.one_pad);
+                self.name = turn.net.name;
+                // A client's lines dim (palette 1): the colours of one pad.
+                self.colours.aim(if (turn.second_pad and turn.net.role != .client) a.two_pads else a.one_pad);
+                self.dim(turn);
+                if (turn.net.role == .client) {
+                    self.choice = .join;
+                    self.previous = .join;
+                    if (!turn.net.named) turn.net_request = .name;
+                }
                 self.colours.startFade(.target);
                 self.blink_left = blink_ticks;
                 // The menu's first step in the same tick: the arrow, the fade's first step.
@@ -133,18 +155,26 @@ pub const Menu = struct {
                 self.phase = .fade_in;
             },
             .fade_in => {
+                self.dim(turn);
                 self.cursor(turn, turn.pressed.pad1, a);
                 if (self.colours.stepFade()) self.phase = .choosing;
             },
             .choosing => {
+                self.dim(turn);
+                self.name = turn.net.name;
                 const p = turn.pressed.pad1;
-                if (p.a or p.b or p.c or p.start) {
+                if ((p.a or p.b or p.c or p.start) and self.available(self.choice)) {
                     turn.play(a.choose);
-                    self.phase = .chosen;
+                    switch (self.choice) {
+                        .name => turn.net_request = .name,
+                        .observe => {
+                            turn.net_request = .observe;
+                            self.phase = .observing;
+                        },
+                        else => self.phase = .chosen,
+                    }
                 } else {
-                    // The lines follow the second pad as it comes and goes.
-                    if (!self.all_lines and turn.second_pad) self.all_lines = true;
-                    if (self.all_lines and !turn.second_pad) self.all_lines = false;
+                    // The lines follow the second pad as it comes and goes (`dim`).
                     self.cursor(turn, p, a);
                 }
             },
@@ -156,20 +186,44 @@ pub const Menu = struct {
             .fade_out => if (self.colours.stepFade()) {
                 self.phase = .leaving;
             },
+            // The network options closed (no tick runs while they are open): the session open,
+            // the host's player goes to the character select alone; else back to the menu.
+            .network => if (turn.net.hosting) {
+                turn.setup.players = .one;
+                turn.setup.rules = if (turn.policies.settings_rules) turn.rules else null;
+                turn.setup.same_character = turn.net.same_character;
+                return .network_play;
+            } else {
+                self.colours.startFade(.target);
+                self.phase = .fade_in;
+            },
+            // Waiting for the host's game, which this machine loads in the menu's place; back to
+            // choosing when the host takes no observer any more.
+            .observing => if (!turn.net.can_observe) {
+                self.phase = .choosing;
+            },
             // A game: its players, and its rules, this machine's settings' where the variant takes
             // them.
             .leaving => switch (self.choice) {
                 .one_player => {
                     turn.setup.players = .one;
                     turn.setup.rules = if (turn.policies.settings_rules) turn.rules else null;
+                    turn.setup.same_character = null;
                     return .one_player;
                 },
-                // Both players here, or this machine's alone: the other machine's joins later.
-                .two_players => {
+                // Both players here, or this machine's alone: the other machine's joins later (a
+                // client's JOIN: the host's game).
+                .two_players, .join => {
                     turn.setup.players = if (turn.policies.two_players_here) .two else .one;
                     turn.setup.rules = if (turn.policies.settings_rules) turn.rules else null;
+                    turn.setup.same_character = null;
                     return .two_players;
                 },
+                .network_play => {
+                    turn.net_request = .network_options;
+                    self.phase = .network;
+                },
+                .name, .observe => unreachable,
                 .options => {
                     const p2 = turn.pads.pad2;
                     const code: input.Pad = .{ .a = true, .b = true, .c = true, .right = true };
@@ -181,12 +235,16 @@ pub const Menu = struct {
         return null;
     }
 
-    /// The arrow: up and down move it, round the ends, with a sound; it blinks; without a second
-    /// pad it does not stay on 2 PLAYERS, but goes on in its direction.
+    /// The arrow: up and down move it, round the ends, with a sound; it blinks; it does not stay
+    /// on a dimmed line (2 PLAYERS without a second pad, a client's JOIN or OBSERVE the host does
+    /// not take), but goes on in its direction. A client's arrow starts on JOIN, and goes back to
+    /// it as it lights until the player moves the arrow.
     fn cursor(self: *Menu, turn: *scene.Turn, p: input.Pad, a: *const Assets) void {
         const lines = self.slice();
         const n = lines.len;
+        if (!self.moved and turn.net.role == .client and self.available(.join)) self.choice = .join;
         if (p.up or p.down) {
+            self.moved = true;
             turn.play(a.move);
             self.previous = self.choice;
             const i = self.indexOf(self.choice);
@@ -197,18 +255,58 @@ pub const Menu = struct {
             self.blink_left = blink_ticks;
             self.hidden = !self.hidden;
         }
-        if (!self.all_lines and self.choice == .two_players) {
-            const i = self.indexOf(.two_players);
+        var tries: usize = 0;
+        while (!self.available(self.choice) and tries < n) : (tries += 1) {
+            const i = self.indexOf(self.choice);
             const up = self.previous == lines[(i + 1) % n];
+            self.previous = self.choice;
             self.choice = lines[if (up) (i + n - 1) % n else (i + 1) % n];
         }
     }
 
+    /// Whether a line can be chosen now.
+    fn available(self: *const Menu, l: Line) bool {
+        return self.dimmed & (@as(u8, 1) << @intCast(self.indexOf(l))) == 0;
+    }
+
+    /// The lines dimmed now: 2 PLAYERS without a second pad, a client's JOIN and OBSERVE by what
+    /// the host takes.
+    fn dim(self: *Menu, turn: *const scene.Turn) void {
+        if (!self.all_lines and turn.second_pad) self.all_lines = true;
+        if (self.all_lines and !turn.second_pad) self.all_lines = false;
+        var bits: u8 = 0;
+        for (self.slice(), 0..) |l, i| {
+            const off = switch (l) {
+                .two_players => !self.all_lines,
+                .join => !turn.net.can_join,
+                .observe => !turn.net.can_observe,
+                else => false,
+            };
+            if (off) bits |= @as(u8, 1) << @intCast(i);
+        }
+        self.dimmed = bits;
+    }
+
     pub fn draw(self: *const Menu, prev: ?*const Menu, v: *view.View, a: *const Assets) !void {
-        if (prev == null) for (self.slice(), 0..) |l, i| {
+        for (self.slice(), 0..) |l, i| {
             const c = a.cellOf(i);
-            try v.board(.a).drawMap(a.map(l), c.x, c.y);
-        };
+            if (a.map(l)) |m| {
+                if (prev == null) try v.board(.a).drawMap(m, c.x, c.y);
+                continue;
+            }
+            // The port's lines, in the font: again when their dimming or the name changed.
+            if (prev) |p| if (p.dimmed == self.dimmed and std.mem.eql(u8, &p.name, &self.name)) continue;
+            const look: render.Look = .{ .palette = if (self.available(l)) 0 else 1 };
+            var buf: [16]u8 = undefined;
+            const text: []const u8 = switch (l) {
+                .network_play => "NETWORK PLAY",
+                .join => "JOIN",
+                .observe => "OBSERVE",
+                .name => std.fmt.bufPrint(&buf, "NAME  {s}", .{&self.name}) catch unreachable,
+                else => unreachable,
+            };
+            try v.write(.a, a.text, c.x, c.y, text, look);
+        }
         v.screen.colours = self.colours.shown;
         if (self.shown_arrow) |l| {
             const at = self.arrowAt(a, l);
@@ -312,4 +410,31 @@ test "the network menu: 2 PLAYERS and OPTIONS, pad 1's alone; 2 PLAYERS puts thi
     while (exit == null) exit = press(&m, &setup, .network, true, .{}).exit;
     try std.testing.expectEqual(flow.Exit.two_players, exit.?);
     try std.testing.expectEqual(@import("../setup.zig").Players.one, setup.players);
+}
+
+test "a client's arrow: on JOIN, off it while it is dimmed, back as it lights until the player moves it" {
+    var setup: Setup = .{};
+    var m: Menu = .{};
+    const tick = struct {
+        fn f(menu: *Menu, s: *Setup, open: bool, pressed: input.Pads) void {
+            var turn: scene.Turn = .{
+                .setup = s,
+                .second_pad = false,
+                .pressed = pressed,
+                .policies = &variant.Variant.network.config().policies,
+                .net = .{ .role = .client, .named = true, .can_join = open, .can_observe = open },
+            };
+            _ = menu.tick(&turn, &Fixture.assets);
+        }
+    }.f;
+    tick(&m, &setup, false, .{});
+    try std.testing.expectEqualSlices(Line, &.{ .name, .join, .observe, .options }, m.slice());
+    try std.testing.expectEqual(Line.options, m.choice);
+    tick(&m, &setup, true, .{});
+    try std.testing.expectEqual(Line.join, m.choice);
+    // Moved, it stays where the player put it.
+    tick(&m, &setup, true, .{ .pad1 = .{ .down = true } });
+    tick(&m, &setup, false, .{});
+    tick(&m, &setup, true, .{});
+    try std.testing.expectEqual(Line.options, m.choice);
 }

@@ -13,10 +13,9 @@
 //! (`gp_screen_*`); without them (a tree without that art), `gp_screen_open` refuses and the page's
 //! own text stands in, in the menu's colours.
 //!
-//! Network play: a native host's page is its guest (`gp_start_netplay`, at once: the game connects
-//! when its player wants to join). On a relay, the page joins the relay when the game's player
-//! wants to play with another (`gp_net_wanted`: 2 PLAYERS chose the select), and gives the game the
-//! role the relay gives it (`gp_start_netplay`), or tells it that two play there (`gp_net_busy`).
+//! Network play: a native host's page is its client (`gp_start_netplay`, at once: the game connects
+//! as it starts). On a relay, the page joins the relay as it loads, and gives the game the role the
+//! relay gives it (`gp_start_netplay`): the first page hosts, every other is its client.
 //!
 //! The game's settings record is the page's only settings (`settings.zig`): the module tells the
 //! page the record's sound and window when the game starts and whenever they change
@@ -293,11 +292,11 @@ export fn gp_fullscreen_left() void {
 }
 
 /// Network play (DESIGN.md 9): the game plays with another machine's player. The page calls it
-/// after `gp_start`, with the role (0 the guest, player 2; 1 the host, player 1) and the address
-/// (`url_len` bytes in the scratch buffer): a native host's `ws://ADDRESS:PORT/` (the game connects
-/// when its player wants to join), or nothing when the page brings the connection itself (a
-/// relay's, once the relay gave the page its role: the first connection the page reports is the
-/// peer). A network play the game had goes. The session's identity is this build's and the data's:
+/// after `gp_start`, with the role (0 a client; 1 the host, player 1) and the address (`url_len`
+/// bytes in the scratch buffer): a native host's `ws://ADDRESS:PORT/` (the game connects at once),
+/// or nothing when the page brings the connections itself (a relay's, once the relay gave the page
+/// its role: on a client's page, the first connection the page reports is the host; on the host's,
+/// each is a client). A network play the game had goes. The session's identity is this build's and the data's:
 /// the digest of the game's files. Returns 0, or -1 with the reason in `gp_error`.
 export fn gp_start_netplay(role: u32, url_len: u32) i32 {
     const g = game orelse {
@@ -320,22 +319,7 @@ export fn gp_start_netplay(role: u32, url_len: u32) i32 {
     return 0;
 }
 
-/// Whether the game's player wants to play with another machine's and the game has no network play
-/// to (its 2 PLAYERS chose the character select): a relay's page then joins the relay (1).
-export fn gp_net_wanted() u32 {
-    const g = game orelse return 0;
-    return @intFromBool(g.wantsNetwork());
-}
-
-/// The relay turned the page away (two players play there), or cannot be reached: the game plays
-/// alone, and says so.
-export fn gp_net_busy() void {
-    const g = game orelse return;
-    g.playAlone();
-    g.tellNetwork(.busy);
-}
-
-/// A connection of network play opened: one the game asked for (`incoming` 0), or a relay's guest
+/// A connection of network play opened: one the game asked for (`incoming` 0), or a relay's client
 /// on the host's page (1).
 export fn gp_net_connected(id: u32, incoming: u32) void {
     backend.netConnected(id, incoming != 0);
@@ -572,8 +556,12 @@ export fn gp_inspect() u32 {
     // The game menu's lines, when it shows: their names, comma-separated.
     var lines_buf: [64]u8 = undefined;
     var lines: std.Io.Writer = .fixed(&lines_buf);
+    var menu_at: []const u8 = "";
     switch (g.state.scenes.base) {
-        .menu => |*m| for (m.lines[0..m.line_count], 0..) |l, i| lines.print("{s}{s}", .{ if (i == 0) "" else ",", @tagName(l) }) catch {},
+        .menu => |*m| {
+            for (m.lines[0..m.line_count], 0..) |l, i| lines.print("{s}{s}", .{ if (i == 0) "" else ",", @tagName(l) }) catch {};
+            menu_at = @tagName(m.choice);
+        },
         else => {},
     }
     std.json.Stringify.value(.{
@@ -583,7 +571,11 @@ export fn gp_inspect() u32 {
         .variant = @tagName(g.state.start.variant),
         .scene = @tagName(std.meta.activeTag(g.state.scenes.base)),
         .menu = lines.buffered(),
+        // The line the menu's arrow is on.
+        .menu_at = menu_at,
         .settings_open = g.settingsOpen(),
+        // Network play's screen of this machine open over the game, if any.
+        .modal = if (g.overlays.find(.net_options) != null) "net_options" else if (g.overlays.find(.name_entry) != null) "name_entry" else "",
         // Network play's message over the picture, if any.
         .message = if (g.overlays.find(.network)) |o| o.network.what.text() else "",
         .players = @tagName(g.state.setup.players),
@@ -613,9 +605,9 @@ export fn gp_inspect() u32 {
             .role = @tagName(np.role),
             .phase = @tagName(np.phase()),
             .tick = np.tick(),
-            .delay = np.session.delay,
+            .delay = np.delay(),
             .sessions = np.sessions,
-            .connected = np.session.connected,
+            .connected = np.connected(),
             .difference = np.difference != null,
             .peer_in_settings = np.peerInSettings(),
         } else null,

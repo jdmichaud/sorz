@@ -84,8 +84,9 @@ const Peer = struct {
         var p = peer.backend.asPlatform();
         _ = try p.start();
         try peer.np.start(&p);
-        // The guest's player wants to join from the start.
-        peer.np.want(&p, true);
+        // The host's session opens at once (its network options' START); the guest connects as it
+        // starts.
+        if (role == .host) try peer.np.openSession(&p, true, false);
         return peer;
     }
 
@@ -114,18 +115,18 @@ const Peer = struct {
         peer.np.update(&p);
         for (peer.np.pending()) |note| switch (note) {
             .joined => {
-                try canonical.read(FakeState, peer.np.session.gameForm(), &peer.state);
+                try canonical.read(FakeState, peer.np.gameForm(), &peer.state);
                 peer.pads.clearRetainingCapacity();
             },
             .welcomed => if (peer.np.role == .guest) peer.np.askJoin(&p, net.protocol.no_character),
             else => {},
         };
         peer.np.clearNotes();
-        if (peer.np.role == .host and peer.np.phase() == .lobby and peer.np.session.join_asked != null) {
+        if (peer.np.role == .host and !peer.np.inSession()) if (peer.np.joinAsked()) |ask| {
             var form: [canonical.maxSize(FakeState)]u8 = undefined;
-            peer.np.begin(&p, canonical.write(FakeState, &peer.state, &form));
+            peer.np.begin(&p, ask.peer, canonical.write(FakeState, &peer.state, &form));
             peer.pads.clearRetainingCapacity();
-        }
+        };
         if (!peer.np.inSession()) {
             // Its own game, alone (the guest's is replaced at the join).
             if (peer.np.role == .host) {
@@ -186,7 +187,7 @@ fn expectSameGame(host: *Peer, guest: *Peer, ticks: u32) !void {
     try std.testing.expectEqual(host.pads.items.len, guest.pads.items.len);
     for (host.pads.items, guest.pads.items) |a, b| try std.testing.expectEqual(a, b);
     try std.testing.expectEqual(host.state.hash(), guest.state.hash());
-    const want = reference(aloneFor(host.alone), ticks, host.np.session.delay);
+    const want = reference(aloneFor(host.alone), ticks, host.np.delay());
     try std.testing.expectEqual(want.hash(), host.state.hash());
 }
 
@@ -198,13 +199,13 @@ test "two agent hosts: the guest joins the host's game, and both play it with th
     const guest = try Peer.create(&network, .guest, null, guestScript);
     defer guest.destroy();
     try runUntil(host, guest, 600, 700);
-    try std.testing.expectEqual(@as(u8, 3), guest.np.session.delay);
+    try std.testing.expectEqual(@as(u8, 3), guest.np.delay());
     // The host's game ran alone while the guest came: the session starts from where it was.
     try std.testing.expect(host.alone > 0);
     try expectSameGame(host, guest, 600);
     // Twenty checks passed; no hold after the start.
     try std.testing.expectEqual(net.session.Phase.playing, host.np.phase());
-    try std.testing.expect(host.np.session.own[0] != null);
+    try std.testing.expect(host.np.player.?.session.own[0] != null);
 }
 
 test "with latency, the round trip picks the delay and the game holds when a pad is late" {
@@ -217,7 +218,7 @@ test "with latency, the round trip picks the delay and the game holds when a pad
     defer guest.destroy();
     try runUntil(host, guest, 400, 900);
     // 45 ms each way, seen at 60 updates a second: 5 or 6 ticks of delay.
-    try std.testing.expect(host.np.session.delay >= 5);
+    try std.testing.expect(host.np.delay() >= 5);
     try expectSameGame(host, guest, 400);
 
     // A delay too short for the latency: both hold, and still play the same game.
@@ -242,7 +243,7 @@ test "a dropped connection holds both games; the guest reconnects and the same s
     defer guest.destroy();
     try runUntil(host, guest, 200, 300);
     const endpoint: *net.memory.Endpoint = @ptrCast(@alignCast(host.backend.transport.?.context));
-    network.breakLink(endpoint, host.np.peer.?);
+    network.breakLink(endpoint, host.np.player.?.connection.?);
     const at = host.np.tick();
     // For half a second of updates, neither runs more than the pads it already had.
     for (0..30) |_| {
@@ -250,7 +251,7 @@ test "a dropped connection holds both games; the guest reconnects and the same s
         try guest.update();
     }
     try std.testing.expect(host.np.tick() <= at + 4 and guest.np.tick() <= at + 4);
-    try std.testing.expect(host.np.peer == null and host.np.lostFor() != null);
+    try std.testing.expect(host.np.player.?.connection == null and host.np.lostFor() != null);
     // The guest tries again after a second, and both go on.
     try runUntil(host, guest, 600, 800);
     try std.testing.expectEqual(@as(u32, 1), host.np.sessions);
@@ -269,7 +270,7 @@ test "a byte corrupted on one side is found within a second and its field is nam
     try std.testing.expectEqual(net.session.Phase.desynced, host.np.phase());
     try std.testing.expectEqual(net.session.Phase.desynced, guest.np.phase());
     // The corruption before tick 131 is seen at the check before tick 150: 19 ticks.
-    const at = host.np.session.desync_at.?;
+    const at = host.np.player.?.session.desync_at.?;
     try std.testing.expectEqual(@as(u32, 150), at);
     for ([_]*Peer{ host, guest }) |peer| {
         const d = peer.np.difference.?;
@@ -281,7 +282,7 @@ test "a byte corrupted on one side is found within a second and its field is nam
     try std.testing.expect(host.np.tick() < at + 10 and guest.np.tick() < at + 10);
 }
 
-test "a guest that quits ends the session; a new guest joins the host's game as it is; a third is turned away" {
+test "a guest that quits ends the session; a new guest joins the host's game as it is; a third waits in the lobby" {
     var network = net.memory.Network.init(std.testing.allocator);
     defer network.deinit();
     const host = try Peer.create(&network, .host, 2, hostScript);
@@ -295,7 +296,7 @@ test "a guest that quits ends the session; a new guest joins the host's game as 
     // The host heard the farewell, ran the ticks whose pads it had (the delay's two), and plays its
     // own game alone again, waiting for another guest.
     for (0..5) |_| try host.update();
-    try std.testing.expect(!host.np.inSession() and host.np.phase() == .idle);
+    try std.testing.expect(!host.np.inSession() and host.np.phase() == .lobby);
     try std.testing.expectEqual(@as(u32, 152), host.np.tick() + 152);
     guest = try Peer.create(&network, .guest, null, guestScript);
     defer guest.destroy();
@@ -305,16 +306,18 @@ test "a guest that quits ends the session; a new guest joins the host's game as 
     try std.testing.expectEqual(@as(u32, 2), host.np.sessions);
     try expectSameGame(host, guest, 100);
 
-    // A third game asks to join while the guest plays: it is refused.
+    // A third game asks to join while the guest plays: it is welcomed to the host's lobby, but no
+    // place is free; the guest plays on.
     const third = try Peer.create(&network, .guest, null, guestScript);
     defer third.destroy();
-    for (0..5) |_| {
+    for (0..20) |_| {
         try host.update();
         try guest.update();
         try third.update();
     }
-    try std.testing.expectEqual(net.session.Phase.ended, third.np.phase());
+    try std.testing.expect(third.np.welcomed() and !third.np.hostStatus().place and !third.np.inSession());
     try std.testing.expectEqual(net.session.Phase.playing, guest.np.phase());
+    try std.testing.expectEqual(@as(usize, 2), host.np.peers.items.len);
 }
 
 test "a game without content has no game to join: its network play waits in the lobby" {

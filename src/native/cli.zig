@@ -114,13 +114,12 @@ pub const Options = struct {
 
     pub const Network = enum { none, netplay, server };
 
-    /// What the options ask of the network: network play (`--netplay` or `--join`), server mode
-    /// (`--server`, which runs no game and serves the game's data to its pages: the game path is
-    /// required, and it keeps no saves), or nothing. `--delay` needs `--netplay`. Network play is
-    /// the network variant's (each machine its own menus, one player a machine): `--original`,
-    /// the cartridge's game on one machine, does not go with it.
+    /// What the options ask of the network: network play (`--netplay`, its port, or `--join`),
+    /// server mode (`--server`, which runs no game and serves the game's data to its pages: the
+    /// game path is required, and it keeps no saves), or nothing. `--delay` goes with hosting,
+    /// not `--join`. `--original`, the cartridge's game on one machine, goes with neither.
     pub fn network(self: Options) TakeError!Network {
-        if (self.delay != null and self.netplay == null) return error.BadValue;
+        if (self.delay != null and (self.join != null or self.server != null)) return error.BadValue;
         if (self.original and (self.netplay != null or self.join != null)) return error.BadValue;
         if (self.server != null) {
             if (self.saves != null) return error.BadValue;
@@ -130,17 +129,26 @@ pub const Options = struct {
         return if (self.netplay != null or self.join != null) .netplay else .none;
     }
 
-    /// The variant the game plays: the cartridge's with `--original`, network play's with
-    /// `--netplay` or `--join`, else the default, extended.
+    /// The variant the game plays: the cartridge's with `--original`, network play's with `--join`
+    /// (a client), else the default, extended.
     pub fn variant(self: Options) sorz.variant.Variant {
-        return .of(.{ .original = self.original, .network = self.netplay != null or self.join != null });
+        return .of(.{ .original = self.original, .network = self.join != null });
+    }
+
+    /// The port NETWORK PLAY listens at without `--netplay` (every interface).
+    pub const default_port = "8000";
+
+    /// Whether the native game may host (DESIGN.md 9: its menu's NETWORK PLAY): not the
+    /// cartridge's, nor a client, nor a server.
+    pub fn hosts(self: Options) bool {
+        return !self.original and self.join == null and self.server == null;
     }
 
     /// The session's options for the game, given the data's identity.
     pub fn netplayOptions(self: Options, data: sorz.net.protocol.DataId) sorz.net.netplay.Options {
         return .{
-            .role = if (self.netplay != null) .host else .guest,
-            .address = self.netplay orelse self.join.?,
+            .role = if (self.join != null) .guest else .host,
+            .address = self.join orelse self.netplay orelse default_port,
             .build = sorz.net.protocol.buildId(sorz.version.build),
             .data = data,
             .delay = self.delay,
@@ -425,10 +433,10 @@ test "the options take the game path and --saves" {
     try std.testing.expectError(error.DuplicateAssets, TestArgs.all(&.{ "one", "two" }));
 }
 
-test "the variant: extended by default, network play's with --netplay or --join, --original's" {
+test "the variant: extended by default (hosting with --netplay too), network play's with --join, --original's" {
     try std.testing.expectEqual(sorz.variant.Variant.extended, (try TestArgs.all(&.{"game"})).variant());
     try std.testing.expectEqual(sorz.variant.Variant.original, (try TestArgs.all(&.{ "game", "--original" })).variant());
-    try std.testing.expectEqual(sorz.variant.Variant.network, (try TestArgs.all(&.{ "game", "--netplay", "7000" })).variant());
+    try std.testing.expectEqual(sorz.variant.Variant.extended, (try TestArgs.all(&.{ "game", "--netplay", "7000" })).variant());
     try std.testing.expectEqual(sorz.variant.Variant.network, (try TestArgs.all(&.{ "--join", "ws://h:1" })).variant());
     // The cartridge's game is one machine's: not with network play.
     try std.testing.expectError(error.BadValue, TestArgs.all(&.{ "game", "--original", "--netplay", "7000" }));
@@ -448,6 +456,12 @@ test "the options of network play" {
     try std.testing.expectEqual(sorz.net.netplay.Role.guest, gn.role);
     try std.testing.expectEqualStrings("ws://192.168.1.2:7000", gn.address);
     try std.testing.expectEqual(Options.Network.none, try (try TestArgs.all(&.{"game"})).network());
+    // The native game hosts by default (its menu's NETWORK PLAY), at port 8000 on every
+    // interface; not the cartridge's, nor a client.
+    const plain = try TestArgs.all(&.{"game"});
+    try std.testing.expect(plain.hosts());
+    try std.testing.expectEqualStrings("8000", plain.netplayOptions(@splat(1)).address);
+    try std.testing.expect(!(try TestArgs.all(&.{ "game", "--original" })).hosts() and !guest.hosts());
     // Server mode serves the game's data to its pages: it needs it, and keeps no saves.
     const server = try TestArgs.all(&.{ "game", "--server", "0.0.0.0:7000" });
     try std.testing.expectEqual(Options.Network.server, try server.network());

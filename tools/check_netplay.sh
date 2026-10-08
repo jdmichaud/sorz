@@ -1,13 +1,15 @@
 #!/bin/sh
-# Network play on the real game over WebSockets (DESIGN.md 9, PLAN item 18), with the agent host and
-# the user's ROM (its content extracted in memory by each process): two processes, the host
-# (`--netplay`) and the guest (`--join`), each running its own front end with its own keys. The
-# host's player chooses 2 PLAYERS and Axel and plays round 1 alone; the guest's chooses 2 PLAYERS
-# later, a character on its own select while the host plays (Axel taken), and joins mid-round: the
-# host's game crosses, its sound beside it, and both run it. At the session's tick 600 both are in
-# the round with two players, in the same state, one session, and both played the same sound since
-# the join, frame by frame (the round's music going on from the host's place). The flows in one process (the joins at the select,
-# leaving, a dropped connection, a planted difference) are src/tools/netplay_check.zig's.
+# Network play on the real game over WebSockets (DESIGN.md 9, PLAN items 18 and 26), with the agent
+# host and the user's ROM (its content extracted in memory by each process): two processes, the host
+# (`--netplay`) and the client (`--join`), each running its own front end with its own keys. The
+# host's player chooses NETWORK PLAY, opens the session (the network options' START), chooses Axel
+# and plays round 1 alone; the client's player gives its name, chooses JOIN later, a character on
+# its own select while the host plays (Axel taken), and joins mid-round: the host's game crosses,
+# its sound beside it, and both run it. At the session's tick 600 both are in the round with two
+# players, in the same state, one session, and both played the same sound since the join, frame by
+# frame (the round's music going on from the host's place). The flows in one process (the joins at
+# the select, observing, leaving, a dropped connection, a planted difference) are
+# src/tools/netplay_check.zig's.
 set -eu
 bin="${1:?usage: check_netplay.sh AGENT ROM}"
 rom="${2:?usage: check_netplay.sh AGENT ROM}"
@@ -18,13 +20,15 @@ fail() { echo "check_netplay: $*" >&2; exit 1; }
 field() { printf '%s\n' "$1" | sed -n "s/.*\"$2\":\"\{0,1\}\([^\",}]*\).*/\1/p"; }
 
 ticks=600
-# Both to their game menus; the host's 2 PLAYERS at once, the guest's much later: the two run as
-# fast as they can, so that a guest at its select while the host is still at its own would join
-# it there. The menu waits; its 2 PLAYERS 2,300 updates after the host's keeps the host in its
-# round by then unless the guest runs three times as fast.
+# Both to their game menus; the host's NETWORK PLAY at once (down to it, A, the network options'
+# START), Axel and play; the client's name (START keeps the entry's) and its JOIN much later (its
+# arrow back on JOIN once the host's session is open): the two run as fast as they can, and a
+# client at its select while the host is still at its own would join it there. Its JOIN
+# 2,100 updates after the host's NETWORK PLAY finds the host in its round unless the client runs
+# three times as fast.
 front="--key 500:enter:3 --key 560:enter:3"
-host_keys="$front --key 640:enter:3 --key 860:right:3 --key 880:z:3 --key 1500:right:60 --key 1700:x:3"
-guest_keys="$front --key 2940:enter:3 --key 3240:z:3"
+host_keys="$front --key 620:down:3 --key 640:z:3 --key 800:enter:3 --key 1160:right:3 --key 1180:z:3 --key 1800:right:60 --key 2000:x:3"
+guest_keys="$front --key 760:enter:3 --key 2940:z:3 --key 3240:z:3"
 
 # A port of their own (another try on another port if it is taken).
 for try in 1 2 3; do
@@ -38,7 +42,7 @@ for try in 1 2 3; do
   [ "$try" = 3 ] && fail "the host could not listen: $(tail -3 "$dir/host.log")"
 done
 # shellcheck disable=SC2086
-"$bin" "$rom" --join "ws://127.0.0.1:$port" --frames 30000 --until-session $ticks $guest_keys >"$dir/guest.json" 2>"$dir/guest.log" || fail "the guest failed: $(cat "$dir/guest.json") $(tail -3 "$dir/guest.log")"
+"$bin" "$rom" --join "ws://127.0.0.1:$port" --frames 30000 --until-session $ticks $guest_keys >"$dir/guest.json" 2>"$dir/guest.log" || fail "the client failed: $(cat "$dir/guest.json") $(tail -3 "$dir/guest.log")"
 wait "$host" || fail "the host failed: $(cat "$dir/host.json") $(tail -3 "$dir/host.log")"
 h="$(cat "$dir/host.json")"
 g="$(cat "$dir/guest.json")"

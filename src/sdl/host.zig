@@ -100,12 +100,19 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
     std.log.info("assets: {s}, saves: {s}", .{ @tagName(providers.kind), providers.saves_path });
 
     // Network play: the WebSocket transport outlives the backend that holds it.
-    const netplay = (options.providers.network() catch .none) == .netplay;
+    // A client with `--join`; else the native game may host (its menu's NETWORK PLAY), when it
+    // has game data (a game without has no game to share).
+    const asked = (options.providers.network() catch .none) == .netplay;
+    var netplay = asked or (options.providers.hosts() and providers.kind != .none);
     var net_side: native.cli.Netplay = undefined;
     var net_options: sorz.net.netplay.Options = undefined;
-    if (netplay) {
+    if (netplay) net: {
         const id = providers.dataIdentity() catch |e| {
             std.log.err("cannot read the game data for its identity: {s}", .{@errorName(e)});
+            if (!asked) {
+                netplay = false;
+                break :net;
+            }
             return 1;
         };
         net_options = options.providers.netplayOptions(id);
@@ -116,7 +123,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
         };
         const hex = sorz.net.identity.hex(&id);
         if (net_options.role == .host) {
-            std.log.info("network play: hosting at {s}, serving its page and the game's files; data {s}, build {s}", .{ net_options.address, hex[0..16], sorz.version.build });
+            std.log.info("network play: NETWORK PLAY hosts at {s}, serving its page and the game's files; data {s}, build {s}", .{ net_options.address, hex[0..16], sorz.version.build });
         } else std.log.info("network play: joining {s}; data {s}, build {s}", .{ net_options.address, hex[0..16], sorz.version.build });
     }
     defer if (netplay) net_side.deinit();

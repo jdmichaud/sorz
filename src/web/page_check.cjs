@@ -361,17 +361,12 @@ check('a file with an invalid name is refused with the file named; the game star
   assert.match(state.frame_hash, /^[0-9a-f]{16}$/);
   assert.equal(state.settings.players, 1);
   assert.equal(state.net, null);
-  // A game without its content has no game to join: it wants no network play; a relay's page
-  // gives it its role whenever the relay does.
-  assert.equal(wasm.gp_net_wanted(), 0);
+  // A relay's page gives the game its role whenever the relay does, its content or not.
   assert.equal(wasm.gp_start_netplay(1, 0), 0);
   assert.equal(wasm.gp_frame(), 0);
   const playing = JSON.parse(new TextDecoder().decode(new Uint8Array(memory.buffer, wasm.gp_scratch(), wasm.gp_inspect())));
   assert.equal(playing.net.role, 'host');
   assert.equal(playing.ticks, 4);
-  // Turned away by the relay: it plays alone, and says so (no message drawn without the content).
-  wasm.gp_net_busy();
-  assert.equal(wasm.gp_frame(), 0);
   void error;
 });
 

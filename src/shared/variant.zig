@@ -50,15 +50,20 @@ pub const Start = struct {
     variant: Variant = .original,
 };
 
-/// The game menu's lines.
-pub const MenuLine = enum(u8) { one_player, two_players, options };
+/// The game menu's lines: the cartridge's, and network play's (DESIGN.md 9): the host's NETWORK
+/// PLAY, a client's NAME, JOIN and OBSERVE.
+pub const MenuLine = enum(u8) { one_player, two_players, options, network_play, name, join, observe };
+
+/// What this machine is in network play: none, the host (or one that may host: the native game,
+/// the first page of a server), or a client.
+pub const NetRole = enum(u8) { none, host, client };
 
 /// The rules that a variant may change, each a named function or value with a default (the
 /// cartridge's). The scenes ask them through their turn (scene.Turn.policies), and the game for
 /// its overlays; nothing else knows the variant.
 pub const Policies = struct {
-    /// The game menu's lines, from the top.
-    menuLines: *const fn () []const MenuLine = cartridgeMenu,
+    /// The game menu's lines, from the top, for this machine's part in network play.
+    menuLines: *const fn (role: NetRole) []const MenuLine = cartridgeMenu,
     /// The players that the game menu's 2 PLAYERS puts in the game on this machine: both (the
     /// cartridge's), or this machine's alone, the other player joining from another machine.
     two_players_here: bool = true,
@@ -92,6 +97,7 @@ pub const extended: Config = .{ .graph = &flow.extended, .policies = .{
     .start_opens_settings = true,
     .settings_key = false,
     .settings_rules = true,
+    .menuLines = extendedMenu,
     .characterTaken = neverTaken,
     .duplicate_colours = "duplicate",
 } };
@@ -103,18 +109,30 @@ pub const network: Config = .{ .graph = &flow.network, .policies = .{
     .start_opens_settings = true,
     .settings_key = false,
     .settings_rules = true,
+    .duplicate_colours = "duplicate",
 } };
 
 // --- the policies -------------------------------------------------------------------------------
 
 /// The cartridge's game menu.
-pub fn cartridgeMenu() []const MenuLine {
+pub fn cartridgeMenu(_: NetRole) []const MenuLine {
     return &.{ .one_player, .two_players, .options };
 }
 
-/// One player a machine: 2 PLAYERS plays with the other machine's player, who may join later.
-pub fn networkMenu() []const MenuLine {
-    return &.{ .two_players, .options };
+/// The extended game's: the cartridge's, and NETWORK PLAY on a machine that may host.
+pub fn extendedMenu(role: NetRole) []const MenuLine {
+    return if (role == .host) &.{ .one_player, .two_players, .network_play, .options } else &.{ .one_player, .two_players, .options };
+}
+
+/// One player a machine: the host page's 1 PLAYER and NETWORK PLAY; a client's NAME, JOIN (the
+/// host's game, as its second player) and OBSERVE (watching it). Without a part yet (the page
+/// waiting for its role): 2 PLAYERS, which waits for one.
+pub fn networkMenu(role: NetRole) []const MenuLine {
+    return switch (role) {
+        .host => &.{ .one_player, .network_play, .options },
+        .client => &.{ .name, .join, .observe, .options },
+        .none => &.{ .two_players, .options },
+    };
 }
 
 /// The cartridge's rule: one character a player.
@@ -137,20 +155,23 @@ test "each variant: its graph, its menu, its options' lines, START and the setti
     try testing.expectEqual(Variant.extended, Variant.of(.{}));
 
     const o = &Variant.original.config().policies;
-    try testing.expectEqualSlices(MenuLine, &.{ .one_player, .two_players, .options }, o.menuLines());
+    try testing.expectEqualSlices(MenuLine, &.{ .one_player, .two_players, .options }, o.menuLines(.host));
     try testing.expect(Variant.original.config().graph == &flow.original);
     try testing.expect(o.two_players_here and !o.advanced_settings and !o.start_opens_settings and o.settings_key);
 
     const e = &Variant.extended.config().policies;
-    try testing.expectEqualSlices(MenuLine, &.{ .one_player, .two_players, .options }, e.menuLines());
+    try testing.expectEqualSlices(MenuLine, &.{ .one_player, .two_players, .options }, e.menuLines(.none));
+    try testing.expectEqualSlices(MenuLine, &.{ .one_player, .two_players, .network_play, .options }, e.menuLines(.host));
     try testing.expect(e.advanced_settings and e.start_opens_settings and !e.settings_key);
     try testing.expect(!e.characterTaken(.axel, .axel) and o.characterTaken(.axel, .axel));
     try testing.expectEqualStrings("duplicate", e.duplicate_colours.?);
     try testing.expect(o.duplicate_colours == null);
 
     const n = &Variant.network.config().policies;
-    try testing.expectEqualSlices(MenuLine, &.{ .two_players, .options }, n.menuLines());
+    try testing.expectEqualSlices(MenuLine, &.{ .two_players, .options }, n.menuLines(.none));
+    try testing.expectEqualSlices(MenuLine, &.{ .one_player, .network_play, .options }, n.menuLines(.host));
+    try testing.expectEqualSlices(MenuLine, &.{ .name, .join, .observe, .options }, n.menuLines(.client));
     try testing.expect(!n.two_players_here and n.advanced_settings and n.start_opens_settings and !n.settings_key);
-    try testing.expect(n.characterTaken(.axel, .axel) and n.duplicate_colours == null);
+    try testing.expect(n.characterTaken(.axel, .axel));
     try testing.expect(takenByTheOther(.axel, .axel) and !takenByTheOther(.adam, .axel));
 }

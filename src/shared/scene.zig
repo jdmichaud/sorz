@@ -104,6 +104,23 @@ pub const Lag = enum { none, middle, load };
 
 /// What a scene's tick has: the pads and the setup the screens share; and what it gives: the sounds
 /// it asks for, and what it asks of the pads and the sound's driver.
+/// This machine's part in network play as its menus see it (game.zig gives it).
+pub const Net = struct {
+    role: variant.NetRole = .none,
+    /// The host: its session is open (the network options' START), and whether the two players
+    /// may choose one character there.
+    hosting: bool = false,
+    same_character: bool = false,
+    /// A client: the host takes a player now (JOIN), or an observer (OBSERVE); its player's name
+    /// is given.
+    can_join: bool = false,
+    can_observe: bool = false,
+    named: bool = true,
+    name: [3]u8 = .{ ' ', ' ', ' ' },
+};
+
+pub const NetRequest = enum { network_options, observe, name };
+
 pub const Turn = struct {
     /// The buttons held at this tick, and those newly held (held now, not at the last reading).
     pads: input.Pads = .{},
@@ -121,6 +138,11 @@ pub const Turn = struct {
     /// This machine's settings' rules, which the game menu gives the game it starts where the
     /// variant takes them (`Policies.settings_rules`).
     rules: @import("setup.zig").Rules = .{},
+    /// This machine's part in network play, for its own menus (DESIGN.md 9).
+    net: Net = .{},
+    /// What the game menu asks of this machine (game.zig): the network options (NETWORK PLAY),
+    /// to watch the host's game (OBSERVE), the name entry (NAME).
+    net_request: ?NetRequest = null,
     setup: *Setup,
     /// The variant's rules (variant.zig), which the scenes ask rather than the variant.
     policies: *const variant.Policies = &variant.original.policies,

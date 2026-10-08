@@ -110,4 +110,7 @@ pub const Setup = struct {
     /// The rules of the game under way, outside the original; null: the cartridge's (the
     /// options' lives, three continues, the players' blows landing on each other).
     rules: ?Rules = null,
+    /// Whether the two players may choose one character, the host's network options' (a game of
+    /// NETWORK PLAY); null: the variant's rule.
+    same_character: ?bool = null,
 };

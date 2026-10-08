@@ -48,6 +48,8 @@ pub const Config = struct {
     data: protocol.DataId,
     /// The host's input delay (2 to 6), instead of the one that the round trip gives.
     delay: ?u8 = null,
+    /// The client's player's name, which its hello carries.
+    name: protocol.Name = .{ ' ', ' ', ' ' },
 };
 
 /// The pads that the session keeps on each side, ticks in a ring.
@@ -67,6 +69,8 @@ pub const silence_ns: u64 = 10 * std.time.ns_per_s;
 pub const rejoin_ns: u64 = 5 * std.time.ns_per_s;
 /// The largest stretch of the sound, in parts per million (0.5 %).
 pub const max_stretch_ppm: u32 = 5000;
+/// The ticks an observer has in hand before it starts running the host's.
+pub const observe_cushion = 4;
 
 /// A display tick's time in nanoseconds, for the input delay.
 const tick_ns: u64 = @import("../sound_out.zig").tick_ps / 1000;
@@ -82,6 +86,9 @@ pub const Phase = enum {
     joining,
     /// A session: both games run the same game in lockstep (held while the connection is down).
     playing,
+    /// The client watches the host's game: the host sends its game and each tick's pads, the
+    /// client runs them; no one waits for the client.
+    observing,
     /// The states differed at a check: the session stopped.
     desynced,
     /// Refused: no session can come of this connection.
@@ -131,6 +138,12 @@ pub const Note = union(enum) {
     join_asked: u8,
     /// The host's game changed (`status`).
     status: protocol.Status,
+    /// The client asks to watch the host's game.
+    observe_asked,
+    /// The observer has the host's game (again): its form is `gameForm`, which it loads.
+    observing,
+    /// A player's dropped connection: the seconds before it leaves the game (0: over).
+    away: u8,
     /// The host refused the guest, or was refused.
     refused: protocol.RejectReason,
     /// The states differed at the check before tick `tick`.
@@ -176,6 +189,21 @@ pub const Session = struct {
     random: std.Random.SplitMix64 = .init(0),
     /// When the connection of a session in play dropped (the host gives up `rejoin_ns` later).
     lost_at: ?u64 = null,
+    /// The client's player's name (the host's session, from its hello).
+    peer_name: protocol.Name = .{ ' ', ' ', ' ' },
+    /// The client asked to watch (on both sides, until the host's game comes or it stops).
+    observe_asked: bool = false,
+    /// The host: the ticks of an observer's game sent so far, and the pads still to send (a pair
+    /// a tick, from tick `ticks_first`).
+    ticks_sent: u32 = 0,
+    ticks_first: u32 = 0,
+    ticks_out: [2 * protocol.max_pads]u8 = undefined,
+    ticks_len: u8 = 0,
+    /// The observer: the host's ticks in hand (a pair a tick, in a ring), the count of them,
+    /// and whether it started running them (after `observe_cushion`).
+    seen: [window][2]u8 = undefined,
+    seen_count: u32 = 0,
+    watching: bool = false,
 
     /// The host's game as the guest last heard it, and as the host last said it.
     peer_status: protocol.Status = .{},
@@ -286,12 +314,12 @@ pub const Session = struct {
     }
 
     fn hello(self: *const Session) protocol.Message {
-        return .{ .hello = .{ .build = self.config.build, .data = self.config.data, .session = self.id, .resume_from = self.remote_count } };
+        return .{ .hello = .{ .build = self.config.build, .data = self.config.data, .session = self.id, .resume_from = self.remote_count, .name = self.config.name } };
     }
 
-    /// Whether a session runs (held or not).
+    /// Whether a session runs (held or not), or the client watches the host's game.
     pub fn inSession(self: *const Session) bool {
-        return self.phase == .playing or self.phase == .desynced;
+        return self.phase == .playing or self.phase == .desynced or self.phase == .observing;
     }
 
     // --- the connection --------------------------------------------------------------------
@@ -320,8 +348,13 @@ pub const Session = struct {
         self.join_asked = null;
         self.game_chunks = 0;
         self.clearOutbox();
+        self.observe_asked = false;
         switch (self.phase) {
             .handshake, .lobby, .joining => self.phase = .idle,
+            .observing => {
+                self.phase = .idle;
+                self.note(.{ .ended = .lost });
+            },
             // A peer that said goodbye: its last pads run, then the session ends (`pads`).
             .playing => if (!self.peer_left) {
                 self.lost_at = now_ns;
@@ -384,13 +417,29 @@ pub const Session = struct {
             .status => |s| self.onStatus(s),
             .join => |c| self.onJoin(c),
             .game => |g| self.onGame(g),
+            .observe => |yes| self.onObserve(yes),
+            .ticks => |t| self.onTicks(t),
+            .away => |seconds| blk: {
+                if (self.config.role != .guest or !self.welcomed) break :blk .unexpected;
+                self.note(.{ .away = seconds });
+                break :blk .accepted;
+            },
+            // After its hello, on the same connection.
+            .name => |n| blk: {
+                if (self.config.role != .host) break :blk .unexpected;
+                self.peer_name = n;
+                break :blk .accepted;
+            },
             .bye => |r| blk: {
                 self.note(.{ .left = r });
                 self.close_requested = true;
                 // The ticks whose pads are in still run; then the session is over.
                 if (self.phase == .playing) {
                     self.peer_left = true;
-                } else self.phase = if (self.phase == .ended) .ended else .idle;
+                } else {
+                    if (self.phase == .observing) self.note(.{ .ended = .left });
+                    self.phase = if (self.phase == .ended) .ended else .idle;
+                }
                 break :blk .accepted;
             },
         };
@@ -428,6 +477,7 @@ pub const Session = struct {
             self.note(.{ .refused = r });
             return .refused;
         }
+        self.peer_name = h.name;
         const resumable = h.session != 0 and h.session == self.id and self.phase == .playing and
             h.resume_from <= self.local_count and self.local_count - h.resume_from < window;
         if (resumable) {
@@ -555,7 +605,9 @@ pub const Session = struct {
 
     fn onGame(self: *Session, g: protocol.GameChunk) Verdict {
         if (self.config.role != .guest or !self.welcomed) return .unexpected;
-        if (self.inSession()) return .stale;
+        // An observer takes the host's game again; a player's game comes once.
+        if (g.observe != (self.observe_asked or self.phase == .observing)) return .unexpected;
+        if (!g.observe and self.inSession()) return .stale;
         if (self.game_chunks == 0 or g.session != self.game_id or g.length != self.game_form.len) {
             self.game_chunks = 0;
             self.game_id = g.session;
@@ -569,9 +621,149 @@ pub const Session = struct {
         if (self.game_chunks != all) return .accepted;
         self.game_chunks = 0;
         self.delay = g.delay;
+        if (g.observe) {
+            self.startWatching(g.session);
+            return .accepted;
+        }
         self.startSession(g.session);
         self.note(.joined);
         return .accepted;
+    }
+
+    // --- observers -------------------------------------------------------------------------
+
+    /// The client asks to watch the host's game.
+    pub fn askObserve(self: *Session) void {
+        if (self.config.role != .guest or !self.welcomed or self.phase != .lobby) return;
+        self.observe_asked = true;
+        self.game_chunks = 0;
+        self.send(.{ .observe = true });
+    }
+
+    /// The observer stops watching: back to its own game.
+    pub fn stopObserve(self: *Session) void {
+        if (self.config.role != .guest or !(self.phase == .observing or self.observe_asked)) return;
+        self.observe_asked = false;
+        if (self.phase == .observing or self.phase == .desynced) self.phase = if (self.connected) .lobby else .idle;
+        self.send(.{ .observe = false });
+    }
+
+    fn onObserve(self: *Session, yes: bool) Verdict {
+        if (self.config.role != .host or !self.welcomed) return .unexpected;
+        if (yes) {
+            if (self.phase != .lobby) return .stale;
+            self.observe_asked = true;
+            self.note(.observe_asked);
+        } else {
+            self.observe_asked = false;
+            if (self.phase == .observing) self.phase = .lobby;
+            self.status_sent = null;
+        }
+        return .accepted;
+    }
+
+    /// The host sends the observer its game, `form` (its canonical form now, with its sound: a
+    /// join's), from which the ticks count from 0; again whenever its game changed otherwise than
+    /// by its pads.
+    pub fn beginObserve(self: *Session, form: []const u8, now_ns: u64) void {
+        std.debug.assert(self.config.role == .host and form.len <= protocol.max_state_len);
+        if (!(self.phase == .lobby and self.observe_asked) and self.phase != .observing) return;
+        self.observe_asked = false;
+        self.id = self.newId(now_ns);
+        var offset: u32 = 0;
+        const length: u32 = @intCast(form.len);
+        while (offset < length) : (offset += protocol.chunk_size) {
+            self.send(.{ .game = .{ .session = self.id, .delay = protocol.min_delay, .observe = true, .length = length, .offset = offset, .bytes = form[offset..][0..protocol.chunkLen(length, offset)] } });
+        }
+        self.phase = .observing;
+        self.ticks_sent = 0;
+        self.ticks_first = 0;
+        self.ticks_len = 0;
+    }
+
+    /// The host's game ran a tick with `pads`: the observer gets them (sent in runs).
+    pub fn observed(self: *Session, pads_: input.Pads) void {
+        if (self.config.role != .host or self.phase != .observing) return;
+        if (self.ticks_len == 0) self.ticks_first = self.ticks_sent;
+        self.ticks_out[self.ticks_len] = @bitCast(pads_.pad1);
+        self.ticks_out[self.ticks_len + 1] = @bitCast(pads_.pad2);
+        self.ticks_len += 2;
+        self.ticks_sent += 1;
+        if (self.ticks_len == self.ticks_out.len) self.flushTicks();
+    }
+
+    /// Sends the observer the ticks' pads in hand.
+    pub fn flushTicks(self: *Session) void {
+        if (self.ticks_len == 0) return;
+        self.send(.{ .ticks = .{ .first = self.ticks_first, .pads = self.ticks_out[0..self.ticks_len] } });
+        self.ticks_len = 0;
+    }
+
+    /// The host's state hash before the observer's tick `ticks_sent`, when it is due (every
+    /// `check_interval` ticks of the observer's game).
+    pub fn observerCheckDue(self: *const Session) bool {
+        return self.config.role == .host and self.phase == .observing and self.ticks_sent != 0 and self.ticks_sent % check_interval == 0;
+    }
+
+    pub fn observerHash(self: *Session, hash: u64) void {
+        if (!self.observerCheckDue()) return;
+        self.flushTicks();
+        self.send(.{ .hash = .{ .tick = self.ticks_sent, .hash = hash } });
+    }
+
+    /// The client's player gave its name again: the host hears it (a hello to come carries it).
+    pub fn rename(self: *Session, name: protocol.Name) void {
+        self.config.name = name;
+        if (self.config.role == .guest and self.connected) self.send(.{ .name = name });
+    }
+
+    /// The host says a player's connection is down, the seconds before it leaves the game (0:
+    /// over), to a client that waits for it.
+    pub fn sayAway(self: *Session, seconds: u8) void {
+        if (self.config.role != .host or !self.welcomed) return;
+        self.send(.{ .away = seconds });
+    }
+
+    /// The observer starts from the host's game: its ticks count from 0.
+    fn startWatching(self: *Session, id: u64) void {
+        self.id = id;
+        self.observe_asked = false;
+        self.phase = .observing;
+        self.next = 0;
+        self.seen_count = 0;
+        self.watching = false;
+        self.own = @splat(null);
+        self.theirs = @splat(null);
+        self.snapshots = .{ null, null };
+        self.desync_at = null;
+        self.note(.observing);
+    }
+
+    fn onTicks(self: *Session, t: protocol.Ticks) Verdict {
+        if (self.config.role != .guest or self.phase != .observing) return .unexpected;
+        const count: u32 = @intCast(t.pads.len / 2);
+        if (t.first + count <= self.seen_count) return .duplicate;
+        if (t.first > self.seen_count) return .out_of_order;
+        var i = self.seen_count - t.first;
+        while (i < count) : (i += 1) {
+            const tick_ = t.first + i;
+            if (tick_ >= self.next + window) return .ahead;
+            self.seen[tick_ % window] = .{ t.pads[2 * i], t.pads[2 * i + 1] };
+            self.seen_count = tick_ + 1;
+        }
+        return .accepted;
+    }
+
+    /// The observer's next tick's pads, the host's: none until it has `observe_cushion` in hand,
+    /// then as they come.
+    fn observedPads(self: *Session) ?input.Pads {
+        if (!self.watching) {
+            if (self.seen_count < self.next + observe_cushion) return null;
+            self.watching = true;
+        }
+        if (self.next >= self.seen_count) return null;
+        const pair = self.seen[self.next % window];
+        return .{ .pad1 = @bitCast(pair[0]), .pad2 = @bitCast(pair[1]) };
     }
 
     /// The host's game, which the guest's game loads (after the note `joined`).
@@ -721,6 +913,7 @@ pub const Session = struct {
     /// The pads of the next tick of the session, or null while it must hold. `local` is the local
     /// player's pad now: it becomes the pad of tick `next + delay`, sampled once per tick.
     pub fn pads(self: *Session, local: input.Pad) ?input.Pads {
+        if (self.phase == .observing and self.config.role == .guest) return self.observedPads();
         if (self.phase != .playing) return null;
         const target = self.next + self.delay;
         if (self.local_count == target and self.local_count - self.peer_ack < window - 1) {
@@ -744,6 +937,10 @@ pub const Session = struct {
 
     /// Tick `next` ran with the pads that `pads` gave.
     pub fn ran(self: *Session) void {
+        if (self.phase == .observing) {
+            self.next += 1;
+            return;
+        }
         // The slack: the peer's pads in hand beyond this tick, averaged over about 16.
         const sample: i32 = @as(i32, @intCast(self.remote_count - self.next - 1)) * 256;
         self.slack += @divFloor(sample - self.slack, 16);
@@ -773,7 +970,8 @@ pub const Session = struct {
     /// Whether the state before tick `next` is due for a check.
     pub fn checkDue(self: *const Session) bool {
         const o = self.own[slotOf(self.next)];
-        return self.phase == .playing and self.next != 0 and self.next % check_interval == 0 and
+        const runs = self.phase == .playing or (self.phase == .observing and self.config.role == .guest);
+        return runs and self.next != 0 and self.next % check_interval == 0 and
             (o == null or o.?.hash.tick != self.next);
     }
 
@@ -793,7 +991,8 @@ pub const Session = struct {
         } else self.snapshots[s] = null;
         const h: protocol.Hash = .{ .tick = t, .hash = hash };
         self.own[slotOf(t)] = .{ .hash = h };
-        self.send(.{ .hash = h });
+        // An observer checks against the host's hashes and sends none.
+        if (self.phase != .observing) self.send(.{ .hash = h });
         if (self.theirs[slotOf(t)]) |x| {
             if (x.tick == t) {
                 self.theirs[slotOf(t)] = null;
@@ -806,7 +1005,8 @@ pub const Session = struct {
     fn onHash(self: *Session, h: protocol.Hash) Verdict {
         if (!self.welcomed) return .unexpected;
         if (h.tick == 0 or h.tick % check_interval != 0) return .malformed;
-        if (self.phase != .playing) return if (self.phase == .desynced) .stale else .unexpected;
+        const checks = self.phase == .playing or (self.phase == .observing and self.config.role == .guest);
+        if (!checks) return if (self.phase == .desynced) .stale else .unexpected;
         const slot = slotOf(h.tick);
         if (self.own[slot]) |*o| {
             if (o.hash.tick == h.tick) {
@@ -825,9 +1025,16 @@ pub const Session = struct {
     }
 
     fn mismatch(self: *Session, t: u32) void {
+        const observer = self.phase == .observing;
         self.phase = .desynced;
         self.desync_at = t;
         self.note(.{ .desync = t });
+        // An observer's game stops; the host's goes on, and no form crosses.
+        if (observer) {
+            self.peer_chunks = done_chunks;
+            self.note(.{ .diagnosed = null });
+            return;
+        }
         // Our form of that tick, for the peer's diagnosis. Without it (longer than the protocol
         // carries, or a later check's in its place) there is nothing to compare: chunks that come
         // are not taken, and the note says so.
@@ -960,6 +1167,76 @@ fn formOf(s: TestState, buf: *[canonical.maxSize(TestState)]u8) []const u8 {
 fn hasNote(s: *const Session, comptime tag: std.meta.Tag(Note)) bool {
     for (s.notes.items) |n| if (n == tag) return true;
     return false;
+}
+
+test "an observer: it asks, takes the host's game, then runs its ticks behind; hashes checked" {
+    var host = try testSession(.host, 2);
+    defer host.deinit();
+    var watcher = try Session.init(testing.allocator, .{ .role = .guest, .build = protocol.buildId("test"), .data = @splat(1), .name = "ANN".* }, canonical.diffFn(TestState));
+    defer watcher.deinit();
+    try welcomePair(&host, &watcher);
+    try testing.expectEqualSlices(u8, "ANN", &host.peer_name);
+    // Its name given again reaches the host on the same connection.
+    watcher.rename("ZED".*);
+    try testing.expectEqual(Verdict.accepted, pump(&watcher, &host, 0));
+    try testing.expectEqualSlices(u8, "ZED", &host.peer_name);
+    watcher.askObserve();
+    try testing.expectEqual(Verdict.accepted, pump(&watcher, &host, 0));
+    try testing.expect(hasNote(&host, .observe_asked));
+    var buf: [canonical.maxSize(TestState)]u8 = undefined;
+    host.beginObserve(formOf(.{ .x = 7 }, &buf), 5);
+    _ = pump(&host, &watcher, 0);
+    try testing.expect(watcher.phase == .observing and watcher.inSession() and hasNote(&watcher, .observing));
+    try testing.expectEqualSlices(u8, formOf(.{ .x = 7 }, &buf), watcher.gameForm());
+    // The host runs 40 ticks; the observer, nothing in hand, holds; then, past its cushion, runs
+    // them in order, the host's pads.
+    try testing.expect(watcher.pads(.{}) == null);
+    for (0..40) |t| {
+        if (host.observerCheckDue()) host.observerHash(1000 + t);
+        host.observed(.{ .pad1 = @bitCast(@as(u8, @intCast(t))), .pad2 = @bitCast(@as(u8, @intCast(t + 100))) });
+    }
+    host.flushTicks();
+    _ = pump(&host, &watcher, 0);
+    try testing.expectEqual(@as(u32, 40), watcher.seen_count);
+    for (0..40) |t| {
+        if (watcher.checkDue()) watcher.check(1000 + t, formOf(.{}, &buf));
+        const got = watcher.pads(.{ .a = true }) orelse return error.Held;
+        try testing.expectEqual(@as(u8, @intCast(t)), @as(u8, @bitCast(got.pad1)));
+        try testing.expectEqual(@as(u8, @intCast(t + 100)), @as(u8, @bitCast(got.pad2)));
+        watcher.ran();
+    }
+    try testing.expect(watcher.phase == .observing and watcher.pads(.{}) == null);
+    // The observer stops: the host sends no more ticks.
+    watcher.stopObserve();
+    _ = pump(&watcher, &host, 0);
+    try testing.expect(host.phase == .lobby and watcher.phase == .lobby);
+    host.observed(.{});
+    try testing.expectEqual(@as(usize, 0), host.outbox.items.len);
+}
+
+test "an observer whose hash differs from the host's stops, and the host goes on" {
+    var host = try testSession(.host, 2);
+    defer host.deinit();
+    var watcher = try testSession(.guest, null);
+    defer watcher.deinit();
+    try welcomePair(&host, &watcher);
+    watcher.askObserve();
+    _ = pump(&watcher, &host, 0);
+    var buf: [canonical.maxSize(TestState)]u8 = undefined;
+    host.beginObserve(formOf(.{}, &buf), 5);
+    for (0..31) |_| {
+        if (host.observerCheckDue()) host.observerHash(1);
+        host.observed(.{});
+    }
+    host.flushTicks();
+    _ = pump(&host, &watcher, 0);
+    for (0..30) |_| {
+        _ = watcher.pads(.{}) orelse return error.Held;
+        watcher.ran();
+    }
+    watcher.check(2, formOf(.{}, &buf));
+    try testing.expect(watcher.phase == .desynced and hasNote(&watcher, .desync));
+    try testing.expectEqual(Phase.observing, host.phase);
 }
 
 test "the handshake: the round trip picks the delay; welcomed, each plays its own game" {

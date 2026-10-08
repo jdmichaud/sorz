@@ -23,8 +23,9 @@
 //      which come first; then the game runs.
 //   flow (with --content): the page of a relay that serves the whole content tree, one tick per
 //      update: the network variant's own front end (DESIGN.md 10.7): START on the intro and the
-//      title, its game menu 2 PLAYERS and OPTIONS; OPTIONS' ADVANCED SETTINGS opens the settings
-//      (one player's), the game held, and Escape saves and leaves; F1 is the browser's.
+//      title, its game menu a host's (the relay's first page): 1 PLAYER, NETWORK PLAY and OPTIONS;
+//      OPTIONS' ADVANCED SETTINGS opens the settings (one player's), the game held, and Escape
+//      saves and leaves; F1 is the browser's.
 //   steps: one tick per update from the game's first, N ticks: the canvas's pixels and the
 //      frame's hash at the ticks the agent host wrote pictures of must equal the agent host's, and
 //      so must the state's hash and the frame's hash at the end, and every block of sound the game
@@ -40,14 +41,14 @@
 //   input: Start pressed through the keyboard (P, the record's), then through a gamepad, against
 //      the agent host pressing Enter (its default) at the same ticks.
 //   netplay (with --content): the agent host hosts (`--netplay`) and serves the page and the whole
-//      content tree; its player chooses 2 PLAYERS and Axel and plays round 1 alone. The page,
-//      opened at the host's address, is its guest: its player chooses 2 PLAYERS, a character on its
-//      own select (Axel taken), and joins the host's game mid-round. One tick per update, the two
-//      games' states must be the same at the session's tick 600, both in the round with two
-//      players.
+//      content tree; its player chooses NETWORK PLAY (the network options' START), Axel, and plays
+//      round 1 alone. The page, opened at the host's address, is its client: its player gives its
+//      name, chooses JOIN, a character on its own select (Axel taken), and joins the host's game
+//      mid-round. One tick per update, the two games' states must be the same at the session's
+//      tick 600, both in the round with two players.
 //   relay (with --content): two pages of the relay (`sorz-server DIR --server`), in two Chromiums
 //      with their own profiles, each on the relay as it loads: the first is the host (player 1)
-//      and plays round 1 alone; the second, its client, chooses 2 PLAYERS later, its character on
+//      and plays round 1 alone; the second, its client, chooses JOIN later, its character on
 //      its own select, and joins the first's game mid-round: one tick per update, the same state at
 //      the session's tick 600. Then the relay's rules, in real time: a third page is a client too,
 //      and the three play on; the guest leaves, and the host plays on without player 2, told so;
@@ -304,13 +305,50 @@ async function holdAt(pages, i, key, at, held = 3) {
   await pages[i].send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
 }
 
-// A page's front end, one tick per update: START on the intro and on the title, then the game
-// menu's 2 PLAYERS (its first line): the character select. The agent host's keys for the same.
-const frontEnd = [[500, 'enter'], [560, 'enter'], [640, 'enter']];
-const agentFrontEnd = frontEnd.map(([t, k]) => `${t}:${k}:3`);
+// Steps manual pages, one update each at a time, until `cond` (an expression of `s`, page i's
+// `sorz.inspect()`) holds (`limit` real seconds at most): through a hold too, where no tick runs
+// (a screen of this machine's, whose fades count real time).
+async function stepUntilState(pages, i, cond, limit = 60) {
+  const began = Date.now();
+  while (!await pages[i].evaluate(`(() => { const s = sorz.inspect(); return ${cond}; })()`)) {
+    if (Date.now() - began > limit * 1000) throw new Error(`the page did not get to ${cond}: ` + JSON.stringify(await pages[i].evaluate('sorz.inspect()')));
+    for (const p of pages) await p.evaluate('sorz.step(1)');
+    await sleep(5);
+  }
+}
 
-async function toSelect(pages, i) {
-  for (const [t, k] of frontEnd) await holdAt(pages, i, keyEvents[k], t);
+// A manual page's key held now for `held` updates of every page.
+async function press(pages, i, key, held = 3) {
+  await pages[i].send('Input.dispatchKeyEvent', { type: 'keyDown', ...key });
+  for (let n = 0; n < held; n++) for (const p of pages) await p.evaluate('sorz.step(1)');
+  await pages[i].send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+}
+
+// A host's page, one tick per update: START on the intro and on the title, then the game menu's
+// NETWORK PLAY (down, A) and the network options' START: the session opens, and its player goes to
+// the character select alone, where it chooses Axel (right, A). The agent host's keys for the
+// same, by update (the network options hold the game a while: the updates of their fades).
+async function hostNetworkPlay(pages, i) {
+  for (const [t, k] of [[500, 'enter'], [560, 'enter'], [620, 'down'], [640, 'z']]) await holdAt(pages, i, keyEvents[k], t);
+  await stepUntilState(pages, i, `s.modal === 'net_options'`);
+  await press(pages, i, keyEvents.enter);
+  await stepUntilState(pages, i, `s.modal === '' && s.scene === 'select'`);
+  await holdAt(pages, i, keyEvents.right, 860);
+  await holdAt(pages, i, keyEvents.z, 880);
+}
+const agentHostKeys = ['500:enter:3', '560:enter:3', '620:down:3', '640:z:3', '800:enter:3', '1160:right:3', '1180:z:3'];
+
+// A client's page, one tick per update: START on the intro and on the title; its name entry opens
+// over its menu (a profile of its own has none), and START keeps it; then the menu's JOIN, where
+// its arrow is once the host takes a player: its character select.
+async function clientJoins(pages, i) {
+  await holdAt(pages, i, keyEvents.enter, 500);
+  await holdAt(pages, i, keyEvents.enter, 560);
+  await stepUntilState(pages, i, `s.modal === 'name_entry'`);
+  await press(pages, i, keyEvents.enter);
+  await stepUntilState(pages, i, `s.modal === '' && s.menu_at === 'join'`);
+  await holdAt(pages, i, keyEvents.z, await pages[i].evaluate('sorz.inspect().ticks') + 80);
+  await stepUntilState(pages, i, `s.scene === 'select'`);
 }
 
 // A port on 127.0.0.1 that no one listens on now.
@@ -327,15 +365,16 @@ function freePort() {
 
 // --- network play with the agent host ----------------------------------------------------------
 
-// The agent host (player 1, `--netplay`) serves the page and the whole content tree at its port;
-// its player chooses 2 PLAYERS and Axel and plays round 1 alone. A new tab opens the page, the
-// host's guest: one tick per update, its player chooses 2 PLAYERS at its own pace, then a
-// character on its own select once the host plays (Axel taken: the cursor starts on Adam), and
-// joins the host's game mid-round. At the session's tick 600 both stop: the same state.
+// The agent host (player 1, `--netplay`) serves the page and the whole content tree at its port
+// once its session opens; its player chooses NETWORK PLAY, START, Axel and plays round 1 alone. A
+// new tab opens the page, the host's client: one tick per update, its player gives its name and
+// chooses JOIN at its own pace, then a character on its own select once the host plays (Axel
+// taken: the cursor starts on Adam), and joins the host's game mid-round. At the session's tick
+// 600 both stop: the same state.
 async function netplaySession(browser) {
   const ticks = 600;
   const port = await freePort();
-  const hostKeys = [...agentFrontEnd, '860:right:3', '880:z:3', '1500:right:60', '1700:x:3'];
+  const hostKeys = [...agentHostKeys, '1800:right:60', '2000:x:3'];
   const host = spawn(options.agent, [options.content, '--netplay', `127.0.0.1:${port}`, '--delay', '3',
     '--frames', '200000', '--until-session', String(ticks), ...hostKeys.flatMap((k) => ['--key', k])], { stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
@@ -353,7 +392,7 @@ async function netplaySession(browser) {
     const mode = await page.evaluate('sorz.netMode');
     const began = Date.now();
     const pages = [page];
-    await toSelect(pages, 0);
+    await clientJoins(pages, 0);
     // Its own select, the host's game in play by then: Adam (the cursor's first, Axel taken).
     await stepUntil(pages, (t) => t[0] >= 1300, { stride: 10 });
     const select = await page.evaluate('sorz.inspect()');
@@ -421,9 +460,9 @@ async function advancing(pages) {
 }
 
 // Two pages through the relay, the whole content tree. Each connects to the relay as it loads: the
-// first is the host, the second its client. The first page's player chooses 2 PLAYERS and Axel
-// and plays round 1 alone; the second's chooses 2 PLAYERS later (the guest), and a character on
-// its own select once the host plays: it joins the host's game mid-round. One tick per update, the
+// first is the host, the second its client. The first page's player chooses NETWORK PLAY, START,
+// Axel and plays round 1 alone; the second's gives its name and chooses JOIN later, and a
+// character on its own select once the host plays: it joins the host's game mid-round. One tick per update, the
 // same state at the session's tick 600. Then in real time: a third page is a client too, and the
 // three play on; the guest leaves, and the host plays on without player 2; the host leaves, and
 // the third hosts once it has connected again. The host's page is in `browser`, the guest's in a
@@ -443,17 +482,15 @@ async function relayCheck(browser, chromium, profile) {
     const mode = await host.evaluate('sorz.netMode');
     const both = [host, guest];
     const began = Date.now();
-    // The host's player: 2 PLAYERS, Axel, round 1 alone; the guest's page has not started its
-    // game's front end yet (a page with no network play steps no message: it waits unstepped).
+    // The host's player: NETWORK PLAY, Axel, round 1 alone; the guest's page has not started its
+    // game's front end yet (it waits unstepped: its connection's messages wait for its updates).
     const first = [host];
-    await toSelect(first, 0);
-    await holdAt(first, 0, keyEvents.right, 860);
-    await holdAt(first, 0, keyEvents.z, 880);
+    await hostNetworkPlay(first, 0);
     const hostRole = await host.evaluate('sorz.relayState');
     await stepUntil(first, (t) => t[0] >= 1800, { stride: 10 });
     const alone = await host.evaluate('sorz.inspect()');
-    // The guest's player: 2 PLAYERS, then Adam on its own select, the host playing.
-    await toSelect(both, 1);
+    // The guest's player: its name, JOIN, then Adam on its own select, the host playing.
+    await clientJoins(both, 1);
     await stepUntil(both, (t, i) => i !== 1 || t[0] >= 1300, { stride: 10 });
     const guestRole = await guest.evaluate('sorz.relayState');
     await holdAt(both, 1, keyEvents.z, 1300);
@@ -483,7 +520,7 @@ async function relayCheck(browser, chromium, profile) {
     // The guest leaves: the host waits a few seconds for it, then plays on without player 2.
     await guest.close();
     pages.splice(pages.indexOf(guest), 1);
-    await host.waitFor(`sorz.inspect().message.startsWith('PLAYER 2 CANNOT BE REACHED')`, 10000, 'the host to wait for its guest');
+    await host.waitFor(`sorz.inspect().message.startsWith('PLAYER 2 DISCONNECTED')`, 10000, 'the host to wait for its guest');
     await host.waitFor(`sorz.inspect().message === 'PLAYER 2 LEFT'`, 15000, 'the host to give its guest up');
     const hostAlone = await host.evaluate('sorz.inspect()');
     if (options.keep) await host.screenshot(path.join(options.keep, 'page-guest-left.png'));
@@ -522,7 +559,7 @@ function multiple(view) {
 const buttons = { a: 'x', b: 'a', c: 'b', start: 'start' };
 const noKeys = { up: 'none', down: 'none', left: 'none', right: 'none', a: 'none', b: 'none', c: 'none', start: 'none' };
 const keptRecord = JSON.stringify({
-  version: 3,
+  version: 4,
   players: {
     player1: { input: 'gamepad 1', keys: { up: 'up', down: 'down', left: 'left', right: 'right', a: 'z', b: 'x', c: 'c', start: 'p' }, autofire: false },
     player2: { input: 'keyboard', keys: { up: 'w', down: 's', left: 'a', right: 'd', a: 'f', b: 'g', c: 'h', start: 'tab' }, autofire: false },
@@ -534,6 +571,7 @@ const keptRecord = JSON.stringify({
   sound: { volume: 30, mute: false },
   window: { scale: 1, fullscreen: false },
   rules: { lives: 3, continues: 3, friendly_hit: true },
+  name: 'BOB',
 }, null, 2);
 
 // Part `settings`: the record kept before the page loads is the game's at the start, and the page
@@ -643,9 +681,10 @@ async function flowCheck(browser) {
     await stepUntil(pages, (t) => t[0] >= 720, { stride: 10 });
     const inMenu = await page.evaluate('sorz.inspect()');
     if (options.keep) await page.screenshot(path.join(options.keep, 'page-flow-game-menu.png'));
-    // OPTIONS (down, a choice), then up twice to ADVANCED SETTINGS (a tick after each move), A.
-    await holdAt(pages, 0, keyEvents.down, 720, 2);
-    await holdAt(pages, 0, keyEvents.enter, 730, 2);
+    // OPTIONS (down to it, a choice), then up twice to ADVANCED SETTINGS (a tick after each move), A.
+    for (let at = 720; at < 760 && (await page.evaluate('sorz.inspect().menu_at')) !== 'options'; at += 8) await holdAt(pages, 0, keyEvents.down, at, 2);
+    const onOptions = await page.evaluate('sorz.inspect().menu_at');
+    await holdAt(pages, 0, keyEvents.enter, (await page.evaluate('sorz.inspect().ticks')) + 4, 2);
     await stepUntil(pages, (t) => t[0] >= 900, { stride: 10 });
     const inOptions = await page.evaluate('sorz.inspect()');
     await holdAt(pages, 0, keyEvents.up, 900, 2);
@@ -673,12 +712,12 @@ async function flowCheck(browser) {
     await page.evaluate('sorz.step(5)');
     const after = await page.evaluate('sorz.inspect()');
     const errors = page.console.filter((m) => m.type === 'error' || m.type === 'exception');
-    const pass = inMenu.variant === 'network' && inMenu.scene === 'menu' && inMenu.menu === 'two_players,options' &&
+    const pass = inMenu.variant === 'network' && inMenu.scene === 'menu' && inMenu.menu === 'one_player,network_play,options' &&
       inOptions.scene === 'options' && held.settings_open && still.ticks === held.ticks && settingsTitle > 20 &&
       held.settings.players === 1 && !after.settings_open && after.ticks > still.ticks && after.scene === 'options' &&
       after.saves_written === held.saves_written + 1 && errors.length === 0;
     return [pass, {
-      game: { variant: inMenu.variant, scene: inMenu.scene, menu: inMenu.menu, ticks: inMenu.ticks },
+      game: { variant: inMenu.variant, scene: inMenu.scene, menu: inMenu.menu, ticks: inMenu.ticks, chose: onOptions },
       options: inOptions.scene,
       settings: { open: held.settings_open, held: still.ticks === held.ticks, title: settingsTitle, players: held.settings.players },
       after: { settings_open: after.settings_open, scene: after.scene, saves: after.saves_written },

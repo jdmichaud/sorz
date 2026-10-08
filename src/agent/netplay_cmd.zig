@@ -3,9 +3,10 @@
 //! or a page) play together: `sorz-agent [DIR] --netplay [ADDRESS:]PORT` or `--join
 //! ws://ADDRESS:PORT`. Each game plays its own front end with its keys (pad 1's on both machines:
 //! the arrows, Z, X, C, Enter), pressed by update (`--key F:NAME:H` holds the key from update F, H
-//! updates); the guest's player's 2 PLAYERS and its character join the host's game. The virtual
-//! clock advances a tick's time per update; an update whose game holds waits a millisecond of real
-//! time for the peer and advances the clock as much. The run ends after `--frames` updates, or once
+//! updates); the guest's player's JOIN and its character join the host's game. The virtual clock
+//! advances a tick's time per update, its own screens open too (their fades count time); an update
+//! whose game holds for the peer waits a millisecond of real time and advances the clock as much.
+//! The run ends after `--frames` updates, or once
 //! the session ran `--until-session` ticks; it prints the game's hashes, its network play, and its
 //! sound since the session began (its frames' hash, their number and their peak): two machines in
 //! a session play the same sound from its first tick, the guest's carried over at the join.
@@ -57,7 +58,7 @@ pub fn writeGame(w: *std.Io.Writer, label: []const u8, game: *const sorz.Game) !
     try w.print("\"{s}\":{{\"ticks\":{d},\"updates\":{d},\"state_hash\":\"{x:0>16}\"", .{ label, game.state.tick, game.update_count, game.stateHash() });
     try w.print(",\"variant\":\"{s}\",\"scene\":\"{s}\",\"players\":\"{s}\"", .{ @tagName(game.state.start.variant), @tagName(std.meta.activeTag(game.state.scenes.base)), @tagName(game.state.setup.players) });
     if (game.netplay) |n| {
-        try w.print(",\"phase\":\"{s}\",\"delay\":{d},\"sessions\":{d},\"session_tick\":{d}", .{ @tagName(n.phase()), n.session.delay, n.sessions, n.tick() });
+        try w.print(",\"phase\":\"{s}\",\"delay\":{d},\"sessions\":{d},\"session_tick\":{d}", .{ @tagName(n.phase()), n.delay(), n.sessions, n.tick() });
         if (n.difference) |d| try w.print(",\"difference\":\"{f}\"", .{d});
     }
     try w.writeAll("}");
@@ -115,7 +116,9 @@ pub fn process(
         const np = game.netplay orelse break;
         if (np.phase() == .ended or (np.phase() == .desynced and np.difference != null)) break;
         const now = std.Io.Clock.awake.now(io).toNanoseconds();
-        if (game.state.tick != last_tick) {
+        if (game.state.tick != last_tick or game.settingsOpen() or game.modalOpen()) {
+            // A tick ran, or this machine's own screen holds the game (the settings, network
+            // play's screens): a tick's time an update, as the game would run.
             last_tick = game.state.tick;
             last_progress = now;
             backend.advance(frame_ns);

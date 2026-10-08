@@ -12,7 +12,7 @@
 //! every field, in a fixed order, so that a player can read and edit it:
 //!
 //!     {
-//!       "version": 3,
+//!       "version": 4,
 //!       "players": {
 //!         "player1": { "input": "gamepad 1", "keys": { "up": "up", ..., "start": "enter" }, "autofire": false },
 //!         "player2": { "input": "keyboard", "keys": { "up": "w", ... }, "autofire": false },
@@ -26,12 +26,14 @@
 //!       "settings_key": "f1",
 //!       "sound": { "volume": 100, "mute": false },
 //!       "window": { "scale": 3, "fullscreen": false },
-//!       "rules": { "lives": 3, "continues": 3, "friendly_hit": true }
+//!       "rules": { "lives": 3, "continues": 3, "friendly_hit": true },
+//!       "name": "BOB"
 //!     }
 //!
 //! Keys are named as `platform.Key` names them (the agent host's `--key` names), "none" for no key,
 //! gamepad buttons as `platform.ControllerButton` does; a gamepad's model and name are printable
-//! ASCII (input.zig `Text`).
+//! ASCII (input.zig `Text`). `name` is this machine's player's in network play (DESIGN.md 9):
+//! three letters or digits, or empty before one is given.
 //!
 //! A record of another version (an older game's) is not read: `load` writes the defaults over it,
 //! and nothing is told (the user, 2026-10-08).
@@ -50,7 +52,7 @@ const input = @import("../input.zig");
 const Rules = @import("../setup.zig").Rules;
 
 /// The record's version: a record of another version is refused.
-pub const version: i64 = 3;
+pub const version: i64 = 4;
 /// The record's name in the storage, and the name a damaged record is kept under.
 pub const name = "settings.json";
 pub const damaged_name = "settings-damaged.json";
@@ -72,6 +74,13 @@ pub const Settings = struct {
     window: Window = .{},
     /// The game's rules outside the original.
     rules: Rules = .{},
+    /// This machine's player's name in network play (spaces: none yet).
+    name: [3]u8 = .{ ' ', ' ', ' ' },
+
+    /// Whether the player gave a name.
+    pub fn named(self: *const Settings) bool {
+        return self.name[0] != ' ';
+    }
 
     pub const Sound = struct {
         /// 0 to 100, in percent of the game's own level.
@@ -235,7 +244,7 @@ pub fn parse(gpa: std.mem.Allocator, bytes: []const u8, report: *Report) Setting
     }
     var s: Settings = .{};
     const r: Reader = .{ .report = report };
-    r.unknown(root, &.{ "version", "players", "gamepads", "settings_key", "sound", "window", "rules" }, "");
+    r.unknown(root, &.{ "version", "players", "gamepads", "settings_key", "sound", "window", "rules", "name" }, "");
 
     // The gamepads known, then the players (a player's gamepad among them), then one key for one
     // setting.
@@ -307,7 +316,19 @@ pub fn parse(gpa: std.mem.Allocator, bytes: []const u8, report: *Report) Setting
         if (r.integer(o, "continues", "rules.continues", 0, max_continues)) |n| s.rules.continues = @intCast(n);
         if (r.boolean(o, "friendly_hit", "rules.friendly_hit")) |b| s.rules.friendly_hit = b;
     }
+    if (r.get(root, "name", "name")) |got| {
+        if (nameOf(got)) |n| s.name = n else report.add("name", "not three letters or digits, or empty");
+    }
     return s;
+}
+
+/// A name of the record: three letters or digits, or empty (none).
+fn nameOf(v: Value) ?[3]u8 {
+    if (v != .string) return null;
+    if (v.string.len == 0) return .{ ' ', ' ', ' ' };
+    if (v.string.len != 3) return null;
+    for (v.string) |ch| if (!(std.ascii.isUpper(ch) or std.ascii.isDigit(ch))) return null;
+    return v.string[0..3].*;
 }
 
 const player_names = [_][]const u8{ "player1", "player2", "player3", "player4" };
@@ -484,7 +505,8 @@ pub fn write(s: *const Settings, w: *std.Io.Writer) std.Io.Writer.Error!void {
     try w.print("  \"settings_key\": \"{s}\",\n", .{keyName(s.settings_key)});
     try w.print("  \"sound\": {{ \"volume\": {d}, \"mute\": {} }},\n", .{ s.sound.volume, s.sound.mute });
     try w.print("  \"window\": {{ \"scale\": {d}, \"fullscreen\": {} }},\n", .{ s.window.scale, s.window.fullscreen });
-    try w.print("  \"rules\": {{ \"lives\": {d}, \"continues\": {d}, \"friendly_hit\": {} }}\n}}\n", .{ s.rules.lives, s.rules.continues, s.rules.friendly_hit });
+    try w.print("  \"rules\": {{ \"lives\": {d}, \"continues\": {d}, \"friendly_hit\": {} }},\n", .{ s.rules.lives, s.rules.continues, s.rules.friendly_hit });
+    try w.print("  \"name\": \"{s}\"\n}}\n", .{if (s.named()) &s.name else ""});
 }
 
 fn keyName(k: platform.Key) []const u8 {
@@ -587,6 +609,7 @@ test "the record round-trips, and the defaults are the input's" {
     s.sound = .{ .volume = 40, .mute = true };
     s.window = .{ .scale = 5, .fullscreen = true };
     s.rules = .{ .lives = 9, .continues = 0, .friendly_hit = false };
+    s.name = "ZO9".*;
     const text = encode(&s, &buf);
     const back = reread(text, &report);
     try testing.expect(report.ok());
@@ -618,7 +641,7 @@ test "the record round-trips, and the defaults are the input's" {
 test "a damaged field gives its default and the rest is kept" {
     var report: Report = .{};
     const s = reread(
-        \\{ "version": 3,
+        \\{ "version": 4,
         \\  "players": {
         \\    "player1": { "input": "gamepad 7", "keys": { "up": "i", "down": "k", "left": "j", "right": "l", "a": "q", "b": "e", "c": "r", "start": 7 }, "autofire": true },
         \\    "player2": { "input": "gamepad 2", "keys": { "up": "w", "down": "s", "left": "a", "right": "d", "a": "f", "b": "g", "c": "h", "start": "tab" }, "autofire": false },
@@ -631,6 +654,7 @@ test "a damaged field gives its default and the rest is kept" {
         \\  "sound": { "volume": "loud", "mute": true },
         \\  "window": { "scale": 2, "fullscreen": "yes", "colour": 1 },
         \\  "rules": { "lives": 0, "continues": 5, "friendly_hit": false },
+        \\  "name": "BOB",
         \\  "extra": [] }
     , &report);
     const p1 = s.layout.players[0];
@@ -652,6 +676,7 @@ test "a damaged field gives its default and the rest is kept" {
         "players.player1.input: a gamepad not among the gamepads; players.player1.keys.start: not the name of a key, or none (escape is the game's); " ++
         "sound.volume: not a whole number from 0 to 100; window: a field the game does not know; window.fullscreen: not true or false; " ++
         "rules.lives: not a whole number from 1 to 9", w.buffered());
+    try testing.expectEqualSlices(u8, "BOB", &s.name);
 }
 
 test "damaged records give the defaults" {
@@ -659,13 +684,13 @@ test "damaged records give the defaults" {
     const defaults: Settings = .{};
     for ([_]struct { []const u8, Report.Refusal }{
         .{ "", .not_json },
-        .{ "{\"version\": 3, \"players\": ", .not_json },
+        .{ "{\"version\": 4, \"players\": ", .not_json },
         .{ "\x00\xff garbage", .not_json },
-        .{ "{\"version\": 3, \"version\": 3}", .not_json },
+        .{ "{\"version\": 4, \"version\": 4}", .not_json },
         .{ "[1, 2]", .not_an_object },
         .{ "{}", .other_version },
         .{ "{\"version\": 2}", .other_version },
-        .{ "{\"version\": \"3\"}", .other_version },
+        .{ "{\"version\": \"4\"}", .other_version },
     }) |case| {
         try testing.expectEqual(defaults, reread(case[0], &report));
         try testing.expectEqual(case[1], report.refused.?);
@@ -677,8 +702,8 @@ test "damaged records give the defaults" {
     try testing.expectEqual(Report.Refusal.too_long, report.refused.?);
 
     // A version alone: every group is missing, and named.
-    try testing.expectEqual(defaults, reread("{\"version\": 3}", &report));
-    try testing.expectEqual(@as(usize, 6), report.field_count);
+    try testing.expectEqual(defaults, reread("{\"version\": 4}", &report));
+    try testing.expectEqual(@as(usize, 7), report.field_count);
     try testing.expectEqualStrings("gamepads", report.fields[0].path);
     try testing.expectEqualStrings("missing", report.fields[0].why);
 }
@@ -765,7 +790,7 @@ test "load: nothing kept, a record kept, a damaged one repaired once and kept as
     try testing.expect(got.found and !got.damaged());
     try testing.expectEqual(s, got.settings);
 
-    const damaged = "{\"version\": 3, \"players\": 3, \"gamepads\": [], \"settings_key\": \"f1\", \"sound\": {\"volume\": 20, \"mute\": false}, \"window\": {\"scale\": 0, \"fullscreen\": true}, \"rules\": {}}";
+    const damaged = "{\"version\": 4, \"players\": 3, \"gamepads\": [], \"settings_key\": \"f1\", \"sound\": {\"volume\": 20, \"mute\": false}, \"window\": {\"scale\": 0, \"fullscreen\": true}, \"rules\": {}}";
     try storage.save(name, damaged);
     got = load(testing.allocator, storage);
     try testing.expect(got.damaged() and !got.repair_failed);

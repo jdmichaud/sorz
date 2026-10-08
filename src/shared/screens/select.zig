@@ -423,7 +423,7 @@ pub const Select = struct {
         var to = next(from, pressed.right);
         // A character the variant's rule says is taken (the other player's, in the cartridge), or
         // another machine's player's.
-        if (self.players == .two and turn.policies.characterTaken(self.cursors[1 - i].place, to)) to = next(to, pressed.right);
+        if (self.players == .two and taken(turn, self.cursors[1 - i].place, to)) to = next(to, pressed.right);
         if (turn.taken == to) to = next(to, pressed.right);
         c.place = to;
         // A portrait the other player's cursor stays on stays lit (when the variant lets both
@@ -438,6 +438,13 @@ pub const Select = struct {
     }
 
     /// Whether a second player may come to this select: one plays it, and it has not ended.
+    /// Whether `wanted` is taken for a player, the other's cursor on `other`: by the host's
+    /// network options in a game of NETWORK PLAY, else by the variant's rule.
+    fn taken(turn: *const scene.Turn, other: Character, wanted: Character) bool {
+        if (turn.setup.same_character) |same| return !same and other == wanted;
+        return turn.policies.characterTaken(other, wanted);
+    }
+
     pub fn joinable(self: *const Select) bool {
         return self.players == .one and switch (self.phase) {
             .setup, .placing, .fade_in, .first_half, .second_half => true,

@@ -1,12 +1,13 @@
-//! The messages of the netplay session (DESIGN.md 9), version 3: one message per transport message,
+//! The messages of the netplay session (DESIGN.md 9), version 4: one message per transport message,
 //! its first byte its kind, then fixed fields in little-endian order. Decoding is strict: an
 //! unknown kind, a wrong length or a field out of its range is `Malformed`, and nothing is
 //! half-read.
 //!
 //! | kind          | fields                                                       | bytes        |
 //! |---------------|--------------------------------------------------------------|--------------|
-//! | 1 hello       | magic "SZNP", protocol u16, build [32], data [32], session    | 83           |
-//! |               | u64 (0: none), resume_from u32 (host pads needed from)       |              |
+//! | 1 hello       | magic "SZNP", protocol u16, build [32], data [32], session    | 86           |
+//! |               | u64 (0: none), resume_from u32 (host pads needed from), name |              |
+//! |               | [3] (the client's player's, letters)                         |              |
 //! | 2 welcome     | session u64 (0: none to resume), delay u8 (2-6),             | 14           |
 //! |               | resume_from u32                                              |              |
 //! | 3 reject      | reason u8                                                    | 2            |
@@ -17,11 +18,18 @@
 //! | 8 state       | tick u32, length u32, offset u32, chunk of the state's form  | 13 + chunk   |
 //! | 9 bye         | reason u8                                                    | 2            |
 //! | 10 settings   | open u8 (0/1): the sender's player is on the settings screen | 2            |
-//! | 11 status     | game u8 (0 none, 1 select, 2 play), character u8 (player 1's,| 3            |
-//! |               | 0-2, 255 none)                                               |              |
+//! | 11 status     | game u8 (0 none, 1 select, 2 play), character u8 (player 1's,| 4            |
+//! |               | 0-2, 255 none), flags u8 (1 open, 2 a place free, 4          |              |
+//! |               | observers taken, 8 the same character)                       |              |
 //! | 12 join       | character u8 (0-2, 255 none)                                 | 2            |
-//! | 13 game       | session u64, delay u8, length u32, offset u32, chunk of the  | 22 + chunk   |
-//! |               | game's form                                                  |              |
+//! | 13 game       | session u64, delay u8, observe u8 (0/1), length u32, offset  | 23 + chunk   |
+//! |               | u32, chunk of the game's form                                |              |
+//! | 14 observe    | yes u8 (0/1): the client's player watches, or no longer      | 2            |
+//! | 15 ticks      | first u32, count u8 (1-64), pads [2 count] (player 1's then  | 6 + 2 count  |
+//! |               | player 2's, each tick's)                                     |              |
+//! | 16 away       | seconds u8: a player's connection is down, the seconds left  | 2            |
+//! |               | before it leaves the game (0: it is back, or it left)        |              |
+//! | 17 name       | name [3]: the client's player's, given again                 | 4            |
 //!
 //! The guest opens with `hello`; the host answers `welcome` (after pings that measure the round
 //! trip and give the input delay) or `reject`. Welcomed, the two machines play their own games:
@@ -38,9 +46,17 @@
 //! after a mismatch, `state` carries that form so that the peers name the first differing field.
 //! `settings` says that the sender's player opened the settings screen, which holds both games,
 //! or closed it. Characters are numbered as the game's: Adam, Axel, Blaze.
+//!
+//! The host keeps a session for each client (its name in its `hello`, and in `name` when its player
+//! gives it again). `status` also says whether
+//! the host's session is open, whether a player's place is free in it, whether the host takes
+//! observers and whether two players may choose one character. A client that asks to watch
+//! (`observe`) gets the host's game (`game` with `observe`), then each tick's pads (`ticks`) as
+//! the host's game runs them, and the game again whenever it changes otherwise; `away` counts a
+//! player's dropped connection down for those who wait for it.
 const std = @import("std");
 
-pub const version: u16 = 3;
+pub const version: u16 = 4;
 pub const magic = "SZNP";
 
 /// The longest run of pads in one message.
@@ -66,6 +82,10 @@ pub const Kind = enum(u8) {
     status = 11,
     join = 12,
     game = 13,
+    observe = 14,
+    ticks = 15,
+    away = 16,
+    name = 17,
     _,
 };
 
@@ -96,12 +116,16 @@ pub const Build = [32]u8;
 /// The game data's identity (identity.zig).
 pub const DataId = [32]u8;
 
+/// A player's name: three letters.
+pub const Name = [3]u8;
+
 pub const Hello = struct {
     protocol: u16 = version,
     build: Build,
     data: DataId,
     session: u64,
     resume_from: u32,
+    name: Name = .{ ' ', ' ', ' ' },
 };
 
 pub const Welcome = struct {
@@ -120,13 +144,28 @@ pub const characters = 3;
 pub const Status = struct {
     game: Game = .none,
     character: u8 = no_character,
+    /// The host's session is open (NETWORK PLAY's START), a player's place is free in it, it
+    /// takes observers, two players may choose one character.
+    open: bool = false,
+    place: bool = false,
+    observers: bool = false,
+    same_character: bool = false,
 
     pub const Game = enum(u8) { none = 0, select = 1, play = 2 };
+
+    fn flags(s: Status) u8 {
+        return @as(u8, @intFromBool(s.open)) | @as(u8, @intFromBool(s.place)) << 1 | @as(u8, @intFromBool(s.observers)) << 2 | @as(u8, @intFromBool(s.same_character)) << 3;
+    }
 };
 
 /// A chunk of the join's game: the session it starts, with its input delay, and the chunk at
 /// `offset` of the game's form of `length` bytes.
-pub const GameChunk = struct { session: u64, delay: u8, length: u32, offset: u32, bytes: []const u8 };
+/// `observe`: for an observer, whose game runs the host's ticks (`ticks`) rather than lockstep.
+pub const GameChunk = struct { session: u64, delay: u8, observe: bool = false, length: u32, offset: u32, bytes: []const u8 };
+
+/// The pads of the ticks from `first` as the host's game ran them: a pair (player 1's, player
+/// 2's) a tick.
+pub const Ticks = struct { first: u32, pads: []const u8 };
 
 pub const Ping = struct { seq: u32, time_ns: u64 };
 
@@ -156,6 +195,13 @@ pub const Message = union(Kind) {
     /// The guest's player asks to join, as this character (`no_character`: none yet).
     join: u8,
     game: GameChunk,
+    /// The client's player watches the host's game (true), or no longer does.
+    observe: bool,
+    ticks: Ticks,
+    /// The seconds before a player whose connection dropped leaves the game (0: back, or gone).
+    away: u8,
+    /// The client's player's name, given again.
+    name: Name,
 };
 
 pub const DecodeError = error{Malformed};
@@ -225,6 +271,7 @@ pub fn encode(m: Message, out: []u8) []u8 {
             w.bytes(&h.data);
             w.int(u64, h.session);
             w.int(u32, h.resume_from);
+            w.bytes(&h.name);
         },
         .welcome => |h| {
             w.int(u64, h.session);
@@ -234,19 +281,29 @@ pub fn encode(m: Message, out: []u8) []u8 {
         .status => |s| {
             w.byte(@backingInt(s.game));
             w.byte(s.character);
+            w.byte(s.flags());
         },
         .join => |c| w.byte(c),
         .game => |g| {
             std.debug.assert(g.length <= max_state_len and g.offset < g.length and g.bytes.len == chunkLen(g.length, g.offset));
             w.int(u64, g.session);
             w.byte(g.delay);
+            w.byte(@intFromBool(g.observe));
             w.int(u32, g.length);
             w.int(u32, g.offset);
             w.bytes(g.bytes);
         },
         .reject => |r| w.byte(@backingInt(r)),
         .bye => |r| w.byte(@backingInt(r)),
-        .settings => |open| w.byte(@intFromBool(open)),
+        .settings, .observe => |yes| w.byte(@intFromBool(yes)),
+        .away => |seconds| w.byte(seconds),
+        .name => |n| w.bytes(&n),
+        .ticks => |t| {
+            std.debug.assert(t.pads.len >= 2 and t.pads.len <= 2 * max_pads and t.pads.len % 2 == 0);
+            w.int(u32, t.first);
+            w.byte(@intCast(t.pads.len / 2));
+            w.bytes(t.pads);
+        },
         .ping, .pong => |p| {
             w.int(u32, p.seq);
             w.int(u64, p.time_ns);
@@ -288,6 +345,7 @@ pub fn decode(bytes: []const u8) DecodeError!Message {
                 .data = (try r.bytes(32))[0..32].*,
                 .session = try r.int(u64),
                 .resume_from = try r.int(u32),
+                .name = (try r.bytes(3))[0..3].*,
             } };
         },
         .welcome => blk: {
@@ -299,8 +357,16 @@ pub fn decode(bytes: []const u8) DecodeError!Message {
         .status => blk: {
             const game = try r.byte();
             const character = try r.byte();
-            if (game > 2 or !isCharacter(character) or (game == 2) == (character == no_character)) return error.Malformed;
-            break :blk .{ .status = .{ .game = @fromBackingInt(game), .character = character } };
+            const flags = try r.byte();
+            if (game > 2 or !isCharacter(character) or (game == 2) == (character == no_character) or flags > 15) return error.Malformed;
+            break :blk .{ .status = .{
+                .game = @fromBackingInt(game),
+                .character = character,
+                .open = flags & 1 != 0,
+                .place = flags & 2 != 0,
+                .observers = flags & 4 != 0,
+                .same_character = flags & 8 != 0,
+            } };
         },
         .join => blk: {
             const character = try r.byte();
@@ -310,10 +376,11 @@ pub fn decode(bytes: []const u8) DecodeError!Message {
         .game => blk: {
             const session = try r.int(u64);
             const delay = try r.byte();
+            const observe = try r.byte();
             const length = try r.int(u32);
             const offset = try r.int(u32);
-            if (session == 0 or delay < min_delay or delay > max_delay or length == 0 or length > max_state_len or offset >= length or offset % chunk_size != 0) return error.Malformed;
-            break :blk .{ .game = .{ .session = session, .delay = delay, .length = length, .offset = offset, .bytes = try r.bytes(chunkLen(length, offset)) } };
+            if (session == 0 or delay < min_delay or delay > max_delay or observe > 1 or length == 0 or length > max_state_len or offset >= length or offset % chunk_size != 0) return error.Malformed;
+            break :blk .{ .game = .{ .session = session, .delay = delay, .observe = observe == 1, .length = length, .offset = offset, .bytes = try r.bytes(chunkLen(length, offset)) } };
         },
         .reject => blk: {
             const reason: RejectReason = @fromBackingInt(@intCast(try r.byte()));
@@ -325,10 +392,19 @@ pub fn decode(bytes: []const u8) DecodeError!Message {
             if (std.enums.tagName(ByeReason, reason) == null) return error.Malformed;
             break :blk .{ .bye = reason };
         },
-        .settings => blk: {
-            const open = try r.byte();
-            if (open > 1) return error.Malformed;
-            break :blk .{ .settings = open == 1 };
+        .settings, .observe => blk: {
+            const yes = try r.byte();
+            if (yes > 1) return error.Malformed;
+            break :blk if (kind == .settings) .{ .settings = yes == 1 } else .{ .observe = yes == 1 };
+        },
+        .away => .{ .away = try r.byte() },
+        .name => .{ .name = (try r.bytes(3))[0..3].* },
+        .ticks => blk: {
+            const first = try r.int(u32);
+            const count = try r.byte();
+            if (count == 0 or count > max_pads) return error.Malformed;
+            if (@as(u64, first) + count > std.math.maxInt(u32)) return error.Malformed;
+            break :blk .{ .ticks = .{ .first = first, .pads = try r.bytes(2 * @as(usize, count)) } };
         },
         .ping => .{ .ping = .{ .seq = try r.int(u32), .time_ns = try r.int(u64) } },
         .pong => .{ .pong = .{ .seq = try r.int(u32), .time_ns = try r.int(u64) } },
@@ -397,12 +473,18 @@ fn roundTrip(m: Message) !void {
 
 test "every message round trips, and its truncations are malformed" {
     const data: DataId = @splat(171);
-    try roundTrip(.{ .hello = .{ .build = buildId("0.1.0 abc"), .data = data, .session = 1234567890123, .resume_from = 77 } });
+    try roundTrip(.{ .hello = .{ .build = buildId("0.1.0 abc"), .data = data, .session = 1234567890123, .resume_from = 77, .name = "BOB".* } });
     try roundTrip(.{ .welcome = .{ .session = 9, .delay = 3, .resume_from = 40 } });
     try roundTrip(.{ .welcome = .{ .session = 0, .delay = 2, .resume_from = 0 } });
     try roundTrip(.{ .status = .{} });
     try roundTrip(.{ .status = .{ .game = .select } });
     try roundTrip(.{ .status = .{ .game = .play, .character = 1 } });
+    try roundTrip(.{ .status = .{ .game = .select, .open = true, .place = true, .observers = true, .same_character = true } });
+    try roundTrip(.{ .observe = true });
+    try roundTrip(.{ .observe = false });
+    try roundTrip(.{ .away = 5 });
+    try roundTrip(.{ .name = "ZED".* });
+    try roundTrip(.{ .ticks = .{ .first = 300, .pads = &.{ 1, 2, 3, 4 } } });
     try roundTrip(.{ .join = no_character });
     try roundTrip(.{ .join = 2 });
     try roundTrip(.{ .reject = .data });
@@ -419,6 +501,7 @@ test "every message round trips, and its truncations are malformed" {
     try roundTrip(.{ .state = .{ .tick = 60, .length = 3 * chunk_size + 10, .offset = 3 * chunk_size, .bytes = chunk[0..10] } });
     try roundTrip(.{ .game = .{ .session = 77, .delay = 4, .length = chunk_size + 5, .offset = 0, .bytes = &chunk } });
     try roundTrip(.{ .game = .{ .session = 77, .delay = 4, .length = chunk_size + 5, .offset = chunk_size, .bytes = chunk[0..5] } });
+    try roundTrip(.{ .game = .{ .session = 78, .delay = 2, .observe = true, .length = 5, .offset = 0, .bytes = chunk[0..5] } });
     try testing.expectEqualStrings("0.1.0 abc", buildText(&buildId("0.1.0 abc")));
     try testing.expectEqual(@as(u32, 4), chunks(3 * chunk_size + 10));
     try testing.expectEqual(@as(u32, 1), chunks(1));
@@ -444,8 +527,13 @@ test "fields out of range are malformed" {
     // A status of no game with a character, of play without one, an unknown game or character;
     // a join as no character the game has.
     for ([_][2]u8{ .{ 0, 1 }, .{ 2, no_character }, .{ 3, no_character }, .{ 1, 3 } }) |v| {
-        try testing.expectError(error.Malformed, decode(&.{ 11, v[0], v[1] }));
+        try testing.expectError(error.Malformed, decode(&.{ 11, v[0], v[1], 0 }));
     }
+    try testing.expectError(error.Malformed, decode(&.{ 11, 0, no_character, 16 }));
+    try testing.expectError(error.Malformed, decode(&.{ 14, 2 }));
+    // Ticks: none, or more than a message may carry, or an odd byte.
+    try testing.expectError(error.Malformed, decode(&.{ 15, 0, 0, 0, 0, 0 }));
+    try testing.expectError(error.Malformed, decode(&.{ 15, 0, 0, 0, 0, 1, 7 }));
     try testing.expectError(error.Malformed, decode(&.{ 12, 3 }));
     // A game's chunk of session 0, or off the grid.
     const g = encode(.{ .game = .{ .session = 1, .delay = 2, .length = 1, .offset = 0, .bytes = &.{0} } }, &buf);
