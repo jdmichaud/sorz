@@ -864,13 +864,14 @@ function sorzTransport(Socket, events, limits = {}) {
       let seen = pads[i];
       if (!pad || !pad.connected) {
         if (seen) {
-          wasm.gp_pad(i, 0);
+          wasm.gp_pad(i, 0, 0);
           pads[i] = null;
         }
         continue;
       }
       if (!seen) {
-        wasm.gp_pad(i, 1);
+        // Its id names it for the game (its model; the module takes a name from it).
+        wasm.gp_pad(i, 1, writeScratch(pad.id || ''));
         seen = pads[i] = { buttons: [], axes: [] };
       }
       for (let b = 0; b < pad.buttons.length; b++) {

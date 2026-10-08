@@ -175,6 +175,11 @@ pub const ControllerButton = enum(u8) {
 };
 pub const ControllerAxis = enum(u8) { left_x, left_y, right_x, right_y, trigger_left, trigger_right, _ };
 
+/// What the platform says of a controller it reports (DESIGN.md 3.3): a key of its model, the same
+/// for every controller of that model on this platform, and a name to show. The bytes are the
+/// platform's, valid while the controller is connected.
+pub const ControllerInfo = struct { model: []const u8 = "", name: []const u8 = "" };
+
 pub const Size = struct { width: u32, height: u32 };
 
 /// A connection of the platform's transport (DESIGN.md 9), named by the backend. It is valid from
@@ -306,6 +311,7 @@ pub const Platform = struct {
         audio_clear: *const fn (*anyopaque) void,
         audio_close: *const fn (*anyopaque) void,
         set_relative_mouse: *const fn (*anyopaque, bool) PlatformError!void,
+        controller_info: *const fn (*anyopaque, ControllerId) ?ControllerInfo,
         net_listen: *const fn (*anyopaque, []const u8) NetError!void,
         net_connect: *const fn (*anyopaque, []const u8) NetError!ConnectionId,
         net_send: *const fn (*anyopaque, ConnectionId, []const u8) NetError!void,
@@ -348,6 +354,11 @@ pub const Platform = struct {
     /// Requests relative mouse mode. The actual state arrives as a `capture_changed` event.
     pub fn setRelativeMouse(p: *Platform, enabled: bool) PlatformError!void {
         return p.vtable.set_relative_mouse(p.context, enabled);
+    }
+    /// What the platform says of a controller connected (its model's key, its name); null for one
+    /// it does not know.
+    pub fn controllerInfo(p: *Platform, id: ControllerId) ?ControllerInfo {
+        return p.vtable.controller_info(p.context, id);
     }
     /// Accepts connections at `[ADDRESS:]PORT` (all interfaces without an address). Each accepted
     /// connection arrives as a `net_connected` event with `incoming` set.

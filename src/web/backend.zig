@@ -8,6 +8,7 @@ const sorz = @import("sorz");
 const platform = sorz.platform;
 const host_mod = @import("host.zig");
 const Host = host_mod.Host;
+const gamepad = @import("gamepad.zig");
 
 pub const WebBackend = struct {
     allocator: std.mem.Allocator,
@@ -30,6 +31,8 @@ pub const WebBackend = struct {
     relative_wanted: bool = false,
     /// Whether the page has the pointer lock.
     captured: bool = false,
+    /// The browser's id of each gamepad, by its index.
+    pads: [8]struct { text: [128]u8 = @splat(0), len: u8 = 0 } = @splat(.{}),
 
     audio: Audio = .{},
 
@@ -78,6 +81,7 @@ pub const WebBackend = struct {
         .audio_clear = audioClear,
         .audio_close = audioClose,
         .set_relative_mouse = setRelativeMouse,
+        .controller_info = controllerInfo,
         .net_listen = netListen,
         .net_connect = netConnect,
         .net_send = netSend,
@@ -231,7 +235,14 @@ pub const WebBackend = struct {
         self.push(.{ .drawable_resized = .{ .width = width, .height = height } });
     }
 
-    pub fn controllerAdded(self: *WebBackend, id: platform.ControllerId) void {
+    /// A gamepad came, `text` the browser's id of it: its model's key, and its name.
+    pub fn controllerAdded(self: *WebBackend, id: platform.ControllerId, text: []const u8) void {
+        const i = @backingInt(id);
+        if (i < self.pads.len) {
+            const p = &self.pads[i];
+            p.len = @intCast(@min(text.len, p.text.len));
+            @memcpy(p.text[0..p.len], text[0..p.len]);
+        }
         self.push(.{ .controller_added = id });
     }
 
@@ -313,6 +324,16 @@ pub const WebBackend = struct {
     /// Requests the pointer lock. A `capture_changed` event reports the state that the page
     /// really has. A browser locks the pointer only after a click, so the lock often comes later,
     /// with its own event.
+    /// A gamepad's id as the browser gave it: its model's key; its name taken from it
+    /// (gamepad.zig `nameOf`).
+    fn controllerInfo(ctx: *anyopaque, id: platform.ControllerId) ?platform.ControllerInfo {
+        const self = cast(ctx);
+        const i = @backingInt(id);
+        if (i >= self.pads.len) return null;
+        const text = self.pads[i].text[0..self.pads[i].len];
+        return .{ .model = text, .name = gamepad.nameOf(text) };
+    }
+
     fn setRelativeMouse(ctx: *anyopaque, enabled: bool) platform.PlatformError!void {
         const self = cast(ctx);
         if (!self.started) return error.NotStarted;
@@ -582,7 +603,11 @@ test "gamepads come as controller events, in order, and the game's pads follow t
     var p = backend.asPlatform();
     try testing.expect((try p.start()).controllers);
     const id: platform.ControllerId = @fromBackingInt(1);
-    backend.controllerAdded(id);
+    backend.controllerAdded(id, "2dc8-3106-8BitDo Receiver");
+    // The platform names it: the browser's id its model, its name from it.
+    const info = p.controllerInfo(id).?;
+    try testing.expectEqualStrings("2dc8-3106-8BitDo Receiver", info.model);
+    try testing.expectEqualStrings("8BitDo Receiver", info.name);
     backend.controllerButton(id, .start, true);
     backend.controllerAxis(id, .left_x, 32767);
     backend.controllerButton(id, .start, false);

@@ -57,6 +57,27 @@ pub fn controller(index: u32) platform.ControllerId {
     return @fromBackingInt(index);
 }
 
+/// A gamepad's name in the browser's id of it: Chromium's "NAME (STANDARD GAMEPAD Vendor: 2dc8
+/// Product: 3106)" gives NAME, Firefox's "2dc8-3106-NAME" too; another id is its own name.
+pub fn nameOf(id: []const u8) []const u8 {
+    if (id.len > 10 and id[4] == '-' and id[9] == '-' and hex(id[0..4]) and hex(id[5..9])) return id[10..];
+    if (std.mem.endsWith(u8, id, ")")) if (std.mem.lastIndexOf(u8, id, " (")) |i| if (i > 0) return id[0..i];
+    return id;
+}
+
+fn hex(s: []const u8) bool {
+    for (s) |ch| if (!std.ascii.isHex(ch)) return false;
+    return true;
+}
+
+test "a gamepad's name from the browser's id" {
+    try std.testing.expectEqualStrings("8BitDo Receiver", nameOf("8BitDo Receiver (STANDARD GAMEPAD Vendor: 2dc8 Product: 3106)"));
+    try std.testing.expectEqualStrings("6B controller", nameOf("0ca3-0024-6B controller"));
+    try std.testing.expectEqualStrings("Xbox 360 Controller", nameOf("Xbox 360 Controller (XInput STANDARD GAMEPAD)"));
+    try std.testing.expectEqualStrings("Some pad", nameOf("Some pad"));
+    try std.testing.expectEqualStrings("", nameOf(""));
+}
+
 /// A stick's position, -1 to 1 in the browser, in SDL's units (-32768 to 32767). The page passes
 /// the value times 32767, rounded.
 pub fn stickValue(scaled: i32) i16 {

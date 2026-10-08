@@ -493,10 +493,11 @@ export fn gp_resized(width: u32, height: u32) void {
     backend.resizedEvent(width, height);
 }
 
-/// A gamepad appeared at `index` of `navigator.getGamepads()`, or went away.
-export fn gp_pad(index: u32, connected: u32) void {
+/// A gamepad appeared at `index` of `navigator.getGamepads()`, its id (the browser's text) the
+/// first `id_len` bytes of the scratch buffer, or went away.
+export fn gp_pad(index: u32, connected: u32, id_len: u32) void {
     const id = gamepad.controller(index);
-    if (connected != 0) backend.controllerAdded(id) else backend.controllerRemoved(id);
+    if (connected != 0) backend.controllerAdded(id, scratch[0..@min(id_len, scratch.len)]) else backend.controllerRemoved(id);
 }
 
 /// A button of the standard mapping changed. The triggers (6 and 7) are axes, and `value` is

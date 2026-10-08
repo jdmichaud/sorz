@@ -124,6 +124,7 @@ pub const AgentBackend = struct {
         .audio_clear = audioClear,
         .audio_close = audioClose,
         .set_relative_mouse = setRelativeMouse,
+        .controller_info = controllerInfo,
         .net_listen = Net.listen,
         .net_connect = Net.connect,
         .net_send = Net.send,
@@ -252,6 +253,11 @@ pub const AgentBackend = struct {
         const self = cast(ctx);
         self.audio.open = false;
         self.audio.queued_frames = 0;
+    }
+
+    /// Its gamepads (the ones its runs inject) are all of one model.
+    fn controllerInfo(_: *anyopaque, _: platform.ControllerId) ?platform.ControllerInfo {
+        return .{ .model = "agent gamepad", .name = "AGENT GAMEPAD" };
     }
 
     fn setRelativeMouse(ctx: *anyopaque, enabled: bool) platform.PlatformError!void {

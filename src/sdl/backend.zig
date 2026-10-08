@@ -85,7 +85,7 @@ pub const SdlBackend = struct {
     motion_residue_y: i64 = 0,
     renderer_name_buf: [32]u8 = @splat(0),
     renderer_name_len: usize = 0,
-    controllers: std.ArrayList(*c.GameController) = .empty,
+    controllers: std.ArrayList(Opened) = .empty,
 
     audio: Audio = .{},
     /// The transport of the `net_*` calls, which the host attaches (the native WebSocket
@@ -131,7 +131,7 @@ pub const SdlBackend = struct {
     /// acquired, then frees the Zig-owned state. Valid after a failed `start` or without one.
     pub fn deinit(self: *SdlBackend) void {
         self.closeAudio();
-        for (self.controllers.items) |handle| c.SDL_GameControllerClose(handle);
+        for (self.controllers.items) |o| c.SDL_GameControllerClose(o.handle);
         self.controllers.deinit(self.allocator);
         self.destroyPresentation();
         if (self.subsystems != 0) c.SDL_QuitSubSystem(self.subsystems);
@@ -156,6 +156,7 @@ pub const SdlBackend = struct {
         .audio_clear = audioClear,
         .audio_close = audioClose,
         .set_relative_mouse = setRelativeMouse,
+        .controller_info = controllerInfo,
         .net_listen = Net.listen,
         .net_connect = Net.connect,
         .net_send = Net.send,
@@ -737,19 +738,42 @@ pub const SdlBackend = struct {
             return null;
         };
         const instance = c.SDL_JoystickInstanceID(joystick);
-        self.controllers.append(self.allocator, handle) catch {
+        var o: Opened = .{ .handle = handle, .instance = instance };
+        // Its model: SDL's GUID (the same for every pad of the model); its name: the device's
+        // (not a mapping's, which the generic one names "generic gamepad").
+        c.SDL_JoystickGetGUIDString(c.SDL_JoystickGetGUID(joystick), &o.model, o.model.len);
+        const name = if (c.SDL_JoystickName(joystick)) |n| std.mem.span(n) else "";
+        o.name_len = @intCast(@min(name.len, o.name.len));
+        @memcpy(o.name[0..o.name_len], name[0..o.name_len]);
+        self.controllers.append(self.allocator, o) catch {
             c.SDL_GameControllerClose(handle);
             return null;
         };
         return controllerId(instance);
     }
 
+    /// An open controller: SDL's handle and instance, its GUID's text and its name.
+    const Opened = struct {
+        handle: *c.GameController,
+        instance: c.JoystickID,
+        model: [33]u8 = @splat(0),
+        name: [64]u8 = @splat(0),
+        name_len: u8 = 0,
+    };
+
+    fn controllerInfo(ctx: *anyopaque, id: platform.ControllerId) ?platform.ControllerInfo {
+        const self = cast(ctx);
+        for (self.controllers.items) |*o| if (controllerId(o.instance) == id) {
+            return .{ .model = std.mem.sliceTo(&o.model, 0), .name = o.name[0..o.name_len] };
+        };
+        return null;
+    }
+
     fn closeController(self: *SdlBackend, instance: c.JoystickID) void {
-        const handle = c.SDL_GameControllerFromInstanceID(instance) orelse return;
-        for (self.controllers.items, 0..) |h, i| {
-            if (h == handle) {
+        for (self.controllers.items, 0..) |o, i| {
+            if (o.instance == instance) {
                 _ = self.controllers.swapRemove(i);
-                c.SDL_GameControllerClose(handle);
+                c.SDL_GameControllerClose(o.handle);
                 return;
             }
         }
@@ -1409,6 +1433,10 @@ test "a joystick without a gamepad mapping is opened with the generic one" {
         };
     }
     const id = added orelse return error.NoControllerAdded;
+    // The platform names it: SDL's GUID its model, the device's name its name.
+    const info = p.controllerInfo(id).?;
+    try std.testing.expectEqual(@as(usize, 32), info.model.len);
+    try std.testing.expect(info.name.len != 0);
     const handle = c.SDL_GameControllerFromInstanceID(@bitCast(@backingInt(id))) orelse return error.NotOpened;
     const joystick = c.SDL_GameControllerGetJoystick(handle).?;
     _ = c.SDL_JoystickSetVirtualButton(joystick, 9, 1);

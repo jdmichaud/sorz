@@ -332,6 +332,8 @@ pub extern "c" fn SDL_JoystickGetGUIDString(guid: JoystickGUID, out: [*]u8, len:
 pub extern "c" fn SDL_JoystickNumAxes(joystick: *Joystick) c_int;
 pub extern "c" fn SDL_JoystickNumButtons(joystick: *Joystick) c_int;
 pub extern "c" fn SDL_JoystickNumHats(joystick: *Joystick) c_int;
+pub extern "c" fn SDL_JoystickGetGUID(joystick: *Joystick) JoystickGUID;
+pub extern "c" fn SDL_JoystickName(joystick: *Joystick) ?[*:0]const u8;
 /// A virtual joystick (the tests' stand-in for a pad SDL does not map).
 pub extern "c" fn SDL_JoystickAttachVirtual(kind: c_int, naxes: c_int, nbuttons: c_int, nhats: c_int) c_int;
 pub extern "c" fn SDL_JoystickDetachVirtual(device_index: c_int) c_int;
