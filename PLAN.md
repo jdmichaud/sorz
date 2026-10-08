@@ -199,6 +199,16 @@
     and labelled, a player's gamepad with its model's buttons, GAMEPAD LIST and a pad
     forgotten); the hosts' naming in unit tests (SDL's virtual joystick); variants-check,
     netplay-check, smoke, and the browser's flow and settings parts. Real gamepads: the user's.
+- [ ] **26 — The network workflow** — Depends: 18, 25.
+  - DESIGN.md 9 (2026-10-08): NETWORK PLAY in the native game's menu (and the first page of a
+    server) opens the network options (PLAYERS 2, OBSERVERS, SAME CHARACTER, START) and the
+    session, listening on 0.0.0.0 (port 8000, or `--netplay`'s); clients connect as they start,
+    give a name, and JOIN or OBSERVE; the host lists who is connected; observers take the game and
+    each tick's pads; a player's drop counts five seconds, then the host decides its leaving; a
+    host that leaves sends its clients to their menus; the server a hub of numbered clients.
+  - Gate: the flows played (a native host and native and page clients: join at the select and in
+    play, observe, drops, the host leaving); netplay-check's flows for them; variants-check,
+    smoke and the browser check pass.
 
 ## F7 — Platforms and exactness
 
