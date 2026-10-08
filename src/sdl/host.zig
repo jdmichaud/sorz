@@ -50,7 +50,7 @@ pub const usage =
     \\                       the round trip)
     \\  --server [ADDRESS:]PORT  server mode, with no window and no game: serve the page and
     \\                       the game's files of DIR|ROM at PORT, and relay network play between
-    \\                       two browsers (sorz-server does the same without SDL's libraries)
+    \\                       the browsers (sorz-server does the same without SDL's libraries)
     \\
 ;
 

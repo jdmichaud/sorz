@@ -41,7 +41,7 @@ pub const usage =
     \\  --delay N            the host's input delay in display ticks, 2 to 6 (default: from the
     \\                       round trip)
     \\  --server [ADDRESS:]PORT  server mode, with no game: serve the page and the game's files
-    \\                       of DIR|ROM at PORT, and relay network play between two browsers
+    \\                       of DIR|ROM at PORT, and relay network play between the browsers
     \\
 ;
 

@@ -72,7 +72,7 @@ function sorzFirst(name, first) {
   });
 }
 
-// The page's side of network play's transport (DESIGN.md 9, PLAN A1 and A2): whole binary
+// The page's side of network play's transport (DESIGN.md 9, PLAN A1, A2 and 26): whole binary
 // messages over WebSockets, by connection, reported to `events` as the platform contract's events:
 // `connected(id, incoming)`, `received(id, bytes)` (an ArrayBuffer) and `disconnected(id,
 // reason)`, the reason one of 'closed', 'lost', 'refused', 'protocol' and 'too_large'. Per
@@ -80,33 +80,37 @@ function sorzFirst(name, first) {
 // by the game.
 //
 // `connect(url)` is the game's connection to a native host. `joinRelay(url)` is the page's own
-// (server mode, src/native/relay.zig): the relay's text messages go to `events.relay(state)`,
-// first the page's role, 'host' or 'guest', or why it has none: 'busy' (two players are playing
-// there) or 'unreachable'; then, once, why the relay connection ended, if the page did not end
-// it: 'host_left' (a guest's host left) or 'lost'. A guest's socket is its connection to the
-// host. A host's socket is not a connection at all: each guest that the relay announces ('peer')
-// is an incoming connection of its own, until it has 'left' (DESIGN.md 9: the game's host logic
-// needs no listening socket). The host's page answers each 'left' with 'left', so that the relay
-// knows which of its messages were for the guest that left. When the host's game closes its
-// guest's connection, the page lets that guest go but stays with the relay: the guest's messages
-// are dropped until the relay says it has left. `leaveRelay()` ends the page's relay connection.
+// connection to a server's relay (src/native/relay.zig), whose text messages go to
+// `events.relay(state)`: first the page's role, 'host' or 'client'; then, once, why the page is off
+// the relay, unless `leaveRelay` took it off: 'unreachable' (no role came), 'host_left' (a client's
+// host left), 'lost' (the connection ended), or 'closed' (a client's game closed its connection to
+// the host). A client's socket is its connection to the host. A host's socket is not a connection
+// at all: each client that the relay announces ('peer N') is an incoming connection of its own,
+// until the relay says it has 'left N' (DESIGN.md 9: the game's host logic needs no listening
+// socket). Between a host and its clients a binary message carries the client's number, two bytes,
+// little-endian, before the game's: the host's page takes a client's number off what comes from it
+// and puts it before what the game sends to it. When the host's game closes a client's connection,
+// the page lets that client go and stays on the relay: what comes from the client is dropped.
+// `leaveRelay()` ends the page's relay connection, and nothing follows.
 //
 // The module's side is `js_net_connect`, `js_net_send` and `js_net_close` over `connect`, `send`
 // and `close`, and `gp_net_connected`, `gp_net_received` and `gp_net_disconnected` from the events.
 // The page learns the mode from `netplay.json`, which the native host and the relay serve
 // (`{"mode": "native" | "relay", "websocket": "/"}`), and gives the module its network play
-// (`gp_start_netplay`): a native host's page is its guest, whose game connects to `ws://<the
-// page's host>/` when its player wants to join; on a relay, the page joins it when the game's
-// player chooses 2 PLAYERS (`gp_net_wanted`), and the module takes the first connection as its
-// peer.
+// (`gp_start_netplay`) as it loads: a native host's page is its client, whose game connects to
+// `ws://<the page's host>/` itself; a relay's page connects to the relay, and gives the module the
+// role the relay gives it, again each time it connects anew.
 function sorzTransport(Socket, events, limits = {}) {
   const maxMessage = limits.maxMessage || 64 * 1024;
   const maxQueued = limits.maxQueued || 1024 * 1024;
-  // Connections by id: { socket, open, closedByGame } for a socket of the game's; a relay's guest
-  // (on the host's page) is { relay, open } over the relay's socket.
+  // Connections by id: { socket, open, closedByGame } for a socket of the game's; one over the
+  // relay's socket is { relay, number, open, closedByGame }, `number` the client's on a host's
+  // page (0 on a client's page, whose one connection is to the host).
   const connections = new Map();
   let nextId = 1;
   let relay = null;
+  // The bytes of a client's number between a host and its clients.
+  const numberLen = 2;
 
   function socketFor(url, onOpen, onMessage, onClose) {
     let socket;
@@ -130,7 +134,8 @@ function sorzTransport(Socket, events, limits = {}) {
     if (!c.closedByGame) events.disconnected(id, reason);
   }
 
-  // A message of the game's: binary and within the size limit, else the connection ends.
+  // A message of the game's: binary and within the size limit, else the connection ends (a relay's
+  // client from a host's page: its messages are dropped from then on).
   function deliver(id, data) {
     const c = connections.get(id);
     if (!c || !c.open) return;
@@ -140,7 +145,7 @@ function sorzTransport(Socket, events, limits = {}) {
       return;
     }
     if (c.socket) c.socket.close(1002);
-    else if (c.relay && c.relay.role === 'guest') c.relay.socket.close(1002);
+    else if (c.relay.role === 'client') c.relay.socket.close(1002);
     end(id, reason);
   }
 
@@ -156,66 +161,99 @@ function sorzTransport(Socket, events, limits = {}) {
     return id;
   }
 
+  // A client's number in the relay's word `word N`, or 0.
+  function numberIn(text, word) {
+    if (!text.startsWith(word + ' ')) return 0;
+    const digits = text.slice(word.length + 1);
+    const n = /^[1-9][0-9]{0,4}$/.test(digits) ? Number(digits) : 0;
+    return n <= 0xffff ? n : 0;
+  }
+
   function joinRelay(url) {
-    // `guest`: the id of the guest's connection (the host's, on a guest's page), kept on a
-    // host's page until the relay says that guest left, even once the game has closed it.
-    const r = { socket: null, role: null, guest: 0, hostLeft: false, ended: false };
+    // `clients`: on a host's page, the id of each client's connection by its number, until the
+    // relay says it left. `host`: on a client's page, the id of its connection to the host.
+    const r = { socket: null, role: null, clients: new Map(), host: 0, hostLeft: false, ended: false };
     relay = r;
+    // The page is off the relay: once, and not after `leaveRelay`.
     const finish = (state) => {
       if (r.ended) return;
       r.ended = true;
+      if (relay === r) relay = null;
       events.relay(state);
     };
-    const guestJoined = (incoming) => {
-      r.guest = nextId++;
-      connections.set(r.guest, { relay: r, open: true, closedByGame: false });
-      events.connected(r.guest, incoming);
-    };
-    r.socket = socketFor(url, () => {}, (data) => {
+    r.finish = finish;
+    const fromHost = (data) => {
       if (typeof data !== 'string') {
-        if (r.guest !== 0) deliver(r.guest, data);
+        if (r.host !== 0) deliver(r.host, data);
+      } else if (data === 'left') {
+        // Its host left: the relay ends the connection next.
+        r.hostLeft = true;
+        const id = r.host;
+        r.host = 0;
+        end(id, 'closed');
+      }
+    };
+    const fromClients = (data) => {
+      if (typeof data !== 'string') {
+        if (data.byteLength < numberLen) return;
+        const id = r.clients.get(new DataView(data).getUint16(0, true));
+        if (id !== undefined) deliver(id, data.slice(numberLen));
         return;
       }
-      if (r.role === null) {
-        if (data === 'host' || data === 'guest') {
-          r.role = data;
-          events.relay(data);
-          if (data === 'guest') guestJoined(false);
-        } else if (data === 'busy') {
-          finish('busy');
-        }
-      } else if (r.role === 'host' && data === 'peer' && r.guest === 0) {
-        guestJoined(true);
-      } else if (r.role === 'host' && data === 'left') {
-        r.socket.send('left');
-        const id = r.guest;
-        r.guest = 0;
-        end(id, 'closed');
-      } else if (r.role === 'guest' && data === 'left') {
-        r.hostLeft = true;
+      const came = numberIn(data, 'peer');
+      if (came !== 0 && !r.clients.has(came)) {
+        const id = nextId++;
+        r.clients.set(came, id);
+        connections.set(id, { relay: r, number: came, open: true, closedByGame: false });
+        events.connected(id, true);
+        return;
       }
+      const went = numberIn(data, 'left');
+      if (went !== 0 && r.clients.has(went)) {
+        const id = r.clients.get(went);
+        r.clients.delete(went);
+        end(id, 'closed');
+      }
+    };
+    r.socket = socketFor(url, () => {}, (data) => {
+      if (r.ended) return;
+      if (r.role === 'host') return fromClients(data);
+      if (r.role === 'client') return fromHost(data);
+      if (data !== 'host' && data !== 'client') return;
+      r.role = data;
+      events.relay(data);
+      // The page may have left the relay meanwhile (its game could not start network play).
+      if (relay !== r || data !== 'client') return;
+      r.host = nextId++;
+      connections.set(r.host, { relay: r, number: 0, open: true, closedByGame: false });
+      events.connected(r.host, false);
     }, () => {
-      const id = r.guest;
-      r.guest = 0;
-      if (id !== 0) end(id, r.hostLeft ? 'closed' : 'lost');
-      if (relay === r) relay = null;
+      if (r.ended) return;
+      const id = r.host;
+      r.host = 0;
+      if (id !== 0) end(id, 'lost');
+      for (const client of r.clients.values()) end(client, 'lost');
+      r.clients.clear();
       if (r.role === null) finish('unreachable');
       else finish(r.hostLeft ? 'host_left' : 'lost');
     });
     if (!r.socket) Promise.resolve().then(() => finish('unreachable'));
   }
 
-  // The page leaves the relay: its connection ends, and no event follows.
+  // The page leaves the relay: its connection ends, its connections over it go without an event,
+  // and nothing follows.
   function leaveRelay() {
     const r = relay;
     if (!r) return;
     relay = null;
     r.ended = true;
-    const id = r.guest;
-    r.guest = 0;
-    const c = connections.get(id);
-    if (c) c.closedByGame = true;
-    connections.delete(id);
+    for (const id of [r.host, ...r.clients.values()]) {
+      const c = connections.get(id);
+      if (c) c.closedByGame = true;
+      connections.delete(id);
+    }
+    r.host = 0;
+    r.clients.clear();
     if (r.socket) r.socket.close(1000);
   }
 
@@ -225,23 +263,32 @@ function sorzTransport(Socket, events, limits = {}) {
     if (!c || !c.open) return 'not_connected';
     if (bytes.byteLength > maxMessage) return 'too_large';
     const socket = c.socket || c.relay.socket;
-    if (socket.bufferedAmount + bytes.byteLength > maxQueued) return 'queue_full';
-    socket.send(bytes);
+    let data = bytes;
+    if (c.number) {
+      const framed = new Uint8Array(numberLen + bytes.byteLength);
+      new DataView(framed.buffer).setUint16(0, c.number, true);
+      framed.set(new Uint8Array(bytes), numberLen);
+      data = framed.buffer;
+    }
+    if (socket.bufferedAmount + data.byteLength > maxQueued) return 'queue_full';
+    socket.send(data);
     return 'sent';
   }
 
   // The game's close: the socket closes after what it has queued, and no event follows. On a
-  // relay, a guest's game leaves the relay; a host's game lets its guest go and stays.
+  // relay, a client's game leaves the relay ('closed'); a host's game lets its client go and stays.
   function close(id) {
     const c = connections.get(id);
     if (!c) return;
     c.closedByGame = true;
     connections.delete(id);
-    if (c.socket) c.socket.close(1000);
-    else if (c.relay && c.relay.role === 'guest') {
-      c.relay.ended = true;
-      c.relay.guest = 0;
-      c.relay.socket.close(1000);
+    if (c.socket) {
+      c.socket.close(1000);
+    } else if (c.relay.role === 'client') {
+      const r = c.relay;
+      r.host = 0;
+      r.socket.close(1000);
+      r.finish('closed');
     }
   }
 
@@ -675,8 +722,8 @@ function sorzTransport(Socket, events, limits = {}) {
   const netResults = { sent: 0, queue_full: 1, not_connected: 2, too_large: 3 };
   const net = {
     // The mode that the server of this page announces in `netplay.json`: 'native' (a native game
-    // hosts here: this page is its guest, player 2), 'relay' (server mode: this page joins the
-    // relay when its player wants to play with another) or null (this page plays alone).
+    // hosts here: this page is its client), 'relay' (server mode: this page is on the relay, the
+    // host or a client) or null (this page plays alone).
     mode: null,
     manifest: null,
     transport: sorzTransport(window.WebSocket, {
@@ -695,8 +742,8 @@ function sorzTransport(Socket, events, limits = {}) {
     onRelay: null,
     // The relay's last word to this page (`sorzTransport`'s `relay` states), for the checks.
     relayState: null,
-    // The page is on the relay (from its joining until the relay's connection ends).
-    onTheRelay: false,
+    // The timer of the page's next connection to the relay, once it is off it.
+    again: 0,
   };
 
   // The page's own words, in the game's capitals: the loading screen's, until the module draws it.
@@ -938,7 +985,8 @@ function sorzTransport(Socket, events, limits = {}) {
     started = false;
     phase = 'stopped';
     net.onRelay = null;
-    // A page that no longer plays makes room on the relay for the next one.
+    clearTimeout(net.again);
+    // A page that no longer plays leaves the relay: a host's clients hear that it left.
     net.transport.leaveRelay();
     if (document.pointerLockElement) document.exitPointerLock();
     overlay.onclick = null;
@@ -984,26 +1032,22 @@ function sorzTransport(Socket, events, limits = {}) {
     }
     if (result === 1) stop('THE GAME HAS ENDED', 'Reload the page to play again.');
     else if (result !== 0) stop('THE GAME STOPPED', errorText());
-    else relay();
     return result;
   }
 
-  // On a relay: the page joins it when the game's player wants to play with another's
-  // (`gp_net_wanted`: its 2 PLAYERS chose the character select) and it is not on it. The relay
-  // gives it its role, which the game takes (`gp_start_netplay`): the first page hosts (player 1,
-  // playing alone until a guest comes), the next joins it; or says why it has none ('busy': two
-  // play there; 'unreachable'), and the game plays alone and says so (`gp_net_busy`). Once its
-  // connection ends (its host left, the connection was lost), the page is off the relay again.
-  function relay() {
-    if (net.mode !== 'relay' || net.onTheRelay || wasm.gp_net_wanted() === 0) return;
-    net.onTheRelay = true;
+  // On a relay: the page connects to it as it loads, and the relay gives it its role, which the
+  // game takes (`gp_start_netplay`, the page bringing the connections): the first page hosts
+  // (player 1), every other is its client. Once the page is off the relay (its host left, the
+  // connection ended or never opened, its game closed its connection to the host), it connects
+  // again a second later, and the game takes the role it then gets: the host, maybe, its host gone.
+  function joinRelay() {
     net.onRelay = (state) => {
-      if (state === 'host' || state === 'guest') {
+      if (state === 'host' || state === 'client') {
         startNetplay(state === 'host' ? 1 : 0, '');
         return;
       }
-      net.onTheRelay = false;
-      if (state === 'busy' || state === 'unreachable') wasm.gp_net_busy();
+      clearTimeout(net.again);
+      net.again = setTimeout(joinRelay, 1000);
     };
     net.transport.joinRelay(netUrl());
   }
@@ -1184,8 +1228,8 @@ function sorzTransport(Socket, events, limits = {}) {
     get phase() { return phase; },
     // Network play's mode here (null, 'native' or 'relay'), from `netplay.json`.
     get netMode() { return net.mode; },
-    // On a relay: the page's role ('host', 'guest'), or why it has none or lost it ('busy',
-    // 'unreachable', 'host_left', 'lost'); null before the relay answered.
+    // On a relay: the page's role ('host', 'client'), or why it is off the relay ('unreachable',
+    // 'host_left', 'lost', 'closed'); null before the relay answered.
     get relayState() { return net.relayState; },
     // The text the player sees now: the module's screen's, or the page's own.
     get message() { return shown; },
@@ -1294,9 +1338,10 @@ function sorzTransport(Socket, events, limits = {}) {
     }
     stats.startMs = performance.now() - loaded;
     stats.readyMs = performance.now();
-    // A native game hosts here: this page is its guest (player 2), its game connecting when its
-    // player wants to join.
+    // A native game hosts here: this page is its client, its game connecting to the host itself.
+    // A relay: the page connects to it now, and its game takes the role it gets.
     if (net.mode === 'native' && !startNetplay(0, netUrl())) return;
+    if (net.mode === 'relay') joinRelay();
     // The checks may take the updates over before the first frame.
     await Promise.resolve();
     run();

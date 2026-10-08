@@ -20,8 +20,9 @@
 //!
 //! The relay (server mode, `relay.zig`) uses it too, with what the game does not need: text
 //! messages with the pages (`sendText`, `Options.accept_text` and `pollText`), a wait for the
-//! next event (`wait`), a connection dropped at once (`abort`), and pings that find a peer gone
-//! without a word (`Options.keepalive_ms`).
+//! next event (`wait`), a connection dropped at once (`abort`) or ended with a close code of its
+//! choice (`closeWith`), messages longer than the game's (`Options.max_message_len`,
+//! `sendLong`), and pings that find a peer gone without a word (`Options.keepalive_ms`).
 const std = @import("std");
 const sorz = @import("sorz");
 const platform = sorz.platform;
@@ -68,10 +69,14 @@ pub const Options = struct {
     /// without closing (a machine asleep, a network gone). The game's session has its own pings
     /// and leaves it at 0.
     keepalive_ms: u32 = 0,
-    /// Whether a peer may send text messages (the relay's pages answer it), which `pollText`
+    /// Whether a peer may send text messages (the relay ignores a page's), which `pollText`
     /// tells apart. Without it, a text message ends its connection (close code 1003), since the
     /// game's peers send binary messages only.
     accept_text: bool = false,
+    /// The longest message a peer may send: the game's, or more for the relay, whose host's page
+    /// puts a client's number before each of the game's messages. A longer one ends its
+    /// connection (close code 1009).
+    max_message_len: usize = platform.max_message_len,
 };
 
 pub const WebSocketTransport = struct {
@@ -253,6 +258,13 @@ pub const WebSocketTransport = struct {
         return self.queueMessage(id, .text, text);
     }
 
+    /// Queues a binary message as `send` does, of up to `Options.max_message_len` bytes rather
+    /// than the game's limit: the relay's, a client's number before a message of the game's.
+    pub fn sendLong(self: *WebSocketTransport, id: platform.ConnectionId, bytes: []const u8) platform.NetError!void {
+        if (bytes.len > self.options.max_message_len) return error.MessageTooLarge;
+        return self.queueMessage(id, .binary, bytes);
+    }
+
     /// Ends a connection at once: what it had to send is dropped, its socket is shut down (no
     /// close frame), and no event follows. The relay's answer to a peer that does not take its
     /// messages, whose writer can be stuck in a write that its close would wait for.
@@ -267,6 +279,20 @@ pub const WebSocketTransport = struct {
         c.out_bytes = 0;
         c.endLocked(.lost, null);
         if (c.stream) |s| s.shutdown(self.io, .both) catch {};
+    }
+
+    /// Ends a connection as the transport ends a peer that breaks its rules: what it had to send
+    /// goes first, then a close frame of `code`, and no event follows. The relay's answer to a
+    /// page's message that is too long for its role.
+    pub fn closeWith(self: *WebSocketTransport, id: platform.ConnectionId, code: u16) void {
+        self.lock();
+        defer self.unlock();
+        const c = self.find(id) orelse return;
+        if (c.reason == null and c.close_code == null) c.close_code = code;
+        c.game_closed = true;
+        self.dropEvents(id);
+        c.wake.signal(self.io);
+        self.room.broadcast(self.io);
     }
 
     /// Drops the undelivered events of a connection. Under the mutex.
@@ -827,7 +853,7 @@ fn readLoop(c: *Conn, sr: *Io.net.Stream.Reader) void {
             .continuation => if (!in_message) return c.end(.protocol, ws.CloseCode.protocol_error),
             else => unreachable,
         }
-        if (message.items.len + h.len > platform.max_message_len) return c.end(.too_large, ws.CloseCode.too_big);
+        if (message.items.len + h.len > t.options.max_message_len) return c.end(.too_large, ws.CloseCode.too_big);
         const len: usize = @intCast(h.len);
         message.ensureUnusedCapacity(t.gpa, len) catch return c.end(.lost, ws.CloseCode.going_away);
         const dst = message.unusedCapacitySlice()[0..len];
@@ -908,7 +934,7 @@ fn writeLoop(c: *Conn) Io.Cancelable!void {
         const game_closed = c.game_closed;
         const ending = batch.items.len == 0 and (c.state == .ending or game_closed);
         const code: ?u16 = if (game_closed and c.reason == null)
-            (if (t.shutting_down) ws.CloseCode.going_away else ws.CloseCode.normal)
+            (if (t.shutting_down) ws.CloseCode.going_away else c.close_code orelse ws.CloseCode.normal)
         else
             c.close_code;
         t.unlock();
@@ -1122,8 +1148,9 @@ pub const Raw = struct {
     stream: Io.net.Stream,
     rbuf: [4096]u8 = undefined,
     reader: Io.net.Stream.Reader = undefined,
-    /// The payload of the frame that `next` read last.
-    payload: [platform.max_message_len]u8 = undefined,
+    /// The payload of the frame that `next` read last: a message of the game's, or one of the
+    /// relay's, a client's number before it.
+    payload: [platform.max_message_len + 16]u8 = undefined,
 
     pub fn open(port: u16) !*Raw {
         const r = try testing.allocator.create(Raw);

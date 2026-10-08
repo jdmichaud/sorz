@@ -1,5 +1,5 @@
 //! sorz-server: server mode (DESIGN.md 9). It serves the browser build and the game's files of
-//! the data it is given (a game directory) on one port, and relays network play between two
+//! the data it is given (a game directory) on one port, and relays network play between the
 //! browsers (`native.relay`); it runs no game, links no library, and runs until it is stopped.
 //!
 //! `sorz-sdl --server` and `sorz-agent --server` run the same relay. This binary is the one for a

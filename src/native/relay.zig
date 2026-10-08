@@ -1,35 +1,35 @@
-//! Server mode (DESIGN.md 9): the relay between two browsers. `DATA --server
+//! Server mode (DESIGN.md 9): the hub of network play between pages. `DATA --server
 //! [ADDRESS:]PORT` (`sorz-server`, or a game binary given it) serves the browser build built into
 //! the executable, `/netplay.json` (`"mode": "relay"`) and the game's files of DATA (a game
-//! directory, or a ROM once its extractor exists: `served.zig`) on one port, as the native host
-//! does, and pairs the pages'
-//! WebSockets: the first page to connect hosts, the next is its guest, and the session's binary
-//! messages go from one to the other as they are, never parsed. It runs no game: the pages load
-//! the files it serves, and a page whose player chooses 1 PLAYER plays alone on them without
-//! joining the relay (only 2 PLAYERS joins it).
+//! directory, or a ROM through its content extracted in memory: `served.zig`) on one port, as the
+//! native host does, and joins the pages' WebSockets. It runs no game: each page loads the files
+//! it serves and runs its own, and connects as it loads. The first page to connect is the host;
+//! every other page is a client, given a number (from 1) that is not used again while the relay
+//! runs. The session's binary messages go between the host and each client, never parsed.
 //!
 //! Text messages tell a page what happens:
-//! - `host` or `guest`: its role, as soon as its connection opens;
-//! - `peer`: to the host, its guest has come; the guest's messages follow;
-//! - `left`: to the host, its guest has gone (the next page to connect is its new guest); to the
-//!   guest, its host has gone, and the relay then ends the guest's connection: the next page to
-//!   connect hosts;
-//! - `busy`: to a third page while two play, whose connection then ends. A third page is refused,
-//!   not kept waiting: it would join a game that starts again from power-on when it does, which
-//!   a reload once a place is free does as well, and the relay keeps no idle connections.
+//! - `host` or `client`: its role, as soon as its connection opens;
+//! - `peer N`: to the host, client N has come; its messages follow;
+//! - `left N`: to the host, client N has gone;
+//! - `left`: to a client, its host has gone; the relay then ends the client's connection. The
+//!   next page to connect hosts (a client connects again and may be the one).
+//! Text from a page is ignored.
 //!
-//! The host's page answers each `left` with a text message `left`. What the host sent before
-//! that answer was for the guest that left, and the relay drops it: without the answer, a
-//! message on its way to a guest that has just left (a welcome, pads) would reach the next guest
-//! when that one joins at once. Any other text from a page is ignored.
+//! Binary messages carry a client's number, two bytes, little-endian, before the game's message:
+//! a client's message reaches the host after the client's number; the host's begin with the number
+//! of the client they are for, which the relay takes off. A host's message for a number that is
+//! not connected (gone, or not given yet) is dropped: since a number is never given again, a
+//! message on its way to a client that has just left never reaches another. Should the numbers
+//! run out (65535 clients), the next client is turned away until a new page hosts: the numbers
+//! then start again, none of the previous host's being connected.
 //!
-//! Limits, as the transport's contract has them: a message is at most `platform.max_message_len`
-//! (a longer one ends its page's connection, close code 1009); a page that sends a malformed
-//! frame is ended (1002); each connection's outgoing queue is bounded
-//! (`net.Options.send_queue_bytes`), and a page that does not take what its partner sends is
-//! dropped at once when its queue is full, so that it never holds its partner back. The relay
-//! pings every page (`keepalive_ms`) and drops one silent through three pings: a host whose
-//! machine went to sleep must not keep the next players waiting.
+//! Limits, as the transport's contract has them: a message of the game's is at most
+//! `platform.max_message_len`, a client's number before it on the host's side (a longer one ends
+//! its page's connection, close code 1009); a page that sends a malformed frame is ended (1002);
+//! each connection's outgoing queue is bounded (`net.Options.send_queue_bytes`), and a page that
+//! does not take what is sent to it is dropped at once when its queue is full, so that it never
+//! holds another back. The relay pings every page (`keepalive_ms`) and drops one silent through
+//! three pings: a host whose machine went to sleep must not keep its clients waiting.
 const std = @import("std");
 const sorz = @import("sorz");
 const platform = sorz.platform;
@@ -42,32 +42,47 @@ const ConnectionId = platform.ConnectionId;
 
 const log = std.log.scoped(.relay);
 
-/// The relay's words to the pages (text messages).
+/// The relay's words to the pages (text messages); `peer` and `left` to the host are followed by a
+/// space and the client's number.
 pub const words = struct {
     pub const host = "host";
-    pub const guest = "guest";
+    pub const client = "client";
     pub const peer = "peer";
     pub const left = "left";
-    pub const busy = "busy";
 };
 
-/// The transport's options for the relay: room for the two players and a few pages being turned
-/// away at once, and pings every five seconds (a silent page is dropped after fifteen). The
-/// server takes text from the pages whatever the options say.
+/// The bytes of a client's number before a binary message (little-endian).
+pub const number_len = 2;
+
+/// The longest message a page sends: a message of the game's, a client's number before it.
+pub const framed_max_len = platform.max_message_len + number_len;
+
+/// The transport's options for the relay: room for a host and its clients, and pings every five
+/// seconds (a silent page is dropped after fifteen). The server takes text from the pages and the
+/// host's framed messages whatever the options say.
 pub const transport_options: net.Options = .{
-    .max_connections = 8,
+    .max_connections = 32,
     .keepalive_ms = 5000,
 };
 
 /// The rules, over the transport's events.
 pub const Relay = struct {
     transport: *net.WebSocketTransport,
+    gpa: std.mem.Allocator,
     host: ?ConnectionId = null,
-    guest: ?ConnectionId = null,
-    /// The `left` that the host's page has not answered yet: until it has, what the host sends is
-    /// for a guest that left, and is dropped.
-    host_answers_due: u32 = 0,
+    /// The host's clients, in the order they came.
+    clients: std.ArrayList(Client) = .empty,
+    /// The number the next client gets; past `maxInt(u16)`, they have all been given.
+    next_number: u32 = 1,
+    /// A client's message with its number before it, on its way to the host.
+    framed: [framed_max_len]u8 = undefined,
     log_enabled: bool = true,
+
+    pub const Client = struct { id: ConnectionId, number: u16 };
+
+    pub fn deinit(self: *Relay) void {
+        self.clients.deinit(self.gpa);
+    }
 
     /// Takes the transport's events until the task is canceled.
     pub fn run(self: *Relay) Io.Cancelable!void {
@@ -80,12 +95,12 @@ pub const Relay = struct {
         }
     }
 
-    /// One event of the transport; `text` tells a text message from a binary one.
+    /// One event of the transport; `text` tells a text message (ignored) from a binary one.
     pub fn handle(self: *Relay, e: platform.Event, text: bool) void {
         switch (e.payload) {
             .net_connected => |c| self.joined(c.connection),
             .net_disconnected => |d| self.gone(d.connection, @tagName(d.reason)),
-            .net_received => |m| if (text) self.heard(m.connection, m.bytes) else self.pass(m.connection, m.bytes),
+            .net_received => |m| if (!text) self.pass(m.connection, m.bytes),
             else => {},
         }
     }
@@ -93,64 +108,80 @@ pub const Relay = struct {
     fn joined(self: *Relay, id: ConnectionId) void {
         if (self.host == null) {
             self.host = id;
-            self.host_answers_due = 0;
+            // No client is connected and the last host is gone: no number can be mistaken.
+            if (self.next_number > std.math.maxInt(u16)) self.next_number = 1;
             if (self.log_enabled) log.info("connection {d} hosts", .{@backingInt(id)});
             self.say(id, words.host);
-        } else if (self.guest == null) {
-            self.guest = id;
-            if (self.log_enabled) log.info("connection {d} joins the host as its guest", .{@backingInt(id)});
-            self.say(id, words.guest);
-            if (self.host) |h| self.say(h, words.peer);
-        } else {
-            if (self.log_enabled) log.info("connection {d} is turned away: two players are playing", .{@backingInt(id)});
-            self.say(id, words.busy);
-            self.transport.transport().close(id);
+            return;
         }
+        if (self.next_number > std.math.maxInt(u16)) {
+            if (self.log_enabled) log.warn("connection {d} is turned away: every client number was given", .{@backingInt(id)});
+            self.transport.transport().close(id);
+            return;
+        }
+        const number: u16 = @intCast(self.next_number);
+        self.clients.append(self.gpa, .{ .id = id, .number = number }) catch {
+            self.transport.transport().close(id);
+            return;
+        };
+        self.next_number += 1;
+        if (self.log_enabled) log.info("connection {d} is client {d}", .{ @backingInt(id), number });
+        // Its role first, so that it has it before any message of the host's; then the host hears
+        // of it, unless it was dropped meanwhile.
+        self.say(id, words.client);
+        if (self.find(id) == null) return;
+        if (self.host) |h| self.sayNumber(h, words.peer, number);
     }
 
-    /// A connection ended (its event, or the relay dropped it): the rules for its role.
+    /// A connection ended (its event, or the relay ended it): the rules for its role.
     fn gone(self: *Relay, id: ConnectionId, why: []const u8) void {
         if (self.host == id) {
             self.host = null;
-            const guest = self.guest orelse {
-                if (self.log_enabled) log.info("the host left ({s})", .{why});
-                return;
-            };
-            self.guest = null;
-            if (self.log_enabled) log.info("the host left ({s}); its guest's connection ends", .{why});
-            self.say(guest, words.left);
-            self.transport.transport().close(guest);
-        } else if (self.guest == id) {
-            self.guest = null;
-            if (self.log_enabled) log.info("the guest left ({s})", .{why});
-            if (self.host) |h| {
-                self.host_answers_due += 1;
-                self.say(h, words.left);
+            if (self.log_enabled) log.info("the host left ({s}); its clients' connections end ({d})", .{ why, self.clients.items.len });
+            for (self.clients.items) |c| {
+                if (self.transport.sendText(c.id, words.left)) |_| {
+                    self.transport.transport().close(c.id);
+                } else |_| self.transport.abort(c.id);
             }
+            self.clients.clearRetainingCapacity();
+        } else if (self.find(id)) |i| {
+            const number = self.clients.items[i].number;
+            _ = self.clients.orderedRemove(i);
+            if (self.log_enabled) log.info("client {d} left ({s})", .{ number, why });
+            if (self.host) |h| self.sayNumber(h, words.left, number);
         }
     }
 
-    /// A text message from a page: the host's answer to `left`; any other is ignored.
-    fn heard(self: *Relay, from: ConnectionId, text: []const u8) void {
-        if (self.host == from and std.mem.eql(u8, text, words.left) and self.host_answers_due > 0) {
-            self.host_answers_due -= 1;
-        }
-    }
-
-    /// A message goes to the sender's partner as it is. A host's message is dropped when it has no
-    /// guest, or when it was sent for a guest that left (before the page answered `left`).
+    /// A binary message: a client's goes to the host after the client's number; the host's goes
+    /// to the client whose number it starts with, without it. The host's message for no client
+    /// connected is dropped.
     fn pass(self: *Relay, from: ConnectionId, bytes: []const u8) void {
-        const to = if (self.host == from)
-            (if (self.host_answers_due == 0) self.guest else null)
-        else if (self.guest == from)
-            self.host
-        else
-            null;
-        const id = to orelse return;
-        self.transport.transport().send(id, bytes) catch |err| switch (err) {
+        if (self.host == from) {
+            if (bytes.len < number_len) return;
+            const number = std.mem.readInt(u16, bytes[0..number_len], .little);
+            for (self.clients.items) |c| {
+                if (c.number == number) return self.forward(c.id, bytes[number_len..]);
+            }
+        } else if (self.find(from)) |i| {
+            const number = self.clients.items[i].number;
+            if (bytes.len > platform.max_message_len) {
+                // Longer than a message of the game's: ended as the transport ends one.
+                if (self.log_enabled) log.warn("client {d} sent a message too long: ended", .{number});
+                self.transport.closeWith(from, ws.CloseCode.too_big);
+                return self.gone(from, "too_large");
+            }
+            const host = self.host orelse return;
+            std.mem.writeInt(u16, self.framed[0..number_len], number, .little);
+            @memcpy(self.framed[number_len..][0..bytes.len], bytes);
+            self.forward(host, self.framed[0 .. number_len + bytes.len]);
+        }
+    }
+
+    fn forward(self: *Relay, to: ConnectionId, bytes: []const u8) void {
+        self.transport.sendLong(to, bytes) catch |err| switch (err) {
             // Its connection is ending: its event follows.
             error.NotConnected => {},
-            else => self.drop(id),
+            else => self.drop(to),
         };
     }
 
@@ -159,6 +190,20 @@ pub const Relay = struct {
             error.NotConnected => {},
             else => self.drop(id),
         };
+    }
+
+    /// `word` and a client's number: `peer N`, `left N`.
+    fn sayNumber(self: *Relay, id: ConnectionId, word: []const u8, number: u16) void {
+        var buf: [16]u8 = undefined;
+        self.say(id, std.fmt.bufPrint(&buf, "{s} {d}", .{ word, number }) catch unreachable);
+    }
+
+    /// Where a client is among `clients`.
+    fn find(self: *const Relay, id: ConnectionId) ?usize {
+        for (self.clients.items, 0..) |c, i| {
+            if (c.id == id) return i;
+        }
+        return null;
     }
 
     /// A page that does not take its messages (its queue is full) is dropped at once, without an
@@ -194,19 +239,21 @@ pub const Server = struct {
         transport_opts.assets = options.assets;
         transport_opts.manifest = manifest;
         transport_opts.accept_text = true;
+        transport_opts.max_message_len = framed_max_len;
         self.* = .{
             .allocator = allocator,
             .transport = .init(allocator, io, transport_opts),
             .relay = undefined,
             .manifest = manifest,
         };
-        self.relay = .{ .transport = &self.transport, .log_enabled = options.log };
+        self.relay = .{ .transport = &self.transport, .gpa = allocator, .log_enabled = options.log };
     }
 
     /// Closes every connection (going away) and frees everything. The task that runs `run` is
     /// canceled first.
     pub fn deinit(self: *Server) void {
         self.transport.deinit();
+        self.relay.deinit();
         self.allocator.free(self.manifest);
         self.* = undefined;
     }
@@ -265,10 +312,9 @@ pub const usage =
     \\  DIR|ROM              the game's data, whose files the pages load: the game directory, or
     \\                       the user's ROM, its content extracted in memory; no game runs here
     \\  --server [ADDRESS:]PORT  serve the browser build's page and the game's files at PORT
-    \\                       (all interfaces without ADDRESS), where a page plays alone (1
-    \\                       PLAYER) or joins the relay of network play (2 PLAYERS): the first
-    \\                       page to join hosts (player 1), the next is player 2, and a third is
-    \\                       turned away while they play
+    \\                       (all interfaces without ADDRESS), and relay network play between
+    \\                       the pages: the first page to connect hosts (player 1), every other
+    \\                       page is its client
     \\  --help, -h           show this help
     \\
 ;
@@ -356,7 +402,37 @@ fn leave(r: *Raw) !void {
     r.close();
 }
 
-test "the relay pairs two pages: roles, their messages both ways, a third page, the guest and the host leaving" {
+/// The host's message for client `number`: the number, then the bytes.
+fn toClient(r: *Raw, number: u16, bytes: []const u8) !void {
+    const m = try testing.allocator.alloc(u8, number_len + bytes.len);
+    defer testing.allocator.free(m);
+    std.mem.writeInt(u16, m[0..number_len], number, .little);
+    @memcpy(m[number_len..], bytes);
+    try r.message(.binary, m);
+}
+
+/// A client's message as the host gets it: the client's number, then the bytes.
+fn expectFrom(r: *Raw, number: u16, bytes: []const u8) !void {
+    const f = try r.next();
+    try testing.expectEqual(ws.Opcode.binary, f.opcode);
+    try testing.expect(f.payload.len >= number_len);
+    try testing.expectEqual(number, std.mem.readInt(u16, f.payload[0..number_len], .little));
+    try testing.expectEqualSlices(u8, bytes, f.payload[number_len..]);
+}
+
+/// A word and a client's number, as the host hears them.
+fn expectSaid(r: *Raw, word: []const u8, number: u16) !void {
+    var buf: [16]u8 = undefined;
+    try expectText(r, try std.fmt.bufPrint(&buf, "{s} {d}", .{ word, number }));
+}
+
+/// A client hears that its host left, and its connection ends.
+fn expectHostLeft(r: *Raw) !void {
+    try expectText(r, words.left);
+    try testing.expectEqual(ws.CloseCode.normal, try r.closeCode());
+}
+
+test "the hub: roles, client numbers, and the messages between the host and each client" {
     var h: Harness = undefined;
     try h.start(.{});
     defer h.stop();
@@ -373,68 +449,80 @@ test "the relay pairs two pages: roles, their messages both ways, a third page, 
         try testing.expect(std.mem.indexOf(u8, body, "\"mode\":\"relay\"") != null);
     }
 
-    // The first page hosts; the second is its guest, which the host hears of.
+    // The first page hosts; every other is a client, numbered from 1, which the host hears of.
     const a = try h.page();
     try expectText(a, words.host);
     const b = try h.page();
-    try expectText(b, words.guest);
-    try expectText(a, words.peer);
+    try expectText(b, words.client);
+    try expectSaid(a, words.peer, 1);
+    const c = try h.page();
+    try expectText(c, words.client);
+    try expectSaid(a, words.peer, 2);
 
-    // Their messages both ways, whole and as they are: a large one, an empty one, one in
-    // fragments.
+    // A client's messages reach the host after its number, whole and as they are: an empty one,
+    // one in fragments, one as long as the game's messages are.
     try b.message(.binary, "hello");
-    try expectBinary(a, "hello");
+    try expectFrom(a, 1, "hello");
+    try c.message(.binary, "");
+    try expectFrom(a, 2, "");
+    try c.frame(.binary, false, 2, "ab");
+    try c.frame(.continuation, true, 1, "c");
+    try expectFrom(a, 2, "abc");
     const big = try testing.allocator.alloc(u8, platform.max_message_len);
     defer testing.allocator.free(big);
     for (big, 0..) |*x, i| x.* = @truncate(i * 13);
-    try a.message(.binary, big);
+    try b.message(.binary, big);
+    try expectFrom(a, 1, big);
+
+    // The host's reach the client whose number they start with, without it.
+    try toClient(a, 2, "to c");
+    try expectBinary(c, "to c");
+    try toClient(a, 1, big);
     try expectBinary(b, big);
-    try a.message(.binary, "");
+    try toClient(a, 1, "");
     try expectBinary(b, "");
-    try a.frame(.binary, false, 2, "ab");
-    try a.frame(.continuation, true, 1, "c");
-    try expectBinary(b, "abc");
 
-    // A third page is turned away, and the two play on.
-    {
-        const c = try h.page();
-        defer c.close();
-        try expectText(c, words.busy);
-        try testing.expectEqual(ws.CloseCode.normal, try c.closeCode());
-    }
-    try b.message(.binary, "still");
-    try expectBinary(a, "still");
+    // Text from a page is ignored, and so is a host's message for no client: a number not given,
+    // a message too short to hold one.
+    try b.message(.text, "hello");
+    try a.message(.text, "hello");
+    try toClient(a, 7, "nobody");
+    try a.message(.binary, "x");
+    try toClient(a, 1, "after");
+    try expectBinary(b, "after");
+    try b.message(.binary, "after");
+    try expectFrom(a, 1, "after");
 
-    // The guest leaves: the host hears it. What the host sends until it answers `left` was for
-    // that guest, and goes nowhere, even once the next page has joined as its new guest.
+    // A client leaves: the host hears it. Its number is not given again, and what the host sends
+    // for it goes nowhere, even once another client has come.
     try leave(b);
-    try expectText(a, words.left);
-    try a.message(.binary, "nobody");
+    try expectSaid(a, words.left, 1);
+    try toClient(a, 1, "gone");
     const d = try h.page();
-    try expectText(d, words.guest);
-    try expectText(a, words.peer);
-    try a.message(.binary, "stale");
-    try d.message(.binary, "hello again");
-    try expectBinary(a, "hello again");
-    try a.message(.text, words.left);
-    try a.message(.binary, "welcome");
+    try expectText(d, words.client);
+    try expectSaid(a, words.peer, 3);
+    try toClient(a, 1, "stale");
+    try toClient(a, 3, "welcome");
     try expectBinary(d, "welcome");
+    try toClient(a, 2, "still");
+    try expectBinary(c, "still");
 
-    // The host goes, without a close frame: its guest hears it and its connection ends. The next
-    // page hosts, and the one after is its guest.
+    // The host goes, without a close frame: each client hears it, and its connection ends. The
+    // next page hosts, and the numbers go on.
     a.close();
-    try expectText(d, words.left);
-    try testing.expectEqual(ws.CloseCode.normal, try d.closeCode());
+    try expectHostLeft(c);
+    c.close();
+    try expectHostLeft(d);
     d.close();
     const e = try h.page();
     defer e.close();
     try expectText(e, words.host);
     const f = try h.page();
     defer f.close();
-    try expectText(f, words.guest);
-    try expectText(e, words.peer);
+    try expectText(f, words.client);
+    try expectSaid(e, words.peer, 4);
     try f.message(.binary, "again");
-    try expectBinary(e, "again");
+    try expectFrom(e, 4, "again");
 }
 
 test "a page that breaks the protocol is ended, and the rules for its role follow" {
@@ -444,113 +532,169 @@ test "a page that breaks the protocol is ended, and the rules for its role follo
     const a = try h.page();
     try expectText(a, words.host);
 
-    // A guest that sends a frame of an unknown kind, one that sends an oversized message: each is
-    // ended with its close code, and its host hears that it left. Text other than the host's
-    // answer is ignored.
+    // A client that sends a frame of an unknown kind, one longer than any page may send, one
+    // longer than a message of the game's (its number would not fit before it): each is ended
+    // with its close code, and the host hears that it left.
     var oversized: [14]u8 = undefined;
-    const oversized_len = ws.writeHeader(&oversized, true, .binary, platform.max_message_len + 1, .{ 0, 0, 0, 0 });
-    for ([_]struct { header: []const u8, code: u16 }{
+    const oversized_len = ws.writeHeader(&oversized, true, .binary, framed_max_len + 1, .{ 0, 0, 0, 0 });
+    var too_long: [14]u8 = undefined;
+    const too_long_len = ws.writeHeader(&too_long, true, .binary, platform.max_message_len + 1, .{ 0, 0, 0, 0 });
+    const payload = try testing.allocator.alloc(u8, platform.max_message_len + 1);
+    defer testing.allocator.free(payload);
+    @memset(payload, 0);
+    var number: u16 = 1;
+    for ([_]struct { header: []const u8, payload: []const u8 = "", code: u16 }{
         .{ .header = &.{ 0x83, 0x80, 0, 0, 0, 0 }, .code = ws.CloseCode.protocol_error },
         .{ .header = oversized[0..oversized_len], .code = ws.CloseCode.too_big },
+        .{ .header = too_long[0..too_long_len], .payload = payload, .code = ws.CloseCode.too_big },
     }) |case| {
         const g = try h.page();
         defer g.close();
-        try expectText(g, words.guest);
-        try expectText(a, words.peer);
-        try g.message(.text, "hello");
+        try expectText(g, words.client);
+        try expectSaid(a, words.peer, number);
         try g.message(.binary, "pad");
-        try expectBinary(a, "pad");
+        try expectFrom(a, number, "pad");
         try g.write(case.header);
+        if (case.payload.len != 0) try g.write(case.payload);
         try testing.expectEqual(case.code, try g.closeCode());
-        try expectText(a, words.left);
-        try a.message(.text, words.left);
+        try expectSaid(a, words.left, number);
+        number += 1;
     }
 
-    // A host that sends an unmasked frame: ended (1002); its guest hears it and is ended too.
+    // A host that sends an unmasked frame: ended (1002); its client hears it and is ended too.
     const g = try h.page();
     defer g.close();
-    try expectText(g, words.guest);
-    try expectText(a, words.peer);
+    try expectText(g, words.client);
+    try expectSaid(a, words.peer, number);
     var header: [14]u8 = undefined;
     const n = ws.writeHeader(&header, true, .binary, 3, null);
     try a.write(header[0..n]);
     try a.write("abc");
     try testing.expectEqual(ws.CloseCode.protocol_error, try a.closeCode());
     a.close();
-    try expectText(g, words.left);
-    try testing.expectEqual(ws.CloseCode.normal, try g.closeCode());
+    try expectHostLeft(g);
     const next = try h.page();
     defer next.close();
     try expectText(next, words.host);
 }
 
-/// Reads a page's frames until one comes: `left` (1) or another (2).
-fn awaitLeft(r: *Raw, state: *std.atomic.Value(u8)) Io.Cancelable!void {
+/// Reads a page's frames until one comes: the text `word` (1) or another (2).
+fn awaitWord(r: *Raw, word: []const u8, state: *std.atomic.Value(u8)) Io.Cancelable!void {
     const f = r.next() catch return state.store(2, .release);
-    const left = f.opcode == .text and std.mem.eql(u8, f.payload, words.left);
-    state.store(if (left) 1 else 2, .release);
+    const heard = f.opcode == .text and std.mem.eql(u8, f.payload, word);
+    state.store(if (heard) 1 else 2, .release);
 }
 
-test "a page that does not take its messages is dropped, and its partner goes on" {
+test "a page that does not take its messages is dropped, and the others go on" {
     var h: Harness = undefined;
     try h.start(.{ .send_queue_bytes = 64 * 1024 });
     defer h.stop();
-    const a = try h.page();
-    defer a.close();
-    try expectText(a, words.host);
-    // The guest reads nothing more.
-    const b = try h.page();
-    defer b.close();
-    try expectText(b, words.guest);
-    try expectText(a, words.peer);
-
-    // The host sends and sends; the relay drops its guest when the guest's queue is full, and the
-    // host hears that it left. The host is never held back.
-    var state: std.atomic.Value(u8) = .init(0);
-    var reader: Io.Group = .init;
-    defer reader.cancel(testing.io);
-    try reader.concurrent(testing.io, awaitLeft, .{ a, &state });
     const chunk = try testing.allocator.alloc(u8, platform.max_message_len);
     defer testing.allocator.free(chunk);
     @memset(chunk, 0x5A);
-    var sent: usize = 0;
-    while (state.load(.acquire) == 0) : (sent += 1) {
-        // 1 GiB at most: far beyond what the sockets' buffers and the queue hold.
-        if (sent == 16 * 1024) return error.TestUnexpectedResult;
-        try a.message(.binary, chunk);
-    }
-    try reader.await(testing.io);
-    try testing.expectEqual(@as(u8, 1), state.load(.acquire));
-    try a.message(.text, words.left);
+    const a = try h.page();
+    try expectText(a, words.host);
+    // The client reads nothing more.
+    const b = try h.page();
+    defer b.close();
+    try expectText(b, words.client);
+    try expectSaid(a, words.peer, 1);
 
-    // The next page is the host's guest, and their messages flow: the first it gets is the first
-    // the host sent after its answer.
+    // The host sends and sends to it; the relay drops it when its queue is full, and the host
+    // hears that it left. The host is never held back.
+    {
+        var state: std.atomic.Value(u8) = .init(0);
+        var reader: Io.Group = .init;
+        defer reader.cancel(testing.io);
+        try reader.concurrent(testing.io, awaitWord, .{ a, "left 1", &state });
+        var sent: usize = 0;
+        while (state.load(.acquire) == 0) : (sent += 1) {
+            // 1 GiB at most: far beyond what the sockets' buffers and the queue hold.
+            if (sent == 16 * 1024) return error.TestUnexpectedResult;
+            try toClient(a, 1, chunk[number_len..]);
+        }
+        try reader.await(testing.io);
+        try testing.expectEqual(@as(u8, 1), state.load(.acquire));
+    }
+
+    // The next client's messages flow both ways.
     const c = try h.page();
-    defer c.close();
-    try expectText(c, words.guest);
-    try expectText(a, words.peer);
-    try a.message(.binary, "after");
+    try expectText(c, words.client);
+    try expectSaid(a, words.peer, 2);
+    try toClient(a, 2, "after");
     try expectBinary(c, "after");
+
+    // A host that reads nothing more is dropped the same way when a client sends and sends: each
+    // client hears that its host left.
+    {
+        var state: std.atomic.Value(u8) = .init(0);
+        var reader: Io.Group = .init;
+        defer reader.cancel(testing.io);
+        try reader.concurrent(testing.io, awaitWord, .{ c, words.left, &state });
+        var sent: usize = 0;
+        while (state.load(.acquire) == 0) : (sent += 1) {
+            if (sent == 16 * 1024) return error.TestUnexpectedResult;
+            // Its connection ends once it has heard: a write may fail then.
+            c.message(.binary, chunk) catch break;
+        }
+        try reader.await(testing.io);
+        try testing.expectEqual(@as(u8, 1), state.load(.acquire));
+    }
+    c.close();
+    a.close();
+    const d = try h.page();
+    defer d.close();
+    try expectText(d, words.host);
 }
 
-test "a host gone without a word is dropped after three pings, and its guest's connection ends" {
+test "a host gone without a word is dropped after three pings, and its clients' connections end" {
     var h: Harness = undefined;
     try h.start(.{ .keepalive_ms = 50 });
     defer h.stop();
-    // The host reads nothing after it hears of its guest: no pong answers the pings.
+    // The host reads nothing after it hears of its client: no pong answers the pings.
     const a = try h.page();
     defer a.close();
     try expectText(a, words.host);
     const b = try h.page();
     defer b.close();
-    try expectText(b, words.guest);
-    try expectText(a, words.peer);
-    // The guest answers the pings (`next` does) until it hears that its host left.
-    try expectText(b, words.left);
-    try testing.expectEqual(ws.CloseCode.normal, try b.closeCode());
+    try expectText(b, words.client);
+    try expectSaid(a, words.peer, 1);
+    // The client answers the pings (`next` does) until it hears that its host left.
+    try expectHostLeft(b);
     const c = try h.page();
     defer c.close();
     try expectText(c, words.host);
+}
+
+test "the numbers are never given again: once they have run out, a client is turned away until another page hosts" {
+    var h: Harness = undefined;
+    try h.start(.{});
+    defer h.stop();
+    // As after 65534 clients; no page has connected yet.
+    h.server.relay.next_number = std.math.maxInt(u16);
+    const a = try h.page();
+    try expectText(a, words.host);
+    const b = try h.page();
+    try expectText(b, words.client);
+    try expectSaid(a, words.peer, std.math.maxInt(u16));
+    {
+        const c = try h.page();
+        defer c.close();
+        try testing.expectEqual(ws.CloseCode.normal, try c.closeCode());
+    }
+    try b.message(.binary, "on");
+    try expectFrom(a, std.math.maxInt(u16), "on");
+    // The host goes: the next page hosts, and its clients are numbered from 1 again.
+    a.close();
+    try expectHostLeft(b);
+    b.close();
+    const d = try h.page();
+    defer d.close();
+    try expectText(d, words.host);
+    const e = try h.page();
+    defer e.close();
+    try expectText(e, words.client);
+    try expectSaid(d, words.peer, 1);
 }
 
 test "the relay serves the game's files it is given" {

@@ -122,47 +122,82 @@ check('nothing follows the game\'s close', () => {
   assert.equal(t.send(id, new ArrayBuffer(1)), 'not_connected');
 });
 
-check('a relay\'s guest is connected once its role is known', () => {
+// A relay's binary message between a host and client `number`: the number, then `len` bytes.
+function framed(number, len) {
+  const bytes = new Uint8Array(2 + len);
+  new DataView(bytes.buffer).setUint16(0, number, true);
+  return bytes.buffer;
+}
+
+function numberOf(data) {
+  return new DataView(data).getUint16(0, true);
+}
+
+check('a relay\'s client is connected once its role is known', () => {
   const events = recorder();
   const t = sorzTransport(FakeSocket, events);
   t.joinRelay('ws://relay/');
   const socket = FakeSocket.last;
   socket.open();
   socket.message(new ArrayBuffer(2)); // Before the role: not the game's.
-  socket.message('guest');
+  socket.message('client');
   socket.message(new ArrayBuffer(3));
-  socket.drop();
   const id = events.log[1][1];
+  // A client's messages cross as they are: the relay knows its number.
+  assert.equal(t.send(id, new ArrayBuffer(4)), 'sent');
+  assert.equal(socket.sent[0].byteLength, 4);
+  socket.drop();
   assert.deepEqual(events.log, [
-    ['relay', 'guest'], ['connected', id, false], ['received', id, 3], ['disconnected', id, 'lost'], ['relay', 'lost'],
+    ['relay', 'client'], ['connected', id, false], ['received', id, 3], ['disconnected', id, 'lost'], ['relay', 'lost'],
   ]);
 });
 
-check('a relay\'s host sees each guest as an incoming connection, and answers each \'left\'', () => {
+check('a relay\'s host sees each client as an incoming connection, its messages by its number', () => {
   const events = recorder();
-  const t = sorzTransport(FakeSocket, events);
+  const t = sorzTransport(FakeSocket, events, { maxMessage: 8 });
   t.joinRelay('ws://relay/');
   const socket = FakeSocket.last;
   socket.open();
   socket.message('host');
-  socket.message('peer');
+  socket.message('peer 1');
+  socket.message('peer 2');
   const first = events.log[1][1];
-  socket.message(new ArrayBuffer(4));
-  assert.equal(t.send(first, new ArrayBuffer(4)), 'sent');
-  socket.message('left');
-  assert.equal(t.send(first, new ArrayBuffer(4)), 'not_connected');
-  socket.message('peer');
-  const second = events.log[4][1];
+  const second = events.log[2][1];
   assert.notEqual(first, second);
+  // From each client, its number taken off; to each, its number put before the game's message.
+  socket.message(framed(2, 4));
+  socket.message(framed(1, 3));
+  assert.equal(t.send(first, new ArrayBuffer(5)), 'sent');
+  assert.equal(t.send(second, new ArrayBuffer(8)), 'sent');
+  assert.equal(t.send(second, new ArrayBuffer(9)), 'too_large');
+  assert.deepEqual(socket.sent.map((m) => [numberOf(m), m.byteLength - 2]), [[1, 5], [2, 8]]);
+  // For no client: an unknown number, a message too short to hold one; words it does not know.
+  socket.message(framed(7, 1));
+  socket.message(new ArrayBuffer(1));
+  socket.message('peer');
+  socket.message('peer 01');
+  socket.message('left 9');
+  // A client leaves; its number is not given again, and what comes for it is dropped.
+  socket.message('left 1');
+  assert.equal(t.send(first, new ArrayBuffer(4)), 'not_connected');
+  socket.message(framed(1, 2));
+  // A client's message too long for the game ends its connection, not the relay's.
+  socket.message(framed(2, 9));
+  assert.equal(socket.closed, null);
+  socket.message(framed(2, 1));
+  socket.message('peer 3');
+  const third = events.log[7][1];
   socket.drop();
   assert.deepEqual(events.log, [
-    ['relay', 'host'], ['connected', first, true], ['received', first, 4], ['disconnected', first, 'closed'],
-    ['connected', second, true], ['disconnected', second, 'lost'], ['relay', 'lost'],
+    ['relay', 'host'], ['connected', first, true], ['connected', second, true],
+    ['received', second, 4], ['received', first, 3], ['disconnected', first, 'closed'], ['disconnected', second, 'too_large'],
+    ['connected', third, true], ['disconnected', third, 'lost'], ['relay', 'lost'],
   ]);
-  assert.deepEqual(socket.sent.filter((m) => typeof m === 'string'), ['left']);
+  // The page says nothing to the relay.
+  assert.deepEqual(socket.sent.filter((m) => typeof m === 'string'), []);
 });
 
-check('a relay that cannot be reached, or where two play, gives no role', () => {
+check('a relay that cannot be reached, or that gives no role, puts the page off it', () => {
   const events = recorder();
   const t = sorzTransport(FakeSocket, events);
   t.joinRelay('ws://relay/');
@@ -171,59 +206,67 @@ check('a relay that cannot be reached, or where two play, gives no role', () => 
   FakeSocket.last.open();
   FakeSocket.last.message('busy');
   FakeSocket.last.drop();
-  assert.deepEqual(events.log, [['relay', 'unreachable'], ['relay', 'busy']]);
+  assert.deepEqual(events.log, [['relay', 'unreachable'], ['relay', 'unreachable']]);
 });
 
-check('a relay\'s guest hears that its host left', () => {
+check('a relay\'s client hears that its host left', () => {
   const events = recorder();
   const t = sorzTransport(FakeSocket, events);
   t.joinRelay('ws://relay/');
   const socket = FakeSocket.last;
   socket.open();
-  socket.message('guest');
+  socket.message('client');
   const id = events.log[1][1];
   socket.message('left');
+  // Its connection to the host ends at once; the page is off the relay once the relay's ends.
+  assert.deepEqual(events.log, [['relay', 'client'], ['connected', id, false], ['disconnected', id, 'closed']]);
+  socket.message(new ArrayBuffer(2));
   socket.drop();
-  assert.deepEqual(events.log, [['relay', 'guest'], ['connected', id, false], ['disconnected', id, 'closed'], ['relay', 'host_left']]);
+  assert.deepEqual(events.log.slice(3), [['relay', 'host_left']]);
   assert.deepEqual(socket.sent, []);
 });
 
-check('a host\'s game lets its guest go and stays with the relay; a guest\'s game leaves it', () => {
+check('a host\'s game lets its client go and stays on the relay; a client\'s game leaves it', () => {
   const events = recorder();
   const t = sorzTransport(FakeSocket, events);
   t.joinRelay('ws://relay/');
   const host = FakeSocket.last;
   host.open();
   host.message('host');
-  host.message('peer');
+  host.message('peer 1');
   const first = events.log[1][1];
   t.close(first);
   assert.equal(host.closed, null);
-  host.message(new ArrayBuffer(5)); // From the guest let go: dropped.
-  host.message('left');
-  host.message('peer');
+  host.message(framed(1, 5)); // From the client let go: dropped.
+  host.message('left 1');
+  host.message('peer 2');
   const second = events.log[2][1];
-  host.message(new ArrayBuffer(6));
+  host.message(framed(2, 6));
   assert.deepEqual(events.log, [['relay', 'host'], ['connected', first, true], ['connected', second, true], ['received', second, 6]]);
-  assert.deepEqual(host.sent, ['left']);
+  assert.deepEqual(host.sent, []);
 
-  const guestEvents = recorder();
-  const g = sorzTransport(FakeSocket, guestEvents);
-  g.joinRelay('ws://relay/');
-  const guest = FakeSocket.last;
-  guest.open();
-  guest.message('guest');
-  g.close(guestEvents.log[1][1]);
-  assert.equal(guest.closed, 1000);
-  guest.drop();
-  assert.deepEqual(guestEvents.log, [['relay', 'guest'], ['connected', guestEvents.log[1][1], false]]);
+  // A client's game closes its connection to the host: the page is off the relay ('closed'), and
+  // the module hears nothing more.
+  const clientEvents = recorder();
+  const c = sorzTransport(FakeSocket, clientEvents);
+  c.joinRelay('ws://relay/');
+  const client = FakeSocket.last;
+  client.open();
+  client.message('client');
+  const id = clientEvents.log[1][1];
+  c.close(id);
+  assert.equal(client.closed, 1000);
+  client.message(new ArrayBuffer(3));
+  client.drop();
+  assert.deepEqual(clientEvents.log, [['relay', 'client'], ['connected', id, false], ['relay', 'closed']]);
 
-  // The page leaves the relay: its connection ends, and nothing follows.
+  // The page leaves the relay: its connection ends, and nothing follows, for none of its clients.
   t.leaveRelay();
   assert.equal(host.closed, 1000);
-  host.message(new ArrayBuffer(7));
+  host.message(framed(2, 7));
   host.drop();
   assert.equal(events.log.length, 4);
+  assert.equal(t.send(second, new ArrayBuffer(1)), 'not_connected');
 });
 
 // The module, with the page's functions stubbed: no game data, no canvas, no sound.
