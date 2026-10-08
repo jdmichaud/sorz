@@ -114,8 +114,9 @@ pub const Mind = struct {
     blast: bool = false,
 };
 
-/// `stand` is his walk (his animation 0); `turn` his turn; `wind_up`... his charge's looks.
-pub const Animation = enum { stand, turn, wind_up, wind_up_2, wind_up_3, rush, knocked, held, held_behind, flight, bounce, down, lifted, flinch };
+/// `stand` is his walk (his animation 0); `turn` his turn; `wind_up`... his charge's looks;
+/// `heavy_lifted` his look lifted by a throw he is too heavy for.
+pub const Animation = enum { stand, turn, wind_up, wind_up_2, wind_up_3, rush, knocked, held, held_behind, flight, bounce, down, lifted, flinch, heavy_lifted };
 pub const Sound = enum { hurt, cry, thud, rush };
 
 pub const Tables = struct {
@@ -219,6 +220,24 @@ pub const Numbers = struct {
     fling_bounce: Fixed,
     fling_bounce_2: Fixed,
     fling_damage: u8,
+    /// Too heavy to be thrown over (boss.zig's `heavy`): lifted less, he comes down on his
+    /// thrower and stops its fall.
+    heavy_toss_lift: i16,
+    heavy_toss_ahead: i16,
+    crush_toss_at: u8,
+    crush_toss_skip: u8,
+    drop_toss_at: u8,
+    crush_vault_at: u8,
+    crush_vault_skip: u8,
+    crush_vault_up: i16,
+    crush_vault_x: Fixed,
+    crush_vault_rise: Fixed,
+    crush_vault_ahead: i16,
+    drop_vault_at: u8,
+    heavy_fling_up: Fixed,
+    crush_fling_at: u8,
+    crush_fling_skip: u8,
+    drop_fling_at: u8,
     special_grounded: u8,
     special_ticks: u16,
     special_ticks_second: u16,

@@ -9,7 +9,8 @@
 //! `Mind` with the body's fields (as Antonio's), its `Numbers` with the body's, its `Animation`
 //! (with `stand`, its animation 0, and `knocked`, `held`, `held_behind`, `flight`, `bounce`,
 //! `down`, `lifted`, `flinch`), its `Sound` (`hurt`, `cry`, `thud`), and `walkAfresh(a)`, its walk
-//! from its start.
+//! from its start. A boss too heavy to be thrown over (round 4's) has the numbers of his crush
+//! (`crush_toss_at`... as boss_r4.zig's) and the animation `heavy_lifted`.
 const std = @import("std");
 const tick = @import("../tick.zig");
 const fixed = @import("../fixed.zig");
@@ -633,9 +634,9 @@ pub fn Of(comptime M: type) type {
 
         /// His fall after a throw: in the air, faster down; landing, his bounces: the first `first`
         /// back up (a shake of the screen when `shake_first`, else a thud); the second halves his speed
-        /// across, `second` up, with the throw's `damage` (the shake then, or a thud); the last stops
-        /// him.
-        pub fn thrownFall(a: A, first: Fixed, second: Fixed, damage: u8, shake_first: bool) void {
+        /// across, `second` up, with the throw's `damage` (the shake then, or a thud; too heavy, no
+        /// damage but the shake); the last stops him.
+        pub fn thrownFall(a: A, first: Fixed, second: Fixed, damage: ?u8, shake_first: bool) void {
             const n = a.numbers();
             const m = a.mind;
             const e = a.entity;
@@ -650,10 +651,10 @@ pub fn Of(comptime M: type) type {
                 return a.sound(.thud);
             }
             if (m.bounces == 1) {
-                if (!shake_first) landingShake(a);
+                if (!shake_first or damage == null) landingShake(a);
                 e.velocity.x = .{ .raw = e.velocity.x.raw >> 1 };
                 e.velocity.height = .parts(@intCast(second.whole()), e.velocity.height.frac());
-                a.takeDamage(m.attacker, damage);
+                a.takeDamage(m.attacker, damage orelse return);
                 if (e.health <= 0) return beatenCry(a);
                 if (shake_first) a.sound(.thud);
                 return;
@@ -672,19 +673,46 @@ pub fn Of(comptime M: type) type {
             lie(a);
         }
 
-        /// Tossed over the shoulder: lifted, flying over, then he falls and bounces.
+        /// Too heavy to be thrown over: his numbers bring him down on his thrower.
+        const heavy = @hasField(M.Numbers, "crush_toss_at");
+
+        /// Too heavy, he comes down on his thrower: its blow his power, knocking it down; his
+        /// throw's ticks cut short by `skip`, a bounce spent, a pixel deeper.
+        fn crush(a: A, skip: u8) void {
+            const m = a.mind;
+            if (m.holder) |h| _ = a.tick.struck(h, .{ .attacker = a.handle, .damage = m.power, .reaction = .knock_down, .push = .zero });
+            m.count -%= skip;
+            m.bounces -%= 1;
+            a.entity.position.depth = a.entity.position.depth.add(.pixels(1));
+        }
+
+        /// Too heavy, he stops his thrower's fall.
+        fn drop(a: A) void {
+            const h = a.mind.holder orelse return;
+            if (a.other(h)) |t| t.velocity.height = .zero;
+        }
+
+        /// Tossed over the shoulder: lifted, flying over, then he falls and bounces. Too heavy, he
+        /// is lifted less and not thrown ahead, comes down on his thrower and stops its fall.
         pub fn tossed(a: A) void {
             const n = a.numbers();
             const m = a.mind;
             const e = a.entity;
             if (m.bounces != 0) {
                 const left = m.count;
-                if (left == n.toss_lift_at) {
-                    a.animate(.lifted);
+                if (heavy and left < n.toss_lift_at) {
+                    if (left == n.drop_toss_at) {
+                        drop(a);
+                    } else {
+                        if (left == n.crush_toss_at) crush(a, n.crush_toss_skip);
+                        thrownFall(a, n.toss_bounce, n.toss_bounce_2, null, true);
+                    }
+                } else if (left == n.toss_lift_at) {
+                    a.animate(if (heavy) .heavy_lifted else .lifted);
                     e.velocity.height = .parts(@intCast(n.toss_up.whole()), e.velocity.height.frac());
-                    e.position.height = e.position.height.sub(.pixels(n.toss_lift));
-                    var x = n.toss_x.whole();
-                    var ahead: i32 = n.toss_ahead;
+                    e.position.height = e.position.height.sub(.pixels(if (heavy) n.heavy_toss_lift else n.toss_lift));
+                    var x: i32 = if (heavy) 0 else n.toss_x.whole();
+                    var ahead: i32 = if (heavy) n.heavy_toss_ahead else n.toss_ahead;
                     if (throwerLeft(a)) {
                         x = -x;
                         ahead = -ahead;
@@ -699,8 +727,18 @@ pub fn Of(comptime M: type) type {
             thrownCount(a);
         }
 
+        /// Flying off `x` across, the way he faces, and `up` in height, with a thud.
+        fn flyOff(a: A, x: Fixed, up: Fixed) void {
+            const e = a.entity;
+            e.velocity.x = x;
+            e.velocity.height = up;
+            a.sound(.thud);
+            if (e.facing == .left) e.velocity.x = e.velocity.x.neg();
+        }
+
         /// Carried over the thrower's head step by step (`carried`), slammed down (the vault's damage),
-        /// then flying off and sliding.
+        /// then flying off and sliding. Too heavy, turned over his thrower he comes down on it, flies
+        /// back off it and stops its fall.
         pub fn vaulted(a: A) void {
             const n = a.numbers();
             const m = a.mind;
@@ -711,6 +749,15 @@ pub fn Of(comptime M: type) type {
                 if (left == n.vault_turn_at) {
                     step = 0;
                     a.animate(.flight);
+                } else if (heavy) {
+                    if (left == n.crush_vault_at) {
+                        crush(a, n.crush_vault_skip);
+                        e.position.height = e.position.height.sub(.pixels(n.crush_vault_up));
+                        e.position.x = e.position.x.add(.pixels(if (e.facing == .left) -n.crush_vault_ahead else n.crush_vault_ahead));
+                        flyOff(a, n.crush_vault_x, n.crush_vault_rise);
+                        return thrownCount(a);
+                    }
+                    if (left == n.drop_vault_at) drop(a);
                 } else if (left == n.vault_over_at) {
                     step = 1;
                 } else if (left == n.vault_down_at) {
@@ -734,10 +781,7 @@ pub fn Of(comptime M: type) type {
             }
             const left = m.count;
             if (left == n.vault_fly_at) {
-                e.velocity.x = n.vault_fly;
-                e.velocity.height = n.vault_fly;
-                a.sound(.thud);
-                if (e.facing == .left) e.velocity.x = e.velocity.x.neg();
+                if (!heavy) flyOff(a, n.vault_fly, n.vault_fly);
             } else if (left < n.vault_fly_at) {
                 if (!grounded(a)) {
                     e.velocity.height = e.velocity.height.add(n.thrown_gravity);
@@ -747,28 +791,32 @@ pub fn Of(comptime M: type) type {
                     } else {
                         e.facing = if (m.left_of) .right else .left;
                         a.animate(.bounce);
-                        e.velocity.x = n.vault_slide;
-                        e.velocity.height = n.vault_slide;
-                        a.sound(.thud);
-                        if (e.facing == .left) e.velocity.x = e.velocity.x.neg();
+                        flyOff(a, n.vault_slide, n.vault_slide);
                     }
                 }
             }
             thrownCount(a);
         }
 
-        /// Flung behind the thrower: swung to its back, flying off, falling and bouncing.
+        /// Flung behind the thrower: swung to its back, flying off, falling and bouncing. Too heavy,
+        /// swung up he falls, comes down on his thrower and stops its fall.
         pub fn flung(a: A) void {
             const n = a.numbers();
             const m = a.mind;
             const e = a.entity;
             if (m.bounces != 0) {
                 const left = m.count;
-                if (left == n.fling_lift_at or left == n.fling_at) {
+                if (heavy and left < n.fling_lift_at) {
+                    if (left == n.crush_fling_at) {
+                        crush(a, n.crush_fling_skip);
+                    } else if (left == n.drop_fling_at) drop(a);
+                    thrownFall(a, n.fling_bounce, n.fling_bounce_2, null, false);
+                } else if (left == n.fling_lift_at or left == n.fling_at) {
                     const k: usize = if (left == n.fling_lift_at) 3 else 4;
                     var x: i32 = 0;
                     if (left == n.fling_lift_at) {
-                        a.animate(.lifted);
+                        a.animate(if (heavy) .heavy_lifted else .lifted);
+                        if (heavy) e.velocity.height = .parts(@intCast(n.heavy_fling_up.whole()), e.velocity.height.frac());
                     } else {
                         e.velocity.height = .parts(@intCast(n.fling_up.whole()), e.velocity.height.frac());
                         x = n.fling_x.whole();

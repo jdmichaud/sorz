@@ -1132,6 +1132,46 @@ fn thrownNumbers(d: *Def, kind: u8) Error!void {
     try d.number("fling_damage", try quick(rom, 0x169AE, 0x5168), "ROM 0x169AE: subq.w #N,(50,a0)");
 }
 
+/// Round 4's boss (type $57) is too heavy to be thrown over as the others: in each throw his
+/// own branch (`cmpi.b #$57,(a0)`) lifts him less and brings him down on his thrower, who takes
+/// his blow's damage (`move.b #1,(124,a1)`, `(125,a1)`, `move.b (74,a0),(52,a0)`), his ticks cut
+/// short and a bounce spent, a pixel deeper; then the thrower's fall is stopped (`clr.l (36,a1)`).
+fn heavyThrows(d: *Def) Error!void {
+    const rom = d.rom;
+    const crush = [_]u32{ 0x165FE, 0x16770, 0x16914 };
+    for (crush) |at| {
+        if (u32be(rom, at) != 0x137C0001 or u16be(rom, at + 4) != 0x7C or u32be(rom, at + 6) != 0x137C0001 or u16be(rom, at + 10) != 0x7D or u32be(rom, at + 12) != 0x1168004A or u16be(rom, at + 16) != 0x34) return error.BadData;
+    }
+    for ([_]u32{ 0x165CE, 0x16740, 0x1690C }) |at| if (u32be(rom, at) != 0x42A90024) return error.BadData;
+    // Tossed (state 6): lifted at the toss's tick ($29) by less, not thrown ahead.
+    if (try immediate(rom, 0x165D6, &.{ 0x0C, 0x07, 0x00 }, 1) != try immediate(rom, 0x16620, &.{ 0x0C, 0x07, 0x00 }, 1)) return error.BadData;
+    if (try movedWord(rom, 0x165E8, 0x24) != try movedWord(rom, 0x16630, 0x24)) return error.BadData;
+    if (try immediate(rom, 0x165F4, &.{ 0x30, 0x3C }, 2) != 0) return error.BadData;
+    try d.number("heavy_toss_lift", try immediate(rom, 0x165EE, &.{ 0x04, 0x68 }, 2), "ROM 0x165EE: subi.w #N,(24,a0)");
+    try d.number("heavy_toss_ahead", try immediate(rom, 0x165F8, &.{ 0x32, 0x3C }, 2), "ROM 0x165F8: move.w #N,d1");
+    try d.number("crush_toss_at", try immediate(rom, 0x165C2, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x165C2: cmpi.b #N,d7");
+    try d.number("crush_toss_skip", try quick(rom, 0x16610, 0x5128), "ROM 0x16610: subq.b #N,(98,a0)");
+    try d.number("drop_toss_at", try immediate(rom, 0x165C8, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x165C8: cmpi.b #N,d7");
+    if (u32be(rom, 0x16618) != 0x52680014 or u32be(rom, 0x167A0) != 0x52680014 or u32be(rom, 0x1692E) != 0x52680014) return error.BadData;
+    // Vaulted over (state 7): at his ticks' $26 he comes down on his thrower, a little up, and
+    // flies back off it.
+    try d.number("crush_vault_at", try immediate(rom, 0x16732, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x16732: cmpi.b #N,d7");
+    try d.number("crush_vault_skip", try immediate(rom, 0x16782, &.{ 0x04, 0x28, 0x00 }, 1), "ROM 0x16782: subi.b #N,(98,a0)");
+    try d.number("crush_vault_up", try quick(rom, 0x1678C, 0x5168), "ROM 0x1678C: subq.w #N,(24,a0)");
+    try d.number("crush_vault_x", try movedLong(rom, 0x16790), "ROM 0x16790: move.l #N,(28,a0) (against his facing: neg at 0x16828)");
+    try d.number("crush_vault_rise", try movedLong(rom, 0x16798), "ROM 0x16798: move.l #N,(36,a0)");
+    try d.number("crush_vault_ahead", try immediate(rom, 0x167B4, &.{ 0x06, 0x68 }, 2), "ROM 0x167B4: addi.w #N,(16,a0) (subi.w facing left, 0x167AC)");
+    if (try immediate(rom, 0x167AC, &.{ 0x04, 0x68 }, 2) != try immediate(rom, 0x167B4, &.{ 0x06, 0x68 }, 2)) return error.BadData;
+    try d.number("drop_vault_at", try immediate(rom, 0x16738, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x16738: cmpi.b #N,d7");
+    // Flung (state 8): lifted ($2D) in his own look, rising, then down on his thrower.
+    if (try immediate(rom, 0x168E2, &.{ 0x0C, 0x07, 0x00 }, 1) != try immediate(rom, 0x1694A, &.{ 0x0C, 0x07, 0x00 }, 1)) return error.BadData;
+    if (u32be(rom, 0x1693C) != 0x76007C18) return error.BadData;
+    try d.number("heavy_fling_up", (try movedWord(rom, 0x16940, 0x24)) << 16, "ROM 0x16940: move.w #N,(36,a0)");
+    try d.number("crush_fling_at", try immediate(rom, 0x168FE, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x168FE: cmpi.b #N,d7");
+    try d.number("crush_fling_skip", try quick(rom, 0x16926, 0x5128), "ROM 0x16926: subq.b #N,(98,a0)");
+    try d.number("drop_fling_at", try immediate(rom, 0x16904, &.{ 0x0C, 0x07, 0x00 }, 1), "ROM 0x16904: cmpi.b #N,d7");
+}
+
 /// The frames of his animation `name` (its word `word`, facing right) show the boomerang in his
 /// hand where the records say, in its pose by the record's animation word; the frames facing
 /// left have the mirror records (but the throw's sixth, never reached in hand: the original's
@@ -1414,11 +1454,14 @@ pub fn bossR4(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition
         .{ .name = "down", .word = try immediate(rom, 0x16490, &.{ 0x30, 0x3C }, 2) },
         .{ .name = "lifted", .word = try animWord(rom, 0x1662A) },
         .{ .name = "flinch", .word = try moveq(rom, 0x16BB4, 0) },
+        .{ .name = "heavy_lifted", .word = try animWord(rom, 0x165E2) },
     };
     for (anims) |an| try d.animations.append(arena, .{ .name = an.name, .loop = true, .frames = try enemyFrames(&d, an.name, try wordEntry(an.word)) });
+    if (try animWord(rom, 0x16936) != try animWord(rom, 0x165E2)) return error.BadData;
     // His blow's power cleared each tick (0x174E8: clr.b (52,a0)): his own frames strike nothing.
     if (u32be(rom, 0x174E8) != 0x42280034) return error.BadData;
     try bossBody(&d, kind);
+    try heavyThrows(&d);
     // The walk (state 1, 0x175BA): his speed, the second of twins' ((93,a0) = 2).
     if (u32be(rom, 0x175EA) != 0x0C280002 or u16be(rom, 0x175EE) != 0x5D) return error.BadData;
     try d.number("walk_speed", try movedLong(rom, 0x175E2), "ROM 0x175E2: move.l #N,(28,a0) (facing left, its whole pixels' bits reversed: not.w at 0x17608)");
