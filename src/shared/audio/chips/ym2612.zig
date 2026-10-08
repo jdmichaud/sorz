@@ -461,7 +461,7 @@ pub const Ym2612 = struct {
     }
 
     /// `withDac` before the final scaling: the DAC replaces channel 6 when it is on.
-    fn withDacRaw(y: *const Ym2612, channels_out: Frame) Frame {
+    inline fn withDacRaw(y: *const Ym2612, channels_out: Frame) Frame {
         if (y.dac_enable == 0) return channels_out;
         const ch6 = &y.chans[5].cache;
         const dacval = y.dacValue();
