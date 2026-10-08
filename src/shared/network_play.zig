@@ -122,6 +122,7 @@ pub fn statusOf(s: *const State) protocol.Status {
 /// watches ends, playing on to its own front end; its player, at its own select, wants to join:
 /// it asks when it can.
 fn guest(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
+    np.sayWhere(p, if (wantsToJoin(&g.state)) .select else .menu);
     if (np.observing()) {
         if (g.startPressed()) {
             np.stopObserve(p);
@@ -184,6 +185,20 @@ fn load(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     };
 }
 
+/// Escape in a game: this machine's player leaves it, not the program, back to its menu (a host
+/// whose server runs, to its lobby: the network options over its menu); the other machines are
+/// told (the host's player 2 dies and is out, its client goes back to its menu, its observers
+/// too). False outside a game: the game quits.
+pub fn leaveGame(g: *Game, p: *platform.Platform) bool {
+    if (!g.state.inGame()) return false;
+    if (g.netplay) |np| {
+        np.leaveGame(p);
+        g.net_lobby = np.role == .host and np.open;
+    }
+    backToMenu(g, p);
+    return true;
+}
+
 /// The client back to its own menu, with its own game's set-up and variant (the host's came with
 /// its game).
 fn backToMenu(g: *Game, p: *platform.Platform) void {
@@ -204,6 +219,8 @@ fn ended(g: *Game, p: *platform.Platform, np: *net.Netplay, why: net.session.End
     }
     switch (np.role) {
         .host => {
+            // Its own player left the game first (Escape): nothing to say.
+            if (!g.state.inGame()) return;
             if (g.scene_assets) |*a| g.state.dropOut(1, a);
             g.tellNetwork(.player_2_left);
             var buf: [Game.join_max]u8 = undefined;

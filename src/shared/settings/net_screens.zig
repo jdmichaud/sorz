@@ -5,9 +5,10 @@
 //! - **The network options**: PLAYERS (2, the only number today), PORT (the native host's, which
 //!   it listens at once its server starts: fixed from then on; none on a page), OBSERVERS (whether
 //!   the session takes them), SAME CHARACTER (whether the two players may choose one character);
-//!   then START SERVER (the session opens, the host's player stays at its menu while clients
-//!   come), or STOP SERVER while it runs (its clients go), START GAME (the session opens if it is
-//!   not, and the host's player goes to the character select) and EXIT. Up and down move, left,
+//!   then START SERVER (the session opens: the screen stays, the host's lobby, listing who is
+//!   connected while clients come), or STOP SERVER while it runs (its clients go; the screen
+//!   stays), START GAME (the session opens if it is not, and the host's player goes to the
+//!   character select) and EXIT (back to the menu, the server as it is). Up and down move, left,
 //!   right, A, B or C change a value, A, B, C or START on an action act; START on a value is START
 //!   GAME; Escape, the settings key's place, and a gamepad's BACK leave as EXIT does. A, B or C
 //!   on PORT edits it, a digit at a time: left and right move between the digits, up and down
@@ -21,6 +22,7 @@
 //! Escape whatever those keys are.
 const std = @import("std");
 const platform = @import("../platform.zig");
+const netplay = @import("../net/netplay.zig");
 const input = @import("../input.zig");
 const panel_mod = @import("../panel.zig");
 const record = @import("record.zig");
@@ -28,8 +30,9 @@ const record = @import("record.zig");
 const Panel = panel_mod.Panel;
 const Settings = record.Settings;
 
-/// What a press did on a screen: stay, or leave (with the screen's answer kept).
-pub const Result = enum { stay, done, cancel };
+/// What a press did on a screen: stay, act and stay (the network options' server), or leave
+/// (with the screen's answer kept).
+pub const Result = enum { stay, acted, done, cancel };
 
 /// A press, as the screens take it.
 const Nav = enum { up, down, left, right, choose, start, back };
@@ -100,14 +103,19 @@ pub const NetOptions = struct {
     /// The digit of the port edited (0 the first of five), and the port before the edit.
     editing: ?u3 = null,
     port_before: u16 = 0,
-    /// The host's server runs (its line is STOP SERVER), and what the screen was left with.
+    /// The host's server runs (its line is STOP SERVER), and the action last taken.
     serving: bool = false,
     action: Action = .start_game,
+    /// Who is connected, while the server runs (the game keeps it up to date).
+    clients: [max_clients]netplay.Entry = undefined,
+    client_count: u8 = 0,
     /// The players of this machine, whose keys work the screen.
     players: usize = 1,
 
     pub const Row = enum(u8) { players, port, observers, same_character, server, game, exit };
     pub const Action = enum { start_server, stop_server, start_game };
+    /// The clients the screen lists.
+    pub const max_clients = 8;
 
     const digits = 5;
 
@@ -160,14 +168,28 @@ pub const NetOptions = struct {
         return .stay;
     }
 
-    /// The action of line `r` (START SERVER or STOP SERVER, START GAME, EXIT).
+    /// The action of line `r`: START SERVER or STOP SERVER (the screen stays), START GAME, EXIT.
     fn act(self: *NetOptions, r: Row) Result {
         switch (r) {
-            .server => self.action = if (self.serving) .stop_server else .start_server,
-            .game => self.action = .start_game,
+            .server => {
+                self.action = if (self.serving) .stop_server else .start_server;
+                return .acted;
+            },
+            .game => {
+                self.action = .start_game;
+                return .done;
+            },
             else => return .cancel,
         }
-        return .done;
+    }
+
+    /// The server as the game left it after an action: running or not, its port fixed or not;
+    /// started, the cursor goes to START GAME.
+    pub fn served(self: *NetOptions, serving: bool, port_fixed: bool) void {
+        if (serving and !self.serving) self.row = .game;
+        self.serving = serving;
+        self.port_fixed = port_fixed;
+        if (!serving) self.client_count = 0;
     }
 
     /// Whether the cursor takes line `r`: not PLAYERS (two today), PORT when there is one to
@@ -252,6 +274,16 @@ pub const NetOptions = struct {
             };
             if (r[2]) |v| try p.text(value_col, row, v, tone);
         }
+        // The lobby: who is connected, while the server runs.
+        if (self.serving) {
+            const top = self.rowOf(.exit) + 2;
+            try p.text(label_col, top, "CONNECTED", .bright);
+            try p.text(label_col, top + 1, netplay.local_line, .dim);
+            for (self.clients[0..self.client_count], 0..) |*c, i| {
+                var buf: [24]u8 = undefined;
+                try p.text(label_col, top + 2 + i, c.line(&buf), .dim);
+            }
+        }
         if (self.editing != null) return;
         const action = self.row == .server or self.row == .game or self.row == .exit;
         if (arrow) p.arrowAt(if (action) label_col - 1 else value_col - 1, @intCast(self.rowOf(self.row)));
@@ -314,10 +346,13 @@ test "the network options: values changed, START SERVER or GAME, STOP SERVER; EX
     _ = o.handle(&s, key(.right));
     try testing.expect(o.same_character);
     _ = o.handle(&s, key(.down));
-    try testing.expectEqual(Result.done, o.handle(&s, key(.x)));
+    try testing.expectEqual(Result.acted, o.handle(&s, key(.x)));
     try testing.expectEqual(NetOptions.Action.start_server, o.action);
-    o.serving = true;
-    try testing.expectEqual(Result.done, o.handle(&s, key(.x)));
+    // Started: STOP SERVER, the cursor on START GAME.
+    o.served(true, true);
+    try testing.expectEqual(NetOptions.Row.game, o.row);
+    o.row = .server;
+    try testing.expectEqual(Result.acted, o.handle(&s, key(.x)));
     try testing.expectEqual(NetOptions.Action.stop_server, o.action);
     _ = o.handle(&s, key(.down));
     try testing.expectEqual(Result.done, o.handle(&s, key(.x)));
@@ -332,7 +367,7 @@ test "the network options: values changed, START SERVER or GAME, STOP SERVER; EX
     // START on an action is A there.
     o.row = .server;
     o.serving = false;
-    try testing.expectEqual(Result.done, o.handle(&s, key(.enter)));
+    try testing.expectEqual(Result.acted, o.handle(&s, key(.enter)));
     try testing.expectEqual(NetOptions.Action.start_server, o.action);
     o.row = .exit;
     try testing.expectEqual(Result.cancel, o.handle(&s, key(.enter)));

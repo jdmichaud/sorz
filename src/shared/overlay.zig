@@ -172,20 +172,15 @@ pub const Overlay = union(Kind) {
     }
 };
 
-/// The host's list at the bottom left, in white over the picture (the font has no parentheses):
-/// LOCAL - PLAYER 1, then each client by its name and what it does.
+/// The host's list at the bottom left, in white over the picture: LOCAL - PLAYER 1, then each
+/// client by its name and what it does (`netplay.Entry.line`).
 fn drawRoster(r: *const Roster, p: *Panel) Panel.Error!void {
     const n = @as(usize, r.len) + 1;
     const top = panel_mod.rows - 1 - n;
-    try p.textClear(1, top, "LOCAL - PLAYER 1", .bright);
-    for (r.entries[0..r.len], 1..) |e, i| {
+    try p.textClear(1, top, netplay.local_line, .bright);
+    for (r.entries[0..r.len], 1..) |*e, i| {
         var buf: [24]u8 = undefined;
-        const doing: []const u8 = switch (e.doing) {
-            .menu => "MENU",
-            .player => "PLAYER 2",
-            .observing => "OBSERVING",
-        };
-        try p.textClear(1, top + i, std.fmt.bufPrint(&buf, "{s} - {s}", .{ &e.name, doing }) catch "", .bright);
+        try p.textClear(1, top + i, e.line(&buf), .bright);
     }
 }
 

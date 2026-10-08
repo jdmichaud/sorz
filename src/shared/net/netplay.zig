@@ -66,10 +66,28 @@ pub const Peer = struct {
 };
 
 /// What a client of the host does, as the host lists it.
-pub const Doing = enum { menu, player, observing };
+pub const Doing = enum { menu, select, player, observing };
 
 /// A client of the host as its screens list it.
-pub const Entry = struct { name: protocol.Name, doing: Doing };
+pub const Entry = struct {
+    name: protocol.Name,
+    doing: Doing,
+
+    /// Its line on the host's screens: NAME - MENU (PLAYER 2, OBSERVING). The font has no
+    /// parentheses.
+    pub fn line(e: *const Entry, buf: *[24]u8) []const u8 {
+        const doing: []const u8 = switch (e.doing) {
+            .menu => "MENU",
+            .select => "SELECT",
+            .player => "PLAYER 2",
+            .observing => "OBSERVING",
+        };
+        return std.fmt.bufPrint(buf, "{s} - {s}", .{ &e.name, doing }) catch unreachable;
+    }
+};
+
+/// The host's own line on its screens.
+pub const local_line = "LOCAL - PLAYER 1";
 
 pub const Netplay = struct {
     allocator: std.mem.Allocator,
@@ -619,7 +637,8 @@ pub const Netplay = struct {
         for (self.peers.items) |peer| {
             if (n == out.len) break;
             if (!peer.session.welcomed and peer != self.player) continue;
-            out[n] = .{ .name = peer.session.peer_name, .doing = if (peer == self.player) .player else if (peer.session.phase == .observing) .observing else .menu };
+            const s = &peer.session;
+            out[n] = .{ .name = s.peer_name, .doing = if (peer == self.player) .player else if (s.phase == .observing) .observing else if (s.peer_where == .select) .select else .menu };
             n += 1;
         }
         return out[0..n];
@@ -663,6 +682,15 @@ pub const Netplay = struct {
         if (self.role != .guest) return false;
         const s = &self.hostPeer().session;
         return s.observe_asked and s.phase == .lobby;
+    }
+
+    /// Where the client's player is in its own game (its menu, its select to join), for the
+    /// host's lists.
+    pub fn sayWhere(self: *Netplay, p: *platform.Platform, x: protocol.Where) void {
+        if (self.role != .guest) return;
+        const host = self.hostPeer();
+        host.session.sayWhere(x);
+        self.flush(p, host);
     }
 
     /// The client's player's name changed: the host hears it at once (`name`), or in the hello of
@@ -809,6 +837,17 @@ pub const Netplay = struct {
     }
 
     /// The game quits: a farewell to each peer, then the connections close.
+    /// This machine's player leaves the game (Escape), not the program: the other player and the
+    /// observers are told, the connections stay.
+    pub fn leaveGame(self: *Netplay, p: *platform.Platform) void {
+        for (self.peers.items) |peer| {
+            peer.session.leaveGame();
+            self.flush(p, peer);
+            self.takeNotes(peer);
+        }
+        if (self.role == .host) self.sendStatus(p);
+    }
+
     pub fn quit(self: *Netplay, p: *platform.Platform) void {
         for (self.peers.items) |peer| {
             peer.session.leave(.quit);

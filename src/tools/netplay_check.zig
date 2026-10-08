@@ -29,14 +29,17 @@
 //!   invitation over its part), and the client, back, goes to its own menu.
 //! - difference: a bit of the client's state flipped in a session: both games stop at the next
 //!   check and name the first field that differs.
-//! - server: the host's START SERVER, its player at its menu: the client's JOIN lit, OBSERVE
-//!   dimmed (no game to watch); the client's JOIN and character wait for the host's game; STOP
-//!   SERVER: the client back at its menu, told, and turned away; START GAME: the server again, the
-//!   host at its select, and the client back in joins it there.
+//! - server: the host's START SERVER: its screen stays, its lobby, which lists the client; the
+//!   client's JOIN lit, OBSERVE dimmed (no game to watch); the client's JOIN and character wait
+//!   for the host's game, its own select naming it player 2; STOP SERVER: the client back at its
+//!   menu, told, and turned away; START GAME: the server again, the host at its select, and the
+//!   client back in joins it there; Escape on the host: its lobby again, the client back at its
+//!   menu, still connected; EXIT: the menu, the server running; Escape in 1 PLAYER's game, the
+//!   server running: the lobby; with it stopped, a local game: the menu.
 //!
 //! Prints a JSON line per flow, and exits with 1 when a step fails; with `--pictures`, two pictures
 //! that differ are written there (host.png, guest.png), and the host's at a few steps, its own
-//! screens over them (network_options.png, roster.png, dropped_out.png).
+//! screens over them (network_options.png, roster.png, lobby.png, dropped_out.png).
 const std = @import("std");
 const sorz = @import("sorz");
 const agent = @import("agent");
@@ -108,6 +111,12 @@ const Machine = struct {
 
     fn key(m: *Machine, k: Key, down: bool) !void {
         try m.backend.inject(.{ .time_ns = m.backend.clock_ns, .payload = if (down) .{ .key_down = .{ .key = k } } else .{ .key_up = .{ .key = k } } });
+    }
+
+    /// The program quits (its window closed): the game says farewell.
+    fn quit(m: *Machine) !void {
+        try m.backend.inject(.{ .time_ns = m.backend.clock_ns, .payload = .quit });
+        try m.update();
     }
 
     fn scene(m: *const Machine) sorz.flow.Kind {
@@ -416,8 +425,8 @@ fn joinLit(m: *Machine) bool {
     return m.np().welcomed() and m.np().hostStatus().place and menu.dimmed & 2 == 0;
 }
 
-/// The host's network options opened from its menu, and `key` (A, or Enter: START) on `row`.
-fn hostOption(f: *Flow, r: *Room, host: *Machine, row: sorz.settings.net_screens.NetOptions.Row, key: platform.Key) !void {
+/// The host's network options opened from its menu.
+fn openOptions(f: *Flow, r: *Room, host: *Machine) !void {
     try f.until(r, host, choosing, 600, "the host at its menu");
     while (menuChoice(host) != .network_play) try r.press(host, .down);
     try r.press(host, .z);
@@ -426,51 +435,118 @@ fn hostOption(f: *Flow, r: *Room, host: *Machine, row: sorz.settings.net_screens
             return m.game.overlays.find(.net_options) != null;
         }
     }.open, 200, "the network options");
-    while (host.game.overlays.find(.net_options).?.net_options.row != row) try r.press(host, .down);
+}
+
+/// The host's network options, open: `key` (A, or Enter: START) on `row`.
+fn pressOption(r: *Room, host: *Machine, row: sorz.settings.net_screens.NetOptions.Row, key: platform.Key) !void {
+    while (lobby(host).?.row != row) try r.press(host, .down);
     try r.press(host, key);
+}
+
+fn lobby(m: *Machine) ?*sorz.settings.net_screens.NetOptions {
+    const o = m.game.overlays.find(.net_options) orelse return null;
+    return &o.net_options;
 }
 
 fn server(f: *Flow, r: *Room) !void {
     const host = try r.add(.host);
     const client = try r.add(.guest);
     try toMenu(f, r, host);
-    // START SERVER (with START, Enter): the session open, the host's player at its menu while the
-    // client comes.
-    try hostOption(f, r, host, .server, .enter);
-    try f.until(r, host, choosing, 600, "the host back at its menu");
-    try f.check(host.np().open and host.game.state.scenes.base == .menu, "the server started, the host at its menu");
+    // START SERVER (with START, Enter): the session open; the screen stays, the host's lobby, its
+    // cursor on START GAME.
+    try openOptions(f, r, host);
+    try pressOption(r, host, .server, .enter);
+    try r.step(10);
+    try f.check(host.np().open and lobby(host) != null and lobby(host).?.serving and lobby(host).?.row == .game, "the server started, the host's lobby stays, on START GAME");
     try toMenu(f, r, client);
     try f.until(r, client, joinLit, 300, "the client's JOIN lit");
     try f.check(client.game.state.scenes.base.menu.dimmed == 0b0100, "OBSERVE dimmed: the host has no game to watch");
+    try f.until(r, host, struct {
+        fn listed(m: *Machine) bool {
+            const l = lobby(m) orelse return false;
+            return l.client_count == 1 and std.mem.eql(u8, &l.clients[0].name, "CLI");
+        }
+    }.listed, 300, "the lobby lists the client");
     // JOIN, a character on its own select: it waits for the host's game.
     while (menuChoice(client) != .join) try r.press(client, .down);
     try r.press(client, .z);
     try f.until(r, client, inSelect, 600, "the client's own select");
+    try f.check(selectOf(client).?.seat == 1, "the client's own select names its player 2");
+    try f.until(r, host, struct {
+        fn listed(m: *Machine) bool {
+            const l = lobby(m) orelse return false;
+            return l.client_count == 1 and l.clients[0].doing == .select;
+        }
+    }.listed, 300, "the lobby lists the client at its select (SELECT)");
     try r.press(client, .z);
     try f.until(r, client, struct {
         fn waits(m: *Machine) bool {
             return m.message() == .waiting_for_player_1;
         }
     }.waits, 300, "the client waits for the host's game");
-    try shot(r, host, "server_started.png");
-    // STOP SERVER: the client back at its menu, told; turned away while the server is stopped.
-    try hostOption(f, r, host, .server, .z);
+    try shot(r, host, "lobby.png");
+    try shot(r, client, "client_waiting.png");
+    // STOP SERVER, in the lobby: the client back at its menu, told; turned away while the server
+    // is stopped; the lobby stays, empty.
+    try pressOption(r, host, .server, .z);
     try f.until(r, client, struct {
         fn back(m: *Machine) bool {
             return choosing(m) and m.message() == .host_stopped;
         }
     }.back, 600, "the client back at its menu, told the host stopped");
-    try f.check(host.np().peers.items.len == 0 and !host.np().open, "the host let its client go");
+    try f.check(host.np().peers.items.len == 0 and !host.np().open and lobby(host) != null and !lobby(host).?.serving and lobby(host).?.client_count == 0, "the host let its client go, its screen still there");
     try r.step(150);
     try f.check(!client.np().welcomed() and client.game.state.scenes.base.menu.dimmed & 0b0110 == 0b0110, "the client turned away: JOIN and OBSERVE dimmed");
     // START GAME: the server again, the host at its select; the client back in joins it there.
-    try hostOption(f, r, host, .game, .z);
+    try pressOption(r, host, .game, .z);
     try f.until(r, host, inSelect, 600, "the host's select");
     try f.until(r, client, joinLit, 300, "the client's JOIN lit again");
     while (menuChoice(client) != .join) try r.press(client, .down);
     try r.press(client, .z);
     try f.until(r, client, inSession, 900, "the client joins at the host's select");
+    try r.step(60);
+    try shot(r, host, "host_joined.png");
+    try shot(r, client, "client_joined.png");
     try f.check(selectOf(host).?.players == .two, "two players at the host's select");
+    // Escape on the host: its lobby again, its server running; the client back at its menu, told,
+    // still in the host's lobby.
+    try r.press(host, .escape);
+    try f.until(r, host, struct {
+        fn back(m: *Machine) bool {
+            const l = lobby(m) orelse return false;
+            return l.serving and l.client_count == 1 and l.clients[0].doing == .menu;
+        }
+    }.back, 300, "the host back in its lobby, the client listed at its menu");
+    try f.until(r, client, struct {
+        fn back(m: *Machine) bool {
+            return choosing(m) and m.message() == .player_1_left;
+        }
+    }.back, 600, "the client back at its menu, told");
+    try f.check(client.np().welcomed() and !client.inSession() and !host.inSession(), "the client still in the host's lobby, no session");
+    // EXIT: the host's menu, its server running; JOIN still lit on the client.
+    try pressOption(r, host, .exit, .z);
+    try f.until(r, host, choosing, 600, "the host's menu");
+    try f.check(host.np().open and joinLit(client), "the server still running, the client's JOIN lit");
+    // Escape in 1 PLAYER's game, the server running: the lobby again. STOP SERVER, EXIT, and
+    // Escape in a local game: back to the menu, the program running.
+    while (menuChoice(host) != .one_player) try r.press(host, .down);
+    try r.press(host, .z);
+    try f.until(r, host, inSelect, 600, "the host's select, its server running");
+    try r.press(host, .escape);
+    try f.until(r, host, struct {
+        fn in(m: *Machine) bool {
+            return lobby(m) != null;
+        }
+    }.in, 300, "the host's lobby again");
+    try pressOption(r, host, .server, .z);
+    try pressOption(r, host, .exit, .z);
+    try f.until(r, host, choosing, 600, "the host's menu, its server stopped");
+    while (menuChoice(host) != .one_player) try r.press(host, .down);
+    try r.press(host, .z);
+    try f.until(r, host, inSelect, 600, "the host's local select");
+    try r.press(host, .escape);
+    try f.until(r, host, choosing, 600, "the host back at its menu");
+    try f.check(!host.game.finished and lobby(host) == null, "the menu, not the lobby: the game goes on");
 }
 
 fn ownMenus(f: *Flow, r: *Room) !void {
@@ -644,8 +720,7 @@ fn inRound(f: *Flow, r: *Room) !void {
 
     // The player quits: the host plays on, player 2's fighter dies and it is out of the game; the
     // observer gets the game again.
-    try guest.key(.escape, true);
-    try guest.update();
+    try guest.quit();
     r.remove(guest);
     try r.step(30);
     try f.check(!host.inSession() and roundOf(host).?.play.world.players[1].gone, "player 2 gone from the game");
@@ -678,8 +753,7 @@ fn inRound(f: *Flow, r: *Room) !void {
     f.note("\"sessions\":{d}", .{host.np().sessions});
 
     // The host quits: its client goes back to its own menu, told why.
-    try host.key(.escape, true);
-    try host.update();
+    try host.quit();
     r.remove(host);
     try f.until(r, next, choosing, 900, "the client back at its menu");
     try f.check(!next.inSession() and next.message() == .player_1_left, "the client is told player 1 left");

@@ -112,6 +112,9 @@ pub const Net = struct {
     /// there.
     hosting: bool = false,
     start_game: bool = false,
+    /// The host's player left a game with its server running: the menu opens its lobby (the
+    /// network options) at once.
+    lobby: bool = false,
     same_character: bool = false,
     /// A client: the host takes a player now (JOIN), or an observer (OBSERVE); its player's name
     /// is given.

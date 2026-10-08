@@ -30,6 +30,8 @@
 //! | 16 away       | seconds u8: a player's connection is down, the seconds left  | 2            |
 //! |               | before it leaves the game (0: it is back, or it left)        |              |
 //! | 17 name       | name [3]: the client's player's, given again                 | 4            |
+//! | 18 where      | place u8: the client's player in its own menu (0) or at its  | 2            |
+//! |               | character select, to join (1)                                |              |
 //!
 //! The guest opens with `hello`; the host answers `welcome` (after pings that measure the round
 //! trip and give the input delay) or `reject`. Welcomed, the two machines play their own games:
@@ -48,14 +50,15 @@
 //! or closed it. Characters are numbered as the game's: Adam, Axel, Blaze.
 //!
 //! The host keeps a session for each client (its name in its `hello`, and in `name` when its player
-//! gives it again). `status` also says whether
+//! gives it again; where its player is in its own game, `where`, for the host's lists). `status` also says whether
 //! the host's session is open, whether a player's place is free in it, whether the host takes
 //! observers and whether two players may choose one character. A client that asks to watch
 //! (`observe`) gets the host's game (`game` with `observe`), then each tick's pads (`ticks`) as
 //! the host's game runs them, and the game again whenever it changes otherwise; `away` counts a
 //! player's dropped connection down for those who wait for it. The host that stops its server
 //! says `bye` (`stopped`) to its clients, and turns away those that come (`reject`, `stopped`)
-//! until it starts it again.
+//! until it starts it again. A player who leaves the game but not the program says `bye` (`ended`):
+//! the session ends, the connection stays.
 const std = @import("std");
 
 pub const version: u16 = 4;
@@ -88,6 +91,7 @@ pub const Kind = enum(u8) {
     ticks = 15,
     away = 16,
     name = 17,
+    where = 18,
     _,
 };
 
@@ -114,6 +118,9 @@ pub const ByeReason = enum(u8) {
     desync = 2,
     /// The host stopped its server: its clients go back to their menus.
     stopped = 3,
+    /// The sender's player left the game (Escape) and goes back to its menu: the session ends, the
+    /// connection stays (the client in the host's lobby).
+    ended = 4,
     _,
 };
 
@@ -124,6 +131,9 @@ pub const DataId = [32]u8;
 
 /// A player's name: three letters.
 pub const Name = [3]u8;
+
+/// Where a client's player is in its own game: its menu, or its character select, to join.
+pub const Where = enum(u8) { menu = 0, select = 1 };
 
 pub const Hello = struct {
     protocol: u16 = version,
@@ -208,6 +218,8 @@ pub const Message = union(Kind) {
     away: u8,
     /// The client's player's name, given again.
     name: Name,
+    /// Where the client's player is in its own game.
+    where: Where,
 };
 
 pub const DecodeError = error{Malformed};
@@ -304,6 +316,7 @@ pub fn encode(m: Message, out: []u8) []u8 {
         .settings, .observe => |yes| w.byte(@intFromBool(yes)),
         .away => |seconds| w.byte(seconds),
         .name => |n| w.bytes(&n),
+        .where => |x| w.byte(@backingInt(x)),
         .ticks => |t| {
             std.debug.assert(t.pads.len >= 2 and t.pads.len <= 2 * max_pads and t.pads.len % 2 == 0);
             w.int(u32, t.first);
@@ -405,6 +418,11 @@ pub fn decode(bytes: []const u8) DecodeError!Message {
         },
         .away => .{ .away = try r.byte() },
         .name => .{ .name = (try r.bytes(3))[0..3].* },
+        .where => blk: {
+            const x = try r.byte();
+            if (x > @backingInt(Where.select)) return error.Malformed;
+            break :blk .{ .where = @fromBackingInt(x) };
+        },
         .ticks => blk: {
             const first = try r.int(u32);
             const count = try r.byte();
@@ -490,6 +508,8 @@ test "every message round trips, and its truncations are malformed" {
     try roundTrip(.{ .observe = false });
     try roundTrip(.{ .away = 5 });
     try roundTrip(.{ .name = "ZED".* });
+    try roundTrip(.{ .where = .select });
+    try roundTrip(.{ .where = .menu });
     try roundTrip(.{ .ticks = .{ .first = 300, .pads = &.{ 1, 2, 3, 4 } } });
     try roundTrip(.{ .join = no_character });
     try roundTrip(.{ .join = 2 });
@@ -497,6 +517,7 @@ test "every message round trips, and its truncations are malformed" {
     try roundTrip(.{ .reject = .stopped });
     try roundTrip(.{ .bye = .quit });
     try roundTrip(.{ .bye = .stopped });
+    try roundTrip(.{ .bye = .ended });
     try roundTrip(.{ .settings = true });
     try roundTrip(.{ .settings = false });
     try roundTrip(.{ .ping = .{ .seq = 5, .time_ns = 123456789 } });
@@ -539,6 +560,7 @@ test "fields out of range are malformed" {
     }
     try testing.expectError(error.Malformed, decode(&.{ 11, 0, no_character, 16 }));
     try testing.expectError(error.Malformed, decode(&.{ 14, 2 }));
+    try testing.expectError(error.Malformed, decode(&.{ 18, 2 }));
     // Ticks: none, or more than a message may carry, or an odd byte.
     try testing.expectError(error.Malformed, decode(&.{ 15, 0, 0, 0, 0, 0 }));
     try testing.expectError(error.Malformed, decode(&.{ 15, 0, 0, 0, 0, 1, 7 }));

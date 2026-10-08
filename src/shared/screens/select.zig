@@ -213,6 +213,9 @@ pub const Select = struct {
     colours: Colours = .{},
     players: setup_mod.Players = .one,
     cursors: [2]Cursor = .{ .{ .place = .adam }, .{ .place = .blaze } },
+    /// The player a lone cursor's label names: player 2 on a client of network play, whose
+    /// player joins the host's game as player 2.
+    seat: u1 = 0,
     /// By place: Adam's, Axel's, Blaze's.
     portraits: [3]Portrait = @splat(.{}),
     /// The eye: the ticks to its next blink or opening, and whether it is closed.
@@ -325,6 +328,7 @@ pub const Select = struct {
             .setup => {
                 turn.releasePads();
                 self.players = turn.setup.players;
+                self.seat = if (turn.net.role == .client and self.players == .one) 1 else 0;
                 turn.setup.characters = .{ null, null };
                 self.colours.aim(a.colours);
                 self.colours.aim(if (self.players == .two) a.two_players else a.one_player);
@@ -512,7 +516,7 @@ pub const Select = struct {
     /// The sprites as the tick leaves them.
     fn list(self: *Select) void {
         var l: Listing = .{};
-        for (self.cursors[0..self.count()], 0..) |c, i| l.labels[i] = c.place;
+        for (self.cursors[0..self.count()], 0..) |c, i| l.labels[if (self.players == .one) self.seat else i] = c.place;
         for (self.portraits, 0..) |p, i| l.portraits[i] = .{ .pose = p.pose, .step = p.step, .y = p.y() };
         self.listed = l;
     }

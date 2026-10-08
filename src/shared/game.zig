@@ -349,6 +349,9 @@ pub const Game = struct {
     /// seconds left, as the host said).
     net_choice: struct { observers: bool = true, same_character: bool = false } = .{},
     net_start_game: bool = false,
+    /// The host's player left a game with its server running (Escape): its menu opens the
+    /// network options at once, its lobby.
+    net_lobby: bool = false,
     away_seconds: u8 = 0,
     /// START held at the last tick (an observer leaves with it).
     start_held: bool = false,
@@ -542,6 +545,7 @@ pub const Game = struct {
             .role = if (np.role == .host) .host else .client,
             .hosting = np.open,
             .start_game = self.net_start_game,
+            .lobby = self.net_lobby,
             .same_character = self.net_choice.same_character,
             .named = self.settings.named(),
             .name = self.settings.name,
@@ -570,6 +574,7 @@ pub const Game = struct {
                     .players = players,
                 };
                 self.net_start_game = false;
+                self.net_lobby = false;
                 self.openModal(.{ .net_options = options.open() }, p.nowNs());
             },
             .name => self.openModal(.{ .name_entry = .open(self.settings.name, players) }, null),
@@ -796,21 +801,28 @@ pub const Game = struct {
                 if (self.settingsFadingOut()) return;
                 self.overlay_dirty = true;
                 if (self.overlays.find(.net_options)) |o| {
-                    switch (o.net_options.handle(&self.settings, e)) {
+                    const x = &o.net_options;
+                    switch (x.handle(&self.settings, e)) {
                         .stay => return,
-                        .done => {
-                            const x = &o.net_options;
+                        // The server started or stopped: the screen stays, the host's lobby.
+                        .acted => {
                             switch (x.action) {
-                                .start_server, .start_game => self.openNetwork(p, x.observers, x.same_character, x.port),
-                                .stop_server => self.stopNetwork(p),
+                                .start_server => self.openNetwork(p, x.observers, x.same_character, x.port),
+                                else => self.stopNetwork(p),
                             }
-                            self.net_start_game = x.action == .start_game;
+                            if (self.netplay) |np| x.served(np.open, np.portFixed());
+                            self.roster();
+                            return;
+                        },
+                        .done => {
+                            self.openNetwork(p, x.observers, x.same_character, x.port);
+                            self.net_start_game = true;
                         },
                         .cancel => {},
                     }
                 } else if (self.overlays.find(.name_entry)) |o| {
                     switch (o.name_entry.handle(&self.settings, e)) {
-                        .stay => return,
+                        .stay, .acted => return,
                         .done => {
                             self.settings.name = o.name_entry.name;
                             self.writeSettings(&self.settings);
@@ -828,7 +840,22 @@ pub const Game = struct {
     /// The host's screens list who is connected, at the bottom left, outside the rounds.
     fn roster(self: *Game) void {
         const np = self.netplay orelse return;
-        const show = np.role == .host and np.open and !self.state.inRounds();
+        // The network options list them themselves, the host's lobby.
+        if (self.overlays.find(.net_options)) |o| {
+            const x = &o.net_options;
+            var entries: [settings_mod.net_screens.NetOptions.max_clients]net.netplay.Entry = undefined;
+            const now = if (np.open) np.roster(&entries) else entries[0..0];
+            var same = x.client_count == now.len;
+            if (same) for (x.clients[0..now.len], now) |a, b| {
+                same = same and std.meta.eql(a, b);
+            };
+            if (!same) {
+                @memcpy(x.clients[0..now.len], now);
+                x.client_count = @intCast(now.len);
+                self.overlay_dirty = true;
+            }
+        }
+        const show = np.role == .host and np.open and !self.state.inRounds() and !self.modalOpen();
         if (!show) {
             if (self.overlays.find(.roster) != null) {
                 self.overlays.remove(.roster);
@@ -939,8 +966,9 @@ pub const Game = struct {
                 }
                 switch (e.payload) {
                     .quit => self.finished = true,
+                    // Escape leaves a game, back to the menu (network_play.zig), or quits.
                     .key_down => |k| if (k.key == .escape) {
-                        self.finished = true;
+                        if (!network_play.leaveGame(self, p)) self.finished = true;
                     } else if (self.policies().settings_key and k.key == self.settings.settings_key and !k.repeat) {
                         self.showSettings(null);
                     } else {

@@ -147,8 +147,17 @@ pub const Menu = struct {
                     self.previous = .join;
                     if (!turn.net.named) turn.net_request = .name;
                 }
-                self.colours.startFade(.target);
                 self.blink_left = blink_ticks;
+                // The host back from a game with its server running: its lobby at once, the menu
+                // dark under it (it fades in once the lobby closes).
+                if (turn.net.lobby) {
+                    self.choice = .network_play;
+                    self.previous = .network_play;
+                    turn.net_request = .network_options;
+                    self.phase = .network;
+                    return null;
+                }
+                self.colours.startFade(.target);
                 // The menu's first step in the same tick: the arrow, the fade's first step.
                 self.cursor(turn, turn.pressed.pad1, a);
                 _ = self.colours.stepFade();

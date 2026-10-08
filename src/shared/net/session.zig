@@ -191,6 +191,10 @@ pub const Session = struct {
     lost_at: ?u64 = null,
     /// The client's player's name (the host's session, from its hello).
     peer_name: protocol.Name = .{ ' ', ' ', ' ' },
+    /// Where the client's player is in its own game (the host's, from `where`), and where the
+    /// client last said (the client's; null: not said on this connection).
+    peer_where: protocol.Where = .menu,
+    where_said: ?protocol.Where = null,
     /// The client asked to watch (on both sides, until the host's game comes or it stops).
     observe_asked: bool = false,
     /// The host: the ticks of an observer's game sent so far, and the pads still to send (a pair
@@ -328,6 +332,8 @@ pub const Session = struct {
     pub fn connectedAt(self: *Session, now_ns: u64) void {
         self.connected = true;
         self.welcomed = false;
+        self.where_said = null;
+        self.peer_where = .menu;
         self.close_requested = false;
         self.last_heard_ns = now_ns;
         self.last_ping_ns = now_ns;
@@ -431,15 +437,26 @@ pub const Session = struct {
                 self.peer_name = n;
                 break :blk .accepted;
             },
+            .where => |x| blk: {
+                if (self.config.role != .host) break :blk .unexpected;
+                self.peer_where = x;
+                break :blk .accepted;
+            },
             .bye => |r| blk: {
                 self.note(.{ .left = r });
-                self.close_requested = true;
+                // A player who left the game alone (`ended`): the connection stays, the client in
+                // the host's lobby.
+                const stays = r == .ended;
+                if (!stays) self.close_requested = true;
                 // The ticks whose pads are in still run; then the session is over.
                 if (self.phase == .playing) {
                     self.peer_left = true;
                 } else {
-                    if (self.phase == .observing) self.note(.{ .ended = .left });
-                    self.phase = if (self.phase == .ended) .ended else .idle;
+                    if (self.phase == .observing) {
+                        self.observe_asked = false;
+                        self.note(.{ .ended = .left });
+                    }
+                    self.phase = if (self.phase == .ended) .ended else if (stays and self.welcomed) .lobby else .idle;
                 }
                 break :blk .accepted;
             },
@@ -649,6 +666,25 @@ pub const Session = struct {
         self.send(.{ .observe = false });
     }
 
+    /// This machine's player leaves the game alone (Escape), not the program: a session or a
+    /// watch ends here, the peer told (`bye`, `ended`; a client's watch, `observe`), and the
+    /// connection stays.
+    pub fn leaveGame(self: *Session) void {
+        if (!self.welcomed) return;
+        switch (self.phase) {
+            .playing, .desynced => {
+                self.send(.{ .bye = .ended });
+                self.over(.left);
+            },
+            .observing => if (self.config.role == .host) {
+                self.send(.{ .bye = .ended });
+                self.phase = .lobby;
+                self.status_sent = null;
+            } else self.stopObserve(),
+            else => {},
+        }
+    }
+
     fn onObserve(self: *Session, yes: bool) Verdict {
         if (self.config.role != .host or !self.welcomed) return .unexpected;
         if (yes) {
@@ -713,6 +749,15 @@ pub const Session = struct {
     }
 
     /// The client's player gave its name again: the host hears it (a hello to come carries it).
+    /// Where the client's player is in its own game: the host hears it when it changes (and on
+    /// each connection, once welcomed).
+    pub fn sayWhere(self: *Session, x: protocol.Where) void {
+        if (self.config.role != .guest or !self.welcomed) return;
+        if (self.where_said == x) return;
+        self.where_said = x;
+        self.send(.{ .where = x });
+    }
+
     pub fn rename(self: *Session, name: protocol.Name) void {
         self.config.name = name;
         if (self.config.role == .guest and self.connected) self.send(.{ .name = name });
