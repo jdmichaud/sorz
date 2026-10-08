@@ -143,6 +143,17 @@ the original's filters, sensitivities and key tables in shared code. Relative mo
 request, and an event reports whether it was granted; losing focus or capture releases held
 controls without producing an action.
 
+The platform names each controller it reports, for the game to know it again (the user,
+2026-10-08): a key of its model, the same for every controller of that model on that platform
+(SDL's GUID; the browser's gamepad id), and a name to show (`controllerInfo`, while it is
+connected). The game keeps its players' gamepads by those alone; no library's identifiers or types
+cross the boundary.
+
+```zig
+const ControllerInfo = struct { model: []const u8, name: []const u8 };
+fn controllerInfo(id: ControllerId) ?ControllerInfo;
+```
+
 The mouse travels in the game's own units. A host that passes window pixels to a game drawn at a
 scale moves the game's pointer too fast (`docs/lessons.md`).
 
