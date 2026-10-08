@@ -28,9 +28,12 @@
 //! Keys are named as `platform.Key` names them (the agent host's `--key` names), "none" for no key,
 //! gamepad buttons as `platform.ControllerButton` does.
 //!
+//! A record of another version (an older game's) is not read: `load` writes the defaults over it,
+//! and nothing is told (the user, 2026-10-08).
+//!
 //! Damaged data has a defined behaviour (`parse`, `load`): a record that does not read as a JSON
-//! object, or that is of another version, gives the defaults; a field that does not read gives
-//! its default, and the rest is kept. The keys are one group and each player's buttons another:
+//! object gives the defaults; a field that does not read gives its default, and the rest is
+//! kept. The keys are one group and each player's buttons another:
 //! one key for two buttons would press both, so a key used twice gives the keys' defaults. A
 //! field missing or unknown counts as damaged too, since the game writes every field and no
 //! other. `load` never fails: it reports what it replaced, the game tells the player once, and
@@ -440,9 +443,10 @@ pub const Loaded = struct {
     }
 };
 
-/// The settings in `storage`, or the defaults. A damaged record is replaced by the settings read
-/// from it (each damaged field at its default), and its bytes are kept as `damaged_name`, so the
-/// player is told once and a hand-edited record is not lost. Never fails.
+/// The settings in `storage`, or the defaults. A record of another version gives the defaults,
+/// written over it, untold. A damaged record is replaced by the settings read from it (each
+/// damaged field at its default), and its bytes are kept as `damaged_name`, so the player is told
+/// once and a hand-edited record is not lost. Never fails.
 pub fn load(gpa: std.mem.Allocator, storage: platform.Storage) Loaded {
     var out: Loaded = .{};
     var owned = storage.load(name) catch |err| {
@@ -452,6 +456,11 @@ pub fn load(gpa: std.mem.Allocator, storage: platform.Storage) Loaded {
     defer owned.deinit();
     out.found = true;
     out.settings = parse(gpa, owned.bytes, &out.report);
+    if (out.report.refused == .other_version) {
+        out.report = .{};
+        save(storage, &out.settings) catch {};
+        return out;
+    }
     if (out.report.ok()) return out;
     storage.save(damaged_name, owned.bytes) catch {};
     save(storage, &out.settings) catch {
@@ -663,6 +672,18 @@ test "load: nothing kept, a record kept, a damaged one repaired once and kept as
     const again = load(testing.allocator, storage);
     try testing.expect(!again.damaged());
     try testing.expectEqual(got.settings, again.settings);
+
+    // Another version's record: the defaults, written over it, untold, nothing kept aside.
+    try storage.deleteSave(damaged_name);
+    try storage.save(name, "{\"version\": 1, \"keys\": {}}");
+    got = load(testing.allocator, storage);
+    try testing.expect(!got.damaged());
+    try testing.expectEqual(Settings{}, got.settings);
+    try testing.expectError(error.NotFound, storage.load(damaged_name));
+    var rewritten = try storage.load(name);
+    defer rewritten.deinit();
+    var buf: [max_written]u8 = undefined;
+    try testing.expectEqualStrings(encode(&Settings{}, &buf), rewritten.bytes);
 }
 
 /// A storage that fails as a broken disk does.

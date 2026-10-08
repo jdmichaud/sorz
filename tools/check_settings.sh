@@ -4,10 +4,11 @@
 #  1. without a record, the game has the defaults and writes nothing;
 #  2. a whole record, as the game writes it, is read at the start: its settings, and nothing to
 #     tell; its keys play (pad 1's Start on P: the state is the one Enter gives with the defaults);
-#  3. damaged records (a damaged field, not JSON, a field missing, another version) start the
-#     game with the defaults where they are damaged; the player is told (the agent host's
-#     `notice`: other_version for another version's), the damaged record is kept as
-#     settings-damaged.json and written back repaired, so the next start has nothing to tell.
+#  3. damaged records (a damaged field, not JSON, a field missing) start the game with the
+#     defaults where they are damaged; the player is told (the agent host's `notice`), the damaged
+#     record is kept as settings-damaged.json and written back repaired, so the next start has
+#     nothing to tell;
+#  4. a record of another version gives the defaults, written over it, untold.
 # The settings screen that changes them is checked by the unit tests and variants-check.
 set -eu
 bin="${1:?usage: check_settings.sh AGENT}"
@@ -51,14 +52,12 @@ out="$("$bin" --saves "$dir/kept" --frames 20 --key 5:enter)"
 [ "$(field "$out" state_hash)" != "$enter_state" ] || fail "Enter is still pad 1's Start with the record: $out"
 
 # 3. Damaged records.
-for record in '{"version": 2, "sound": {"volume": "loud", "mute": true}}' 'not JSON' '{"version": 2}' '{"version": 1}'; do
+for record in '{"version": 2, "sound": {"volume": "loud", "mute": true}}' 'not JSON' '{"version": 2}'; do
   rm -rf "$dir/damaged"
   mkdir "$dir/damaged"
   printf '%s' "$record" >"$dir/damaged/settings.json"
   out="$("$bin" --saves "$dir/damaged" --frames 2 2>"$dir/log")" || fail "a damaged record stopped the game: $record"
-  told=damaged
-  [ "$record" = '{"version": 1}' ] && told=other_version
-  [ "$(field "$out" notice)" = "$told" ] || fail "the player is not told of a damaged record: $out"
+  [ "$(field "$out" notice)" = damaged ] || fail "the player is not told of a damaged record: $out"
   grep -q "the settings record was damaged" "$dir/log" || fail "the log does not tell of the damaged record"
   [ "$(cat "$dir/damaged/settings-damaged.json")" = "$record" ] || fail "the damaged record was not kept: $record"
   out="$("$bin" --saves "$dir/damaged" --frames 2 2>/dev/null)"
@@ -68,4 +67,13 @@ for record in '{"version": 2, "sound": {"volume": "loud", "mute": true}}' 'not J
     *) [ "$(field "$out" settings)" = "$defaults" ] || fail "a refused record does not give the defaults: $out" ;;
   esac
 done
-echo "check_settings: a record was read at the start and its keys played; damaged records gave the defaults, were told once and kept aside"
+# 4. Another version's record.
+rm -rf "$dir/old"
+mkdir "$dir/old"
+printf '%s' '{"version": 1, "keys": {}}' >"$dir/old/settings.json"
+out="$("$bin" --saves "$dir/old" --frames 2)"
+[ "$(field "$out" notice)" = none ] || fail "another version's record is told: $out"
+[ "$(field "$out" settings)" = "$defaults" ] || fail "another version's record does not give the defaults: $out"
+[ ! -e "$dir/old/settings-damaged.json" ] || fail "another version's record was kept aside"
+grep -q '"version": 2' "$dir/old/settings.json" || fail "another version's record was not written over"
+echo "check_settings: a record was read at the start and its keys played; damaged records gave the defaults, were told once and kept aside; another version's was written over, untold"

@@ -454,7 +454,7 @@ pub const Game = struct {
             settings_mod.record.damaged_name,
             if (loaded.repair_failed) ", and the repaired one could not be written" else "",
         });
-        self.tell(if (loaded.report.refused == .other_version) .other_version else .damaged);
+        self.tell(.damaged);
     }
 
     /// A notice about the record: for the host (`notice`) and over the picture for a few seconds.

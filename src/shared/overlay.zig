@@ -27,8 +27,6 @@ pub const Notice = enum {
     unreadable,
     /// The record could not be written.
     not_saved,
-    /// The record was of another version (an older game's): the defaults stand.
-    other_version,
 
     pub fn text(n: Notice) []const u8 {
         return switch (n) {
@@ -36,7 +34,6 @@ pub const Notice = enum {
             .damaged => "THE SETTINGS FILE WAS DAMAGED.",
             .unreadable => "THE SETTINGS FILE CANNOT BE READ.",
             .not_saved => "THE SETTINGS COULD NOT BE SAVED.",
-            .other_version => "THE SETTINGS FILE WAS AN OLD ONE.",
         };
     }
 };
