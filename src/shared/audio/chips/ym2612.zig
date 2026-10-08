@@ -448,10 +448,31 @@ pub const Ym2612 = struct {
     pub fn generate(y: *Ym2612, out: []Frame) void {
         var done: usize = 0;
         while (done < out.len) {
-            const n = y.render(out[done..]);
-            for (out[done..][0..n]) |*f| f.* = y.scale(f.*);
+            const n = y.renderChannels(out[done..]);
+            for (out[done..][0..n]) |*f| f.* = y.withDac(f.*);
             done += n;
         }
+    }
+
+    /// A sample of `renderChannels` with the DAC's value as it is now, scaled as ymfm scales it:
+    /// the DAC's data written between `renderChannels` and this call is heard from this sample.
+    pub inline fn withDac(y: *const Ym2612, channels_out: Frame) Frame {
+        return y.scale(y.withDacRaw(channels_out));
+    }
+
+    /// `withDac` before the final scaling: the DAC replaces channel 6 when it is on.
+    fn withDacRaw(y: *const Ym2612, channels_out: Frame) Frame {
+        if (y.dac_enable == 0) return channels_out;
+        const ch6 = &y.chans[5].cache;
+        const dacval = y.dacValue();
+        const dac: Frame = switch (y.variant) {
+            .ym2612 => .{
+                .left = if (ch6.output0) dacDiscontinuity(dacval) else dac_zero,
+                .right = if (ch6.output1) dacDiscontinuity(dacval) else dac_zero,
+            },
+            .ym3438 => .{ .left = if (ch6.output0) dacval else 0, .right = if (ch6.output1) dacval else 0 },
+        };
+        return .{ .left = channels_out.left + dac.left, .right = channels_out.right + dac.right };
     }
 
     /// A sample before the final scaling, scaled as ymfm scales it (`scaled`).
@@ -483,11 +504,11 @@ pub const Ym2612 = struct {
         break :blk t;
     };
 
-    /// One sample before the final scaling (see `render`).
+    /// One sample before the final scaling (see `renderChannels`).
     pub fn sampleRaw(y: *Ym2612) Frame {
         var out: [1]Frame = undefined;
-        _ = y.render(&out);
-        return out[0];
+        _ = y.renderChannels(&out);
+        return y.withDacRaw(out[0]);
     }
 
     /// The most samples rendered at once.
@@ -502,31 +523,22 @@ pub const Ym2612 = struct {
         lfo_am: [block_samples]u8 = undefined,
     };
 
-    /// Renders the next samples into `out` before the final scaling: the sum of the six channels'
-    /// 9-bit outputs, the DAC replacing channel 6 when it is on. The YM2612 variant applies the
-    /// DAC's distortion to each channel, as its multiplexed output does (Nuked-OPN2's sum of its
-    /// 24 output cycles, divided by its gain of 3, gives the same sums). Returns the number of
-    /// samples, at least one: a block of up to `block_samples`, which ends before a preparation.
+    /// Renders the channels of the next samples into `out`, before the DAC's value and the final
+    /// scaling (`withDac`): the sum of the FM channels' 9-bit outputs, channel 6's only when the
+    /// DAC is off. The YM2612 variant applies the DAC's distortion to each channel, as its
+    /// multiplexed output does (Nuked-OPN2's sum of its 24 output cycles, divided by its gain of
+    /// 3, gives the same sums). Returns the number of samples, at least one: a block of up to
+    /// `block_samples`, which ends before a preparation. Until `withDac` takes the last of them,
+    /// the only writes allowed are the DAC's data (register $2A): it changes nothing else.
     ///
     /// ymfm clocks every channel, then outputs every channel, sample after sample. The channels
     /// share only their clocks (`Clocks`) and the preparation, and no write comes within a block:
     /// each channel runs through the whole block in turn, with the same results.
-    fn render(y: *Ym2612, out: []Frame) usize {
+    pub fn renderChannels(y: *Ym2612, out: []Frame) usize {
         var clocks: Clocks = .{};
         y.clockShared(&clocks, @min(out.len, block_samples));
         const raw = out[0..clocks.len];
         var base: Frame = .{};
-        if (y.dac_enable != 0) {
-            const ch6 = &y.chans[5].cache;
-            const dacval = y.dacValue();
-            base = switch (y.variant) {
-                .ym2612 => .{
-                    .left = if (ch6.output0) dacDiscontinuity(dacval) else dac_zero,
-                    .right = if (ch6.output1) dacDiscontinuity(dacval) else dac_zero,
-                },
-                .ym3438 => .{ .left = if (ch6.output0) dacval else 0, .right = if (ch6.output1) dacval else 0 },
-            };
-        }
         // A channel that is not active gives 0, which the DAC moves to `dac_zero`.
         if (y.variant == .ym2612) {
             const fm: u32 = if (y.dac_enable != 0) all_channels >> 1 else all_channels;

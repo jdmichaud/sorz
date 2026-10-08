@@ -15,6 +15,13 @@
 //! write since, the number of next samples equal to it, and `pub fn skip(self: *T, n: u32) void`,
 //! which takes `n` of them at once (see `Psg`).
 //!
+//! A YM2612 core may also render its channels apart from the DAC's value, so that the DAC's
+//! values, written every few samples while a PCM sample plays, do not cut its work into small
+//! blocks: `pub fn renderChannels(self: *T, out: []Frame) usize`, the next samples of its channels
+//! (at least one, at most `out.len`), after which only the DAC's data may be written until
+//! `pub fn withDac(self: *const T, channels: Frame) Frame` gives each of them with the DAC's value
+//! at its time (see `Ym2612`).
+//!
 //! The synthesiser takes its chips as comptime parameters (`Synth(Fm, Psg)`): a game is a value,
 //! and a chip held behind a pointer to its own owner would break when the game is copied.
 //! Everything is integer arithmetic, so the samples are the same on every platform.

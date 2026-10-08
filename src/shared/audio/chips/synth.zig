@@ -148,17 +148,31 @@ pub fn Synth(comptime Fm: type, comptime P: type) type {
                 }
                 if (next_fm >= t) break;
                 // The samples that start before `t` and before the DAC's next write take no write:
-                // the YM2612 makes them at once. The PSG's are made sample by sample with the mix.
-                const end = if (s.dac.nextCycle()) |w| @min(t, w) else t;
-                const count: usize = @intCast(@min((end + Fm.cycles_per_sample - 1) / Fm.cycles_per_sample - s.fm_count, block_samples));
+                // the YM2612 makes them at once. A core that renders its channels apart from the
+                // DAC's value (`dac_values`) takes the sample's values among them, each before the
+                // first sample that starts at or after it: they write only the DAC's data. The
+                // PSG's are made sample by sample with the mix.
+                const next_dac = if (dac_values) s.dac.nextSetup() else s.dac.nextCycle();
+                const end = if (next_dac) |w| @min(t, w) else t;
+                const most: usize = @intCast(@min((end + Fm.cycles_per_sample - 1) / Fm.cycles_per_sample - s.fm_count, block_samples));
                 var block: [block_samples]Frame = undefined;
-                s.fm.generate(block[0..count]);
+                const count = if (dac_values) s.fm.renderChannels(block[0..most]) else most;
+                if (!dac_values) s.fm.generate(block[0..count]);
+                var dac_due = if (dac_values) s.dac.nextCycle() orelse std.math.maxInt(u64) else 0;
                 for (block[0..count]) |f| {
                     const at = s.fm_count * Fm.cycles_per_sample;
+                    var sample = f;
+                    if (dac_values) {
+                        if (at >= dac_due) {
+                            while (s.dac.nextWrite(at)) |w| s.fm.write(w.port, w.value);
+                            dac_due = s.dac.nextCycle() orelse std.math.maxInt(u64);
+                        }
+                        sample = s.fm.withDac(f);
+                    }
                     if (s.fm_count > 0) {
                         n += s.mix(s.psgMean(at), out[2 * n ..]);
                     } else s.psgTo(at);
-                    s.fm_sample = f;
+                    s.fm_sample = sample;
                     s.fm_count += 1;
                 }
                 s.now = (s.fm_count - 1) * Fm.cycles_per_sample;
@@ -169,6 +183,11 @@ pub fn Synth(comptime Fm: type, comptime P: type) type {
 
         /// The most YM2612 samples made at once (the YM2612 renders up to 128 at a time).
         const block_samples = 128;
+
+        /// Whether the YM2612 core renders its channels apart from the DAC's value
+        /// (`renderChannels`, `withDac`: see `Ym2612`), so that the DAC's values do not end its
+        /// blocks.
+        const dac_values = @hasDecl(Fm, "renderChannels") and @hasDecl(Fm, "withDac");
 
         /// The PSG's mean level over the time of the YM2612's latest sample, which ends at `at`:
         /// `psgTo(at)`, then the sum divided by the sample's cycles. When every step before `at`

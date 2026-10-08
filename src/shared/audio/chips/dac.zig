@@ -80,6 +80,17 @@ pub const Dac = struct {
         return d.next;
     }
 
+    /// The master cycle of the next write that is not one of the sample's values (the DAC's
+    /// switching on, the pan), or null when none is to come: the values write only the DAC's
+    /// data.
+    pub fn nextSetup(d: *const Dac) ?u64 {
+        if (d.pending) |p| return p.cycle;
+        return switch (d.stage) {
+            .enable, .pan => d.next,
+            .idle, .value => null,
+        };
+    }
+
     /// The next write due at or before master cycle `until`, or null. Each call returns one port
     /// write; an address write is always followed by its data write at the same cycle.
     pub fn nextWrite(d: *Dac, until: u64) ?Write {
