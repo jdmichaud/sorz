@@ -471,13 +471,18 @@ are its own, driven by its player alone. The host and its clients:
 - Escape in a game leaves it, not the program: the host's player goes back to its menu, or to its
   lobby while its server runs; a client's player to its menu. The other machines are told (the
   session ends, the connections stay); a client at the select they shared keeps it, its own
-  again. At the front end, Escape quits.
+  again, and an observer goes back to its menu. A client whose host is gone (its connection not
+  back a second after the host's five) goes back to its menu. At the front end, Escape quits.
+- While the server runs, the host's 1 PLAYER game takes a client as START GAME's does (SAME
+  CHARACTER the lobby's); its 2 PLAYERS game is a local game of two: both its pads play, and it
+  offers clients no place (observers may watch).
 - The host's player who leaves a round its client plays: the game runs on for the client, on the
   host's machine under its lobby (silent there). Player 1 leaves it at a tick both machines make
   the change at (the host sends it ahead of its pads for that tick): its fighter dies as at the
   time over, and it is out. The lobby's RETURN TO GAME drops player 1 back in the same way, when
   JOIN IN PROGRESS allows it; EXIT shows the game, its player watching. The game over, or no
-  client left in it, the host's menu comes back under the lobby.
+  client left in it, the host's menu comes back under the lobby, whether its player had the lobby
+  open or watched; the observers go back to their menus.
 
 **The join.** The host's game holds for a moment while its state crosses (its canonical form,
 section 6); the client loads it, and from that tick on both run the same game in lockstep.
