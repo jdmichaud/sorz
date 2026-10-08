@@ -45,7 +45,8 @@
 //!
 //! Prints a JSON line per flow, and exits with 1 when a step fails; with `--pictures`, two pictures
 //! that differ are written there (host.png, guest.png), and the host's at a few steps, its own
-//! screens over them (network_options.png, roster.png, lobby.png, dropped_out.png).
+//! screens over them (network_options.png, roster.png, lobby.png, dropped_out.png), and the
+//! client's OPTIONS (client_options.png).
 const std = @import("std");
 const sorz = @import("sorz");
 const agent = @import("agent");
@@ -606,6 +607,8 @@ fn ownMenus(f: *Flow, r: *Room) !void {
     try f.until(r, client, inOptions, 400, "the client's OPTIONS");
     const o = &client.game.state.scenes.base.options;
     try f.check(o.own_only and o.advanced_settings, "the client's OPTIONS show its own lines alone");
+    try r.step(90);
+    try shot(r, client, "client_options.png");
     try r.press(client, .up);
     try r.press(client, .up);
     try f.check(client.game.state.scenes.base.options.line == .advanced_settings, "ADVANCED SETTINGS");

@@ -355,7 +355,9 @@ fn guestOptions(f: *Flow, r: *Run) !void {
     try optionsUp(r, 1);
     try f.check(optionsOf(r).?.line == .advanced_settings, "ADVANCED SETTINGS");
     try optionsUp(r, 1);
-    try f.check(optionsOf(r).?.line == .sound_test, "SOUND TEST, no LEVEL or CONTROL");
+    try f.check(optionsOf(r).?.line == .control, "CONTROL, its player's buttons");
+    try optionsUp(r, 1);
+    try f.check(optionsOf(r).?.line == .sound_test, "SOUND TEST, no LEVEL");
 }
 
 pub fn main(init: std.process.Init) !void {

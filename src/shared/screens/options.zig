@@ -11,7 +11,8 @@
 //! names' column; A, B or C on it plays the game menu's choice sound and fades the screen out to the
 //! settings (game.zig: an overlay of this machine that holds the game, which fades in and out as
 //! well), and the options fade back in when they close. A network guest's options (DESIGN.md 9:
-//! the game's rules are player 1's game's) show only what is its own: SOUND TEST, ADVANCED
+//! the game's rules are player 1's game's) show only what is its own: SOUND TEST, CONTROL (its
+//! player's buttons: game.zig carries its pad into the host's game by the host's), ADVANCED
 //! SETTINGS and EXIT. Where the settings give the game's rules (variant.zig), the hidden lives line
 //! is not there: the settings' LIVES are the game's.
 const std = @import("std");
@@ -50,7 +51,7 @@ pub const Line = enum(u8) {
 
     /// A line of the game's rules, which a network guest's options do not show.
     fn rules(l: Line) bool {
-        return l == .level or l == .control or l.hidden();
+        return l == .level or l.hidden();
     }
 };
 
@@ -394,11 +395,11 @@ test "ADVANCED SETTINGS: right before EXIT when there is the line; A opens the s
     try std.testing.expect(turn.settings == 0 and turn.settings_fade and o.phase == .in_settings);
 }
 
-test "a network guest's options: SOUND TEST, ADVANCED SETTINGS, EXIT" {
+test "a network guest's options: SOUND TEST, CONTROL, ADVANCED SETTINGS, EXIT" {
     var o: Options = .{ .advanced_settings = true, .own_only = true, .hidden_lines = true };
-    try std.testing.expectEqual(Line.advanced_settings, o.next(true));
+    try std.testing.expectEqual(Line.control, o.next(true));
     o.line = .exit;
     try std.testing.expectEqual(Line.sound_test, o.next(true));
     try std.testing.expectEqual(Line.advanced_settings, o.next(false));
-    try std.testing.expect(!o.has(.level) and !o.has(.control) and !o.has(.lives) and o.has(.sound_test));
+    try std.testing.expect(!o.has(.level) and o.has(.control) and !o.has(.lives) and o.has(.sound_test));
 }

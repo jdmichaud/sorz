@@ -35,6 +35,7 @@ const std = @import("std");
 const platform = @import("platform.zig");
 const input = @import("input.zig");
 const settings_mod = @import("settings/root.zig");
+const content_screens = @import("content/screens.zig");
 const canonical = @import("canonical.zig");
 const scene = @import("scene.zig");
 const flow = @import("flow.zig");
@@ -1014,10 +1015,50 @@ pub const Game = struct {
         } else self.writeSettings(&self.settings);
     }
 
-    /// The pad button that attacks by the options' CONTROL, for autofire (B without the content).
+    /// The options' CONTROL this machine's player plays with: its own, in another machine's game
+    /// too (a client in the host's, whose set-up is the host's: its own kept, `own_setup`).
+    fn ownControl(self: *const Game) u8 {
+        if (self.own_setup) |o| return o.control;
+        return self.state.setup.control;
+    }
+
+    /// This machine's player's pad as the game's CONTROL reads it: its A, B and C pressed for
+    /// their actions by its own CONTROL, and given to the game as the game's CONTROL has those
+    /// actions (a client's pad in the host's game).
+    fn toGameControl(self: *const Game, pad: input.Pad) input.Pad {
+        const own = self.ownControl();
+        const game = self.state.setup.control;
+        if (own == game) return pad;
+        const a = if (self.scene_assets) |*x| x else return pad;
+        return relayout(pad, a.round.screen.buttons.of(own), a.round.screen.buttons.of(game));
+    }
+
+    /// The pad that does under layout `to` what `pad` does under `from`: each action's button.
+    fn relayout(pad: input.Pad, from: content_screens.Layout, to: content_screens.Layout) input.Pad {
+        var out = pad;
+        out.a = false;
+        out.b = false;
+        out.c = false;
+        for ([_][2]content_screens.Button{ .{ from.special, to.special }, .{ from.attack, to.attack }, .{ from.jump, to.jump } }) |m| {
+            const held = switch (m[0]) {
+                .a => pad.a,
+                .b => pad.b,
+                .c => pad.c,
+            };
+            switch (m[1]) {
+                .a => out.a = out.a or held,
+                .b => out.b = out.b or held,
+                .c => out.c = out.c or held,
+            }
+        }
+        return out;
+    }
+
+    /// The pad button that attacks by this machine's player's CONTROL, for autofire (B without
+    /// the content).
     fn attackButton(self: *const Game) input.Button {
         const a = if (self.scene_assets) |*a| a else return .b;
-        return switch (a.round.screen.buttons.of(self.state.setup.control).attack) {
+        return switch (a.round.screen.buttons.of(self.ownControl()).attack) {
             .a => .a,
             .b => .b,
             .c => .c,
@@ -1215,7 +1256,9 @@ pub const Game = struct {
         if (self.lobbyOverGame()) pads.pad1 = .{};
         const session = if (self.netplay) |np| (if (np.inSession()) np else null) else null;
         if (session) |np| {
-            pads = np.pads(p, pads.pad1) orelse return false;
+            // A client's pad goes by its own CONTROL into the host's game.
+            const local = if (np.role == .guest) self.toGameControl(pads.pad1) else pads.pad1;
+            pads = np.pads(p, local) orelse return false;
             if (np.eventAt()) |e| self.applyEvent(p, np, e);
         } else if (self.netplay) |np| if (np.role == .host and np.open) {
             // The host's session open: its second player is the network's, not this machine's.
@@ -1568,4 +1611,14 @@ test "without the content's look, no settings screen; without network play, both
     game.showSettings(null);
     try testing.expect(!game.settingsOpen());
     try testing.expect(game.plays(0) and game.plays(1));
+}
+
+test "a client's pad by its own CONTROL, carried into the game's: each action's button" {
+    const own: content_screens.Layout = .{ .special = .c, .attack = .a, .jump = .b };
+    const game: content_screens.Layout = .{};
+    // Its A attacks: the game's attack button, B.
+    try std.testing.expectEqual(input.Pad{ .b = true, .left = true }, Game.relayout(.{ .a = true, .left = true }, own, game));
+    // Its C, the special attack: the game's A; its B, the jump: the game's C.
+    try std.testing.expectEqual(input.Pad{ .a = true, .c = true, .start = true }, Game.relayout(.{ .c = true, .b = true, .start = true }, own, game));
+    try std.testing.expectEqual(input.Pad{ .a = true }, Game.relayout(.{ .a = true }, game, game));
 }
