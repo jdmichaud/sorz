@@ -46,11 +46,12 @@
 //      games' states must be the same at the session's tick 600, both in the round with two
 //      players.
 //   relay (with --content): two pages of the relay (`sorz-server DIR --server`), in two Chromiums
-//      with their own profiles. The first to choose 2 PLAYERS hosts (player 1) and plays round 1
-//      alone; the second chooses 2 PLAYERS later, its character on its own select, and joins the
-//      first's game mid-round: one tick per update, the same state at the session's tick 600. Then
-//      the relay's rules, in real time: a third page that chooses 2 PLAYERS is turned away and
-//      plays alone, told why; the guest leaves, and the host plays on without player 2, told so.
+//      with their own profiles, each on the relay as it loads: the first is the host (player 1)
+//      and plays round 1 alone; the second, its client, chooses 2 PLAYERS later, its character on
+//      its own select, and joins the first's game mid-round: one tick per update, the same state at
+//      the session's tick 600. Then the relay's rules, in real time: a third page is a client too,
+//      and the three play on; the guest leaves, and the host plays on without player 2, told so;
+//      the host leaves, and the third, connecting again, hosts.
 //
 // The agent host's frames are ticks: its picture at frame F is the page's after F + 1 updates of
 // one tick. The report is one JSON line per part, and the exit status says whether every part
@@ -411,21 +412,6 @@ async function relayPage(browser, relay, manual) {
   return page;
 }
 
-// A page in real time: its tick, and Enter held a tenth of a second.
-async function pressEnter(page) {
-  await page.send('Input.dispatchKeyEvent', { type: 'keyDown', ...keyEvents.enter });
-  await sleep(100);
-  await page.send('Input.dispatchKeyEvent', { type: 'keyUp', ...keyEvents.enter });
-}
-
-// A page in real time to its character select: Enter at its ticks of the front end.
-async function toSelectLive(page) {
-  for (const [t] of frontEnd) {
-    await page.waitFor(`sorz.inspect().ticks >= ${t}`, 60000, 'the page\'s tick ' + t);
-    await pressEnter(page);
-  }
-}
-
 // The tick counts of pages, once and again a second later.
 async function advancing(pages) {
   const before = await Promise.all(pages.map((p) => p.evaluate('sorz.inspect().ticks')));
@@ -434,13 +420,14 @@ async function advancing(pages) {
   return before.map((v, i) => after[i] - v);
 }
 
-// Two pages through the relay, the whole content tree. The first page's player chooses 2 PLAYERS
-// and Axel (the relay makes it the host) and plays round 1 alone; the second's chooses 2 PLAYERS
-// later (it is the guest), and a character on its own select once the host plays: it joins the
-// host's game mid-round. One tick per update, the same state at the session's tick 600. Then in
-// real time: a third page that chooses 2 PLAYERS is turned away and plays alone; the guest leaves,
-// and the host plays on without player 2. The host's page is in `browser`, the guest's in a second
-// Chromium with its own profile (`profile`). Returns the parts' reports.
+// Two pages through the relay, the whole content tree. Each connects to the relay as it loads: the
+// first is the host, the second its client. The first page's player chooses 2 PLAYERS and Axel
+// and plays round 1 alone; the second's chooses 2 PLAYERS later (the guest), and a character on
+// its own select once the host plays: it joins the host's game mid-round. One tick per update, the
+// same state at the session's tick 600. Then in real time: a third page is a client too, and the
+// three play on; the guest leaves, and the host plays on without player 2; the host leaves, and
+// the third hosts once it has connected again. The host's page is in `browser`, the guest's in a
+// second Chromium with its own profile (`profile`). Returns the parts' reports.
 async function relayCheck(browser, chromium, profile) {
   const reports = [];
   const ticks = 600;
@@ -473,29 +460,25 @@ async function relayCheck(browser, chromium, profile) {
     await stepUntil(both, (t) => t[1] !== null);
     await stepUntil(both, (t) => t[1] !== null && t[1] >= ticks, { freeze: true });
     const [h, g] = await Promise.all(both.map((p) => p.evaluate('sorz.inspect()')));
-    reports.push(['relay', mode === 'relay' && hostRole === 'host' && guestRole === 'guest' && alone.scene === 'round' &&
-      alone.players === 'one' && !alone.net.connected && h.state_hash === g.state_hash && h.net.tick === ticks && g.net.tick === ticks &&
+    reports.push(['relay', mode === 'relay' && hostRole === 'host' && guestRole === 'client' && alone.scene === 'round' &&
+      alone.players === 'one' && h.state_hash === g.state_hash && h.net.tick === ticks && g.net.tick === ticks &&
       h.scene === 'round' && h.players === 'two' && h.net.phase === 'playing' && !h.net.difference && !g.net.difference, {
       mode,
       roles: [hostRole, guestRole],
-      host_alone: { ticks: alone.ticks, scene: alone.scene, players: alone.players },
+      host_alone: { ticks: alone.ticks, scene: alone.scene, players: alone.players, connected: alone.net.connected },
       seconds: Math.round((Date.now() - began) / 100) / 10,
       host: { ticks: h.ticks, state_hash: h.state_hash, net: h.net, players: h.players },
       guest: { ticks: g.ticks, state_hash: g.state_hash, net: g.net },
     }]);
 
-    // The relay's rules, in real time. A third page is turned away: it plays alone, told why.
+    // The relay's rules, in real time. A third page is a client of the host too, as it loads (the
+    // relay turns no page away), and the three play on. What its game offers its player (JOIN
+    // dimmed, OBSERVE) is the game's, for its own checks.
     for (const p of both) await p.evaluate('sorz.manual = false');
     const third = await relayPage(browser, relay, false);
     pages.push(third);
-    await toSelectLive(third);
     await third.waitFor(`sorz.relayState !== null`, 20000, 'the relay\'s answer to the third');
-    await third.waitFor(`sorz.inspect().message !== ''`, 5000, 'the third told why');
-    const turnedAway = await third.evaluate('({ relay: sorz.relayState, state: sorz.inspect() })');
-    if (options.keep) await third.screenshot(path.join(options.keep, 'page-busy.png'));
-    // Its own character select, alone: not held.
-    await third.waitFor(`sorz.inspect().scene === 'select'`, 10000, 'the third\'s select');
-    const thirdSelect = await third.evaluate('sorz.inspect()');
+    const thirdRole = await third.evaluate('sorz.relayState');
     const playingOn = await advancing([host, guest, third]);
     // The guest leaves: the host waits a few seconds for it, then plays on without player 2.
     await guest.close();
@@ -505,14 +488,18 @@ async function relayCheck(browser, chromium, profile) {
     const hostAlone = await host.evaluate('sorz.inspect()');
     if (options.keep) await host.screenshot(path.join(options.keep, 'page-guest-left.png'));
     const hostPlays = (await advancing([host]))[0];
-    reports.push(['relay_rules', turnedAway.relay === 'busy' && turnedAway.state.message === 'TWO PLAYERS ARE PLAYING THERE\nYOU PLAY ALONE' &&
-      turnedAway.state.net === null && thirdSelect.players === 'one' && thirdSelect.net === null && playingOn.every((n) => n > 30) &&
-      hostAlone.scene === 'round' && hostAlone.net.phase !== 'playing' && hostPlays > 30, {
-      third: { relay: turnedAway.relay, message: turnedAway.state.message, then: thirdSelect.scene, players: thirdSelect.players, the_three_play_on: playingOn },
+    // The host leaves: its clients' connections end, they connect again, and the first hosts.
+    const errors = host.console.filter((m) => m.type === 'error' || m.type === 'exception');
+    await host.close();
+    pages.splice(pages.indexOf(host), 1);
+    const thirdHosts = await third.waitFor(`sorz.relayState === 'host'`, 10000, 'the third to host').then(() => true, () => false);
+    reports.push(['relay_rules', thirdRole === 'client' && playingOn.every((n) => n > 30) &&
+      hostAlone.scene === 'round' && hostAlone.net.phase !== 'playing' && hostPlays > 30 && thirdHosts, {
+      third: { relay: thirdRole, the_three_play_on: playingOn, hosts_once_the_host_left: thirdHosts },
       guest_left: { message: hostAlone.message, scene: hostAlone.scene, net: hostAlone.net, ticks_in_1_s: hostPlays },
       relay_log: relay.log.trim().split('\n').slice(-12),
     }]);
-    const errors = pages.flatMap((p) => p.console.filter((m) => m.type === 'error' || m.type === 'exception'));
+    errors.push(...pages.flatMap((p) => p.console.filter((m) => m.type === 'error' || m.type === 'exception')));
     reports.push(['relay_console', errors.length === 0, { errors: errors.slice(0, 5) }]);
   } finally {
     for (const page of pages) await page.close();
