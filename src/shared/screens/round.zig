@@ -1612,8 +1612,12 @@ fn healthOf(a: *const Round.Assets, e: *const world.Entity) u8 {
 /// that changes its kind (playing, asking, out) is cleared, then drawn whole.
 pub fn drawBar(v: *view.View, a: anytype, now: Bar, was: ?Bar) !void {
     const board = v.board(.window);
+    // The invitation first: gone (player 2 dropped in), the cells under it come back, and player
+    // 2's part is drawn whole over them.
+    const changed = (was == null and now.join) or (was != null and was.?.join != now.join);
+    if (changed) try drawJoin(v, a, now.join);
     for (now.players, 0..) |p, k| {
-        const before: ?PlayerBar = if (was) |w| w.players[k] else null;
+        const before: ?PlayerBar = if (was) |w| (if (k == 1 and changed and !now.join) null else w.players[k]) else null;
         if (before) |b| {
             if (std.meta.eql(b, p)) continue;
             if (std.meta.activeTag(b) != std.meta.activeTag(p)) {
@@ -1628,7 +1632,6 @@ pub fn drawBar(v: *view.View, a: anytype, now: Bar, was: ?Bar) !void {
         try bigDigit(board, a, a.screen.status_bar.time, now.time / 10);
         try bigDigit(board, a, .{ .x = a.screen.status_bar.time.x + 1, .y = a.screen.status_bar.time.y }, now.time % 10);
     }
-    if ((was == null and now.join) or (was != null and was.?.join != now.join)) try drawJoin(v, a, now.join);
 }
 
 /// The bosses' bars that changed since `was`: shown, their rectangle and its label, then each
