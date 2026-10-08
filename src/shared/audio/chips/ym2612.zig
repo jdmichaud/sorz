@@ -527,6 +527,13 @@ pub const Ym2612 = struct {
                 .ym3438 => .{ .left = if (ch6.output0) dacval else 0, .right = if (ch6.output1) dacval else 0 },
             };
         }
+        // A channel that is not active gives 0, which the DAC moves to `dac_zero`.
+        if (y.variant == .ym2612) {
+            const fm: u32 = if (y.dac_enable != 0) all_channels >> 1 else all_channels;
+            const quiet: i32 = @popCount(fm & ~y.active_channels);
+            base.left += quiet * dac_zero;
+            base.right += quiet * dac_zero;
+        }
         @memset(raw, base);
         for (0..channels) |c| y.renderChannel(c, &clocks, raw);
         return raw.len;
@@ -573,19 +580,12 @@ pub const Ym2612 = struct {
     }
 
     /// Runs channel `c` through the block: clocks it, and adds its output to `raw`'s samples when
-    /// it is active and not replaced by the DAC.
+    /// it is active and not replaced by the DAC (`render` counts the others').
     fn renderChannel(y: *Ym2612, c: usize, clocks: *const Clocks, raw: []Frame) void {
         const dac = c == 5 and y.dac_enable != 0;
         if (bitfield(y.active_channels, @intCast(c), 1) != 0 and !dac) {
             y.runAudible(&y.chans[c], clocks, raw);
-            return;
-        }
-        y.runChannel(&y.chans[c], clocks, raw, false);
-        // Not active: 0, which the DAC moves to `dac_zero`.
-        if (y.variant == .ym2612 and !dac) for (raw) |*f| {
-            f.left += dac_zero;
-            f.right += dac_zero;
-        };
+        } else y.runChannel(&y.chans[c], clocks, raw, false);
     }
 
     /// An active channel through the block: `runChannel`, which follows ymfm step by step, when

@@ -30,9 +30,10 @@ pub const Model1 = struct {
     }
 };
 
-/// BlastEm's one-pole filter in 16.16: (x alpha + y (1 - alpha)) >> 16.
+/// BlastEm's one-pole filter in 16.16: (x alpha + y (1 - alpha)) >> 16. Any 32-bit values give
+/// products and a sum within 49 bits: the operations cannot overflow.
 inline fn lowpass(last: i32, x: i32) i32 {
-    const v = (@as(i64, x) * lowpass_alpha + @as(i64, last) * (0x10000 - lowpass_alpha)) >> 16;
+    const v = (@as(i64, x) *% lowpass_alpha +% @as(i64, last) *% (0x10000 - lowpass_alpha)) >> 16;
     return @intCast(v);
 }
 

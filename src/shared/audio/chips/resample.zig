@@ -40,7 +40,7 @@ pub const Resampler = struct {
         const width = r.span();
         // Frame at s + frac: needs inputs s and s + 1, that is count >= s + 2.
         while (r.count >= r.s + 2) {
-            std.debug.assert(r.count == r.s + 2);
+            if (r.count != r.s + 2) unreachable;
             out[2 * n] = interpolate(r.a.left, r.b.left, r.frac, width);
             out[2 * n + 1] = interpolate(r.a.right, r.b.right, r.frac, width);
             n += 1;
@@ -69,10 +69,12 @@ pub const Resampler = struct {
     }
 };
 
+/// `frac` is below `span`, 1008 times a rate of at most 53,267, below 2^26: with any 32-bit
+/// values, the operations cannot overflow.
 inline fn interpolate(a: i32, b: i32, frac: u64, span: u64) i16 {
-    const d: i64 = @as(i64, b) - a;
-    const v = @as(i64, a) + @divFloor(d * @as(i64, @intCast(frac)), @as(i64, @intCast(span)));
-    return @intCast(std.math.clamp(v, std.math.minInt(i16), std.math.maxInt(i16)));
+    const d: i64 = @as(i64, b) -% a;
+    const v = @as(i64, a) +% @divFloor(d *% @as(i64, @intCast(frac)), @as(i64, @intCast(span)));
+    return @intCast(@max(@min(v, std.math.maxInt(i16)), std.math.minInt(i16)));
 }
 
 const testing = std.testing;
