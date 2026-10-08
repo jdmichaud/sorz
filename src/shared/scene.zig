@@ -126,6 +126,9 @@ pub const Turn = struct {
     /// during play where the variant says so): the game opens them over the scenes, on that
     /// player's machine (game.zig).
     settings: ?u1 = null,
+    /// They were asked for from the options, which faded out first: they fade in and out as the
+    /// menus' screens do, without the pause's jingle.
+    settings_fade: bool = false,
     /// The sounds asked for in the first half of a logic tick of play (its players'), which the
     /// sound's driver takes at the frame in the logic tick's middle: this tick's update, before
     /// `requests`, which it takes at the next.

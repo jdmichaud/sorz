@@ -8,8 +8,9 @@
 //!
 //! The port's ADVANCED SETTINGS line (the extended and network variants: variant.zig) comes
 //! between CONTROL's table and EXIT, which moves a row down: its name in the font, in the other
-//! names' column; A, B or C on it opens the settings (game.zig: an overlay of this machine that
-//! holds the game), and the options go on when they close. A network guest's options (DESIGN.md 9:
+//! names' column; A, B or C on it plays the game menu's choice sound and fades the screen out to the
+//! settings (game.zig: an overlay of this machine that holds the game, which fades in and out as
+//! well), and the options fade back in when they close. A network guest's options (DESIGN.md 9:
 //! the game's rules are player 1's game's) show only what is its own: SOUND TEST, ADVANCED
 //! SETTINGS and EXIT.
 const std = @import("std");
@@ -89,7 +90,7 @@ pub const Options = struct {
     own_only: bool = false,
     values: Values = .{},
 
-    pub const Phase = enum(u8) { setup, aim, fade_in, first_line, lines, leave, fade_out, leaving };
+    pub const Phase = enum(u8) { setup, aim, fade_in, first_line, lines, leave, fade_out, leaving, to_settings, in_settings, from_settings };
 
     pub const Assets = struct {
         title: *const art.TileMap,
@@ -110,6 +111,7 @@ pub const Options = struct {
         data: *const records.Options,
         sound_test_sounds: library.SoundTest,
         move: library.Sound,
+        choose: library.Sound,
         stop: library.Sound,
         // The content's `*_chosen` maps are the dim lines (palette 1), shown when the cursor is
         // not on them.
@@ -132,6 +134,7 @@ pub const Options = struct {
             .data = "screens/options",
             .sound_test_sounds = "screens/options",
             .move = "menu move",
+            .choose = "menu choose",
             .stop = "stop",
         };
 
@@ -200,6 +203,20 @@ pub const Options = struct {
                 self.phase = .leaving;
             },
             .leaving => return .done,
+            // The settings open once the screen has faded out; no tick runs while they are open,
+            // and the next fades it back in, the cursor where it was.
+            .to_settings => if (self.colours.stepFade()) {
+                turn.settings = 0;
+                turn.settings_fade = true;
+                self.phase = .in_settings;
+            },
+            .in_settings => {
+                self.colours.startFade(.target);
+                self.phase = .from_settings;
+            },
+            .from_settings => if (self.colours.stepFade()) {
+                self.phase = .lines;
+            },
         }
         return null;
     }
@@ -236,9 +253,12 @@ pub const Options = struct {
             .first_round => if (step) |up| {
                 v.first_round = wrap(v.first_round, 8, up);
             },
-            // The settings open over the options, which go on when they close.
+            // The game menu's choice sound, and the screen fades out to the settings (as a
+            // menu's screen leaves for the next); the options go on when they close.
             .advanced_settings => if (p.a or p.b or p.c) {
-                turn.settings = 0;
+                turn.play(a.choose);
+                self.colours.startFade(.black);
+                self.phase = .to_settings;
             },
             .exit => if (p.a or p.b or p.c) {
                 self.phase = .leave;
@@ -353,15 +373,20 @@ test "ADVANCED SETTINGS: right before EXIT when there is the line; A opens the s
     try std.testing.expectEqual(Line.first_round, o.next(false));
     try std.testing.expectEqual(Line.exit, o.next(true));
 
-    // A on it: the settings asked for, by this machine's player; left and right do nothing.
+    // A on it: the screen fades out, then the settings are asked for, by this machine's player;
+    // left and right do nothing.
     var setup: Setup = .{};
     var turn: scene.Turn = .{ .setup = &setup, .pressed = .{ .pad1 = .{ .right = true } } };
-    const a: Options.Assets = undefined;
+    var a: Options.Assets = undefined;
+    a.choose = 1;
     o.lineInput(&turn, &a);
-    try std.testing.expect(turn.settings == null);
+    try std.testing.expect(turn.settings == null and o.phase == .setup);
     turn.pressed = .{ .pad1 = .{ .a = true } };
     o.lineInput(&turn, &a);
-    try std.testing.expectEqual(@as(?u1, 0), turn.settings);
+    try std.testing.expect(turn.settings == null and o.phase == .to_settings);
+    o.colours.fade.?.left = 1;
+    _ = o.tick(&turn, &a);
+    try std.testing.expect(turn.settings == 0 and turn.settings_fade and o.phase == .in_settings);
 }
 
 test "a network guest's options: SOUND TEST, ADVANCED SETTINGS, EXIT" {

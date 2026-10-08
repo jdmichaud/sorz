@@ -60,6 +60,8 @@ pub const Panel = struct {
     composer: *render.Composer,
     sprites: [1]render.Sprite = undefined,
     screen: render.Screen = .{},
+    /// The menu's colours, which a fade goes from or towards.
+    colours: render.palettes.Colours = render.palettes.black,
     /// The last picture, RGBA.
     rgba: []u8,
 
@@ -83,7 +85,8 @@ pub const Panel = struct {
         errdefer self.composer.destroy();
         self.rgba = try gpa.alloc(u8, width * height * 4);
         self.screen = .{ .plane_a = .{ .board = &self.board } };
-        colours.apply(&self.screen.colours);
+        colours.apply(&self.colours);
+        self.screen.colours = self.colours;
     }
 
     pub fn deinit(self: *Panel) void {
@@ -91,6 +94,19 @@ pub const Panel = struct {
         self.composer.destroy();
         self.board.deinit();
         self.* = undefined;
+    }
+
+    /// The colours `steps` steps into a fade of the panel (render.Fade, a step a tick), from black
+    /// to the menu's colours or from them to black; null: the menu's colours.
+    pub fn faded(self: *Panel, to: ?render.Fade.To, steps: u8) void {
+        const t = to orelse {
+            self.screen.colours = self.colours;
+            return;
+        };
+        var ps: render.Palettes = .{ .shown = if (t == .black) self.colours else render.palettes.black, .target = self.colours };
+        var f: render.Fade = .{ .to = t };
+        for (0..steps) |_| _ = f.step(&ps);
+        self.screen.colours = ps.shown;
     }
 
     /// A new picture: no text, no arrow.

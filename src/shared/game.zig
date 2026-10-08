@@ -27,7 +27,8 @@
 //! (overlay.zig), opened on the machine of the player who asks: OPTIONS' ADVANCED SETTINGS, START
 //! during play (the extended and network variants), the settings key in the original. While it is
 //! open the game holds:
-//! no tick, the picture dimmed under it, the game's sound faded out and the pause's jingle played.
+//! no tick, the picture dimmed under it, the game's sound faded out and the pause's jingle played;
+//! opened from the options, it fades in and out as the menus' screens do, without the jingle.
 //! In network play the other machine holds too, says why and plays the jingle. A damaged record is repaired and kept aside (settings/record.zig),
 //! and a notice tells the player for a few seconds.
 const std = @import("std");
@@ -50,6 +51,7 @@ const world = @import("world/root.zig");
 const variant = @import("variant.zig");
 const overlay = @import("overlay.zig");
 const panel_mod = @import("panel.zig");
+const render = @import("render/root.zig");
 const network_play = @import("network_play.zig");
 const sound_form = @import("sound_form.zig");
 
@@ -57,6 +59,24 @@ pub const page_width = picture.width;
 pub const page_height = picture.height;
 
 pub const UpdateResult = enum { running, finished };
+
+/// The settings panel's fade, a step every tick's time from `since_ns` (render.Fade).
+const PanelFade = struct {
+    to: render.Fade.To,
+    since_ns: u64,
+
+    const Shown = struct { to: render.Fade.To, steps: u8 };
+
+    fn at(f: PanelFade, now_ns: u64) Shown {
+        const steps = @min((now_ns -| f.since_ns) * 1000 / sound_out.tick_ps, render.Fade.steps);
+        return .{ .to = f.to, .steps = @intCast(steps) };
+    }
+
+    /// Faded out: the settings go.
+    fn out(f: PanelFade, now_ns: u64) bool {
+        return f.to == .black and f.at(now_ns).steps == render.Fade.steps;
+    }
+};
 
 /// How the updates run ticks: as the sound or the clock make them due (the game as the player
 /// runs it), or one each (the agent host's).
@@ -310,6 +330,11 @@ pub const Game = struct {
     overlay_dirty: bool = true,
     /// The settings' arrow as last drawn (it blinks while they wait for a key).
     arrow_shown: bool = true,
+    /// The settings opened from the options fade in and out as the menus' screens do: their
+    /// panel's fade, from their opening, then from their closing (they go once it is over); and
+    /// its step as last drawn.
+    panel_fade: ?PanelFade = null,
+    panel_fade_shown: ?PanelFade.Shown = null,
     alone: bool = false,
     /// The player this machine's pad plays outside a session: player 2 for a guest whose host
     /// left the game under way, until that game ends (network_play.zig); else player 1.
@@ -593,37 +618,51 @@ pub const Game = struct {
     }
 
     /// Opens the settings screen over the game, which holds while it is open; the controls let go,
-    /// and once the game runs, the pause's jingle plays. A notice goes. The screen shows this
-    /// machine's players alone (one in network play), and the settings key where the variant has
-    /// it.
-    fn showSettings(self: *Game) void {
+    /// and once the game runs, the pause's jingle plays, unless they fade in from the options (from
+    /// `fade_ns`). A notice goes. The screen shows this machine's players alone (one in network
+    /// play), and the settings key where the variant has it.
+    fn showSettings(self: *Game, fade_ns: ?u64) void {
         if (self.settingsOpen() or self.panel == null) return;
         self.overlays.remove(.notice);
         self.overlays.push(.{ .settings = .open(&self.settings, .{ .one_player = self.controls.one_player, .settings_key = self.policies().settings_key }) });
         self.overlay_dirty = true;
         self.controls.release();
-        if (self.started) self.jingle_at = 0;
+        self.panel_fade = if (fade_ns) |t| .{ .to = .target, .since_ns = t } else null;
+        if (self.started and fade_ns == null) self.jingle_at = 0;
     }
 
     /// The settings screen closed: the controls take the keys; SAVE AND EXIT writes the record
-    /// (left without saving, the screen gave back the settings it opened with).
-    fn closeSettings(self: *Game, how: settings_mod.screen.Result) void {
-        self.overlays.remove(.settings);
+    /// (left without saving, the screen gave back the settings it opened with). Faded in, they
+    /// fade out from `now_ns` before they go (null: at once).
+    fn closeSettings(self: *Game, how: settings_mod.screen.Result, now_ns: ?u64) void {
         self.overlay_dirty = true;
         self.controls.layout = self.settings.layout;
         if (how == .save_and_exit) self.writeSettings(&self.settings);
+        if (self.panel_fade != null) if (now_ns) |t| {
+            self.panel_fade = .{ .to = .black, .since_ns = t };
+            return;
+        };
+        self.panel_fade = null;
+        self.overlays.remove(.settings);
+    }
+
+    /// The settings fading out once closed: they take no more presses.
+    fn settingsClosing(self: *const Game) bool {
+        const f = self.panel_fade orelse return false;
+        return f.to == .black;
     }
 
     /// An event while the settings are open: they take the presses; the controls still see the
     /// controllers come and go, and the focus.
-    fn settingsEvent(self: *Game, e: platform.Event) void {
+    fn settingsEvent(self: *Game, e: platform.Event, now_ns: u64) void {
         switch (e.payload) {
             .quit => self.finished = true,
             .key_down, .controller_button_down => {
+                if (self.settingsClosing()) return;
                 const screen = &self.overlays.find(.settings).?.settings;
                 const result = screen.handle(&self.settings, e);
                 self.overlay_dirty = true;
-                if (result != .stay) self.closeSettings(result);
+                if (result != .stay) self.closeSettings(result, now_ns);
             },
             else => _ = self.controls.handle(e),
         }
@@ -654,7 +693,7 @@ pub const Game = struct {
                 self.events_consumed += 1;
                 if (self.netplay) |np| if (np.handle(p, e)) continue;
                 if (self.settingsOpen()) {
-                    self.settingsEvent(e);
+                    self.settingsEvent(e, p.nowNs());
                     continue;
                 }
                 switch (e.payload) {
@@ -662,7 +701,7 @@ pub const Game = struct {
                     .key_down => |k| if (k.key == .escape) {
                         self.finished = true;
                     } else if (self.policies().settings_key and k.key == self.settings.settings_key and !k.repeat) {
-                        self.showSettings();
+                        self.showSettings(null);
                     } else {
                         _ = self.controls.handle(e);
                     },
@@ -673,8 +712,8 @@ pub const Game = struct {
         if (self.finished) {
             // Quitting with the settings open writes nothing, as leaving them without saving.
             if (self.overlays.find(.settings)) |o| {
-                self.settings = o.settings.before;
-                self.closeSettings(.exit_without_saving);
+                if (!self.settingsClosing()) self.settings = o.settings.before;
+                self.closeSettings(.exit_without_saving, null);
             }
             if (self.netplay) |np| np.quit(p);
             return .finished;
@@ -685,6 +724,12 @@ pub const Game = struct {
             network_play.update(self, p);
         }
         if (self.netplay) |np| self.peerOverlay(np);
+        // The closed settings faded out: they go, and the game goes on.
+        if (self.panel_fade) |f| if (f.out(p.nowNs())) {
+            self.panel_fade = null;
+            self.overlays.remove(.settings);
+            self.overlay_dirty = true;
+        };
         // A game turned away plays alone until its character select is over.
         if (self.alone and !network_play.wantsToJoin(&self.state)) self.alone = false;
         // A guest that played on alone as player 2: its own game's player 1 again once it ended.
@@ -806,7 +851,7 @@ pub const Game = struct {
         const machine: State.Machine = .{ .second_pad = self.secondPad(), .guest = self.guest, .taken = network_play.taken(self) };
         const turn = self.state.stepWith(pads, machine, if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
         self.redraw = true;
-        if (turn.settings) |who| if (self.plays(who)) self.showSettings();
+        if (turn.settings) |who| if (self.plays(who)) self.showSettings(if (turn.settings_fade) p.nowNs() else null);
         if (self.sound) |*s| {
             const frames = tickSound(s, &self.transfers_due, &turn, self.stretchPpm());
             // After a hold, the sound fades in, and the jingle of the hold stops.
@@ -983,6 +1028,9 @@ pub const Game = struct {
         const arrow = !waiting or (now_ns / blink_ns) % 2 == 0;
         if (arrow != self.arrow_shown) self.overlay_dirty = true;
         self.arrow_shown = arrow;
+        const shade = if (self.panel_fade) |f| f.at(now_ns) else null;
+        if (!std.meta.eql(shade, self.panel_fade_shown)) self.overlay_dirty = true;
+        self.panel_fade_shown = shade;
         var drawn: usize = 0;
         for (self.overlays.slice()) |_| drawn += 1;
         if (drawn == 0) {
@@ -992,6 +1040,7 @@ pub const Game = struct {
         if (self.overlay_dirty or !self.overlay_shown) {
             self.overlay_dirty = false;
             p.begin();
+            if (shade) |f| p.faded(f.to, f.steps) else p.faded(null, 0);
             for (self.overlays.slice()) |*o| {
                 try o.draw(p, &self.settings, arrow);
             }
@@ -1102,7 +1151,7 @@ test "a hold's sound fades out, and the next tick's fades in" {
 test "without the content's look, no settings screen; without network play, both players here" {
     var game = try Game.init(testing.allocator, null, null);
     defer game.deinit();
-    game.showSettings();
+    game.showSettings(null);
     try testing.expect(!game.settingsOpen());
     try testing.expect(game.plays(0) and game.plays(1));
 }
