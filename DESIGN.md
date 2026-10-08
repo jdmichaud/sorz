@@ -408,86 +408,109 @@ The toolchain is pinned (`build.zig.zon`, `build.zig`). The modules, and what ea
 
 ## 9. Networking
 
-The original's two players share one console. Network play is an addition (plan items A1 and A2):
-two players on two machines, each with their own pad, playing the same game as if on one console.
+The original's two players share one console. Network play is an addition (plan items A1, A2 and
+26): the players of several machines play the same game as if on one console, two players today
+(more players are a later work), and others may watch.
 
-**The ways to play** (the user, 2026-10-01). Two players on one machine use the native game; a
-browser always has one player.
+**The ways to play** (the user, 2026-10-01 and 2026-10-08). Two players on one machine use the
+native game; a browser always has one player.
 
-| How it starts | Players on the machine | Who is who |
+| How it starts | The machine | Who is who |
 | --- | --- | --- |
-| `sorz DATA` | 1 or 2 (the keyboard's two layouts, two gamepads) | as on the console |
-| `sorz DATA --netplay PORT` | 1 | the host is player 1; its guest (a browser on the served page, or `sorz DATA --join`) player 2 |
-| `sorz DATA --server PORT` | 1 a browser, none on the server | the first browser to choose 2 PLAYERS is player 1, the next player 2 |
+| `sorz DATA` | 1 or 2 players; or NETWORK PLAY, the host | as on the console; the host's player is player 1 |
+| `sorz DATA --netplay PORT` | as `sorz DATA`, NETWORK PLAY at PORT (8000 without) | as above |
+| `sorz DATA --join ws://ADDRESS:PORT` | a client of that host, 1 player | player 2 once it joins, or an observer |
+| `sorz DATA --server PORT` | none on the server; 1 player a browser | the first page is the host, the others its clients |
 
-A machine with one player shows one layout of keys in its settings, and every gamepad drives that
-player; network play sends that player's pad. A player who opens the settings during a network
-game pauses both games, and the other player is told why.
+A machine with one player shows that player's input alone in its settings; network play sends that
+player's pad. A player who opens the settings during a network game pauses every game of it, and
+the others are told why.
 
-**Each machine its own menus; the players meet in the game** (the user, 2026-10-05). Each machine
-runs its own front end: the Sega logo, the title, the game menu and OPTIONS are its own, driven by
-its player alone, and nothing of them crosses the network.
+**Each machine its own menus; the players meet in the game** (the user, 2026-10-05 and
+2026-10-08). Each machine runs its own front end: the Sega logo, the title, its menus and OPTIONS
+are its own, driven by its player alone. The host and its clients:
 
-- The network variant's game menu offers 2 PLAYERS (the one way to play; more players may come
-  later) and OPTIONS. A player who chooses 2 PLAYERS goes to the character select, and may start
-  the game and play alone.
-- The second player's 2 PLAYERS joins the first player's game. If the first is still at the
-  character select, the two meet there and each sees the other's cursor. If the first plays, the
-  second chooses a character on their own machine while the first plays on, and drops in once
-  chosen, as the original's second player joins a game (its PRESS 2UP START); the first sees the
-  second only then.
-- In netplay the host is player 1: a guest who chooses 2 PLAYERS before the host has a game waits
-  at the character select for it. In server mode the first page to choose 2 PLAYERS is player 1.
-- The game's rules (LEVEL, the lives, whatever of OPTIONS the game reads) are player 1's game's: a
-  guest's OPTIONS shows only what is its own.
-- When the game ends, each machine goes back to its own menu. A player who leaves leaves the
-  other playing alone, and a new second player can join later.
+- **The host** is the native game whose player chooses NETWORK PLAY in its menu (1 PLAYER, 2
+  PLAYERS, NETWORK PLAY, OPTIONS), or the first page connected to a server (its menu: 1 PLAYER,
+  NETWORK PLAY, OPTIONS). NETWORK PLAY opens the network options: PLAYERS (2, the only number
+  today), OBSERVERS (yes or no), SAME CHARACTER (whether two players may choose one character), and
+  START. START opens the session: the native host listens on every interface (0.0.0.0) at its
+  port, and serves there the page and the game's files (section 5.3); the host's player goes to the
+  character select as player 1, and plays alone until a player joins. The host's front end
+  screens list who is connected at the bottom left: LOCAL (PLAYER 1), and each client by its name
+  and what it does (MENU, PLAYER 2, OBSERVING).
+- **A client** is a page of that host or server (not the first), or `--join`: it connects as it
+  starts, and its player gives a name of three letters, kept in the settings. Its menu: JOIN, when
+  the host's session is open and a player's place is free; OBSERVE, when it is open and the host
+  takes observers; OPTIONS. A line it cannot take is dimmed.
+- **JOIN** goes to the client's own character select, and joins the host's game as player 2: at
+  the host's select, the two meet there and each sees the other's cursor; in play, the client's
+  player chooses a character on its own machine while the host plays on, and drops in once chosen,
+  as the original's second player joins a game (its PRESS 2UP START).
+- **OBSERVE** shows the host's game on the client: it takes the host's game and then each tick's
+  pads (below), and holds no one. START leaves it, back to the client's menu.
+- The game's rules (LEVEL, the lives, whatever of OPTIONS or the settings the game reads, SAME
+  CHARACTER) are the host's game's: a client's OPTIONS shows only what is its own.
+- When the game ends, each machine goes back to its own menu, and the session closes.
 
 **The join.** The host's game holds for a moment while its state crosses (its canonical form,
-section 6); the guest loads it, and from that tick on both run the same game in lockstep.
+section 6); the client loads it, and from that tick on both run the same game in lockstep.
 
-**Delay-based input lockstep.** From the join, both peers run the same deterministic game; the
-only thing that crosses the network in play is each player's pad. The host is player 1, the
-guest player 2. Every display tick, a peer samples its pad and sends it for tick N + D, where the
-input delay D is chosen at the session's start from the measured round trip (2 to 6 ticks); tick
-N runs when both pads for N are in. The loads' waits are ticks like any other (section 10.2), so
-the peers stay in step through them. Rollback (predicting the other pad and re-running the ticks
-it changes) is not planned: a co-operative beat-'em-up tolerates a few ticks of delay, and
-re-running ticks would replay the sound. It is the upgrade if the delay is felt.
+**Delay-based input lockstep.** From the join, the host and its player run the same deterministic
+game; what crosses the network in play is each player's pad. Every display tick, a player's
+machine samples its pad and sends it for tick N + D, where the input delay D is chosen at the
+session's start from the measured round trip (2 to 6 ticks); tick N runs when every player's pad
+for N is in. The loads' waits are ticks like any other (section 10.2), so the machines stay in
+step through them. Rollback (predicting a pad and re-running the ticks it changes) is not planned:
+a co-operative beat-'em-up tolerates a few ticks of delay, and re-running ticks would replay the
+sound. It is the upgrade if the delay is felt.
 
+- **Observers.** The host sends an observer its game, then the pads of each tick as it runs
+  (every player's); the observer runs them as they come, behind the players, and no game waits
+  for it. When the host's game changes otherwise than by its pads (a player joins, a player
+  leaves), the host sends its game again. An observer checks its states against the host's hashes,
+  as a player does.
 - **Canonical state.** The game's state is one value, with a canonical serialisation (section 6).
-  Its hash is exchanged every 30 ticks; a mismatch pauses the game, and the peers then compare
+  Its hash is exchanged every 30 ticks; a mismatch stops the game, and the machines then compare
   their serialisations field by field to name the first differing field.
-- **Time.** Each peer runs its ticks at its own sound device's rate (section 3.4), and the two
-  devices' clocks differ slightly. The peer that gets ahead of the other stretches its sound by up
-  to 0.5 % (the synthesiser's output rate) until they are level again, so neither waits with an
-  empty sound queue. A peer whose partner's input is late holds: no tick runs, the picture stays,
-  and the sound fades rather than breaks.
-- **Game data.** A browser guest loads the game's files of the native game that serves its page
-  (section 5.3): the host's copy, or the relay's. A native guest uses its own. The handshake
-  compares the data's identity, its content tree's digest (a ROM's is the digest of the tree
-  extracted from it, so a ROM, an unedited extraction of it and a page's copy of either are the
-  same data; an edited tree, a mod, is other data), and refuses a session between different data. In a session, only the join's state and then the
-  pads cross the network.
+- **Time.** Each machine runs its ticks at its own sound device's rate (section 3.4), and the
+  devices' clocks differ slightly. A player's machine that gets ahead stretches its sound by up to
+  0.5 % (the synthesiser's output rate) until they are level again, so neither waits with an empty
+  sound queue. A machine whose partner's input is late holds: no tick runs, the picture stays, and
+  the sound fades rather than breaks.
+- **Game data.** A page loads the game's files of the native game that serves it (section 5.3):
+  the host's copy, or the server's. A native client uses its own. The handshake compares the
+  data's identity, its content tree's digest (a ROM's is the digest of the tree extracted from it,
+  so a ROM, an unedited extraction of it and a page's copy of either are the same data; an edited
+  tree, a mod, is other data), and refuses a client of different data.
+
+**Leaving.** A host that leaves ends the session: each client goes back to its own menu, told why.
+A player's connection that drops holds the game on the host and on its observers, with a count of
+five seconds (PLAYER 2 DISCONNECTED, the seconds left); a client that comes back in time resumes
+it; otherwise the host decides the tick at which its player leaves the game (its character goes
+and does not come back), and plays on. The client may join again later. A client in its menu or
+observing leaves as it pleases.
 
 The layers:
 
 - The game (game.zig) takes the merged pads of each tick from the session instead of the local
   controls, and never runs a tick ahead of them.
 - The session protocol, in shared code, encodes and decodes messages and keeps the handshake
-  (protocol and build versions, data identity, roles, input delay), the inputs by tick, pings,
-  state hashes, the hold, and reconnection. It is outside the simulation.
+  (protocol and build versions, data identity, the client's name, the input delay), the host's
+  word on its session (open, a player's place free, observers taken), the inputs by tick, pings,
+  state hashes, the hold, and reconnection. It is outside the simulation. The host keeps one
+  session of the protocol for each client.
 - The platform transport moves whole messages, reliably and in order, while a connection lives:
   `connect`, `listen`, `send` (accepted into a bounded queue) and `close`, and the events
   `connected`, `disconnected` and `received` through `pollEvents`. The transport is WebSocket
   (RFC 6455): the native build implements a server and a client on `std.Io.net`, the browser uses
-  the page's WebSocket. The agent host has an in-memory pair, so two agent instances can play a
-  session in one test.
+  the page's WebSocket. The agent host has an in-memory transport, so that agent instances can
+  play a session in one test.
 
-**Netplay** (`sorz DATA --netplay [ADDRESS:]PORT`): the native game serves the browser build's
-files, the game's files of DATA (section 5.3) and a WebSocket on one port, and is the host. A guest
-joins from a browser at that address, whose page loads the host's files and runs the game's own
-front end, or from another native game with its own data (`sorz DATA --join ws://ADDRESS:PORT`). The
+**The native host** (NETWORK PLAY, at `--netplay`'s port, 8000 without): it serves the browser
+build's files, the game's files of DATA (section 5.3) and a WebSocket on one port. A client joins
+from a browser at that address, whose page loads the host's files and runs the game's own front
+end, or from another native game with its own data (`sorz DATA --join ws://ADDRESS:PORT`). The
 native game serves the browser build from inside itself: `build.zig` embeds the page, the script
 and the module into each executable (the generated module `web_page`, with `@embedFile`), so there
 is no `web` directory to serve and no option to serve one.
@@ -496,24 +519,17 @@ is no `web` directory to serve and no option to serve one.
 --server` run no game; `sorz-server`, a program of its own that links nothing, does the same on a
 machine without the display and sound libraries that `sorz-sdl` needs to start. It serves the
 page built into it and the game's files of DATA, and relays the session's binary messages between
-two WebSockets; it never parses them. Of the pages whose players choose 2 PLAYERS, the first to
-connect is the host, and plays alone until a second page joins: one player has the browser game
-with nothing but a server. The server
-tells each page its role in a text message (`host`, `guest`), and tells the host when its guest
-arrives and leaves (`peer`, `left`). The host's page answers a `left` with its own `left`, and the
-server drops what the host sent before that answer, so that no stale message reaches the next
-guest. The host's page shows its guest to the module as a connection of its own, so the game's
-host logic needs no listening socket; its manifest says it is a relay, so the page reports the
-connection open only after its role. A host that leaves ends its guest's connection (the guest's
-page is told `left`), and the next browser to join hosts. A third browser while two play is told
-`busy` and turned away; its player plays alone, outside the session. Each connection's queue is bounded: a page
-that does not read is dropped when its queue is full, so that its partner never stalls; a page
-silent for 15 seconds is dropped. A relay guest whose connection drops starts a new session on
-reload.
-
-A session starts at the join. A dropped connection holds the host's game for a few seconds; a
-guest that comes back in time joins again, otherwise the host plays on alone and the guest's
-player leaves the game. A game that restarts starts a new session.
+the host's page and its clients' pages, never parsing them. The first page to connect is the
+host; each other page is a client, given a number that is not used again. The server tells each
+page its role in a text message (`host`, `client`), and tells the host when a client comes and
+goes (`peer N`, `left N`). A client's binary messages reach the host after the client's number
+(two bytes); the host's go to the client whose number they start with, which the server takes off.
+The host's page shows each client to the module as a connection of its own, so the game's host
+logic needs no listening socket; its manifest says it is a relay, so the page reports a
+connection open only after its role. A host that leaves ends its clients' connections (each told
+`left`): they go back to their menus, connect again, and the first to do so hosts. Each
+connection's queue is bounded: a page that does not read is dropped when its queue is full, so
+that it never holds another back; a page silent for 15 seconds is dropped.
 
 ## 10. The game
 
@@ -674,8 +690,9 @@ player leaves the game. A game that restarts starts a new session.
     settings by the settings key (F1).
   - **extended**: the default; port additions such as ADVANCED SETTINGS in OPTIONS, START opening
     the settings during the game, or the same character twice.
-  - **network**: one player a machine: each machine its own menus, the players meeting in the
-    game (section 9).
+  - **network**: one player a machine, a client of a host (section 9): each machine its own
+    menus, the players meeting in the game; the extended variant's menu offers NETWORK PLAY, its
+    host.
 
   A variant is chosen at start; in network play the host's is both games'.
 - **E3 Example: the same character twice.** The select scene asks the policy whether a choice is
