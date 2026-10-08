@@ -15,7 +15,7 @@
 //! - network, as a browser's page plays it alone (one player): 2 PLAYERS and OPTIONS; ADVANCED
 //!   SETTINGS opens one player's settings; 2 PLAYERS to the select with this machine's player
 //!   alone, then the round, where START opens the settings.
-//! - network, a guest's OPTIONS: SOUND TEST, ADVANCED SETTINGS and EXIT alone.
+//! - network, a client's OPTIONS: SOUND TEST, CONTROL, ADVANCED SETTINGS and EXIT alone.
 //!
 //! The network's sessions (the join, the two games in lockstep) are netplay-check's. Prints a JSON
 //! line per flow, and exits with 1 when a step fails.
@@ -345,7 +345,8 @@ fn page(f: *Flow, r: *Run) !void {
 
 fn guestOptions(f: *Flow, r: *Run) !void {
     try toMenu(f, r);
-    try down(r, 1);
+    try f.check(std.mem.eql(sorz.variant.MenuLine, lines(r), &.{ .name, .join, .observe, .options }), "a client's menu: NAME, JOIN, OBSERVE, OPTIONS");
+    while (r.menu().?.choice != .options) try r.press(.down);
     try r.press(.enter);
     try f.until(r, inOptions, 400, "OPTIONS");
     const o = optionsOf(r).?;
@@ -396,7 +397,15 @@ pub fn main(init: std.process.Init) !void {
             r.game.setOnePlayer();
             r.game.host_volume = true;
         }
-        r.game.guest = sg.guest;
+        // A client of network play, named, its connection the platform's to bring (none comes).
+        if (sg.guest) r.game.settings.name = "CLI".*;
+        if (sg.guest) try r.game.startNetplay(.{
+            .role = .guest,
+            .address = "",
+            .build = sorz.net.protocol.buildId(sorz.version.build),
+            .data = @splat(1),
+            .log = false,
+        });
         sg.run(&f, r) catch |e| if (e != error.StepFailed) return e;
         try f.report(r);
         all = all and f.failed == null;
