@@ -259,7 +259,9 @@ const signed_waveform: [waveform_length]u16 = blk: {
 /// envelope attenuation shifted left by 2, as `Ym2612.opComputeVolume` gives it for an operator
 /// without SSG-EG's inversion: there, an envelope above `eg_quiet` gives 0 by the lookup itself.
 inline fn waveVolume(phase: u32, eg4: u32) i32 {
-    return signed_volume[signed_waveform[phase & (waveform_length - 1)] + eg4];
+    const index: u10 = @truncate(phase);
+    // At most `2 * volume_span - 1`: no overflow.
+    return signed_volume[signed_waveform[index] +% eg4];
 }
 
 /// Per 6-bit rate, eight 4-bit envelope increments (ymfm's `attenuation_increment`).
