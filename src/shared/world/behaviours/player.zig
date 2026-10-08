@@ -1147,6 +1147,8 @@ fn fallSound(a: Actor, by: Handle) []const u8 {
 /// It loses `damage` health, down to none (the original's player keeps no less): what it lost is
 /// told.
 fn loses(a: Actor, by: ?Handle, damage: i16) void {
+    // The other player's hold, knees or throw: no harm, the rules' FRIENDLY HIT off.
+    if (by) |h| if (!h.eql(a.handle) and a.tick.world.playerOf(h) != null and !a.tick.friendlyHit()) return;
     a.takeDamage(by, @min(damage, @max(a.entity.health, 0)));
 }
 

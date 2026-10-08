@@ -243,7 +243,8 @@ fn control(t: *Tick) void {
 /// A player's blow that is not a knock-down frees the one the other holds at once, before the
 /// others' turns: the original's touch puts the blow's kind where the struck one's hold keeps its
 /// request, which its one held reads at its turn (a knock-down's kind reads as a hold from the
-/// front, until the holder feels the blow).
+/// front, until the holder feels the blow). The rules' FRIENDLY HIT off, a blow does not land on
+/// the other player (the holds, their team moves, still take).
 fn betweenPlayers(t: *Tick) void {
     if (t.world.special) return;
     const hs = [2]Handle{ t.world.players[0].entity orelse return, t.world.players[1].entity orelse return };
@@ -261,6 +262,7 @@ fn betweenPlayers(t: *Tick) void {
         const body = be.boxes.body orelse continue;
         if (!meet(ae, &t.kindOf(ae).definition.boxes[reach], be, &t.kindOf(be).definition.boxes[body])) continue;
         if (t.power(ae) != 0) {
+            if (!blowsLand(ae.team, be.team, friendlyHit(t))) continue;
             roles[a] = .striker;
             roles[b] = .struck;
         } else if (classes[0] == 1 and classes[1] == 1) {
@@ -441,11 +443,9 @@ pub fn blowsLand(attacker: entity.Team, target: entity.Team, friendly: bool) boo
     };
 }
 
-/// Whether the players' blows, and what they throw, land on each other: the rules' (the round's
-/// plan), the original's without a plan.
+/// Whether the players' blows, and what they throw, land on each other (`Tick.friendlyHit`).
 fn friendlyHit(t: *const Tick) bool {
-    const plan = t.plan orelse return true;
-    return plan.friendly_hit;
+    return t.friendlyHit();
 }
 
 /// The blows that meet `x` at its turn land: the missiles' first (the original's enemies look at

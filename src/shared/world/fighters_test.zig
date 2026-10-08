@@ -1159,6 +1159,36 @@ test "two players: knees pause the one held and cost it the knee's blow; the las
     try testing.expectEqual(@as(i16, 80 - 2 - 2 - 3), r.w.get(other).?.health);
 }
 
+test "two players, FRIENDLY HIT off: a blow lands no more, and the hold's knees do no harm" {
+    // FRIENDLY HIT on (the original's): a punch at the other hurts it.
+    for ([_]bool{ true, false }) |friendly| {
+        var r = try Round.init();
+        defer r.deinit();
+        const plan: script.Plan = .{ .round = &lives_round, .friendly_hit = friendly };
+        const other = try secondPlayer(&r, 840, .left);
+        for (0..12) |i| r.stepPlan(if (i % 4 == 0) .{ .pad1 = .{ .b = true } } else .{}, &plan);
+        const health = r.w.get(other).?.health;
+        if (friendly) try testing.expect(health < 80) else try testing.expectEqual(@as(i16, 80), health);
+    }
+    // Off: the hold still takes, its knees do no harm.
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &lives_round, .friendly_hit = false };
+    const other = try secondPlayer(&r, 830, .left);
+    var held = false;
+    for (0..20) |_| {
+        r.stepPlan(.{ .pad1 = .{ .right = true } }, &plan);
+        if (std.mem.eql(u8, r.state(), "grab")) {
+            held = true;
+            break;
+        }
+    }
+    try testing.expect(held);
+    r.stepPlan(b_pad, &plan);
+    for (0..10) |_| r.stepPlan(.{}, &plan);
+    try testing.expectEqual(@as(i16, 80), r.w.get(other).?.health);
+}
+
 test "two players: a blinking player neither strikes nor holds the other" {
     var r = try Round.init();
     defer r.deinit();

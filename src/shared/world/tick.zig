@@ -172,6 +172,13 @@ pub const Tick = struct {
         return p;
     }
 
+    /// Whether the players' blows, and what they throw, hurt each other: the rules' (the round's
+    /// plan), the original's without a plan.
+    pub fn friendlyHit(t: *const Tick) bool {
+        const plan = t.plan orelse return true;
+        return plan.friendly_hit;
+    }
+
     /// `target` takes `damage` from `attacker` (null: no entity's, the special attack's): its
     /// health falls, and the blow is noted for the traces.
     pub fn takeDamage(t: *Tick, target: Handle, attacker: ?Handle, damage: i16) void {

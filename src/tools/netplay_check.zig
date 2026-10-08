@@ -63,6 +63,8 @@
 //! - lobby_silence: the host's lobby over the game its client plays: its sound is silence.
 //! - rules: in round 1 with a client, the host's settings change FRIENDLY HIT: both games take it
 //!   at one tick, and stay the same.
+//! - friendly: in round 1 with a client, player 1's punches hurt player 2; the host's settings,
+//!   by their keys, turn FRIENDLY HIT off; the punches no longer hurt, on both machines.
 //! - left: in round 1 with a client, Escape on the host: its lobby over the game, which runs on
 //!   for the client; player 1 dies out of it at one tick on both machines (the same game); RETURN
 //!   TO GAME: player 1 drops back in on both; JOIN IN PROGRESS off: no way back; EXIT shows the
@@ -1326,6 +1328,72 @@ fn rulesChange(f: *Flow, r: *Room) !void {
     try sameFor(f, r, host, pair.guest, 120);
 }
 
+/// Player `k`'s fighter's health on machine `m`.
+fn healthOf(m: *Machine, k: u1) i32 {
+    const w = &roundOf(m).?.play.world;
+    return w.getConst(w.players[k].entity orelse return -1).?.health;
+}
+
+/// Player 2 put just in front of player 1, facing it, on both machines at one tick (the same
+/// change to both games).
+fn faceOff(r: *Room, pair: Pair) !void {
+    try level(r, pair.host, pair.guest);
+    for ([_]*Machine{ pair.host, pair.guest }) |m| {
+        const w = &m.game.state.scenes.base.round.play.world;
+        const one = w.get(w.players[0].entity.?).?;
+        const two = w.get(w.players[1].entity.?).?;
+        two.position = one.position.add(.pixels(28, 0, 0));
+        one.facing = .right;
+        two.facing = .left;
+    }
+}
+
+/// Player 1's punches at player 2 (its attack button, X), a few.
+fn punches(r: *Room, host: *Machine) !void {
+    for (0..4) |_| {
+        try r.press(host, .x);
+        try r.step(12);
+    }
+    try r.step(30);
+}
+
+/// In round 1 with a client: player 1's punches hurt player 2 (FRIENDLY HIT on); the host's
+/// settings, by their keys, turn FRIENDLY HIT off; its punches no longer do; the same game on
+/// both.
+fn friendly(f: *Flow, r: *Room) !void {
+    const pair = try inRoundTogether(f, r);
+    try f.check(pair.host.game.state.setup.rules.?.friendly_hit, "FRIENDLY HIT on");
+    try faceOff(r, pair);
+    const before = healthOf(pair.guest, 1);
+    try punches(r, pair.host);
+    try level(r, pair.host, pair.guest);
+    f.note("\"health_on\":[{d},{d}]", .{ before, healthOf(pair.guest, 1) });
+    try f.check(healthOf(pair.host, 1) < before and healthOf(pair.guest, 1) < before, "player 1's punches hurt player 2");
+    // The host's settings by their keys: START, down to FRIENDLY HIT, A, Escape (saving).
+    try r.press(pair.host, .enter);
+    try f.until(r, pair.host, settingsOpen, 80, "the host's settings open");
+    var n: usize = 0;
+    while (pair.host.game.overlays.find(.settings).?.settings.row != .friendly_hit and n < 20) : (n += 1) try r.press(pair.host, .down);
+    try f.check(pair.host.game.overlays.find(.settings).?.settings.row == .friendly_hit, "FRIENDLY HIT's line reached");
+    try r.press(pair.host, .z);
+    try r.press(pair.host, .escape);
+    try f.until(r, pair.host, settingsClosed, 120, "the host's settings close");
+    try f.until(r, pair.guest, struct {
+        fn off(m: *Machine) bool {
+            return !m.game.state.setup.rules.?.friendly_hit;
+        }
+    }.off, 300, "the client's game: FRIENDLY HIT off");
+    try f.check(!pair.host.game.state.setup.rules.?.friendly_hit, "the host's game: FRIENDLY HIT off");
+    try r.step(90);
+    try faceOff(r, pair);
+    const after = healthOf(pair.guest, 1);
+    try punches(r, pair.host);
+    try level(r, pair.host, pair.guest);
+    f.note("\"health_off\":[{d},{d}]", .{ after, healthOf(pair.guest, 1) });
+    try f.check(healthOf(pair.host, 1) == after and healthOf(pair.guest, 1) == after, "FRIENDLY HIT off: player 1's punches do not hurt player 2");
+    try same(f, r, pair.host, pair.guest, "the same game on both");
+}
+
 fn difference(f: *Flow, r: *Room) !void {
     const host = try r.add(.host);
     const guest = try r.add(.guest);
@@ -1411,6 +1479,7 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "local_two", .run = localTwo },
         .{ .name = "lobby_silence", .run = lobbySilence },
         .{ .name = "rules", .run = rulesChange },
+        .{ .name = "friendly", .run = friendly },
     }) |e| {
         if (only.items.len != 0) {
             var wanted = false;
