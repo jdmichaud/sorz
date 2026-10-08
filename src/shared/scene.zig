@@ -107,24 +107,26 @@ pub const Lag = enum { none, middle, load };
 /// This machine's part in network play as its menus see it (game.zig gives it).
 pub const Net = struct {
     role: variant.NetRole = .none,
-    /// The host: its session is open (its server started), its network options closed with START
-    /// GAME (its player goes to the select), and whether the two players may choose one character
-    /// there.
+    /// The host: its server is open, what its menu does next (network_play.zig: its lobby, or
+    /// START GAME's select), and whether the two players may choose one character.
     hosting: bool = false,
-    start_game: bool = false,
-    /// The host's player left a game with its server running: the menu opens its lobby (the
-    /// network options) at once.
-    lobby: bool = false,
+    intent: Intent = .none,
     same_character: bool = false,
     /// A client: the host takes a player now (JOIN), or an observer (OBSERVE); its player's name
     /// is given.
     can_join: bool = false,
     can_observe: bool = false,
+    /// A client's wish to watch is on its way.
+    observe_wait: bool = false,
     named: bool = true,
     name: [3]u8 = .{ ' ', ' ', ' ' },
 };
 
 pub const NetRequest = enum { network_options, observe, name };
+
+/// What the host's menu does next for network play: nothing of its own, open its lobby (as it
+/// comes back from a game with the lobby pending), or go on to the select (START GAME).
+pub const Intent = enum { none, open_lobby, start_game };
 
 pub const Turn = struct {
     /// The buttons held at this tick, and those newly held (held now, not at the last reading).

@@ -351,5 +351,5 @@ test "a game without content has no game to join: its network play waits in the 
     // Each runs its own test pattern; the guest never wanted to join: no session.
     try std.testing.expect(games[0].game.state.tick >= 119 and games[1].game.state.tick >= 119);
     try std.testing.expect(!games[0].game.netplay.?.inSession() and games[1].game.netplay.?.phase() == .idle);
-    try std.testing.expect(games[1].game.guest and !games[0].game.guest);
+    try std.testing.expect(games[1].game.isClient() and !games[0].game.isClient());
 }

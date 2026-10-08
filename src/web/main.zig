@@ -578,6 +578,8 @@ export fn gp_inspect() u32 {
         .modal = if (g.overlays.find(.net_options) != null) "net_options" else if (g.overlays.find(.name_entry) != null) "name_entry" else "",
         // Network play's message over the picture, if any.
         .message = if (g.overlays.find(.network)) |o| o.network.what.text() else "",
+        // Network play's notice over the picture, if any (it goes after a while).
+        .notice_text = if (g.overlays.find(.net_notice)) |o| o.net_notice.what.text() else "",
         .players = @tagName(g.state.setup.players),
         .frames_presented = g.frames_presented,
         .frame_hash = &frame_hash,

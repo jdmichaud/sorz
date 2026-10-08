@@ -6,7 +6,7 @@
 //!   observer. It listens once its session opens (`open`, NETWORK PLAY's START; a page behind a
 //!   relay has its connections brought by the page). The game gives the host's status
 //!   (`setStatus`: the driver adds whether the session is open, a place free, observers taken and
-//!   the same character allowed), takes a join (`joinAsked`, then `begin` or `needCharacter`) or a
+//!   the same character allowed), takes a join (`joinAsked`, then `begin` or `declineJoin`) or a
 //!   wish to watch (`observeAsked`, then `beginObserve`), gives each tick's pads to the observers
 //!   (`observed`) and its game again when it changed otherwise (`resync`), and ends the player's
 //!   session (`end`). A player whose connection comes back (its hello names the session) takes
@@ -518,6 +518,7 @@ pub const Netplay = struct {
             .diagnosed => |d| if (d) |x| log.err("first difference: {f}", .{x}) else log.err("the states could not be compared", .{}),
             .left => |r| log.info("{s} left ({s})", .{ if (self.role == .host) who else "the host", @tagName(r) }),
             .ended => |e| log.info("{s} ended ({s})", .{ if (peer == self.player or self.role == .guest) "the session" else "a client's watch", @tagName(e) }),
+            .watch_ended => log.info("the watch of the host's game ended", .{}),
             .settings => |open| if (open) {
                 log.info("the other player is on the settings screen: the game holds", .{});
             } else log.info("the other player left the settings screen", .{}),
@@ -602,17 +603,34 @@ pub const Netplay = struct {
         self.sendStatus(p);
     }
 
-    /// The host's game cannot take `peer` without a character: it chooses first.
-    pub fn needCharacter(self: *Netplay, p: *platform.Platform, peer: *Peer) void {
-        peer.session.needCharacter();
+    /// The host's game does not take `peer`'s ask now: it hears the host's status again.
+    pub fn declineJoin(self: *Netplay, p: *platform.Platform, peer: *Peer) void {
+        peer.session.declineJoin();
         self.flush(p, peer);
     }
 
-    /// The host: a client that asks to watch, when the session takes observers.
+    /// The host: a client that asks to watch (the game decides: `beginObserve`, or
+    /// `declineObserve`).
     pub fn observeAsked(self: *const Netplay) ?*Peer {
-        if (self.role != .host or !self.open or !self.observers) return null;
+        if (self.role != .host or !self.open) return null;
         for (self.peers.items) |peer| if (peer.session.phase == .lobby and peer.session.observe_asked) return peer;
         return null;
+    }
+
+    /// The host has no game for `peer` to watch now: it hears the host's status again.
+    pub fn declineObserve(self: *Netplay, p: *platform.Platform, peer: *Peer) void {
+        peer.session.declineObserve();
+        self.flush(p, peer);
+    }
+
+    /// The host's game the observers watched is over for them (its player left it, or it ended
+    /// under the host's lobby): they are told, and go back to their menus.
+    pub fn endWatches(self: *Netplay, p: *platform.Platform) void {
+        for (self.peers.items) |peer| if (peer.session.phase == .observing) {
+            peer.session.leaveGame();
+            self.flush(p, peer);
+        };
+        self.sendStatus(p);
     }
 
     /// The host sends `peer` its game, `form`: the client watches it from now on.

@@ -148,14 +148,13 @@ pub const Menu = struct {
                     if (!turn.net.named) turn.net_request = .name;
                 }
                 self.blink_left = blink_ticks;
-                // The host back from a game with its server running: its lobby at once, the menu
-                // dark under it (it fades in once the lobby closes).
-                if (turn.net.lobby or (turn.net.start_game and turn.net.hosting)) {
+                // The host back from a game, its lobby pending: the lobby at once, the menu dark
+                // under it (it fades in once the lobby closes); START GAME chosen in a lobby that
+                // was over a game: on to the select.
+                if (turn.net.intent != .none) {
                     self.choice = .network_play;
                     self.previous = .network_play;
-                    // Its START GAME chosen already (a lobby over a game that ended): on to the
-                    // select.
-                    if (turn.net.lobby) turn.net_request = .network_options;
+                    if (turn.net.intent == .open_lobby) turn.net_request = .network_options;
                     self.phase = .network;
                     return null;
                 }
@@ -198,9 +197,8 @@ pub const Menu = struct {
                 self.phase = .leaving;
             },
             // The network options closed (no tick runs while they are open): with START GAME, the
-            // session open, the host's player goes to the character select alone; else (the
-            // server started or stopped, or nothing) back to the menu.
-            .network => if (turn.net.start_game and turn.net.hosting) {
+            // host's player goes to the character select alone; with EXIT, back to the menu.
+            .network => if (turn.net.intent == .start_game) {
                 turn.setup.players = .one;
                 turn.setup.rules = if (turn.policies.settings_rules) turn.rules else null;
                 turn.setup.same_character = turn.net.same_character;
@@ -210,17 +208,19 @@ pub const Menu = struct {
                 self.phase = .fade_in;
             },
             // Waiting for the host's game, which this machine loads in the menu's place; back to
-            // choosing when the host takes no observer any more.
-            .observing => if (!turn.net.can_observe) {
+            // choosing when the wish is over (the host had no game to show, or Escape).
+            .observing => if (!turn.net.observe_wait) {
                 self.phase = .choosing;
             },
             // A game: its players, and its rules, this machine's settings' where the variant takes
             // them.
             .leaving => switch (self.choice) {
+                // With the host's server open, its network options' SAME CHARACTER: a client may
+                // join this game.
                 .one_player => {
                     turn.setup.players = .one;
                     turn.setup.rules = if (turn.policies.settings_rules) turn.rules else null;
-                    turn.setup.same_character = null;
+                    turn.setup.same_character = if (turn.net.hosting) turn.net.same_character else null;
                     return .one_player;
                 },
                 // Both players here, or this machine's alone: the other machine's joins later (a

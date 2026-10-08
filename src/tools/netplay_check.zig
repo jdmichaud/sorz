@@ -38,10 +38,33 @@
 //!   host's select; Escape: the client keeps the select; EXIT: the menu, the server running;
 //!   Escape in 1 PLAYER's game, the server running: the lobby; with it stopped, a local game:
 //!   the menu.
+//! - rejoin: the server started, the client waiting at its select; START GAME, the join; the
+//!   host back to its lobby, the client keeping its select; START GAME again: each join lands on
+//!   a select that shows (no fade on the client).
+//! - select_escape: the client waiting at its select, Escape: its menu, its ask withdrawn; the
+//!   host's next select does not take it.
+//! - observer_select: the host's Escape at the shared select: the player keeps it, the observer
+//!   goes back to its menu.
+//! - observer_lobby: the host leaves the round, the client quits: the observer back at its menu,
+//!   no difference found.
+//! - observe_start: OBSERVE chosen with START held: the watch goes on.
+//! - desync_host, desync_client: the games differ; the host's Escape: its lobby, the client its
+//!   menu; the client's Escape: its menu, the host's player 2 place free again.
+//! - select_link_down: the link down at the shared select, the host's Escape, the client back
+//!   within 5 s: welcomed to the lobby, no session resumed.
+//! - client_gives_up: the host's machine gone in a round: the client holds, then goes back to its
+//!   menu.
+//! - event_reconnect: the host's leave sent as the link breaks; back, the leave is made at its
+//!   tick on both: the same game.
+//! - stop_left: STOP SERVER with the client playing the game the host left and an observer: both
+//!   back at their menus, told; the host's lobby over its menu.
+//! - local_two: the server open, the host's 2 PLAYERS: both pads play, the client's JOIN dimmed,
+//!   OBSERVE lit.
+//! - lobby_silence: the host's lobby over the game its client plays: its sound is silence.
 //! - left: in round 1 with a client, Escape on the host: its lobby over the game, which runs on
 //!   for the client; player 1 dies out of it at one tick on both machines (the same game); RETURN
 //!   TO GAME: player 1 drops back in on both; JOIN IN PROGRESS off: no way back; EXIT shows the
-//!   game, which runs on; the client quits: the game the host left is over.
+//!   game, which runs on; the client quits: the game the host left is over, its lobby again.
 //!
 //! Prints a JSON line per flow, and exits with 1 when a step fails; with `--pictures`, two pictures
 //! that differ are written there (host.png, guest.png), and the host's at a few steps, its own
@@ -139,9 +162,16 @@ const Machine = struct {
         return n.inSession();
     }
 
+    /// Network play's wait over the picture, if any.
     fn message(m: *Machine) ?sorz.overlay.Message {
         const o = m.game.overlays.find(.network) orelse return null;
         return o.network.what;
+    }
+
+    /// Network play's notice over the picture, if any.
+    fn notice(m: *Machine) ?sorz.overlay.Message {
+        const o = m.game.overlays.find(.net_notice) orelse return null;
+        return o.net_notice.what;
     }
 
     fn seconds(m: *Machine) u8 {
@@ -519,12 +549,13 @@ fn server(f: *Flow, r: *Room) !void {
         }
     }.kept, 600, "the client keeps the select, its choice made: it waits for player 1");
     try f.check(selectOf(client).?.cursors[0].place == waited and selectOf(client).?.cursors[0].chosen and client.np().welcomed(), "its cursor and choice as they were, still connected");
+    try f.check(client.notice() == .player_1_left, "PLAYER 1 LEFT shown with the wait");
     // STOP SERVER, in the lobby: the client back at its menu, told; turned away while the server
     // is stopped; the lobby stays, empty.
     try pressOption(r, host, .server, .z);
     try f.until(r, client, struct {
         fn back(m: *Machine) bool {
-            return choosing(m) and m.message() == .host_stopped;
+            return choosing(m) and m.notice() == .host_stopped;
         }
     }.back, 600, "the client back at its menu, told the host stopped");
     try f.check(host.np().peers.items.len == 0 and !host.np().open and lobby(host) != null and !lobby(host).?.serving and lobby(host).?.client_count == 0, "the host let its client go, its screen still there");
@@ -571,6 +602,46 @@ fn server(f: *Flow, r: *Room) !void {
     try r.press(host, .escape);
     try f.until(r, host, choosing, 600, "the host back at its menu");
     try f.check(!host.game.finished and lobby(host) == null, "the menu, not the lobby: the game goes on");
+}
+
+/// The client at its own select, its choice made, waiting for the host's game.
+fn waitsAtOwnSelect(m: *Machine) bool {
+    const sel = selectOf(m) orelse return false;
+    return !m.inSession() and sel.seat == 1 and sel.cursors[0].chosen and m.message() == .waiting_for_player_1;
+}
+
+/// The user's sequence (2026-10-08): the server started, the client waiting at its select; the
+/// host's START GAME, the join at its select; the host back to its lobby; START GAME again: each
+/// join lands on a select that shows (no fade on the client).
+fn rejoin(f: *Flow, r: *Room) !void {
+    const host = try r.add(.host);
+    const client = try r.add(.guest);
+    try toMenu(f, r, host);
+    try openOptions(f, r, host);
+    try pressOption(r, host, .server, .z);
+    try toMenu(f, r, client);
+    try f.until(r, client, joinLit, 300, "the client's JOIN lit");
+    while (menuChoice(client) != .join) try r.press(client, .down);
+    try r.press(client, .z);
+    try f.until(r, client, inSelect, 600, "the client's own select");
+    try r.press(client, .z);
+    try f.until(r, client, waitsAtOwnSelect, 300, "the client waits at its select");
+    for (0..2) |round_trip| {
+        try pressOption(r, host, .game, .z);
+        try f.until(r, client, inSession, 900, "the client joins the host's select");
+        try f.check(selectOf(client).?.settled() and selectOf(host).?.settled(), if (round_trip == 0) "the first join: the select shows, no fade" else "the join again: the select shows, no fade");
+        try r.step(30);
+        try r.press(host, .escape);
+        try f.until(r, client, waitsAtOwnSelect, 600, "the client keeps its select, waiting");
+        try f.until(r, host, struct {
+            fn in(m: *Machine) bool {
+                return lobby(m) != null;
+            }
+        }.in, 300, "the host back in its lobby");
+        // No stale offer: the client hears the host has no game, and the host keeps no ask.
+        try r.step(30);
+        try f.check(client.np().hostStatus().game == .none and host.np().joinAsked() == null and client.game.net.client == .own_select, "no stale status, no ask held");
+    }
 }
 
 fn ownMenus(f: *Flow, r: *Room) !void {
@@ -750,7 +821,7 @@ fn inRound(f: *Flow, r: *Room) !void {
     r.remove(guest);
     try r.step(30);
     try f.check(!host.inSession() and roundOf(host).?.play.world.players[1].gone, "player 2 gone from the game");
-    try f.check(host.message() == .player_2_left, "the host is told");
+    try f.check(host.notice() == .player_2_left, "the host is told");
     try f.until(r, host, struct {
         fn out(m: *Machine) bool {
             const pl = &roundOf(m).?.play.world.players[1];
@@ -782,10 +853,10 @@ fn inRound(f: *Flow, r: *Room) !void {
     try host.quit();
     r.remove(host);
     try f.until(r, next, choosing, 900, "the client back at its menu");
-    try f.check(!next.inSession() and next.message() == .player_1_left, "the client is told player 1 left");
+    try f.check(!next.inSession() and next.notice() == .player_1_left, "the client is told player 1 left");
     try f.check(next.game.state.start.variant == .network and std.mem.eql(sorz.variant.MenuLine, lines(next), &.{ .name, .join, .observe, .options }), "the client's own menu again: NAME, JOIN, OBSERVE, OPTIONS");
     try r.step(@intCast(sorz.overlay.notice_ns / frame_ns + 30));
-    try f.check(next.message() == null, "the notice gone after a while");
+    try f.check(next.notice() == null, "the notice gone after a while");
 }
 
 fn away(f: *Flow, r: *Room) !void {
@@ -866,7 +937,7 @@ fn left(f: *Flow, r: *Room) !void {
     // Escape on the host: its lobby over the game, which runs on for the client; player 1 dies
     // out of it on both machines, at one tick.
     try r.press(host, .escape);
-    try f.check(lobby(host) != null and lobby(host).?.in_game and host.game.net_left, "the host's lobby over the game");
+    try f.check(lobby(host) != null and lobby(host).?.in_game and host.game.net.host == .left, "the host's lobby over the game");
     const at = guest.game.state.tick;
     try f.until(r, host, struct {
         fn out(m: *Machine) bool {
@@ -875,7 +946,7 @@ fn left(f: *Flow, r: *Room) !void {
         }
     }.out, 900, "player 1 dead, out of the game");
     try f.check(host.inSession() and guest.inSession() and guest.game.state.tick > at + 60 and fighting(guest, 1), "the client plays on");
-    try f.check(guest.message() == .player_1_left, "the client is told player 1 left");
+    try f.check(guest.notice() == .player_1_left, "the client is told player 1 left");
     try same(f, r, host, guest, "the same game without player 1");
     try shot(r, host, "left_lobby.png");
     // RETURN TO GAME: player 1 drops back in, on both.
@@ -891,7 +962,7 @@ fn left(f: *Flow, r: *Room) !void {
         }
     }.back, 300, "player 1 back in the game");
     try r.step(30);
-    try f.check(fighting(guest, 0) and !host.game.net_left, "player 1 back on the client too");
+    try f.check(fighting(guest, 0) and host.game.net.host == .game, "player 1 back on the client too");
     try same(f, r, host, guest, "the same game with player 1 back");
     // JOIN IN PROGRESS off: no way back, nor in for another client; EXIT shows the game.
     try r.press(host, .escape);
@@ -904,20 +975,332 @@ fn left(f: *Flow, r: *Room) !void {
     try r.step(30);
     try f.check(!lobby(host).?.join_in_progress and !lobby(host).?.can_return and !host.np().join_in_progress, "JOIN IN PROGRESS off: no RETURN TO GAME, the session takes no join");
     try pressOption(r, host, .exit, .z);
-    try f.check(lobby(host) == null and host.game.net_left, "EXIT: the game shown, player 1 still out");
+    try f.check(lobby(host) == null and host.game.net.host == .watching, "EXIT: the game shown, player 1 still out");
     const shown = host.game.state.tick;
     try r.step(60);
     try f.check(host.game.state.tick > shown + 30, "the game runs on, shown");
     try same(f, r, host, guest, "the same game, watched");
-    // The client quits: no player left in the game; the host's player watched it, and goes on
-    // to its own front end.
+    // The client quits: no player left in the game the host's player watched: its lobby again,
+    // its menu under it.
     try guest.quit();
     r.remove(guest);
     try f.until(r, host, struct {
         fn over(m: *Machine) bool {
-            return !m.game.net_left and !m.inSession();
+            return m.game.net.host == .lobby and lobby(m) != null and !m.inSession();
         }
-    }.over, 900, "the game the host left over");
+    }.over, 900, "the game the host left over: its lobby");
+}
+
+// --- the review's scenarios (2026-10-08): each state's ways out, on both machines -------------
+
+const Pair = struct { host: *Machine, guest: *Machine };
+
+/// A host and a client in round 1 together: the host's NETWORK PLAY and START, the client's
+/// JOIN at its select, player 1 Axel, player 2 where its cursor starts.
+fn inRoundTogether(f: *Flow, r: *Room) !Pair {
+    const host = try r.add(.host);
+    const guest = try r.add(.guest);
+    try hostNetworkPlay(f, r, host);
+    try clientJoins(f, r, guest);
+    try f.until(r, guest, inSession, 900, "the client joins");
+    try f.until(r, guest, inSelect, 200, "the select on the client");
+    try r.press(host, .right);
+    try r.step(6);
+    try r.press(host, .z);
+    try r.press(guest, .z);
+    try f.until(r, host, playing, 2400, "round 1");
+    try r.step(60);
+    return .{ .host = host, .guest = guest };
+}
+
+/// A client named OBS that chooses OBSERVE, and watches the host's game.
+fn observerWatches(f: *Flow, r: *Room) !*Machine {
+    const watcher = try r.addNamed(.guest, "OBS".*);
+    try toMenu(f, r, watcher);
+    try f.until(r, watcher, struct {
+        fn lit(m: *Machine) bool {
+            const menu = switch (m.game.state.scenes.base) {
+                .menu => |*x| x,
+                else => return false,
+            };
+            return menu.dimmed & 0b0100 == 0;
+        }
+    }.lit, 300, "OBSERVE lit");
+    while (menuChoice(watcher) != .observe) try r.press(watcher, .down);
+    try r.press(watcher, .z);
+    try f.until(r, watcher, struct {
+        fn in(m: *Machine) bool {
+            return m.game.net.client == .observing;
+        }
+    }.in, 600, "the observer watches");
+    return watcher;
+}
+
+fn atClientMenu(m: *Machine) bool {
+    return choosing(m) and m.game.net.client == .menu;
+}
+
+fn inLobby(m: *Machine) bool {
+    return lobby(m) != null and m.game.net.host == .lobby;
+}
+
+/// The client waits at its own select, Escape: its menu, its ask withdrawn; the host's next
+/// game does not take it.
+fn selectEscape(f: *Flow, r: *Room) !void {
+    const host = try r.add(.host);
+    const client = try r.add(.guest);
+    try toMenu(f, r, host);
+    try openOptions(f, r, host);
+    try pressOption(r, host, .server, .z);
+    try toMenu(f, r, client);
+    try f.until(r, client, joinLit, 300, "the client's JOIN lit");
+    while (menuChoice(client) != .join) try r.press(client, .down);
+    try r.press(client, .z);
+    try f.until(r, client, inSelect, 600, "the client's own select");
+    try r.press(client, .z);
+    try f.until(r, client, waitsAtOwnSelect, 300, "the client waits at its select");
+    try r.press(client, .escape);
+    try f.until(r, client, atClientMenu, 600, "Escape: the client's menu, no wait over it");
+    try f.check(client.message() == null and host.np().joinAsked() == null, "no wait, no ask left with the host");
+    try f.until(r, host, struct {
+        fn listed(m: *Machine) bool {
+            const l = lobby(m) orelse return false;
+            return l.client_count == 1 and l.clients[0].doing == .menu;
+        }
+    }.listed, 120, "the host lists the client at its menu");
+    try pressOption(r, host, .game, .z);
+    try f.until(r, host, inSelect, 600, "the host's select");
+    try r.step(300);
+    try f.check(!client.inSession() and atClientMenu(client), "the host's game does not take the client");
+}
+
+/// Host, client and an observer at the shared select; the host's Escape: the player keeps its
+/// select, the observer goes back to its menu.
+fn observerSelect(f: *Flow, r: *Room) !void {
+    const host = try r.add(.host);
+    const guest = try r.add(.guest);
+    try hostNetworkPlay(f, r, host);
+    try clientJoins(f, r, guest);
+    try f.until(r, guest, inSession, 900, "the client joins at the select");
+    const watcher = try r.addNamed(.guest, "OBS".*);
+    try toMenu(f, r, watcher);
+    try r.step(10);
+    while (menuChoice(watcher) != .observe) try r.press(watcher, .down);
+    try r.press(watcher, .z);
+    try f.until(r, watcher, struct {
+        fn in(m: *Machine) bool {
+            return m.game.net.client == .observing;
+        }
+    }.in, 600, "the observer watches the select");
+    try r.press(host, .escape);
+    try f.until(r, watcher, atClientMenu, 600, "the observer back at its menu");
+    try f.until(r, guest, struct {
+        fn kept(m: *Machine) bool {
+            const sel = selectOf(m) orelse return false;
+            return !m.inSession() and sel.seat == 1 and m.game.net.client == .own_select;
+        }
+    }.kept, 600, "the player keeps its select");
+    try f.check(selectOf(watcher) == null, "the observer at no select of its own");
+}
+
+/// In round 1, an observer; the host leaves the round (its lobby over the game); the client
+/// quits: the game is over, the observer back at its menu, with no difference found.
+fn observerLobby(f: *Flow, r: *Room) !void {
+    const pair = try inRoundTogether(f, r);
+    const host = pair.host;
+    const watcher = try observerWatches(f, r);
+    try r.press(host, .escape);
+    try f.check(host.game.net.host == .left, "the host's lobby over the game");
+    try r.step(120);
+    try f.check(watcher.game.net.client == .observing, "the observer watches on");
+    try pair.guest.quit();
+    r.remove(pair.guest);
+    try f.until(r, host, inLobby, 900, "the host's lobby, its menu under it");
+    try f.until(r, watcher, atClientMenu, 900, "the observer back at its menu");
+    try f.check(watcher.np().phase() != .desynced and watcher.message() != .desynced, "no difference found");
+}
+
+/// OBSERVE chosen with START held: the watch goes on.
+fn observeStart(f: *Flow, r: *Room) !void {
+    const host = try r.add(.host);
+    try hostNetworkPlay(f, r, host);
+    const watcher = try r.addNamed(.guest, "OBS".*);
+    try toMenu(f, r, watcher);
+    try r.step(10);
+    while (menuChoice(watcher) != .observe) try r.press(watcher, .down);
+    try watcher.key(.enter, true);
+    try f.until(r, watcher, struct {
+        fn in(m: *Machine) bool {
+            return m.game.net.client == .observing;
+        }
+    }.in, 600, "the observer watches");
+    try r.step(60);
+    try watcher.key(.enter, false);
+    try r.step(30);
+    try f.check(watcher.game.net.client == .observing, "START held as OBSERVE was chosen does not end the watch");
+}
+
+/// The games differ: the host's Escape takes it to its lobby, the client to its menu.
+fn desyncHost(f: *Flow, r: *Room) !void {
+    const pair = try inRoundTogether(f, r);
+    pair.guest.game.state.random.state ^= 1;
+    try f.until(r, pair.host, struct {
+        fn stopped(m: *Machine) bool {
+            return m.np().phase() == .desynced;
+        }
+    }.stopped, 300, "the games differ: stopped");
+    try r.press(pair.host, .escape);
+    try f.until(r, pair.host, inLobby, 600, "the host's Escape: its lobby");
+    try f.until(r, pair.guest, atClientMenu, 900, "the client back at its menu");
+}
+
+/// The games differ: the client's Escape takes it to its menu; the host plays on, player 2's
+/// place free.
+fn desyncClient(f: *Flow, r: *Room) !void {
+    const pair = try inRoundTogether(f, r);
+    pair.guest.game.state.random.state ^= 1;
+    try f.until(r, pair.guest, struct {
+        fn stopped(m: *Machine) bool {
+            return m.np().phase() == .desynced;
+        }
+    }.stopped, 300, "the games differ: stopped");
+    try r.press(pair.guest, .escape);
+    try f.until(r, pair.guest, atClientMenu, 900, "the client's Escape: its menu");
+    try f.until(r, pair.host, struct {
+        fn free(m: *Machine) bool {
+            return m.np().player == null and m.np().phase() != .desynced and m.message() == null;
+        }
+    }.free, 600, "the host plays on, player 2's place free");
+    try f.until(r, pair.host, struct {
+        fn room(m: *Machine) bool {
+            return statusOfHost(m).place;
+        }
+    }.room, 900, "a client may join again");
+}
+
+fn statusOfHost(m: *Machine) net.protocol.Status {
+    return sorz.network_play.statusOf(&m.game.state, m.game.net.local_two);
+}
+
+/// At the shared select, the link breaks; the host's Escape; the client back within 5 s: the
+/// host's lobby welcomes it, no session resumed, no difference.
+fn selectLinkDown(f: *Flow, r: *Room) !void {
+    const host = try r.add(.host);
+    const guest = try r.add(.guest);
+    try hostNetworkPlay(f, r, host);
+    try clientJoins(f, r, guest);
+    try f.until(r, guest, inSession, 900, "the client joins at the select");
+    try r.step(30);
+    const endpoint: *net.memory.Endpoint = @ptrCast(@alignCast(host.backend.transport.?.context));
+    r.network.breakLink(endpoint, host.np().player.?.connection.?);
+    try r.step(5);
+    try r.press(host, .escape);
+    try f.until(r, host, inLobby, 600, "the host's lobby");
+    try f.check(!host.inSession() and host.np().player == null, "the session ended, the link down");
+    try f.until(r, guest, struct {
+        fn back(m: *Machine) bool {
+            return m.np().welcomed() and !m.inSession();
+        }
+    }.back, 600, "the client back, in the host's lobby, no session");
+    try r.step(60);
+    try f.check(guest.np().phase() != .desynced and host.np().phase() != .desynced, "no difference");
+}
+
+/// The host's machine gone in round 1: the client holds, then gives up, back at its menu.
+fn clientGivesUp(f: *Flow, r: *Room) !void {
+    const pair = try inRoundTogether(f, r);
+    const endpoint: *net.memory.Endpoint = @ptrCast(@alignCast(pair.host.backend.transport.?.context));
+    r.network.breakLink(endpoint, pair.host.np().player.?.connection.?);
+    pair.host.frozen = true;
+    try r.step(60);
+    try f.check(pair.guest.message() == .player_1_away, "the client holds and waits");
+    const wait: u32 = @intCast((net.session.rejoin_ns + 2 * std.time.ns_per_s) / frame_ns + 600);
+    try f.until(r, pair.guest, atClientMenu, wait, "the client gives up: its menu");
+    try f.check(!pair.guest.inSession(), "no session");
+}
+
+/// The host's leave sent, the link breaks before the client has it, and comes back: the leave
+/// crosses again, made at its tick on both.
+fn eventReconnect(f: *Flow, r: *Room) !void {
+    const pair = try inRoundTogether(f, r);
+    try pair.host.key(.escape, true);
+    try pair.host.update();
+    try pair.host.key(.escape, false);
+    try f.check(pair.host.game.net.host == .left and pair.host.np().eventDue(), "the leave scheduled");
+    const endpoint: *net.memory.Endpoint = @ptrCast(@alignCast(pair.host.backend.transport.?.context));
+    r.network.breakLink(endpoint, pair.host.np().player.?.connection.?);
+    try f.until(r, pair.guest, struct {
+        fn back(m: *Machine) bool {
+            return m.np().connected() and m.inSession() and m.message() == null;
+        }
+    }.back, 600, "the client back in its session");
+    try f.until(r, pair.host, struct {
+        fn out(m: *Machine) bool {
+            const x = roundOf(m) orelse return false;
+            return x.play.world.players[0].out;
+        }
+    }.out, 900, "player 1 out");
+    try r.step(30);
+    try same(f, r, pair.host, pair.guest, "the same game on both");
+}
+
+/// STOP SERVER with the client playing the game the host left and an observer: both back at
+/// their menus, told; the host's lobby over its menu.
+fn stopLeft(f: *Flow, r: *Room) !void {
+    const pair = try inRoundTogether(f, r);
+    const watcher = try observerWatches(f, r);
+    try r.press(pair.host, .escape);
+    try f.until(r, pair.host, struct {
+        fn out(m: *Machine) bool {
+            const l = lobby(m) orelse return false;
+            return l.in_game and !fighting(m, 0);
+        }
+    }.out, 900, "the host's lobby over the game, player 1 out");
+    try pressOption(r, pair.host, .server, .z);
+    for ([_]*Machine{ pair.guest, watcher }) |m| try f.until(r, m, struct {
+        fn told(x: *Machine) bool {
+            return atClientMenu(x) and x.notice() == .host_stopped;
+        }
+    }.told, 900, "a client back at its menu, told the host stopped");
+    try f.check(pair.host.game.net.host == .lobby and lobby(pair.host) != null and !lobby(pair.host).?.in_game and !pair.host.game.state.inGame(), "the host's lobby over its menu");
+}
+
+/// The host's server open, its local 2 PLAYERS: both pads play, the client's JOIN dimmed, its
+/// OBSERVE lit.
+fn localTwo(f: *Flow, r: *Room) !void {
+    const host = try r.add(.host);
+    const client = try r.add(.guest);
+    try toMenu(f, r, host);
+    try openOptions(f, r, host);
+    try pressOption(r, host, .server, .z);
+    try pressOption(r, host, .exit, .z);
+    try f.until(r, host, choosing, 600, "the host's menu");
+    while (menuChoice(host) != .two_players) try r.press(host, .down);
+    try r.press(host, .z);
+    try f.until(r, host, inSelect, 600, "the host's local select");
+    try f.check(selectOf(host).?.players == .two and host.game.net.local_two, "a local game of two");
+    try toMenu(f, r, client);
+    try r.step(30);
+    try f.check(client.game.state.scenes.base.menu.dimmed & 0b0110 == 0b0010, "the client's JOIN dimmed, OBSERVE lit");
+    // Player 2's pad moves its cursor (its right: D, the second player's key).
+    const before = selectOf(host).?.cursors[1].place;
+    for (0..4) |_| {
+        try r.press(host, .d);
+        try r.step(4);
+    }
+    try f.check(selectOf(host).?.cursors[1].place != before, "player 2's local pad plays");
+}
+
+/// The host's lobby over the game its client plays: the host's sound is silence.
+fn lobbySilence(f: *Flow, r: *Room) !void {
+    const pair = try inRoundTogether(f, r);
+    try r.press(pair.host, .escape);
+    try r.step(30);
+    pair.host.backend.audio.pcm.clearRetainingCapacity();
+    try r.step(120);
+    var loud: usize = 0;
+    for (pair.host.backend.audio.pcm.items) |x| loud += @intFromBool(x != 0);
+    try f.check(pair.host.game.net.host == .left and pair.host.backend.audio.pcm.items.len != 0 and loud == 0, "the host's lobby over the game: silence");
 }
 
 fn difference(f: *Flow, r: *Room) !void {
@@ -991,6 +1374,19 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "difference", .run = difference },
         .{ .name = "server", .run = server },
         .{ .name = "left", .run = left },
+        .{ .name = "rejoin", .run = rejoin },
+        .{ .name = "select_escape", .run = selectEscape },
+        .{ .name = "observer_select", .run = observerSelect },
+        .{ .name = "observer_lobby", .run = observerLobby },
+        .{ .name = "observe_start", .run = observeStart },
+        .{ .name = "desync_host", .run = desyncHost },
+        .{ .name = "desync_client", .run = desyncClient },
+        .{ .name = "select_link_down", .run = selectLinkDown },
+        .{ .name = "client_gives_up", .run = clientGivesUp },
+        .{ .name = "event_reconnect", .run = eventReconnect },
+        .{ .name = "stop_left", .run = stopLeft },
+        .{ .name = "local_two", .run = localTwo },
+        .{ .name = "lobby_silence", .run = lobbySilence },
     }) |e| {
         if (only.items.len != 0) {
             var wanted = false;

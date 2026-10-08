@@ -521,7 +521,7 @@ async function relayCheck(browser, chromium, profile) {
     await guest.close();
     pages.splice(pages.indexOf(guest), 1);
     await host.waitFor(`sorz.inspect().message.startsWith('PLAYER 2 DISCONNECTED')`, 10000, 'the host to wait for its guest');
-    await host.waitFor(`sorz.inspect().message === 'PLAYER 2 LEFT'`, 15000, 'the host to give its guest up');
+    await host.waitFor(`sorz.inspect().notice_text === 'PLAYER 2 LEFT'`, 15000, 'the host to give its guest up');
     const hostAlone = await host.evaluate('sorz.inspect()');
     if (options.keep) await host.screenshot(path.join(options.keep, 'page-guest-left.png'));
     const hostPlays = (await advancing([host]))[0];
@@ -533,7 +533,7 @@ async function relayCheck(browser, chromium, profile) {
     reports.push(['relay_rules', thirdRole === 'client' && playingOn.every((n) => n > 30) &&
       hostAlone.scene === 'round' && hostAlone.net.phase !== 'playing' && hostPlays > 30 && thirdHosts, {
       third: { relay: thirdRole, the_three_play_on: playingOn, hosts_once_the_host_left: thirdHosts },
-      guest_left: { message: hostAlone.message, scene: hostAlone.scene, net: hostAlone.net, ticks_in_1_s: hostPlays },
+      guest_left: { notice: hostAlone.notice_text, scene: hostAlone.scene, net: hostAlone.net, ticks_in_1_s: hostPlays },
       relay_log: relay.log.trim().split('\n').slice(-12),
     }]);
     errors.push(...pages.flatMap((p) => p.console.filter((m) => m.type === 'error' || m.type === 'exception')));

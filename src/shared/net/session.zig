@@ -11,7 +11,7 @@
 //!   the pads the other lacks. Different versions or data: `reject`.
 //! - **The lobby.** Welcomed, each machine plays its own game. The host says what its game is
 //!   (`status`, `setStatus`); the guest asks to join (`askJoin`, with its player's character or
-//!   none), and the host's game decides when (a note `join_asked`, then `begin` or `needCharacter`).
+//!   none), and the host's game decides when (a note `join_asked`, then `begin` or `declineJoin`).
 //! - **The join.** `begin` starts a session with the host's game's canonical form: a new id, its
 //!   form in `game` chunks, then the session's pads; the guest gathers the chunks (a note `joined`:
 //!   its game loads `gameForm`). From that tick, both run the same game.
@@ -155,6 +155,9 @@ pub const Note = union(enum) {
     left: protocol.ByeReason,
     /// The session ended.
     ended: End,
+    /// The client's watch of the host's game ended from the host's side (the host left the game,
+    /// or its connection went).
+    watch_ended,
     /// The peer's player opened the settings screen (true) or closed it.
     settings: bool,
 };
@@ -196,8 +199,10 @@ pub const Session = struct {
     peer_where: protocol.Where = .{},
     where_said: ?protocol.Where = null,
     /// A change of the game at a tick to come (the host's player leaving or coming back): the
-    /// host's, as it scheduled it; the client's, as it heard it.
+    /// host's, as it scheduled it, kept until the client has the pads past its tick (a resumed
+    /// connection gets it again); the client's, as it heard it, and the tick of the last it made.
     event: ?protocol.Event = null,
+    event_made: ?u32 = null,
     /// The client asked to watch (on both sides, until the host's game comes or it stops).
     observe_asked: bool = false,
     /// The host: the ticks of an observer's game sent so far, and the pads still to send (a pair
@@ -362,7 +367,7 @@ pub const Session = struct {
             .handshake, .lobby, .joining => self.phase = .idle,
             .observing => {
                 self.phase = .idle;
-                self.note(.{ .ended = .lost });
+                self.note(.watch_ended);
             },
             // A peer that said goodbye: its last pads run, then the session ends (`pads`).
             .playing => if (!self.peer_left) {
@@ -441,9 +446,11 @@ pub const Session = struct {
                 self.peer_name = n;
                 break :blk .accepted;
             },
+            // Back at its menu, the client's ask to join is over.
             .where => |x| blk: {
                 if (self.config.role != .host) break :blk .unexpected;
                 self.peer_where = x;
+                if (x.at == .menu) self.join_asked = null;
                 break :blk .accepted;
             },
             .bye => |r| blk: {
@@ -452,15 +459,18 @@ pub const Session = struct {
                 // the host's lobby.
                 const stays = r == .ended;
                 if (!stays) self.close_requested = true;
-                // The ticks whose pads are in still run; then the session is over.
-                if (self.phase == .playing) {
-                    self.peer_left = true;
-                } else {
-                    if (self.phase == .observing) {
-                        self.observe_asked = false;
-                        self.note(.{ .ended = .left });
-                    }
-                    self.phase = if (self.phase == .ended) .ended else if (stays and self.welcomed) .lobby else .idle;
+                // The ticks whose pads are in still run; then the session is over. Stopped at a
+                // mismatch, it is over at once.
+                switch (self.phase) {
+                    .playing => self.peer_left = true,
+                    .desynced => self.over(.left),
+                    else => {
+                        if (self.phase == .observing) {
+                            self.observe_asked = false;
+                            self.note(.watch_ended);
+                        }
+                        self.phase = if (self.phase == .ended) .ended else if (stays and self.welcomed) .lobby else .idle;
+                    },
                 }
                 break :blk .accepted;
             },
@@ -472,6 +482,7 @@ pub const Session = struct {
     fn over(self: *Session, why: End) void {
         self.peer_left = false;
         self.event = null;
+        self.event_made = null;
         self.lost_at = null;
         self.id = 0;
         self.next = 0;
@@ -578,12 +589,15 @@ pub const Session = struct {
         self.send(.{ .status = s });
     }
 
+    /// The host's status, kept whenever it comes (a session's last ticks running out too: the
+    /// host sends it as the session ends). While the client asks to join, it is the host's answer
+    /// that its game does not take it now: the client is in the lobby again, and asks again as
+    /// the status lets it; a wish to watch that the status no longer lets is over.
     fn onStatus(self: *Session, s: protocol.Status) Verdict {
         if (self.config.role != .guest or !self.welcomed) return .unexpected;
-        if (self.inSession()) return .stale;
         self.peer_status = s;
-        // A join at the select that came too late: the guest's player chooses a character first.
-        if (self.phase == .joining and s.game == .play) self.phase = .lobby;
+        if (self.phase == .joining) self.phase = .lobby;
+        if (self.observe_asked and self.phase == .lobby and !(s.open and s.observers and s.game != .none)) self.observe_asked = false;
         self.note(.{ .status = s });
         return .accepted;
     }
@@ -605,10 +619,17 @@ pub const Session = struct {
         return .accepted;
     }
 
-    /// The host's game cannot take the guest without a character (it plays): the guest is told
-    /// what it plays again, and chooses.
-    pub fn needCharacter(self: *Session) void {
+    /// The host's game does not take the guest's ask now (its offer changed, or wants a character
+    /// first): the ask is dropped, and the guest hears the host's status again, its answer.
+    pub fn declineJoin(self: *Session) void {
         self.join_asked = null;
+        if (self.status_sent) |s| self.send(.{ .status = s });
+    }
+
+    /// The host has no game for the client to watch now: its wish is dropped, and it hears the
+    /// host's status again.
+    pub fn declineObserve(self: *Session) void {
+        self.observe_asked = false;
         if (self.status_sent) |s| self.send(.{ .status = s });
     }
 
@@ -674,18 +695,21 @@ pub const Session = struct {
     /// This machine's player leaves the game alone (Escape), not the program: a session or a
     /// watch ends here, the peer told (`bye`, `ended`; a client's watch, `observe`), and the
     /// connection stays.
+    /// With the connection down, the session ends here all the same (a peer back later is
+    /// welcomed to the lobby). A client's ask to join or to watch is withdrawn.
     pub fn leaveGame(self: *Session) void {
-        if (!self.welcomed) return;
         switch (self.phase) {
             .playing, .desynced => {
-                self.send(.{ .bye = .ended });
+                if (self.welcomed) self.send(.{ .bye = .ended });
                 self.over(.left);
             },
             .observing => if (self.config.role == .host) {
-                self.send(.{ .bye = .ended });
-                self.phase = .lobby;
+                if (self.welcomed) self.send(.{ .bye = .ended });
+                self.phase = if (self.connected) .lobby else .idle;
                 self.status_sent = null;
             } else self.stopObserve(),
+            .joining => self.phase = .lobby,
+            .lobby => if (self.observe_asked) self.stopObserve(),
             else => {},
         }
     }
@@ -828,6 +852,7 @@ pub const Session = struct {
         self.id = id;
         self.phase = .playing;
         self.event = null;
+        self.event_made = null;
         self.peer_left = false;
         self.lost_at = null;
         self.next = 0;
@@ -1002,7 +1027,9 @@ pub const Session = struct {
 
     fn onEvent(self: *Session, e: protocol.Event) Verdict {
         if (self.config.role != .guest or self.phase != .playing) return .unexpected;
-        if (self.event) |was| if (std.meta.eql(was, e)) return .accepted;
+        if (self.event) |was| if (std.meta.eql(was, e)) return .duplicate;
+        // Sent again on a resumed connection, after its tick ran here.
+        if (self.event_made == e.tick) return .duplicate;
         // Its tick ran already: the games would differ.
         if (e.tick < self.next or self.event != null) return .malformed;
         self.event = e;
@@ -1022,8 +1049,15 @@ pub const Session = struct {
             self.next += 1;
             return;
         }
-        if (self.event) |e| if (e.tick <= self.next) {
-            self.event = null;
+        if (self.event) |e| if (e.tick <= self.next) switch (self.config.role) {
+            // The host keeps it until the client has its pads past its tick.
+            .host => if (self.peer_ack > e.tick) {
+                self.event = null;
+            },
+            .guest => {
+                self.event = null;
+                self.event_made = e.tick;
+            },
         };
         // The slack: the peer's pads in hand beyond this tick, averaged over about 16.
         const sample: i32 = @as(i32, @intCast(self.remote_count - self.next - 1)) * 256;
@@ -1409,7 +1443,7 @@ test "a join at the select that came too late: the guest chooses, then joins the
     _ = pump(&guest, &host, 0);
     // The host's select ended meanwhile: its game plays, and it needs the guest's character.
     host.setStatus(.{ .game = .play, .character = 1 });
-    host.needCharacter();
+    host.declineJoin();
     _ = pump(&host, &guest, 0);
     try testing.expectEqual(Phase.lobby, guest.phase);
     try testing.expectEqual(@as(u8, 1), guest.peer_status.character);
@@ -1472,8 +1506,9 @@ test "pads messages: duplicate, stale, out of order, ahead, conflicting, malform
     try testing.expectEqual(Verdict.unexpected, host.receive(encodeMsg(.{ .welcome = .{ .session = 1, .delay = 2, .resume_from = 0 } }, &buf), 0));
     try testing.expectEqual(Verdict.unexpected, guest.receive(encodeMsg(.{ .join = 1 }, &buf), 0));
     try testing.expectEqual(Verdict.unexpected, host.receive(encodeMsg(.{ .status = .{} }, &buf), 0));
-    // A status or a game during the session: stale.
-    try testing.expectEqual(Verdict.stale, guest.receive(encodeMsg(.{ .status = .{} }, &buf), 0));
+    // A status during the session is kept (the host sends one as the session ends); a game is
+    // stale.
+    try testing.expectEqual(Verdict.accepted, guest.receive(encodeMsg(.{ .status = .{} }, &buf), 0));
     // The session goes on after all of them.
     try testing.expectEqual(Phase.playing, host.phase);
 }

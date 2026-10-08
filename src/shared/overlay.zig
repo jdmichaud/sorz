@@ -103,7 +103,7 @@ pub const Message = enum {
     }
 };
 
-pub const Kind = enum { settings, net_options, name_entry, peer_settings, network, notice, gamepad, roster };
+pub const Kind = enum { settings, net_options, name_entry, peer_settings, network, net_notice, notice, gamepad, roster };
 
 /// The host's list of who is connected: its own player, then its clients.
 pub const Roster = struct {
@@ -123,9 +123,11 @@ pub const Overlay = union(Kind) {
     name_entry: net_screens.NameEntry,
     /// The other player (of network play) is in their settings: this player, `player` (0 or 1).
     peer_settings: u1,
-    /// Network play's message, its count where it has one, and for a notice the time it goes
-    /// (set when first shown).
-    network: struct { what: Message, until_ns: ?u64 = null, seconds: u8 = 0 },
+    /// Network play's wait (it holds the game while it lasts), its count where it has one.
+    network: struct { what: Message, seconds: u8 = 0 },
+    /// Network play's notice, until the time it goes (set when first shown): over a wait, it
+    /// stays in its own place.
+    net_notice: struct { what: Message, until_ns: ?u64 = null },
     /// A notice, until the time it goes (set when first shown).
     notice: struct { what: Notice, until_ns: ?u64 = null },
     /// A gamepad came, or went: its label (input.zig), until the time the message goes (set
@@ -137,7 +139,7 @@ pub const Overlay = union(Kind) {
     /// Whether it holds the game under it: no tick runs, the picture stays, the sound fades out.
     pub fn holds(o: *const Overlay) bool {
         return switch (o.*) {
-            .notice, .gamepad, .roster => false,
+            .notice, .gamepad, .roster, .net_notice => false,
             .network => |n| n.what.holds(),
             else => true,
         };
@@ -159,6 +161,7 @@ pub const Overlay = union(Kind) {
                 var buf: [64]u8 = undefined;
                 _ = try p.message(n.what.textWith(n.seconds, &buf), 11, true);
             },
+            .net_notice => |n| _ = try p.message(n.what.text(), 5, true),
             .roster => |r| try drawRoster(&r, p),
             .notice => |n| {
                 try p.box(1, panel_mod.rows - 5, panel_mod.columns - 2, 3);
