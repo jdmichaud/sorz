@@ -436,14 +436,15 @@ are its own, driven by its player alone. The host and its clients:
   today), PORT (the native host's), OBSERVERS (yes or no), SAME CHARACTER (whether two players may
   choose one character), then START SERVER, START GAME and EXIT. START SERVER opens the session:
   the native host listens on every interface (0.0.0.0) at its port, and serves there the page and
-  the game's files (section 5.3); the host's player stays at its menu while clients connect. START
-  GAME opens the session if it is not open, and the host's player goes to the character select as
-  player 1, and plays alone until a player joins. The session stays open from game to game; while
-  it is, the network options' STOP SERVER closes it: its clients go back to their menus, told
-  THE HOST STOPPED, and the clients that come are turned away (they try again every second) until
-  the session opens again. The host's front end screens list who is connected at the bottom left,
-  in white over the picture: LOCAL - PLAYER 1, and each client by its name and what it does (MENU,
-  PLAYER 2, OBSERVING).
+  the game's files (section 5.3); the network options stay, the host's lobby: they list who is
+  connected while clients come. START GAME opens the session if it is not open, and the host's
+  player goes to the character select as player 1, and plays alone until a player joins. The
+  session stays open from game to game; while it is, STOP SERVER (in the lobby) closes it: its
+  clients go back to their menus, told THE HOST STOPPED, and the clients that come are turned away
+  (they try again every second) until the session opens again. The lobby, and the host's front
+  end screens at the bottom left in white over the picture, list who is connected: LOCAL - PLAYER
+  1, and each client by its name and what it does (MENU, SELECT: at its own character select to
+  join, PLAYER 2, OBSERVING).
 - **A client** is a page of that host or server (not the first), or `--join`: it connects as it
   starts, and its player gives a name of three letters, kept in the settings. Its menu: JOIN, when
   the host's session is open and a player's place is free; OBSERVE, when it is open, the host
@@ -461,6 +462,9 @@ are its own, driven by its player alone. The host and its clients:
 - When the game ends, each machine plays on to its own front end (a client in its own variant
   again), and the session stays open for the next game. A player who leaves, or does not come back
   in time, dies in the game as at the time over, and is out of it.
+- Escape in a game leaves it, not the program: the host's player goes back to its menu, or to its
+  lobby while its server runs; a client's player to its menu. The other machines are told (the
+  session ends, the connections stay). At the front end, Escape quits.
 
 **The join.** The host's game holds for a moment while its state crosses (its canonical form,
 section 6); the client loads it, and from that tick on both run the same game in lockstep.
