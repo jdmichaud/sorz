@@ -19,18 +19,20 @@
 //! - round: the host plays round 1 alone a while; the client's player chooses a character on its
 //!   own select (the host's taken), joins mid-round as it, and drops in; the same state, picture
 //!   and sound after the join and on; a second client watches (OBSERVE): the same game, behind;
-//!   the player quits: the host plays on, player 2 out of the game, its observer with it; the
-//!   observer leaves with START, back to its menu; a new client joins; the host quits: its client
-//!   goes back to its own menu, told why.
+//!   the player quits: the host plays on, player 2's fighter dies and it is out of the game, its
+//!   observer with it; the observer leaves with START, back to its menu; a new client joins; the
+//!   host quits: its client goes back to its own menu (its own variant's lines), told why for a
+//!   while.
 //! - away: the connection drops in the round: both hold, the host counting the seconds down; the
 //!   client back in time, the same session goes on; the connection drops again and the client is
-//!   not back in time: the host plays on without player 2, and the client, back, goes to its own
-//!   menu.
+//!   not back in time: the host plays on, player 2's fighter dies and it is out of the game (no
+//!   invitation over its part), and the client, back, goes to its own menu.
 //! - difference: a bit of the client's state flipped in a session: both games stop at the next
 //!   check and name the first field that differs.
 //!
 //! Prints a JSON line per flow, and exits with 1 when a step fails; with `--pictures`, two pictures
-//! that differ are written there (host.png, guest.png).
+//! that differ are written there (host.png, guest.png), and the host's at a few steps, its own
+//! screens over them (network_options.png, roster.png, dropped_out.png).
 const std = @import("std");
 const sorz = @import("sorz");
 const agent = @import("agent");
@@ -611,6 +613,9 @@ fn inRound(f: *Flow, r: *Room) !void {
     r.remove(host);
     try f.until(r, next, choosing, 900, "the client back at its menu");
     try f.check(!next.inSession() and next.message() == .player_1_left, "the client is told player 1 left");
+    try f.check(next.game.state.start.variant == .network and std.mem.eql(sorz.variant.MenuLine, lines(next), &.{ .name, .join, .observe, .options }), "the client's own menu again: NAME, JOIN, OBSERVE, OPTIONS");
+    try r.step(@intCast(sorz.overlay.notice_ns / frame_ns + 30));
+    try f.check(next.message() == null, "the notice gone after a while");
 }
 
 fn away(f: *Flow, r: *Room) !void {

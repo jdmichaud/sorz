@@ -170,8 +170,10 @@ fn load(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     };
 }
 
-/// The client back to its own menu, with its own game's set-up.
+/// The client back to its own menu, with its own game's set-up and variant (the host's came with
+/// its game).
 fn backToMenu(g: *Game, p: *platform.Platform) void {
+    g.state.start = g.start();
     g.state.backToMenu(g.own_setup orelse g.state.setup);
     g.own_setup = null;
     g.rebuild(p);

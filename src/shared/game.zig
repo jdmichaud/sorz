@@ -297,8 +297,6 @@ pub const Game = struct {
     /// A guest's own game's set-up from before it joined another's: its own menu's when it goes
     /// back to it (network_play.zig).
     own_setup: ?Setup = null,
-    /// Network play turned this game away (two played there, other data): it plays alone, and
-    /// asks no more until its game's character select is over.
     /// The variant the game plays (variant.zig), which the host chooses before the first update:
     /// in network play, the host's is both games'.
     variant: variant.Variant = .extended,
@@ -1249,7 +1247,7 @@ pub const Game = struct {
     const blink_ns: u64 = 16 * sound_out.tick_ps / 1000;
 
     /// The overlays over `under` (null: a black screen), drawn again when they changed; a notice
-    /// whose time is over goes. The frame is the panel's.
+    /// (the settings', network play's) whose time is over goes. The frame is the panel's.
     fn overlaid(self: *Game, now_ns: u64, under: ?platform.RgbaFrame) !platform.RgbaFrame {
         const p = self.panel orelse return under orelse self.pic.frame();
         if (self.overlays.find(.notice)) |o| {
@@ -1261,6 +1259,14 @@ pub const Game = struct {
                 self.overlay_dirty = true;
             }
         }
+        if (self.overlays.find(.network)) |o| if (!o.network.what.holds()) {
+            const until = o.network.until_ns orelse now_ns + overlay.notice_ns;
+            o.network.until_ns = until;
+            if (now_ns >= until) {
+                self.overlays.remove(.network);
+                self.overlay_dirty = true;
+            }
+        };
         // A gamepad's message fades out over its last part, alone over the picture.
         var light: u8 = 255;
         if (self.overlays.find(.gamepad)) |o| {
