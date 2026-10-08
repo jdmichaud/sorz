@@ -464,7 +464,10 @@ are its own, driven by its player alone. The host and its clients:
   pads (below), and holds no one. START leaves it, back to the client's menu; at the game's end
   the client plays on to its own front end.
 - The game's rules (LEVEL, the lives, whatever of OPTIONS or the settings the game reads, SAME
-  CHARACTER) are the host's game's: a client's OPTIONS shows only what is its own.
+  CHARACTER) are the host's game's: a client's OPTIONS shows only what is its own (its CONTROL:
+  its pad carried into the host's by the host's). The host's settings change the settings' rules
+  during a game too (FRIENDLY HIT at once, the lives and continues at the next continue), at a
+  tick both machines share.
 - When the game ends, each machine plays on to its own front end (a client in its own variant
   again), and the session stays open for the next game. A player who leaves, or does not come back
   in time, dies in the game as at the time over, and is out of it.
