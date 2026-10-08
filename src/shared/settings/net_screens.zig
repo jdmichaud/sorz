@@ -2,11 +2,14 @@
 //! screen's style (screen.zig): the host's network options, opened by its menu's NETWORK PLAY, and
 //! a client's name entry.
 //!
-//! - **The network options**: PLAYERS (2, the only number today), OBSERVERS (whether the session
-//!   takes them), SAME CHARACTER (whether the two players may choose one character), START (the
-//!   session opens) and EXIT (it does not). Up and down move, left, right, A, B or C change a
+//! - **The network options**: PLAYERS (2, the only number today), PORT (the native host's, which
+//!   it listens at from START on: fixed once it listens; none on a page), OBSERVERS (whether the
+//!   session takes them), SAME CHARACTER (whether the two players may choose one character), START
+//!   (the session opens) and EXIT (it does not). Up and down move, left, right, A, B or C change a
 //!   value, A, B or C on START or EXIT act; START opens the session from any line; Escape, the
-//!   settings key's place, and a gamepad's BACK leave as EXIT does.
+//!   settings key's place, and a gamepad's BACK leave as EXIT does. A, B or C on PORT edits it, a
+//!   digit at a time: left and right move between the digits, up and down change the one there,
+//!   A, B, C or START keep the port (1 to 65535), Escape or BACK leave it as it was.
 //! - **The name entry**: ENTER YOUR NAME, three letters (A to Z, then 0 to 9): up and down change
 //!   the letter under the cursor, left and right move it; A, B, C or START keeps the name, Escape
 //!   or BACK leaves it as it was.
@@ -88,27 +91,84 @@ pub const NetOptions = struct {
     row: Row = .observers,
     observers: bool = true,
     same_character: bool = false,
+    /// The port the host listens at (null: none, a page's), and whether it is fixed (it listens).
+    port: ?u16 = null,
+    port_fixed: bool = false,
+    /// The digit of the port edited (0 the first of five), and the port before the edit.
+    editing: ?u3 = null,
+    port_before: u16 = 0,
     /// The players of this machine, whose keys work the screen.
     players: usize = 1,
 
-    pub const Row = enum(u8) { players, observers, same_character, start, exit };
+    pub const Row = enum(u8) { players, port, observers, same_character, start, exit };
+
+    const digits = 5;
+
+    /// The options as they open: the cursor on the first line it takes.
+    pub fn open(self: NetOptions) NetOptions {
+        var o = self;
+        o.row = if (o.takes(.port)) .port else .observers;
+        return o;
+    }
 
     /// Takes one event.
     pub fn handle(self: *NetOptions, settings: *const Settings, e: platform.Event) Result {
         const nav = navOf(settings, self.players, e) orelse return .stay;
+        if (self.editing) |*at| {
+            const port = self.port.?;
+            switch (nav) {
+                .left => at.* = if (at.* == 0) digits - 1 else at.* - 1,
+                .right => at.* = if (at.* == digits - 1) 0 else at.* + 1,
+                .up, .down => self.port = turnDigit(port, at.*, nav == .up),
+                .choose, .start => {
+                    if (port == 0) self.port = self.port_before;
+                    self.editing = null;
+                },
+                .back => {
+                    self.port = self.port_before;
+                    self.editing = null;
+                },
+            }
+            return .stay;
+        }
         switch (nav) {
-            .up => self.row = if (self.row == .observers) .exit else @fromBackingInt(@backingInt(self.row) - 1),
-            .down => self.row = if (self.row == .exit) .observers else @fromBackingInt(@backingInt(self.row) + 1),
+            .up => self.move(-1),
+            .down => self.move(1),
             .left, .right => self.change(),
             .choose => switch (self.row) {
                 .start => return .done,
                 .exit => return .cancel,
+                .port => {
+                    self.port_before = self.port.?;
+                    self.editing = 0;
+                },
                 else => self.change(),
             },
             .start => return .done,
             .back => return .cancel,
         }
         return .stay;
+    }
+
+    /// Whether the cursor takes line `r`: not PLAYERS (two today), PORT when there is one to
+    /// change.
+    fn takes(self: *const NetOptions, r: Row) bool {
+        return switch (r) {
+            .players => false,
+            .port => self.port != null and !self.port_fixed,
+            else => true,
+        };
+    }
+
+    /// The cursor to the next line it takes up (`step` -1) or down, round the ends.
+    fn move(self: *NetOptions, step: i8) void {
+        const n = std.enums.values(Row).len;
+        var i: usize = @backingInt(self.row);
+        for (0..n) |_| {
+            i = if (step < 0) (i + n - 1) % n else (i + 1) % n;
+            if (self.takes(@fromBackingInt(@intCast(i)))) break;
+        }
+        self.row = @fromBackingInt(@intCast(i));
     }
 
     fn change(self: *NetOptions) void {
@@ -119,30 +179,60 @@ pub const NetOptions = struct {
         }
     }
 
-    fn rowOf(r: Row) usize {
-        return switch (r) {
-            .players, .observers, .same_character => first_row + @backingInt(r),
-            .start, .exit => first_row + @backingInt(r) + 1,
-        };
+    /// The port with its digit `at` (of five, from the first) one up or down, round from 9 to 0;
+    /// past 65535, 65535.
+    fn turnDigit(port: u16, at: u3, up: bool) u16 {
+        var weight: u32 = 1;
+        for (0..digits - 1 - @as(usize, at)) |_| weight *= 10;
+        const d = (port / weight) % 10;
+        const turned: u32 = if (up) (d + 1) % 10 else (d + 9) % 10;
+        const v = @as(u32, port) - d * weight + turned * weight;
+        return @intCast(@min(v, std.math.maxInt(u16)));
+    }
+
+    /// The panel's row of line `r` (PORT's none without a port; START and EXIT after a blank).
+    fn rowOf(self: *const NetOptions, r: Row) usize {
+        var row: usize = first_row;
+        for (std.enums.values(Row)) |x| {
+            if (x == .port and self.port == null) continue;
+            if (x == .start) row += 1;
+            if (x == r) return row;
+            row += 1;
+        }
+        unreachable;
     }
 
     pub fn draw(self: *const NetOptions, p: *Panel, arrow: bool) Panel.Error!void {
         try p.box(box_col, box_row, panel_mod.columns - 2 * box_col, panel_mod.rows - 2 * box_row);
         try p.text(label_col, title_row, "NETWORK PLAY", .bright);
+        var port_buf: [8]u8 = undefined;
+        const port_text: ?[]const u8 = if (self.port) |v| std.fmt.bufPrint(&port_buf, "{d}", .{v}) catch unreachable else null;
         const rows = [_]struct { Row, []const u8, ?[]const u8 }{
             .{ .players, "PLAYERS", "2" },
+            .{ .port, "PORT", port_text },
             .{ .observers, "OBSERVERS", if (self.observers) "YES" else "NO" },
             .{ .same_character, "SAME CHARACTER", if (self.same_character) "YES" else "NO" },
             .{ .start, "START", null },
             .{ .exit, "EXIT", null },
         };
         for (rows) |r| {
-            // PLAYERS is two today: dim, never chosen.
+            if (r[0] == .port and self.port == null) continue;
+            // PLAYERS is two today, a fixed port the one listened at: dim, never chosen.
             const tone: panel_mod.Tone = if (r[0] == self.row) .bright else .dim;
-            try p.text(label_col, rowOf(r[0]), r[1], tone);
-            if (r[2]) |v| try p.text(value_col, rowOf(r[0]), v, tone);
+            const row = self.rowOf(r[0]);
+            try p.text(label_col, row, r[1], tone);
+            if (r[0] == .port) if (self.editing) |at| {
+                // Its five digits apart, the one edited bright, the arrow before it.
+                var buf: [digits]u8 = undefined;
+                _ = std.fmt.bufPrint(&buf, "{d:0>5}", .{self.port.?}) catch unreachable;
+                for (buf, 0..) |ch, i| try p.text(value_col + 2 * i, row, &.{ch}, if (i == at) .bright else .dim);
+                if (arrow) p.arrowAt(@intCast(value_col + 2 * @as(usize, at) - 1), @intCast(row));
+                continue;
+            };
+            if (r[2]) |v| try p.text(value_col, row, v, tone);
         }
-        if (arrow) p.arrowAt(if (self.row == .start or self.row == .exit) label_col - 1 else value_col - 1, @intCast(rowOf(self.row)));
+        if (self.editing != null) return;
+        if (arrow) p.arrowAt(if (self.row == .start or self.row == .exit) label_col - 1 else value_col - 1, @intCast(self.rowOf(self.row)));
     }
 };
 
@@ -207,10 +297,39 @@ test "the network options: values changed, START opens, EXIT or Escape do not" {
     try testing.expectEqual(Result.cancel, o.handle(&s, key(.c)));
     try testing.expectEqual(Result.cancel, o.handle(&s, key(.escape)));
     try testing.expectEqual(Result.done, o.handle(&s, key(.enter)));
-    // PLAYERS is not a line the cursor takes.
+    // PLAYERS is not a line the cursor takes, nor PORT without one.
     o.row = .observers;
     _ = o.handle(&s, key(.up));
     try testing.expectEqual(NetOptions.Row.exit, o.row);
+}
+
+test "the network options' PORT: edited a digit at a time, kept or left; fixed, not taken" {
+    const s: Settings = .{};
+    var o = (NetOptions{ .port = 8000 }).open();
+    try testing.expectEqual(NetOptions.Row.port, o.row);
+    _ = o.handle(&s, key(.z));
+    try testing.expectEqual(@as(?u3, 0), o.editing);
+    // 08000: the first digit up twice, the second down once, kept.
+    _ = o.handle(&s, key(.up));
+    _ = o.handle(&s, key(.up));
+    _ = o.handle(&s, key(.right));
+    _ = o.handle(&s, key(.down));
+    try testing.expectEqual(@as(?u16, 27000), o.port);
+    try testing.expectEqual(Result.stay, o.handle(&s, key(.enter)));
+    try testing.expect(o.editing == null and o.port.? == 27000);
+    // Past 65535: 65535. Escape leaves the port as it was.
+    _ = o.handle(&s, key(.z));
+    for (0..4) |_| _ = o.handle(&s, key(.up));
+    try testing.expectEqual(@as(?u16, 65535), o.port);
+    _ = o.handle(&s, key(.escape));
+    try testing.expectEqual(@as(?u16, 27000), o.port);
+    // Up from PORT goes round to EXIT; fixed, the cursor does not take it.
+    _ = o.handle(&s, key(.up));
+    try testing.expectEqual(NetOptions.Row.exit, o.row);
+    var fixed = (NetOptions{ .port = 8000, .port_fixed = true }).open();
+    try testing.expectEqual(NetOptions.Row.observers, fixed.row);
+    _ = fixed.handle(&s, key(.up));
+    try testing.expectEqual(NetOptions.Row.exit, fixed.row);
 }
 
 test "the name entry: letters up and down, the cursor round, A keeps it" {

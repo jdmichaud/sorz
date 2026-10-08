@@ -202,6 +202,31 @@ pub const Netplay = struct {
         self.sendStatus(p);
     }
 
+    /// The port the host listens at, or will: its address's (null: the platform brings the
+    /// connections, or not the host).
+    pub fn port(self: *const Netplay) ?u16 {
+        if (self.role != .host or self.address.len == 0) return null;
+        const a = platform.parseListenAddress(self.address) catch return null;
+        return a.port;
+    }
+
+    /// Whether the host listens already: its port can no longer change.
+    pub fn portFixed(self: *const Netplay) bool {
+        return self.listening;
+    }
+
+    /// The host listens at `new` (its address's interface kept), before it listens.
+    pub fn setPort(self: *Netplay, new: u16) error{OutOfMemory}!void {
+        if (self.role != .host or self.address.len == 0 or self.listening) return;
+        const a = platform.parseListenAddress(self.address) catch return;
+        if (a.port == new) return;
+        const colon = std.mem.lastIndexOfScalar(u8, self.address, ':');
+        const host = if (colon) |c| self.address[0 .. c + 1] else "";
+        const address = try std.fmt.allocPrint(self.allocator, "{s}{d}", .{ host, new });
+        self.allocator.free(self.address);
+        self.address = address;
+    }
+
     /// The host's session closes (its game went back to the menu): its clients stay, apart.
     pub fn closeSession(self: *Netplay, p: *platform.Platform) void {
         if (!self.open) return;
@@ -768,3 +793,23 @@ pub const Netplay = struct {
         }
     }
 };
+
+test "the host's port: its address's, changed with its interface kept, fixed once it listens" {
+    const S = struct { x: u8 = 0 };
+    const opts: Options = .{ .role = .host, .address = "0.0.0.0:8080", .build = protocol.buildId("test"), .data = @splat(1), .log = false };
+    var np = try Netplay.init(std.testing.allocator, opts, canonical.diffFn(S));
+    defer np.deinit();
+    try std.testing.expectEqual(@as(?u16, 8080), np.port());
+    try np.setPort(27015);
+    try std.testing.expectEqualStrings("0.0.0.0:27015", np.address);
+    np.listening = true;
+    try np.setPort(9000);
+    try std.testing.expectEqual(@as(?u16, 27015), np.port());
+    var bare = try Netplay.init(std.testing.allocator, .{ .role = .host, .address = "8000", .build = opts.build, .data = opts.data, .log = false }, canonical.diffFn(S));
+    defer bare.deinit();
+    try bare.setPort(8001);
+    try std.testing.expectEqualStrings("8001", bare.address);
+    var page = try Netplay.init(std.testing.allocator, .{ .role = .host, .address = "", .build = opts.build, .data = opts.data, .log = false }, canonical.diffFn(S));
+    defer page.deinit();
+    try std.testing.expectEqual(@as(?u16, null), page.port());
+}
