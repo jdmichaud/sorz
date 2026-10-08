@@ -150,10 +150,12 @@ pub const Menu = struct {
                 self.blink_left = blink_ticks;
                 // The host back from a game with its server running: its lobby at once, the menu
                 // dark under it (it fades in once the lobby closes).
-                if (turn.net.lobby) {
+                if (turn.net.lobby or (turn.net.start_game and turn.net.hosting)) {
                     self.choice = .network_play;
                     self.previous = .network_play;
-                    turn.net_request = .network_options;
+                    // Its START GAME chosen already (a lobby over a game that ended): on to the
+                    // select.
+                    if (turn.net.lobby) turn.net_request = .network_options;
                     self.phase = .network;
                     return null;
                 }

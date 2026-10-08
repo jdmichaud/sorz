@@ -20,7 +20,7 @@
 //! | 10 settings   | open u8 (0/1): the sender's player is on the settings screen | 2            |
 //! | 11 status     | game u8 (0 none, 1 select, 2 play), character u8 (player 1's,| 4            |
 //! |               | 0-2, 255 none), flags u8 (1 open, 2 a place free, 4          |              |
-//! |               | observers taken, 8 the same character)                       |              |
+//! |               | observers taken, 8 the same character, 16 joins in progress) |              |
 //! | 12 join       | character u8 (0-2, 255 none)                                 | 2            |
 //! | 13 game       | session u64, delay u8, observe u8 (0/1), length u32, offset  | 23 + chunk   |
 //! |               | u32, chunk of the game's form                                |              |
@@ -32,6 +32,8 @@
 //! | 17 name       | name [3]: the client's player's, given again                 | 4            |
 //! | 18 where      | place u8: the client's player in its own menu (0) or at its  | 2            |
 //! |               | character select, to join (1)                                |              |
+//! | 19 event      | tick u32, what u8 (1 player 1 leaves, 2 player 1 comes       | 7            |
+//! |               | back), character u8 (0-2; 255 for a leave)                   |              |
 //!
 //! The guest opens with `hello`; the host answers `welcome` (after pings that measure the round
 //! trip and give the input delay) or `reject`. Welcomed, the two machines play their own games:
@@ -58,7 +60,9 @@
 //! player's dropped connection down for those who wait for it. The host that stops its server
 //! says `bye` (`stopped`) to its clients, and turns away those that come (`reject`, `stopped`)
 //! until it starts it again. A player who leaves the game but not the program says `bye` (`ended`):
-//! the session ends, the connection stays.
+//! the session ends, the connection stays. `event` changes the game in a session at a tick the
+//! host chooses, ahead of its pads for that tick: its player leaving the game (Escape, the game
+//! going on for its client) or coming back.
 const std = @import("std");
 
 pub const version: u16 = 4;
@@ -92,6 +96,7 @@ pub const Kind = enum(u8) {
     away = 16,
     name = 17,
     where = 18,
+    event = 19,
     _,
 };
 
@@ -166,11 +171,13 @@ pub const Status = struct {
     place: bool = false,
     observers: bool = false,
     same_character: bool = false,
+    /// Players may join the game in progress (past its select).
+    join_in_progress: bool = false,
 
     pub const Game = enum(u8) { none = 0, select = 1, play = 2 };
 
     fn flags(s: Status) u8 {
-        return @as(u8, @intFromBool(s.open)) | @as(u8, @intFromBool(s.place)) << 1 | @as(u8, @intFromBool(s.observers)) << 2 | @as(u8, @intFromBool(s.same_character)) << 3;
+        return @as(u8, @intFromBool(s.open)) | @as(u8, @intFromBool(s.place)) << 1 | @as(u8, @intFromBool(s.observers)) << 2 | @as(u8, @intFromBool(s.same_character)) << 3 | @as(u8, @intFromBool(s.join_in_progress)) << 4;
     }
 };
 
@@ -220,6 +227,17 @@ pub const Message = union(Kind) {
     name: Name,
     /// Where the client's player is in its own game.
     where: Where,
+    event: Event,
+};
+
+/// A change of the game in a session, before tick `tick` on both machines.
+pub const Event = struct {
+    tick: u32,
+    what: What,
+    /// The character player 1 comes back as (`no_character` for a leave).
+    character: u8 = no_character,
+
+    pub const What = enum(u8) { leave = 1, back = 2 };
 };
 
 pub const DecodeError = error{Malformed};
@@ -317,6 +335,11 @@ pub fn encode(m: Message, out: []u8) []u8 {
         .away => |seconds| w.byte(seconds),
         .name => |n| w.bytes(&n),
         .where => |x| w.byte(@backingInt(x)),
+        .event => |e| {
+            w.int(u32, e.tick);
+            w.byte(@backingInt(e.what));
+            w.byte(e.character);
+        },
         .ticks => |t| {
             std.debug.assert(t.pads.len >= 2 and t.pads.len <= 2 * max_pads and t.pads.len % 2 == 0);
             w.int(u32, t.first);
@@ -377,7 +400,7 @@ pub fn decode(bytes: []const u8) DecodeError!Message {
             const game = try r.byte();
             const character = try r.byte();
             const flags = try r.byte();
-            if (game > 2 or !isCharacter(character) or (game == 2) == (character == no_character) or flags > 15) return error.Malformed;
+            if (game > 2 or !isCharacter(character) or (game == 2) == (character == no_character) or flags > 31) return error.Malformed;
             break :blk .{ .status = .{
                 .game = @fromBackingInt(game),
                 .character = character,
@@ -385,6 +408,7 @@ pub fn decode(bytes: []const u8) DecodeError!Message {
                 .place = flags & 2 != 0,
                 .observers = flags & 4 != 0,
                 .same_character = flags & 8 != 0,
+                .join_in_progress = flags & 16 != 0,
             } };
         },
         .join => blk: {
@@ -422,6 +446,13 @@ pub fn decode(bytes: []const u8) DecodeError!Message {
             const x = try r.byte();
             if (x > @backingInt(Where.select)) return error.Malformed;
             break :blk .{ .where = @fromBackingInt(x) };
+        },
+        .event => blk: {
+            const tick = try r.int(u32);
+            const what = try r.byte();
+            const character = try r.byte();
+            if (what < 1 or what > 2 or !isCharacter(character) or (what == 2) == (character == no_character)) return error.Malformed;
+            break :blk .{ .event = .{ .tick = tick, .what = @fromBackingInt(what), .character = character } };
         },
         .ticks => blk: {
             const first = try r.int(u32);
@@ -510,6 +541,9 @@ test "every message round trips, and its truncations are malformed" {
     try roundTrip(.{ .name = "ZED".* });
     try roundTrip(.{ .where = .select });
     try roundTrip(.{ .where = .menu });
+    try roundTrip(.{ .event = .{ .tick = 900, .what = .leave } });
+    try roundTrip(.{ .event = .{ .tick = 1200, .what = .back, .character = 1 } });
+    try roundTrip(.{ .status = .{ .game = .play, .character = 0, .open = true, .join_in_progress = true } });
     try roundTrip(.{ .ticks = .{ .first = 300, .pads = &.{ 1, 2, 3, 4 } } });
     try roundTrip(.{ .join = no_character });
     try roundTrip(.{ .join = 2 });
@@ -558,7 +592,11 @@ test "fields out of range are malformed" {
     for ([_][2]u8{ .{ 0, 1 }, .{ 2, no_character }, .{ 3, no_character }, .{ 1, 3 } }) |v| {
         try testing.expectError(error.Malformed, decode(&.{ 11, v[0], v[1], 0 }));
     }
-    try testing.expectError(error.Malformed, decode(&.{ 11, 0, no_character, 16 }));
+    try testing.expectError(error.Malformed, decode(&.{ 11, 0, no_character, 32 }));
+    // An event of no kind, a leave with a character, a coming back without one.
+    try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 3, no_character }));
+    try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 1, 1 }));
+    try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 2, no_character }));
     try testing.expectError(error.Malformed, decode(&.{ 14, 2 }));
     try testing.expectError(error.Malformed, decode(&.{ 18, 2 }));
     // Ticks: none, or more than a message may carry, or an odd byte.

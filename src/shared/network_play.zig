@@ -74,8 +74,19 @@ pub fn update(g: *Game, p: *platform.Platform) void {
 }
 
 /// The host's game: its status, the join asked of it (taken now when it can be), the observers.
+/// The game its player left for its client ends (its rounds over, or no client left in it): with
+/// the lobby over it, the host's menu under the lobby; else its player watched it, and plays on
+/// to its own front end.
 fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     const assets = if (g.scene_assets) |*a| a else return;
+    if (g.state.inGame()) g.net_start_game = false;
+    if (g.net_left and !(np.inSession() and g.state.inRounds())) {
+        g.net_left = false;
+        if (g.overlays.find(.net_options)) |o| if (o.net_options.in_game) {
+            o.net_options.in_game = false;
+            backToMenu(g, p);
+        };
+    }
     np.setStatus(p, statusOf(&g.state));
     if (!np.inSession()) if (np.joinAsked()) |ask| {
         const character: ?Character = if (ask.character == protocol.no_character) null else @fromBackingInt(@as(u8, ask.character));
@@ -140,7 +151,7 @@ fn guest(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     const chosen = choice(&g.state);
     switch (st.game) {
         .select => np.askJoin(p, if (chosen) |c| @backingInt(c) else protocol.no_character),
-        .play => if (chosen) |c| if (st.same_character or @backingInt(c) != st.character) np.askJoin(p, @backingInt(c)),
+        .play => if (chosen) |c| if (st.place and (st.same_character or @backingInt(c) != st.character)) np.askJoin(p, @backingInt(c)),
         .none => {},
     }
 }
@@ -188,9 +199,20 @@ fn load(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
 /// Escape in a game: this machine's player leaves it, not the program, back to its menu (a host
 /// whose server runs, to its lobby: the network options over its menu); the other machines are
 /// told (the host's player 2 dies and is out, its client goes back to its menu, its observers
-/// too). False outside a game: the game quits.
+/// too). The host's player who leaves a round its client plays: the game runs on for the client,
+/// player 1 dying out of it at a tick both machines make it (`protocol.Event`), the lobby over
+/// the game (again, should its player have been watching it). False outside a game: the game
+/// quits.
 pub fn leaveGame(g: *Game, p: *platform.Platform) bool {
     if (!g.state.inGame()) return false;
+    if (g.netplay) |np| if (np.role == .host and np.open and np.inSession() and g.state.inRounds()) {
+        if (!g.net_left) {
+            if (!np.schedule(p, .leave, protocol.no_character)) return true;
+            g.net_left = true;
+        }
+        g.openLobby(p, true);
+        return true;
+    };
     if (g.netplay) |np| {
         np.leaveGame(p);
         g.net_lobby = np.role == .host and np.open;
@@ -201,7 +223,7 @@ pub fn leaveGame(g: *Game, p: *platform.Platform) bool {
 
 /// The client back to its own menu, with its own game's set-up and variant (the host's came with
 /// its game).
-fn backToMenu(g: *Game, p: *platform.Platform) void {
+pub fn backToMenu(g: *Game, p: *platform.Platform) void {
     g.state.start = g.start();
     g.state.backToMenu(g.own_setup orelse g.state.setup);
     g.own_setup = null;

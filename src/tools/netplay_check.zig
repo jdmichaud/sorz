@@ -36,6 +36,10 @@
 //!   client back in joins it there; Escape on the host: its lobby again, the client back at its
 //!   menu, still connected; EXIT: the menu, the server running; Escape in 1 PLAYER's game, the
 //!   server running: the lobby; with it stopped, a local game: the menu.
+//! - left: in round 1 with a client, Escape on the host: its lobby over the game, which runs on
+//!   for the client; player 1 dies out of it at one tick on both machines (the same game); RETURN
+//!   TO GAME: player 1 drops back in on both; JOIN IN PROGRESS off: no way back; EXIT shows the
+//!   game, which runs on; the client quits: the game the host left is over.
 //!
 //! Prints a JSON line per flow, and exits with 1 when a step fails; with `--pictures`, two pictures
 //! that differ are written there (host.png, guest.png), and the host's at a few steps, its own
@@ -818,6 +822,82 @@ fn away(f: *Flow, r: *Room) !void {
     f.note("\"held_at\":{d}", .{at});
 }
 
+/// Whether player `k` plays a fighter in the round.
+fn fighting(m: *const Machine, k: u1) bool {
+    const x = roundOf(m) orelse return false;
+    return x.play.world.players[k].entity != null;
+}
+
+fn left(f: *Flow, r: *Room) !void {
+    const host = try r.add(.host);
+    const guest = try r.add(.guest);
+    try hostNetworkPlay(f, r, host);
+    try clientJoins(f, r, guest);
+    try f.until(r, guest, inSession, 900, "the client joins");
+    try f.until(r, guest, inSelect, 200, "the select on the client");
+    try r.press(host, .right);
+    try r.step(6);
+    try r.press(host, .z);
+    try r.press(guest, .z);
+    try f.until(r, host, playing, 2400, "round 1");
+    try r.step(60);
+    // Escape on the host: its lobby over the game, which runs on for the client; player 1 dies
+    // out of it on both machines, at one tick.
+    try r.press(host, .escape);
+    try f.check(lobby(host) != null and lobby(host).?.in_game and host.game.net_left, "the host's lobby over the game");
+    const at = guest.game.state.tick;
+    try f.until(r, host, struct {
+        fn out(m: *Machine) bool {
+            const x = roundOf(m) orelse return false;
+            return x.play.world.players[0].entity == null and x.play.world.players[0].out;
+        }
+    }.out, 900, "player 1 dead, out of the game");
+    try f.check(host.inSession() and guest.inSession() and guest.game.state.tick > at + 60 and fighting(guest, 1), "the client plays on");
+    try f.check(guest.message() == .player_1_left, "the client is told player 1 left");
+    try same(f, r, host, guest, "the same game without player 1");
+    try shot(r, host, "left_lobby.png");
+    // RETURN TO GAME: player 1 drops back in, on both.
+    try f.until(r, host, struct {
+        fn can(m: *Machine) bool {
+            return lobby(m).?.can_return;
+        }
+    }.can, 60, "RETURN TO GAME offered");
+    try pressOption(r, host, .game, .z);
+    try f.until(r, host, struct {
+        fn back(m: *Machine) bool {
+            return lobby(m) == null and fighting(m, 0);
+        }
+    }.back, 300, "player 1 back in the game");
+    try r.step(30);
+    try f.check(fighting(guest, 0) and !host.game.net_left, "player 1 back on the client too");
+    try same(f, r, host, guest, "the same game with player 1 back");
+    // JOIN IN PROGRESS off: no way back, nor in for another client; EXIT shows the game.
+    try r.press(host, .escape);
+    try f.until(r, host, struct {
+        fn out(m: *Machine) bool {
+            return !fighting(m, 0) and lobby(m) != null;
+        }
+    }.out, 900, "player 1 out again");
+    try pressOption(r, host, .join_in_progress, .z);
+    try r.step(30);
+    try f.check(!lobby(host).?.join_in_progress and !lobby(host).?.can_return and !host.np().join_in_progress, "JOIN IN PROGRESS off: no RETURN TO GAME, the session takes no join");
+    try pressOption(r, host, .exit, .z);
+    try f.check(lobby(host) == null and host.game.net_left, "EXIT: the game shown, player 1 still out");
+    const shown = host.game.state.tick;
+    try r.step(60);
+    try f.check(host.game.state.tick > shown + 30, "the game runs on, shown");
+    try same(f, r, host, guest, "the same game, watched");
+    // The client quits: no player left in the game; the host's player watched it, and goes on
+    // to its own front end.
+    try guest.quit();
+    r.remove(guest);
+    try f.until(r, host, struct {
+        fn over(m: *Machine) bool {
+            return !m.game.net_left and !m.inSession();
+        }
+    }.over, 900, "the game the host left over");
+}
+
 fn difference(f: *Flow, r: *Room) !void {
     const host = try r.add(.host);
     const guest = try r.add(.guest);
@@ -888,6 +968,7 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "away", .run = away },
         .{ .name = "difference", .run = difference },
         .{ .name = "server", .run = server },
+        .{ .name = "left", .run = left },
     }) |e| {
         if (only.items.len != 0) {
             var wanted = false;

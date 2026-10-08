@@ -227,15 +227,25 @@ pub const State = struct {
     pub fn join(self: *State, character: ?setup_mod.Character, assets: *const scene.Assets) void {
         switch (self.scenes.base) {
             .select => |*s| s.join(&self.setup, &assets.select),
-            .round => |*r| _ = r.dropIn(character.?),
+            .round => |*r| _ = r.dropIn(1, character.?),
             else => {},
         }
     }
 
-    /// Player `who` leaves the game (network play's other player, who quit or did not come back):
-    /// in a round its fighter dies, and it is out of the game, as a player out of lives who does
-    /// not continue; out of the next round between two; the second player gone from the character
-    /// select.
+    /// Player `who` comes back to the round under way as `character` (network play's host's
+    /// player, back to the game its clients played on): its fighter drops in at the next logic
+    /// tick.
+    pub fn dropIn(self: *State, who: u1, character: setup_mod.Character) void {
+        switch (self.scenes.base) {
+            .round => |*r| _ = r.dropIn(who, character),
+            else => {},
+        }
+    }
+
+    /// Player `who` leaves the game (network play's player who quit or did not come back, or the
+    /// host's who left it for its clients): in a round its fighter dies, and it is out of the
+    /// game, as a player out of lives who does not continue; out of the next round between two;
+    /// the second player gone from the character select.
     pub fn dropOut(self: *State, who: u1, assets: *const scene.Assets) void {
         switch (self.scenes.base) {
             .select => |*s| if (who == 1) s.leave(&self.setup, &assets.select),
@@ -347,8 +357,11 @@ pub const Game = struct {
     /// The host's network options last chosen, whether they closed with START GAME (the menu's
     /// player goes to the select), and a client's count of a player's dropped connection (the
     /// seconds left, as the host said).
-    net_choice: struct { observers: bool = true, same_character: bool = false } = .{},
+    net_choice: NetChoice = .{},
     net_start_game: bool = false,
+    /// The host's player left the game its clients play on (Escape): the game runs on, player 1
+    /// out of it, the lobby over it (or the game shown, its player watching).
+    net_left: bool = false,
     /// The host's player left a game with its server running (Escape): its menu opens the
     /// network options at once, its lobby.
     net_lobby: bool = false,
@@ -519,14 +532,17 @@ pub const Game = struct {
         self.guest = options.role == .guest;
     }
 
-    /// The host's session opens (the network options' START SERVER or START GAME, or a check's
-    /// call): it listens (at `port`, when it does not yet), and takes a player and, with
-    /// `observers`, observers.
-    pub fn openNetwork(self: *Game, p: *platform.Platform, observers: bool, same_character: bool, port: ?u16) void {
+    /// What the host's network options chose.
+    pub const NetChoice = settings_mod.net_screens.NetOptions.Choice;
+
+    /// The host's session opens (the network options' START SERVER or START GAME): it listens (at
+    /// `port`, when it does not yet), and takes a player and, as `choice` says, observers and
+    /// joins in progress.
+    pub fn openNetwork(self: *Game, p: *platform.Platform, choice: NetChoice, port: ?u16) void {
         const np = self.netplay orelse return;
-        self.net_choice = .{ .observers = observers, .same_character = same_character };
+        self.net_choice = choice;
         if (port) |x| np.setPort(x) catch {};
-        np.openSession(p, observers, same_character) catch |err| {
+        np.openSession(p, choice.observers, choice.same_character, choice.join_in_progress) catch |err| {
             std.log.err("network play cannot listen at {s}: {s}", .{ np.address, @errorName(err) });
             self.tellNetwork(.cannot_host);
         };
@@ -564,21 +580,67 @@ pub const Game = struct {
         const players = self.controls.players();
         switch (r) {
             .network_options => {
-                const np = self.netplay orelse return;
-                const options: settings_mod.net_screens.NetOptions = .{
-                    .observers = self.net_choice.observers,
-                    .same_character = self.net_choice.same_character,
-                    .port = np.port(),
-                    .port_fixed = np.portFixed(),
-                    .serving = np.open,
-                    .players = players,
-                };
                 self.net_start_game = false;
                 self.net_lobby = false;
-                self.openModal(.{ .net_options = options.open() }, p.nowNs());
+                self.openLobby(p, false);
             },
             .name => self.openModal(.{ .name_entry = .open(self.settings.name, players) }, null),
             .observe => if (self.netplay) |np| np.askObserve(p),
+        }
+    }
+
+    /// The host's network options, its lobby: over its menu (fading in), or over the game its
+    /// player left for its clients (`in_game`: at once, the game running on under it).
+    pub fn openLobby(self: *Game, p: *platform.Platform, in_game: bool) void {
+        const np = self.netplay orelse return;
+        const c = self.net_choice;
+        const options: settings_mod.net_screens.NetOptions = .{
+            .observers = c.observers,
+            .same_character = c.same_character,
+            .join_in_progress = c.join_in_progress,
+            .port = np.port(),
+            .port_fixed = np.portFixed(),
+            .serving = np.open,
+            .in_game = in_game,
+            .players = self.controls.players(),
+        };
+        self.openModal(.{ .net_options = options.open() }, if (in_game) null else p.nowNs());
+        self.roster(p);
+    }
+
+    /// Whether the lobby is over a game the host's player left: the game runs on under it, its
+    /// sound silent.
+    fn lobbyOverGame(self: *const Game) bool {
+        for (self.overlays.items[0..self.overlays.len]) |o| switch (o) {
+            .net_options => |x| return x.in_game,
+            else => {},
+        };
+        return false;
+    }
+
+    /// Whether the game holds: an overlay holds it, but the lobby over a game its clients play.
+    fn holding(self: *const Game) bool {
+        return self.overlays.holds() and !self.lobbyOverGame();
+    }
+
+    /// A change of the game in the session before this tick (`protocol.Event`): the host's player
+    /// leaving it (its fighter dies, out) or coming back (it drops in), on both machines; the
+    /// host's observers take the game again.
+    fn applyEvent(self: *Game, p: *platform.Platform, np: *net.Netplay, e: net.protocol.Event) void {
+        const a = if (self.scene_assets) |*x| x else return;
+        switch (e.what) {
+            .leave => {
+                self.state.dropOut(0, a);
+                if (np.role == .guest) self.tellNetwork(.player_1_left);
+            },
+            .back => if (e.character < net.protocol.characters) {
+                self.state.dropIn(0, @fromBackingInt(e.character));
+                if (np.role == .host) self.net_left = false;
+            },
+        }
+        if (np.role == .host) {
+            var buf: [join_max]u8 = undefined;
+            np.resync(p, self.joinForm(&buf));
         }
     }
 
@@ -804,19 +866,36 @@ pub const Game = struct {
                     const x = &o.net_options;
                     switch (x.handle(&self.settings, e)) {
                         .stay => return,
-                        // The server started or stopped: the screen stays, the host's lobby.
+                        // The server started or stopped: the screen stays, the host's lobby. Stopped
+                        // under a game its player left, the game ends with it: the menu under the
+                        // lobby.
                         .acted => {
                             switch (x.action) {
-                                .start_server => self.openNetwork(p, x.observers, x.same_character, x.port),
-                                else => self.stopNetwork(p),
+                                .start_server => self.openNetwork(p, x.choice(), x.port),
+                                else => {
+                                    self.stopNetwork(p);
+                                    if (x.in_game) {
+                                        self.net_left = false;
+                                        x.in_game = false;
+                                        network_play.backToMenu(self, p);
+                                    }
+                                },
                             }
                             if (self.netplay) |np| x.served(np.open, np.portFixed());
-                            self.roster();
+                            self.roster(p);
                             return;
                         },
-                        .done => {
-                            self.openNetwork(p, x.observers, x.same_character, x.port);
-                            self.net_start_game = true;
+                        .done => switch (x.action) {
+                            // Player 1 drops back in at a tick to come, on both machines.
+                            .return_to_game => {
+                                const np = self.netplay orelse return;
+                                const c = self.state.setup.characters[0] orelse return;
+                                if (!np.schedule(p, .back, @backingInt(c))) return;
+                            },
+                            else => {
+                                self.openNetwork(p, x.choice(), x.port);
+                                self.net_start_game = true;
+                            },
                         },
                         .cancel => {},
                     }
@@ -838,11 +917,24 @@ pub const Game = struct {
     }
 
     /// The host's screens list who is connected, at the bottom left, outside the rounds.
-    fn roster(self: *Game) void {
+    fn roster(self: *Game, p: *platform.Platform) void {
         const np = self.netplay orelse return;
-        // The network options list them themselves, the host's lobby.
+        // The network options list them themselves, the host's lobby; their values apply at once
+        // while the server runs; over a game its player left, whether it can come back.
         if (self.overlays.find(.net_options)) |o| {
             const x = &o.net_options;
+            if (np.open and !std.meta.eql(x.choice(), self.net_choice)) {
+                self.net_choice = x.choice();
+                np.setOptions(p, x.observers, x.same_character, x.join_in_progress);
+            }
+            const can_return = x.in_game and x.join_in_progress and !np.eventDue() and switch (self.state.scenes.base) {
+                .round => |*r| r.play.world.players[0].entity == null,
+                else => false,
+            };
+            if (can_return != x.can_return) {
+                x.can_return = can_return;
+                self.overlay_dirty = true;
+            }
             var entries: [settings_mod.net_screens.NetOptions.max_clients]net.netplay.Entry = undefined;
             const now = if (np.open) np.roster(&entries) else entries[0..0];
             var same = x.client_count == now.len;
@@ -1011,8 +1103,8 @@ pub const Game = struct {
                 },
             }
         };
-        self.roster();
-        if (self.overlays.holds()) {
+        self.roster(p);
+        if (self.holding()) {
             self.hold(p);
         } else switch (self.pacing) {
             .per_update => _ = self.runTick(p),
@@ -1116,11 +1208,15 @@ pub const Game = struct {
     /// holds (an overlay, or the other player's pads not in), and nothing ran. A tick whose game
     /// menu chose SETTINGS opens them, on the machine of the player who chose.
     fn runTick(self: *Game, p: *platform.Platform) bool {
-        if (self.overlays.holds()) return false;
+        if (self.holding()) return false;
         var pads = self.controls.read(self.state.tick, self.attackButton());
+        // The host's player out of the game it left: its pad plays nothing (the lobby takes its
+        // keys).
+        if (self.lobbyOverGame()) pads.pad1 = .{};
         const session = if (self.netplay) |np| (if (np.inSession()) np else null) else null;
         if (session) |np| {
             pads = np.pads(p, pads.pad1) orelse return false;
+            if (np.eventAt()) |e| self.applyEvent(p, np, e);
         } else if (self.netplay) |np| if (np.role == .host and np.open) {
             // The host's session open: its second player is the network's, not this machine's.
             pads.pad2 = .{};
@@ -1136,7 +1232,8 @@ pub const Game = struct {
             const shaped = if (self.faded) self.fade(frames, .in) else frames;
             if (self.faded) self.jingle_at = null;
             self.faded = false;
-            _ = p.audioQueue(self.atVolume(shaped)) catch {};
+            // Under the lobby, the game the host's player left plays silent on its machine.
+            _ = p.audioQueue(if (self.lobbyOverGame()) self.silence(shaped.len) else self.atVolume(shaped)) catch {};
         } else _ = transfersOf(&self.transfers_due, &turn);
         if (self.netplay) |np| {
             if (session != null) np.ran();
@@ -1249,6 +1346,20 @@ pub const Game = struct {
     /// buffer. The gain is the square of the volume's fraction, so that its steps sound even; muted,
     /// the queue gets silence and still paces the game. A host that applies the volume itself
     /// (`host_volume`) gets the frames as they are.
+    /// `n` samples of silence.
+    fn silence(self: *Game, n: usize) []const i16 {
+        if (self.volume_buffer.len < n) {
+            self.allocator.free(self.volume_buffer);
+            self.volume_buffer = self.allocator.alloc(i16, n) catch {
+                self.volume_buffer = &.{};
+                return &.{};
+            };
+        }
+        const out = self.volume_buffer[0..n];
+        @memset(out, 0);
+        return out;
+    }
+
     fn atVolume(self: *Game, frames: []const i16) []const i16 {
         const s = self.settings.sound;
         if (self.host_volume or (s.volume >= settings_mod.record.max_volume and !s.mute)) return frames;

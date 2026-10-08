@@ -307,10 +307,10 @@ pub const Round = struct {
     time_over_text: bool = false,
     shown_time_over: bool = false,
     join: Join = .{},
-    /// Player 2 joins at the next logic tick as this character (network play's: `dropIn`).
-    join_as: ?setup_mod.Character = null,
-    /// The character of the join under way.
-    joining: ?setup_mod.Character = null,
+    /// A player joins at the next logic tick as this character (network play's: `dropIn`).
+    join_as: ?Drop = null,
+    /// The join under way: who, as which character.
+    joining: ?Drop = null,
     out_blinks: [2]OutBlink = .{ .{}, .{} },
     /// The last player out of the game is at its game over: the round ends at the next tick.
     over: bool = false,
@@ -855,9 +855,9 @@ pub const Round = struct {
     fn joinTick(self: *Round, turn: *scene.Turn, a: *const Assets) ?world.tick.Join {
         const j = &a.screen.status_bar.join;
         const w = &self.play.world;
-        if (self.join_as) |c| {
+        if (self.join_as) |d| {
             self.join_as = null;
-            if (w.players[1].entity == null) if (self.joinOf(turn, a, c)) |x| return x;
+            if (w.players[d.player].entity == null) if (self.joinOf(turn, a, d)) |x| return x;
         }
         // The special attack holds the invitation as it is (its count, its blink); in its closed
         // round (the last) there is none.
@@ -877,7 +877,7 @@ pub const Round = struct {
             self.join.turn();
             return null;
         }
-        const x = self.joinOf(turn, a, j.next[@backingInt(first.?)]) orelse {
+        const x = self.joinOf(turn, a, .{ .player = 1, .character = j.next[@backingInt(first.?)] }) orelse {
             self.join.turn();
             return null;
         };
@@ -885,15 +885,15 @@ pub const Round = struct {
         return x;
     }
 
-    /// The join of player 2 as `character`: null when the content lacks it.
-    fn joinOf(self: *Round, turn: *const scene.Turn, a: *const Assets, character: setup_mod.Character) ?world.tick.Join {
-        const kind = a.kinds.find(@tagName(character)) orelse {
-            std.log.warn("the content defines no {s}: player 2 cannot join", .{@tagName(character)});
+    /// The join of `d`'s player as its character: null when the content lacks it.
+    fn joinOf(self: *Round, turn: *const scene.Turn, a: *const Assets, d: Drop) ?world.tick.Join {
+        const kind = a.kinds.find(@tagName(d.character)) orelse {
+            std.log.warn("the content defines no {s}: player {d} cannot join", .{ @tagName(d.character), @as(u8, d.player) + 1 });
             return null;
         };
-        self.joining = character;
+        self.joining = d;
         const lives = if (turn.setup.rules) |r| r.lives else a.screen.status_bar.join.lives;
-        return .{ .player = 1, .kind = kind, .lives = lives, .colours = playerColours(turn, 1, character, kind, a) };
+        return .{ .player = d.player, .kind = kind, .lives = lives, .colours = playerColours(turn, d.player, d.character, kind, a) };
     }
 
     /// The colours player `k` playing `character` (of kind `kind`) is drawn with: the variant's
@@ -905,20 +905,26 @@ pub const Round = struct {
         return a.kinds.get(kind).definition.colourMap(name);
     }
 
-    /// Player 2 joined at this logic tick, as `joining`: two players in the game from now on.
+    /// A player joined at this logic tick, as `joining`: player 2 makes two players in the game
+    /// from now on.
     fn joined(self: *Round, turn: *scene.Turn) void {
         const w = &self.play.world;
-        if (w.players[1].entity == null) return;
-        turn.setup.characters[1] = self.joining;
-        turn.setup.players = .two;
+        const d = self.joining orelse return;
+        if (w.players[d.player].entity == null) return;
+        turn.setup.characters[d.player] = d.character;
+        if (d.player == 1) turn.setup.players = .two;
     }
 
-    /// Player 2 joins the round under way as `character` at its next logic tick, its first life
+    /// A player and the character it joins as.
+    pub const Drop = struct { player: u1, character: setup_mod.Character };
+
+    /// Player `k` joins the round under way as `character` at its next logic tick, its first life
     /// dropping in as the original's PRESS 2UP START's does (network play's second player joining
-    /// a game, DESIGN.md 9). False when player 2 plays already.
-    pub fn dropIn(self: *Round, character: setup_mod.Character) bool {
-        if (self.play.world.players[1].entity != null) return false;
-        self.join_as = character;
+    /// a game, or its host's player coming back to it: DESIGN.md 9). False when that player plays
+    /// already.
+    pub fn dropIn(self: *Round, k: u1, character: setup_mod.Character) bool {
+        if (self.play.world.players[k].entity != null) return false;
+        self.join_as = .{ .player = k, .character = character };
         return true;
     }
 
@@ -929,7 +935,9 @@ pub const Round = struct {
     pub fn dropOut(self: *Round, k: u1) void {
         const w = &self.play.world;
         const p = &w.players[k];
-        if (self.join_as != null and k == 1) self.join_as = null;
+        if (self.join_as) |d| if (d.player == k) {
+            self.join_as = null;
+        };
         const h = p.entity orelse return;
         p.gone = true;
         p.continues = 0;

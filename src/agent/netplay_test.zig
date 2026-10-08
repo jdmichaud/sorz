@@ -86,7 +86,7 @@ const Peer = struct {
         try peer.np.start(&p);
         // The host's session opens at once (its network options' START); the guest connects as it
         // starts.
-        if (role == .host) try peer.np.openSession(&p, true, false);
+        if (role == .host) try peer.np.openSession(&p, true, false, true);
         return peer;
     }
 

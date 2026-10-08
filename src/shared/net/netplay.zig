@@ -106,6 +106,7 @@ pub const Netplay = struct {
     stopped: bool = false,
     observers: bool = false,
     same_character: bool = false,
+    join_in_progress: bool = true,
     listening: bool = false,
     /// The host's game, as the game last said it (without the driver's flags).
     status: protocol.Status = .{},
@@ -209,7 +210,7 @@ pub const Netplay = struct {
 
     /// The host's session opens (NETWORK PLAY's START): the host listens (once), and clients
     /// may join and, when `observers`, watch.
-    pub fn openSession(self: *Netplay, p: *platform.Platform, observers: bool, same_character: bool) platform.NetError!void {
+    pub fn openSession(self: *Netplay, p: *platform.Platform, observers: bool, same_character: bool, join_in_progress: bool) platform.NetError!void {
         if (self.role != .host) return;
         if (self.address.len != 0 and !self.listening) {
             try p.netListen(self.address);
@@ -218,8 +219,14 @@ pub const Netplay = struct {
         } else if (self.stopped and self.log_enabled) log.info("the server started again", .{});
         self.open = true;
         self.stopped = false;
+        self.setOptions(p, observers, same_character, join_in_progress);
+    }
+
+    /// What the host's session takes, changed while it is open (the lobby's values).
+    pub fn setOptions(self: *Netplay, p: *platform.Platform, observers: bool, same_character: bool, join_in_progress: bool) void {
         self.observers = observers;
         self.same_character = same_character;
+        self.join_in_progress = join_in_progress;
         self.sendStatus(p);
     }
 
@@ -553,10 +560,12 @@ pub const Netplay = struct {
     fn statusFor(self: *const Netplay) protocol.Status {
         var s = self.status;
         s.open = self.open;
-        // The game says whether it has room for a second player (`status.place`).
-        s.place = self.open and self.player == null and self.status.place;
+        // The game says whether it has room for a second player (`status.place`); a game under
+        // way takes one when joins in progress are allowed.
+        s.place = self.open and self.player == null and self.status.place and (self.status.game != .play or self.join_in_progress);
         s.observers = self.open and self.observers;
         s.same_character = self.same_character;
+        s.join_in_progress = self.join_in_progress;
         return s;
     }
 
@@ -746,6 +755,29 @@ pub const Netplay = struct {
             self.hold_logged = false;
         }
         return merged;
+    }
+
+    /// The host changes the game in its session (its player leaves, or comes back as
+    /// `character`) at a tick to come, on both machines; false when it cannot now.
+    pub fn schedule(self: *Netplay, p: *platform.Platform, what: protocol.Event.What, character: u8) bool {
+        if (self.role != .host) return false;
+        const s = self.main() orelse return false;
+        const at = s.schedule(what, character) orelse return false;
+        self.flushAll(p);
+        if (self.log_enabled) log.info("player 1 {s} at tick {d}", .{ if (what == .leave) "leaves the game" else "comes back", at });
+        return true;
+    }
+
+    /// The change of the game before the session's next tick, if any.
+    pub fn eventAt(self: *const Netplay) ?protocol.Event {
+        const s = self.main() orelse return null;
+        return s.eventAt();
+    }
+
+    /// Whether a change of the game is still to come.
+    pub fn eventDue(self: *const Netplay) bool {
+        const s = self.main() orelse return false;
+        return s.event != null;
     }
 
     /// The tick that `pads` gave the pads of ran.

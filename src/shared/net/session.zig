@@ -195,6 +195,9 @@ pub const Session = struct {
     /// client last said (the client's; null: not said on this connection).
     peer_where: protocol.Where = .menu,
     where_said: ?protocol.Where = null,
+    /// A change of the game at a tick to come (the host's player leaving or coming back): the
+    /// host's, as it scheduled it; the client's, as it heard it.
+    event: ?protocol.Event = null,
     /// The client asked to watch (on both sides, until the host's game comes or it stops).
     observe_asked: bool = false,
     /// The host: the ticks of an observer's game sent so far, and the pads still to send (a pair
@@ -426,6 +429,7 @@ pub const Session = struct {
             .game => |g| self.onGame(g),
             .observe => |yes| self.onObserve(yes),
             .ticks => |t| self.onTicks(t),
+            .event => |e| self.onEvent(e),
             .away => |seconds| blk: {
                 if (self.config.role != .guest or !self.welcomed) break :blk .unexpected;
                 self.note(.{ .away = seconds });
@@ -467,6 +471,7 @@ pub const Session = struct {
     /// the guest is apart until it asks to join again).
     fn over(self: *Session, why: End) void {
         self.peer_left = false;
+        self.event = null;
         self.lost_at = null;
         self.id = 0;
         self.next = 0;
@@ -822,6 +827,7 @@ pub const Session = struct {
     fn startSession(self: *Session, id: u64) void {
         self.id = id;
         self.phase = .playing;
+        self.event = null;
         self.peer_left = false;
         self.lost_at = null;
         self.next = 0;
@@ -851,6 +857,8 @@ pub const Session = struct {
         self.lost_at = null;
         self.peer_ack = @max(self.peer_ack, peer_has);
         self.sent_upto = peer_has;
+        // A change of the game the client may not have heard: before the pads of its tick.
+        if (self.event) |e| self.send(.{ .event = e });
         self.flushPads();
         for (self.own) |h| if (h) |x| self.send(.{ .hash = x.hash });
         if (self.local_settings) self.send(.{ .settings = true });
@@ -981,12 +989,42 @@ pub const Session = struct {
         };
     }
 
+    /// The host changes the game at the first tick whose pads it has not sent (`what`: its player
+    /// leaves, or comes back as `character`): the client hears it before those pads. Returns the
+    /// tick, or null when no session runs or a change is still to come.
+    pub fn schedule(self: *Session, what: protocol.Event.What, character: u8) ?u32 {
+        if (self.config.role != .host or self.phase != .playing or self.event != null) return null;
+        const e: protocol.Event = .{ .tick = self.local_count, .what = what, .character = character };
+        self.event = e;
+        self.send(.{ .event = e });
+        return e.tick;
+    }
+
+    fn onEvent(self: *Session, e: protocol.Event) Verdict {
+        if (self.config.role != .guest or self.phase != .playing) return .unexpected;
+        if (self.event) |was| if (std.meta.eql(was, e)) return .accepted;
+        // Its tick ran already: the games would differ.
+        if (e.tick < self.next or self.event != null) return .malformed;
+        self.event = e;
+        return .accepted;
+    }
+
+    /// The change of the game before the next tick, if any (the game makes it, then runs the
+    /// tick).
+    pub fn eventAt(self: *const Session) ?protocol.Event {
+        const e = self.event orelse return null;
+        return if (e.tick == self.next and self.phase == .playing) e else null;
+    }
+
     /// Tick `next` ran with the pads that `pads` gave.
     pub fn ran(self: *Session) void {
         if (self.phase == .observing) {
             self.next += 1;
             return;
         }
+        if (self.event) |e| if (e.tick <= self.next) {
+            self.event = null;
+        };
         // The slack: the peer's pads in hand beyond this tick, averaged over about 16.
         const sample: i32 = @as(i32, @intCast(self.remote_count - self.next - 1)) * 256;
         self.slack += @divFloor(sample - self.slack, 16);
@@ -1738,4 +1776,52 @@ test "the settings screen: the peer is told, holds once its pads run out, and bo
     var fresh = try testSession(.guest, null);
     defer fresh.deinit();
     try testing.expectEqual(Verdict.unexpected, fresh.receive(encodeMsg(.{ .settings = true }, &buf), 0));
+}
+
+test "an event: the host schedules its player's leave ahead of its pads; both make it at one tick" {
+    var host = try testSession(.host, 3);
+    defer host.deinit();
+    var guest = try testSession(.guest, null);
+    defer guest.deinit();
+    try startPair(&host, &guest);
+    try runBoth(&host, &guest, 10);
+    const at = host.schedule(.leave, protocol.no_character).?;
+    try testing.expect(at > host.next);
+    // One change at a time.
+    try testing.expectEqual(@as(?u32, null), host.schedule(.back, 1));
+    var seen: [2]?u32 = .{ null, null };
+    for (0..10) |_| {
+        const t = host.next;
+        if (host.eventAt() != null) seen[0] = t;
+        _ = host.pads(.{}) orelse return error.Held;
+        _ = pump(&host, &guest, 0);
+        if (guest.eventAt() != null) seen[1] = t;
+        _ = guest.pads(.{}) orelse return error.Held;
+        _ = pump(&guest, &host, 0);
+        host.ran();
+        guest.ran();
+    }
+    try testing.expectEqual(@as(?u32, at), seen[0]);
+    try testing.expectEqual(@as(?u32, at), seen[1]);
+    try testing.expect(host.event == null and guest.event == null);
+    // A change whose tick ran already is refused.
+    var buf: [protocol.max_len]u8 = undefined;
+    try testing.expectEqual(Verdict.malformed, guest.receive(encodeMsg(.{ .event = .{ .tick = 2, .what = .leave } }, &buf), 0));
+}
+
+test "a player who leaves the game alone: its last pads run, the session ends, the connection stays" {
+    var host = try testSession(.host, 2);
+    defer host.deinit();
+    var guest = try testSession(.guest, null);
+    defer guest.deinit();
+    try startPair(&host, &guest);
+    try runBoth(&host, &guest, 10);
+    _ = guest.pads(.{});
+    guest.leaveGame();
+    try testing.expect(guest.phase == .lobby and !guest.inSession());
+    _ = pump(&guest, &host, 0);
+    try testing.expect(host.peer_left);
+    while (host.pads(.{})) |_| host.ran();
+    try testing.expectEqual(End.left, host.notes.getLast().ended);
+    try testing.expect(host.phase == .lobby and !host.close_requested and host.welcomed);
 }
