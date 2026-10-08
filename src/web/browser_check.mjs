@@ -535,13 +535,14 @@ function multiple(view) {
 const buttons = { a: 'x', b: 'a', c: 'b', start: 'start' };
 const noKeys = { up: 'none', down: 'none', left: 'none', right: 'none', a: 'none', b: 'none', c: 'none', start: 'none' };
 const keptRecord = JSON.stringify({
-  version: 2,
+  version: 3,
   players: {
-    player1: { input: 'keyboard', keys: { up: 'up', down: 'down', left: 'left', right: 'right', a: 'z', b: 'x', c: 'c', start: 'p' }, buttons, autofire: false },
-    player2: { input: 'keyboard', keys: { up: 'w', down: 's', left: 'a', right: 'd', a: 'f', b: 'g', c: 'h', start: 'tab' }, buttons, autofire: false },
-    player3: { input: 'keyboard', keys: noKeys, buttons, autofire: false },
-    player4: { input: 'keyboard', keys: noKeys, buttons, autofire: false },
+    player1: { input: 'gamepad 1', keys: { up: 'up', down: 'down', left: 'left', right: 'right', a: 'z', b: 'x', c: 'c', start: 'p' }, autofire: false },
+    player2: { input: 'keyboard', keys: { up: 'w', down: 's', left: 'a', right: 'd', a: 'f', b: 'g', c: 'h', start: 'tab' }, autofire: false },
+    player3: { input: 'keyboard', keys: noKeys, autofire: false },
+    player4: { input: 'keyboard', keys: noKeys, autofire: false },
   },
+  gamepads: [{ label: 1, model: '2dc8-3106-8BitDo Receiver', name: '8BitDo Receiver', buttons }],
   settings_key: 'f1',
   sound: { volume: 30, mute: false },
   window: { scale: 1, fullscreen: false },

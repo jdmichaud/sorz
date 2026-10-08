@@ -98,9 +98,8 @@ pub const Overlay = union(Kind) {
     network: struct { what: Message, until_ns: ?u64 = null },
     /// A notice, until the time it goes (set when first shown).
     notice: struct { what: Notice, until_ns: ?u64 = null },
-    /// A gamepad came: its place (GAMEPAD 1 the first's), until the time it goes (set when
-    /// first shown).
-    gamepad: struct { slot: u2, until_ns: ?u64 = null },
+    /// A gamepad came: its label (input.zig), until the time it goes (set when first shown).
+    gamepad: struct { label: u16, until_ns: ?u64 = null },
 
     /// Whether it holds the game under it: no tick runs, the picture stays, the sound fades out.
     pub fn holds(o: *const Overlay) bool {
@@ -126,7 +125,10 @@ pub const Overlay = union(Kind) {
                 try p.box(1, panel_mod.rows - 5, panel_mod.columns - 2, 3);
                 try p.text(3, panel_mod.rows - 4, n.what.text(), .bright);
             },
-            .gamepad => |g| _ = try p.message(gamepadText(g.slot), panel_mod.rows - 4, true),
+            .gamepad => |g| {
+                var buf: [32]u8 = undefined;
+                _ = try p.message(gamepadText(g.label, &buf), panel_mod.rows - 4, true);
+            },
         }
     }
 };
@@ -136,14 +138,9 @@ pub fn peerText(player: u1) []const u8 {
     return if (player == 1) "PLAYER 2 IS IN THE SETTINGS MENU" else "PLAYER 1 IS IN THE SETTINGS MENU";
 }
 
-/// A gamepad's message, by its place.
-pub fn gamepadText(slot: u2) []const u8 {
-    return switch (slot) {
-        0 => "GAMEPAD 1 CONNECTED",
-        1 => "GAMEPAD 2 CONNECTED",
-        2 => "GAMEPAD 3 CONNECTED",
-        3 => "GAMEPAD 4 CONNECTED",
-    };
+/// A gamepad's message, by its label.
+pub fn gamepadText(label: u16, buf: *[32]u8) []const u8 {
+    return std.fmt.bufPrint(buf, "GAMEPAD {d} CONNECTED", .{label}) catch unreachable;
 }
 
 /// The overlays over the game, from the bottom: one of each kind at most.
@@ -194,7 +191,7 @@ test "the overlays: one of each kind, the settings hold and dim, a notice does n
     var s: Stack = .{};
     s.push(.{ .notice = .{ .what = .damaged } });
     try std.testing.expect(!s.holds() and !s.dims());
-    s.push(.{ .gamepad = .{ .slot = 1 } });
+    s.push(.{ .gamepad = .{ .label = 12 } });
     try std.testing.expect(!s.holds() and !s.dims());
     s.remove(.gamepad);
     s.push(.{ .peer_settings = 1 });

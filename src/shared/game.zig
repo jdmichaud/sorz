@@ -674,7 +674,8 @@ pub const Game = struct {
 
     /// An event while the settings are open: they take the presses; the controls still see the
     /// controllers come and go, and the focus.
-    fn settingsEvent(self: *Game, e: platform.Event, now_ns: u64) void {
+    fn settingsEvent(self: *Game, e: platform.Event, p: *platform.Platform) void {
+        const now_ns = p.nowNs();
         switch (e.payload) {
             .quit => self.finished = true,
             .key_down, .controller_button_down => {
@@ -686,32 +687,53 @@ pub const Game = struct {
                 // Its next page: the panel fades out, then in on it.
                 if (screen.pending != null) self.panel_fade = .{ .to = .black, .since_ns = now_ns, .then = .turn_page };
             },
-            else => self.controlEvent(e),
+            else => self.controlEvent(e, p),
         }
     }
 
-    /// An event for the controls. A gamepad that comes is told (GAMEPAD N CONNECTED), and the
-    /// settings follow player 1 taking it; while the settings are open, they offer it, and player
-    /// 1 takes it there.
-    fn controlEvent(self: *Game, e: platform.Event) void {
-        _ = self.controls.handle(e);
-        const added = switch (e.payload) {
-            .controller_added => |id| id,
-            .controller_removed => null,
-            else => return,
+    /// An event for the controls. A gamepad that comes is known by its model, as the platform
+    /// names it (input.zig `Controls.add`); one seen for the first time is kept in the settings
+    /// and their record. It is told (GAMEPAD N CONNECTED), and the settings follow player 1
+    /// taking it; while the settings are open, they offer it, and player 1 takes it there.
+    fn controlEvent(self: *Game, e: platform.Event, p: *platform.Platform) void {
+        const got: ?input.Controls.Added = switch (e.payload) {
+            .controller_added => |id| self.controls.add(id, p.controllerInfo(id) orelse .{}),
+            .controller_removed => blk: {
+                _ = self.controls.handle(e);
+                break :blk null;
+            },
+            else => {
+                _ = self.controls.handle(e);
+                return;
+            },
         };
-        const slot = if (added) |id| self.controls.slotOf(id) else null;
         if (self.overlays.find(.settings)) |o| {
             o.settings.facts.gamepads = self.controls.connected();
-            if (slot) |g| _ = self.settings.layout.came(@intCast(g));
+            if (got) |g| {
+                if (g.new) self.knowGamepad(g.label, &o.settings);
+                _ = self.settings.layout.came(g.label);
+            }
             self.overlay_dirty = true;
             return;
         }
         self.settings.layout.players[0].gamepad = self.controls.layout.players[0].gamepad;
-        if (slot) |g| {
-            self.overlays.push(.{ .gamepad = .{ .slot = @intCast(g) } });
+        if (got) |g| {
+            if (g.new) self.knowGamepad(g.label, null);
+            self.overlays.push(.{ .gamepad = .{ .label = g.label } });
             self.overlay_dirty = true;
         }
+    }
+
+    /// A gamepad seen for the first time: the settings know it, and their record keeps it (the
+    /// settings the screen opened with while it is open, so that leaving it without saving keeps
+    /// the gamepad too).
+    fn knowGamepad(self: *Game, label: u16, screen: ?*settings_mod.screen.Screen) void {
+        const g = self.controls.layout.pad(label).?.*;
+        self.settings.layout.adopt(g, &self.controls.labels);
+        if (screen) |s| {
+            s.before.layout.adopt(g, &self.controls.labels);
+            self.writeSettings(&s.before);
+        } else self.writeSettings(&self.settings);
     }
 
     /// The pad button that attacks by the options' CONTROL, for autofire (B without the content).
@@ -749,7 +771,7 @@ pub const Game = struct {
                 self.events_consumed += 1;
                 if (self.netplay) |np| if (np.handle(p, e)) continue;
                 if (self.settingsOpen()) {
-                    self.settingsEvent(e, p.nowNs());
+                    self.settingsEvent(e, p);
                     continue;
                 }
                 switch (e.payload) {
@@ -761,7 +783,7 @@ pub const Game = struct {
                     } else {
                         _ = self.controls.handle(e);
                     },
-                    else => self.controlEvent(e),
+                    else => self.controlEvent(e, p),
                 }
             }
         }

@@ -11,8 +11,12 @@
 //! EXIT and EXIT WITHOUT SAVING. INPUT CONFIGURATION has a column for each player of this machine
 //! (one with network play or a browser): its input method (the keyboard, or a gamepad connected:
 //! a gamepad one player takes goes from the other, who goes back to the keyboard), its keys, or
-//! its gamepad's A, B, C and START (the directions are the gamepad's d-pad and stick), and its
-//! autofire; the settings key where the variant has it; and EXIT, back to the first page.
+//! its gamepad's A, B, C and START (its model's: the directions are the gamepad's d-pad and stick),
+//! and its autofire; the settings key where the variant has it; GAMEPAD LIST...; and EXIT, back to
+//! the first page. GAMEPAD LIST shows every gamepad the machine knows (input.zig), by its label,
+//! with its name, the connected ones bright, the others dim, scrolling past the screen's rows; an
+//! unconnected one is forgotten with DEL, or with A, B or C and a yes (A, B or C again; START:
+//! no).
 //!
 //! The pads' keys work it as they work the options: the directions move (left and right between
 //! the players' columns, or change a value), A, B or C acts (a key or a button: the next one
@@ -35,7 +39,7 @@ const panel_mod = @import("../panel.zig");
 const Settings = record.Settings;
 const Panel = panel_mod.Panel;
 
-pub const Page = enum(u8) { main, input };
+pub const Page = enum(u8) { main, input, gamepads };
 
 /// The first page's rows.
 pub const Row = enum(u8) {
@@ -70,6 +74,7 @@ pub const InputRow = enum(u8) {
     start,
     autofire,
     settings_key,
+    gamepad_list,
     exit,
 
     /// The pad button of a button row.
@@ -86,7 +91,7 @@ pub const InputRow = enum(u8) {
 
     /// A row of the players' columns.
     fn perPlayer(row: InputRow) bool {
-        return row != .settings_key and row != .exit;
+        return row != .settings_key and row != .gamepad_list and row != .exit;
     }
 };
 
@@ -101,9 +106,13 @@ pub const Facts = struct {
     settings_key: bool = true,
     /// The game's rules are the settings' here (variant.zig): their rows.
     rules: bool = false,
-    /// The gamepads connected, a bit each by their place (GAMEPAD 1 the first's): the input
-    /// methods a player may take.
-    gamepads: u4 = 0,
+    /// The labels of the gamepads connected, the lowest first (input.zig `Controls.connected`):
+    /// the input methods a player may take.
+    gamepads: [input.Controls.max_controllers]?u16 = @splat(null),
+
+    pub fn connected(self: *const Facts, label: u16) bool {
+        return std.mem.indexOfScalar(?u16, &self.gamepads, label) != null;
+    }
 };
 
 /// What an event did: the screen stays open, or it closed, its settings to be written, or given
@@ -121,6 +130,11 @@ pub const Screen = struct {
     column: u2 = 0,
     /// Waiting for the new key (or gamepad button) of the chosen setting.
     waiting: bool = false,
+    /// GAMEPAD LIST's cursor (an index in the labels' order, EXIT past them), the first row
+    /// shown, and the question whether to forget the chosen gamepad.
+    list_cursor: usize = 0,
+    list_top: usize = 0,
+    confirming: bool = false,
     /// The settings when the screen opened, which leaving it without saving gives back.
     before: Settings = .{},
 
@@ -145,6 +159,10 @@ pub const Screen = struct {
             .key_down => |k| {
                 if (self.waiting) {
                     self.takeKey(settings, k);
+                    return .stay;
+                }
+                if (self.page == .gamepads and k.key == .delete and !k.repeat) {
+                    self.forgetChosen(settings);
                     return .stay;
                 }
                 const nav: Nav = if (self.padButton(settings, k.key)) |b| navOf(b) else switch (k.key) {
@@ -198,11 +216,14 @@ pub const Screen = struct {
         return if (place.player < self.facts.players) place.button else null;
     }
 
-    /// The pad button a gamepad's button presses for a player of this machine.
+    /// The pad button a gamepad's button presses for a player of this machine (its gamepad's
+    /// model's), or by the first buttons.
     fn faceOf(self: *const Screen, settings: *const Settings, b: platform.ControllerButton) ?input.Button {
         for (settings.layout.players[0..self.facts.players]) |p| {
-            if (std.mem.indexOfScalar(platform.ControllerButton, &p.buttons, b)) |i| return input.face_buttons[i];
+            const pad = settings.layout.pad(p.gamepad orelse continue) orelse continue;
+            if (std.mem.indexOfScalar(platform.ControllerButton, &pad.buttons, b)) |i| return input.face_buttons[i];
         }
+        if (std.mem.indexOfScalar(platform.ControllerButton, &input.default_buttons, b)) |i| return input.face_buttons[i];
         return null;
     }
 
@@ -211,6 +232,7 @@ pub const Screen = struct {
         return switch (self.page) {
             .main => self.navigateMain(settings, nav),
             .input => self.navigateInput(settings, nav),
+            .gamepads => self.navigateList(settings, nav),
         };
     }
 
@@ -228,7 +250,7 @@ pub const Screen = struct {
                 .scale => settings.window.scale = if (settings.window.scale >= record.max_scale) 1 else settings.window.scale + 1,
                 .lives => settings.rules.lives = if (settings.rules.lives >= record.max_lives) 1 else settings.rules.lives + 1,
                 .continues => settings.rules.continues = if (settings.rules.continues >= record.max_continues) 0 else settings.rules.continues + 1,
-                .defaults => settings.* = .{},
+                .defaults => settings.defaults(),
                 .save_and_exit => return .save_and_exit,
                 .exit_without_saving => return self.leave(settings),
                 else => change(self.row, settings, true),
@@ -253,6 +275,12 @@ pub const Screen = struct {
                 .method => settings.layout.assign(self.column, self.nextMethod(p.gamepad)),
                 .autofire => p.autofire = !p.autofire,
                 .settings_key => self.waiting = true,
+                .gamepad_list => {
+                    self.pending = .gamepads;
+                    self.list_cursor = 0;
+                    self.list_top = 0;
+                    self.confirming = false;
+                },
                 .exit => self.pending = .main,
                 else => if (p.gamepad == null or self.input_row.face() != null) {
                     self.waiting = true;
@@ -264,6 +292,55 @@ pub const Screen = struct {
         return .stay;
     }
 
+    /// GAMEPAD LIST: up and down move (EXIT past the gamepads), A, B or C on an unconnected one
+    /// asks whether to forget it (A, B or C again: yes; START: no), on EXIT goes back, as START
+    /// does.
+    fn navigateList(self: *Screen, settings: *Settings, nav: Nav) Result {
+        var buf: [input.max_known]u16 = undefined;
+        const labels = settings.layout.labels(&buf);
+        if (self.confirming) {
+            if (nav == .choose) self.forgetChosen(settings);
+            if (nav == .choose or nav == .back) self.confirming = false;
+            return .stay;
+        }
+        switch (nav) {
+            .up => self.list_cursor = if (self.list_cursor == 0) labels.len else self.list_cursor - 1,
+            .down => self.list_cursor = if (self.list_cursor >= labels.len) 0 else self.list_cursor + 1,
+            .left, .right => {},
+            .choose => if (self.list_cursor >= labels.len) {
+                self.pending = .input;
+            } else if (!self.facts.connected(labels[self.list_cursor])) {
+                self.confirming = true;
+            },
+            .back => self.pending = .input,
+            .leave => unreachable,
+        }
+        self.scroll(labels.len);
+        return .stay;
+    }
+
+    /// Forgets the chosen gamepad, when it is not connected.
+    fn forgetChosen(self: *Screen, settings: *Settings) void {
+        var buf: [input.max_known]u16 = undefined;
+        const labels = settings.layout.labels(&buf);
+        if (self.list_cursor >= labels.len or self.facts.connected(labels[self.list_cursor])) return;
+        settings.layout.forget(labels[self.list_cursor]);
+        self.confirming = false;
+        self.scroll(labels.len - 1);
+    }
+
+    /// The rows of gamepads GAMEPAD LIST shows at once.
+    const list_rows = 16;
+
+    /// Keeps the cursor (within the `count` gamepads and EXIT) among the rows shown.
+    fn scroll(self: *Screen, count: usize) void {
+        self.list_cursor = @min(self.list_cursor, count);
+        if (self.list_cursor >= count) return;
+        if (self.list_cursor < self.list_top) self.list_top = self.list_cursor;
+        if (self.list_cursor >= self.list_top + list_rows) self.list_top = self.list_cursor + 1 - list_rows;
+        self.list_top = @min(self.list_top, count -| list_rows);
+    }
+
     /// Turns to the page it waits to turn to, if any.
     pub fn turnPage(self: *Screen) void {
         const p = self.pending orelse return;
@@ -271,12 +348,12 @@ pub const Screen = struct {
         self.pending = null;
     }
 
-    /// The input method after `now`: the keyboard, then each gamepad connected, in their order.
-    fn nextMethod(self: *const Screen, now: ?u2) ?u2 {
-        var g: usize = if (now) |n| @as(usize, n) + 1 else 0;
-        while (g < input.Controls.max_controllers) : (g += 1) {
-            if (self.facts.gamepads & (@as(u4, 1) << @intCast(g)) != 0) return @intCast(g);
-        }
+    /// The input method after `now`: the keyboard, then each gamepad connected, in their labels'
+    /// order.
+    fn nextMethod(self: *const Screen, now: ?u16) ?u16 {
+        for (self.facts.gamepads) |g| if (g) |l| {
+            if (now == null or l > now.?) return l;
+        };
         return null;
     }
 
@@ -346,7 +423,8 @@ pub const Screen = struct {
             self.waiting = false;
             return;
         }
-        if (settings.bindButton(self.column, self.input_row.face().?, b)) self.waiting = false;
+        const which = settings.layout.players[self.column].gamepad.?;
+        if (settings.bindButton(which, self.input_row.face().?, b)) self.waiting = false;
     }
 
     // --- the picture ---------------------------------------------------------------------------
@@ -384,7 +462,8 @@ pub const Screen = struct {
             .method => method_row,
             .autofire => configuration_row + 10,
             .settings_key => configuration_row + 11,
-            .exit => configuration_row + 12 + @as(u16, @intFromBool(self.facts.settings_key)) + 1,
+            .gamepad_list => configuration_row + 12 + @as(u16, @intFromBool(self.facts.settings_key)),
+            .exit => configuration_row + 13 + @as(u16, @intFromBool(self.facts.settings_key)),
             else => configuration_row + @backingInt(row),
         };
     }
@@ -396,7 +475,36 @@ pub const Screen = struct {
         switch (self.page) {
             .main => try self.drawMain(settings, p, arrow),
             .input => try self.drawInput(settings, p, arrow),
+            .gamepads => try self.drawList(settings, p, arrow),
         }
+    }
+
+    /// GAMEPAD LIST: each gamepad's label and name on a row (cut to the box), bright when it is
+    /// connected, from the first row shown; EXIT under them; the bottom line says what A, B or C
+    /// or DEL would do.
+    fn drawList(self: *const Screen, settings: *const Settings, p: *Panel, arrow: bool) Panel.Error!void {
+        try p.text(label_col, title_row, "GAMEPAD LIST", .bright);
+        var buf: [input.max_known]u16 = undefined;
+        const labels = settings.layout.labels(&buf);
+        if (labels.len == 0) try p.text(label_col, first_row, "NO GAMEPAD YET.", .dim);
+        const shown = labels[@min(self.list_top, labels.len)..][0..@min(labels.len -| self.list_top, list_rows)];
+        for (shown, 0..) |l, i| {
+            var line: [panel_mod.columns]u8 = undefined;
+            const pad = settings.layout.pad(l).?;
+            const text = std.fmt.bufPrint(&line, "GAMEPAD {d} {s}", .{ l, pad.name.slice() }) catch line[0..];
+            const width = panel_mod.columns - label_col - box_col - 1;
+            try p.text(label_col, first_row + i, text[0..@min(text.len, width)], if (self.facts.connected(l)) .bright else .dim);
+        }
+        const exit_row = first_row + list_rows + 1;
+        try p.text(label_col, exit_row, "EXIT", if (self.list_cursor >= labels.len) .bright else .dim);
+        if (arrow) p.arrowAt(label_col - 1, if (self.list_cursor >= labels.len) exit_row else @intCast(first_row + self.list_cursor - self.list_top));
+        const prompt_text: []const u8 = if (self.confirming)
+            "FORGET IT? A, B, C: YES. START: NO."
+        else if (self.list_cursor < labels.len and !self.facts.connected(labels[self.list_cursor]))
+            "DEL, OR A, B, C: FORGET IT."
+        else
+            "";
+        try p.text(label_col, prompt_row, prompt_text, .dim);
     }
 
     fn drawMain(self: *const Screen, settings: *const Settings, p: *Panel, arrow: bool) Panel.Error!void {
@@ -435,7 +543,8 @@ pub const Screen = struct {
             if (!row.perPlayer()) continue;
             for (0..self.facts.players) |c| {
                 const here = chosen and c == self.column;
-                const text = if (here and self.waiting) "" else self.cell(settings, row, c);
+                var buf: [16]u8 = undefined;
+                const text = if (here and self.waiting) "" else cell(settings, row, c, &buf);
                 try p.text(player_cols[c], y, text, if (here) .bright else .dim);
             }
         }
@@ -444,34 +553,32 @@ pub const Screen = struct {
             const x: i32 = if (self.input_row.perPlayer()) player_cols[self.column] - 1 else if (self.input_row == .settings_key) player_cols[0] - 1 else label_col - 1;
             p.arrowAt(x, y);
         }
-        try p.text(label_col, prompt_row, self.prompt(settings), .dim);
+        var buf: [panel_mod.columns]u8 = undefined;
+        try p.text(label_col, prompt_row, self.prompt(settings, &buf), .dim);
     }
 
-    /// Player `c`'s cell of `row`: its input method, its key or gamepad button, its autofire.
-    fn cell(self: *const Screen, settings: *const Settings, row: InputRow, c: usize) []const u8 {
-        _ = self;
+    /// Player `c`'s cell of `row`: its input method, its key or its gamepad's button (its model's),
+    /// its autofire.
+    fn cell(settings: *const Settings, row: InputRow, c: usize, buf: *[16]u8) []const u8 {
         const pi = &settings.layout.players[c];
         return switch (row) {
-            .method => methodName(pi.gamepad),
+            .method => methodName(pi.gamepad, buf),
             .autofire => if (pi.autofire) "ON" else "OFF",
-            else => if (pi.gamepad == null)
-                keyName(pi.keys[@backingInt(row.button().?)])
-            else if (row.face()) |f| buttonName(pi.buttons[f]) else "",
+            else => if (pi.gamepad) |l| blk: {
+                const f = row.face() orelse break :blk "";
+                const pad = settings.layout.pad(l) orelse break :blk "";
+                break :blk buttonName(pad.buttons[f]);
+            } else keyName(pi.keys[@backingInt(row.button().?)]),
         };
     }
 
     /// The bottom line: what the screen waits for, or that the chosen player's gamepad is away.
-    fn prompt(self: *const Screen, settings: *const Settings) []const u8 {
+    fn prompt(self: *const Screen, settings: *const Settings, buf: []u8) []const u8 {
         if (self.waiting) return if (self.waitsForButton(settings)) "PRESS THE NEW GAMEPAD BUTTON." else "PRESS THE NEW KEY.";
         if (!self.input_row.perPlayer()) return "";
         const g = settings.layout.players[self.column].gamepad orelse return "";
-        if (self.facts.gamepads & (@as(u4, 1) << g) != 0) return "";
-        return switch (g) {
-            0 => "GAMEPAD 1 IS AWAY: THE KEYS PLAY.",
-            1 => "GAMEPAD 2 IS AWAY: THE KEYS PLAY.",
-            2 => "GAMEPAD 3 IS AWAY: THE KEYS PLAY.",
-            3 => "GAMEPAD 4 IS AWAY: THE KEYS PLAY.",
-        };
+        if (self.facts.connected(g)) return "";
+        return std.fmt.bufPrint(buf, "GAMEPAD {d} IS AWAY: THE KEYS PLAY.", .{g}) catch "";
     }
 
     fn label(row: Row) []const u8 {
@@ -503,6 +610,7 @@ pub const Screen = struct {
             .start => "START",
             .autofire => "AUTOFIRE",
             .settings_key => "SETTINGS KEY",
+            .gamepad_list => "GAMEPAD LIST...",
             .exit => "EXIT",
         };
     }
@@ -522,14 +630,9 @@ pub const Screen = struct {
 };
 
 /// An input method's name on the screen.
-pub fn methodName(g: ?u2) []const u8 {
+pub fn methodName(g: ?u16, buf: *[16]u8) []const u8 {
     const n = g orelse return "KEYB.";
-    return switch (n) {
-        0 => "GAMEPAD 1",
-        1 => "GAMEPAD 2",
-        2 => "GAMEPAD 3",
-        3 => "GAMEPAD 4",
-    };
+    return std.fmt.bufPrint(buf, "GAMEPAD {d}", .{n}) catch unreachable;
 }
 
 /// A key's name on the screen, in the game's font (at most 9 characters).
@@ -655,28 +758,36 @@ test "INPUT CONFIGURATION: a key rebound swaps with the setting that had it; STA
     try testing.expectEqual(Result.stay, press(&screen, &s, .tab));
 }
 
+fn knownPads(s: *Settings, models: []const []const u8) void {
+    for (models, 0..) |m, i| s.layout.gamepads[i] = .{ .label = @intCast(i + 1), .model = .of(m), .name = .of(m) };
+}
+
 test "the input method: the keyboard, then the gamepads connected; a gamepad taken goes from the other" {
     var s: Settings = .{};
-    var screen: Screen = .open(&s, .{ .gamepads = 0b101 });
+    knownPads(&s, &.{ "6B", "6B", "8BitDo" });
+    var screen: Screen = .open(&s, .{ .gamepads = .{ 1, 3, null, null } });
     screen.page = .input;
     _ = press(&screen, &s, .z);
-    try testing.expectEqual(@as(?u2, 0), s.layout.players[0].gamepad);
+    try testing.expectEqual(@as(?u16, 1), s.layout.players[0].gamepad);
     _ = press(&screen, &s, .z);
-    try testing.expectEqual(@as(?u2, 2), s.layout.players[0].gamepad);
+    try testing.expectEqual(@as(?u16, 3), s.layout.players[0].gamepad);
     _ = press(&screen, &s, .z);
-    try testing.expectEqual(@as(?u2, null), s.layout.players[0].gamepad);
+    try testing.expectEqual(@as(?u16, null), s.layout.players[0].gamepad);
     _ = press(&screen, &s, .z);
     // Player 2 takes GAMEPAD 1: player 1 goes back to the keyboard.
     _ = press(&screen, &s, .right);
     _ = press(&screen, &s, .f);
-    try testing.expect(s.layout.players[1].gamepad == 0 and s.layout.players[0].gamepad == null);
-    // A gamepad player's buttons: A rebinds its gamepad's A; its directions are the d-pad's.
+    try testing.expect(s.layout.players[1].gamepad == 1 and s.layout.players[0].gamepad == null);
+    // A gamepad player's buttons: A rebinds its gamepad's model's A; its directions are the
+    // d-pad's.
     for (0..5) |_| _ = press(&screen, &s, .down);
     try testing.expectEqual(InputRow.a, screen.input_row);
     _ = press(&screen, &s, .z);
     try testing.expect(screen.waiting);
     _ = pressButton(&screen, &s, .y);
-    try testing.expectEqual(platform.ControllerButton.y, s.layout.players[1].buttons[0]);
+    try testing.expectEqual(platform.ControllerButton.y, s.layout.pad(1).?.buttons[0]);
+    try testing.expectEqual(platform.ControllerButton.y, s.layout.pad(2).?.buttons[0]);
+    try testing.expectEqual(platform.ControllerButton.x, s.layout.pad(3).?.buttons[0]);
     _ = press(&screen, &s, .up);
     _ = press(&screen, &s, .z);
     try testing.expect(!screen.waiting);
@@ -688,8 +799,52 @@ test "the input method: the keyboard, then the gamepads connected; a gamepad tak
     _ = press(&screen, &s, .down);
     try testing.expectEqual(InputRow.settings_key, screen.input_row);
     _ = press(&screen, &s, .down);
+    try testing.expectEqual(InputRow.gamepad_list, screen.input_row);
+    _ = press(&screen, &s, .down);
     _ = pressTurning(&screen, &s, .z);
     try testing.expectEqual(Page.main, screen.page);
+}
+
+test "GAMEPAD LIST: every gamepad known, an unconnected one forgotten (DEL, or A and a yes), scrolling" {
+    var s: Settings = .{};
+    knownPads(&s, &.{ "a", "b", "c" });
+    s.layout.players[1].gamepad = 2;
+    var screen: Screen = .open(&s, .{ .gamepads = .{ 1, null, null, null } });
+    screen.page = .input;
+    screen.input_row = .gamepad_list;
+    _ = pressTurning(&screen, &s, .z);
+    try testing.expectEqual(Page.gamepads, screen.page);
+    // GAMEPAD 1 is connected: A does nothing, nor DEL.
+    _ = press(&screen, &s, .z);
+    _ = press(&screen, &s, .delete);
+    try testing.expect(!screen.confirming and s.layout.pad(1) != null);
+    // GAMEPAD 2: A asks, START says no; A asks again, A says yes: player 2 to the keyboard.
+    _ = press(&screen, &s, .down);
+    _ = press(&screen, &s, .z);
+    try testing.expect(screen.confirming);
+    _ = press(&screen, &s, .enter);
+    try testing.expect(!screen.confirming and s.layout.pad(2) != null);
+    _ = press(&screen, &s, .z);
+    _ = press(&screen, &s, .x);
+    try testing.expect(s.layout.pad(2) == null and s.layout.players[1].gamepad == null);
+    // GAMEPAD 3, now second: DEL forgets it at once; the cursor on EXIT.
+    _ = press(&screen, &s, .delete);
+    try testing.expect(s.layout.pad(3) == null);
+    try testing.expectEqual(@as(usize, 1), screen.list_cursor);
+    _ = pressTurning(&screen, &s, .z);
+    try testing.expectEqual(Page.input, screen.page);
+
+    // Many gamepads: the rows shown follow the cursor.
+    s = .{};
+    for (0..30) |i| s.layout.gamepads[i] = .{ .label = @intCast(i + 1) };
+    screen = .open(&s, .{});
+    screen.page = .gamepads;
+    for (0..20) |_| _ = press(&screen, &s, .down);
+    try testing.expectEqual(@as(usize, 20), screen.list_cursor);
+    try testing.expectEqual(@as(usize, 20 + 1 - Screen.list_rows), screen.list_top);
+    _ = press(&screen, &s, .up);
+    for (0..20) |_| _ = press(&screen, &s, .up);
+    try testing.expectEqual(@as(usize, 30), screen.list_cursor);
 }
 
 test "EXIT WITHOUT SAVING, the settings key and a gamepad's BACK give back what the screen opened with" {
