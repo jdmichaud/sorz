@@ -60,10 +60,12 @@ pub const page_height = picture.height;
 
 pub const UpdateResult = enum { running, finished };
 
-/// The settings panel's fade, a step every tick's time from `since_ns` (render.Fade).
+/// The settings panel's fade, a step every tick's time from `since_ns` (render.Fade); once faded
+/// out, the settings go or their screen turns to its next page.
 const PanelFade = struct {
     to: render.Fade.To,
     since_ns: u64,
+    then: enum { close, turn_page } = .close,
 
     const Shown = struct { to: render.Fade.To, steps: u8 };
 
@@ -72,7 +74,7 @@ const PanelFade = struct {
         return .{ .to = f.to, .steps = @intCast(steps) };
     }
 
-    /// Faded out: the settings go.
+    /// Faded out.
     fn out(f: PanelFade, now_ns: u64) bool {
         return f.to == .black and f.at(now_ns).steps == render.Fade.steps;
     }
@@ -333,11 +335,12 @@ pub const Game = struct {
     /// a fading gamepad's message.
     arrow_shown: bool = true,
     light_shown: u8 = 255,
-    /// The settings opened from the options fade in and out as the menus' screens do: their
-    /// panel's fade, from their opening, then from their closing (they go once it is over); and
-    /// its step as last drawn.
+    /// The settings' panel fades: in and out as the menus' screens do when the options open them
+    /// (`settings_fade`), and out and in as their screen turns its page. The fade running (or the
+    /// last, its colours kept), and its step as last drawn.
     panel_fade: ?PanelFade = null,
     panel_fade_shown: ?PanelFade.Shown = null,
+    settings_fade: bool = false,
     alone: bool = false,
     /// The player this machine's pad plays outside a session: player 2 for a guest whose host
     /// left the game under way, until that game ends (network_play.zig); else player 1.
@@ -637,6 +640,7 @@ pub const Game = struct {
         self.overlay_dirty = true;
         self.controls.release();
         self.panel_fade = if (fade_ns) |t| .{ .to = .target, .since_ns = t } else null;
+        self.settings_fade = fade_ns != null;
         if (self.started and fade_ns == null) self.jingle_at = 0;
     }
 
@@ -647,18 +651,25 @@ pub const Game = struct {
         self.overlay_dirty = true;
         self.controls.layout = self.settings.layout;
         if (how == .save_and_exit) self.writeSettings(&self.settings);
-        if (self.panel_fade != null) if (now_ns) |t| {
+        if (self.settings_fade) if (now_ns) |t| {
             self.panel_fade = .{ .to = .black, .since_ns = t };
             return;
         };
         self.panel_fade = null;
+        self.settings_fade = false;
         self.overlays.remove(.settings);
     }
 
-    /// The settings fading out once closed: they take no more presses.
-    fn settingsClosing(self: *const Game) bool {
+    /// The settings' panel fading out (they close, or turn their page): they take no presses.
+    fn settingsFadingOut(self: *const Game) bool {
         const f = self.panel_fade orelse return false;
         return f.to == .black;
+    }
+
+    /// The settings fading out once closed.
+    fn settingsClosing(self: *const Game) bool {
+        const f = self.panel_fade orelse return false;
+        return f.to == .black and f.then == .close;
     }
 
     /// An event while the settings are open: they take the presses; the controls still see the
@@ -667,11 +678,13 @@ pub const Game = struct {
         switch (e.payload) {
             .quit => self.finished = true,
             .key_down, .controller_button_down => {
-                if (self.settingsClosing()) return;
+                if (self.settingsFadingOut()) return;
                 const screen = &self.overlays.find(.settings).?.settings;
                 const result = screen.handle(&self.settings, e);
                 self.overlay_dirty = true;
-                if (result != .stay) self.closeSettings(result, now_ns);
+                if (result != .stay) return self.closeSettings(result, now_ns);
+                // Its next page: the panel fades out, then in on it.
+                if (screen.pending != null) self.panel_fade = .{ .to = .black, .since_ns = now_ns, .then = .turn_page };
             },
             else => self.controlEvent(e),
         }
@@ -767,11 +780,21 @@ pub const Game = struct {
             network_play.update(self, p);
         }
         if (self.netplay) |np| self.peerOverlay(np);
-        // The closed settings faded out: they go, and the game goes on.
+        // The settings' panel faded out: closed, they go, and the game goes on; else their screen
+        // turns its page, and the panel fades in on it.
         if (self.panel_fade) |f| if (f.out(p.nowNs())) {
-            self.panel_fade = null;
-            self.overlays.remove(.settings);
             self.overlay_dirty = true;
+            switch (f.then) {
+                .close => {
+                    self.panel_fade = null;
+                    self.settings_fade = false;
+                    self.overlays.remove(.settings);
+                },
+                .turn_page => {
+                    if (self.overlays.find(.settings)) |o| o.settings.turnPage();
+                    self.panel_fade = .{ .to = .target, .since_ns = p.nowNs() };
+                },
+            }
         };
         // A game turned away plays alone until its character select is over.
         if (self.alone and !network_play.wantsToJoin(&self.state)) self.alone = false;

@@ -23,6 +23,9 @@
 //! WITHOUT SAVING, the settings key (where the variant has it) and a gamepad's BACK leave without
 //! saving, giving back the settings the screen opened with. The changes apply at once (the input
 //! when the screen closes).
+//!
+//! The screen turns its page once the game has faded it out (`pending`, `turnPage`: game.zig fades
+//! the panel out, then in on the next page), and takes no event until then.
 const std = @import("std");
 const platform = @import("../platform.zig");
 const input = @import("../input.zig");
@@ -110,6 +113,8 @@ pub const Result = enum { stay, save_and_exit, exit_without_saving };
 pub const Screen = struct {
     facts: Facts = .{},
     page: Page = .main,
+    /// The page it turns to once faded out; it takes no events until then.
+    pending: ?Page = null,
     row: Row = .input_configuration,
     input_row: InputRow = .method,
     /// INPUT CONFIGURATION's player column.
@@ -135,6 +140,7 @@ pub const Screen = struct {
     /// Takes one event; `settings` change as the player chooses. When it closes without saving,
     /// they are already given back.
     pub fn handle(self: *Screen, settings: *Settings, e: platform.Event) Result {
+        if (self.pending != null) return .stay;
         switch (e.payload) {
             .key_down => |k| {
                 if (self.waiting) {
@@ -214,7 +220,7 @@ pub const Screen = struct {
             .left, .right => change(self.row, settings, nav == .right),
             .choose => switch (self.row) {
                 .input_configuration => {
-                    self.page = .input;
+                    self.pending = .input;
                     self.input_row = .method;
                     self.column = 0;
                 },
@@ -247,15 +253,22 @@ pub const Screen = struct {
                 .method => settings.layout.assign(self.column, self.nextMethod(p.gamepad)),
                 .autofire => p.autofire = !p.autofire,
                 .settings_key => self.waiting = true,
-                .exit => self.page = .main,
+                .exit => self.pending = .main,
                 else => if (p.gamepad == null or self.input_row.face() != null) {
                     self.waiting = true;
                 },
             },
-            .back => self.page = .main,
+            .back => self.pending = .main,
             .leave => unreachable,
         }
         return .stay;
+    }
+
+    /// Turns to the page it waits to turn to, if any.
+    pub fn turnPage(self: *Screen) void {
+        const p = self.pending orelse return;
+        self.page = p;
+        self.pending = null;
     }
 
     /// The input method after `now`: the keyboard, then each gamepad connected, in their order.
@@ -353,10 +366,12 @@ pub const Screen = struct {
     const configuration_row = 8;
     const prompt_row = panel_mod.rows - 3;
 
-    /// The first page's screen row of `row`: a blank row before the rules and before DEFAULTS.
+    /// The first page's screen row of `row`: a blank row after INPUT CONFIGURATION..., before the
+    /// rules and before DEFAULTS.
     fn screenRow(self: *const Screen, row: Row) u16 {
         var n: u16 = 0;
         for (std.enums.values(Row)[0..@backingInt(row)]) |r| n += @intFromBool(self.shows(r));
+        if (row != .input_configuration) n += 1;
         if (@backingInt(row) >= @backingInt(Row.lives)) n += 1;
         if (@backingInt(row) >= @backingInt(Row.defaults) and self.facts.rules) n += 1;
         return first_row + n;
@@ -592,6 +607,13 @@ fn press(screen: *Screen, settings: *Settings, k: platform.Key) Result {
     return screen.handle(settings, .{ .time_ns = 0, .payload = .{ .key_down = .{ .key = k } } });
 }
 
+/// `press`, the page turned at once (the game turns it once it has faded it out).
+fn pressTurning(screen: *Screen, settings: *Settings, k: platform.Key) Result {
+    const r = press(screen, settings, k);
+    screen.turnPage();
+    return r;
+}
+
 fn pressButton(screen: *Screen, settings: *Settings, b: platform.ControllerButton) Result {
     const id: platform.ControllerId = @fromBackingInt(1);
     return screen.handle(settings, .{ .time_ns = 0, .payload = .{ .controller_button_down = .{ .controller = id, .button = b } } });
@@ -601,8 +623,12 @@ test "INPUT CONFIGURATION: a key rebound swaps with the setting that had it; STA
     var s: Settings = .{};
     var screen: Screen = .open(&s, .{});
     // INPUT CONFIGURATION (A), then player 2's A (row a, column 1): A, then X, player 1's B.
+    // The page turns once faded out: no event until then.
     try testing.expectEqual(Result.stay, press(&screen, &s, .z));
-    try testing.expectEqual(Page.input, screen.page);
+    try testing.expect(screen.page == .main and screen.pending == .input);
+    try testing.expectEqual(Result.stay, press(&screen, &s, .down));
+    screen.turnPage();
+    try testing.expect(screen.page == .input and screen.input_row == .method);
     for ([_]platform.Key{ .down, .down, .down, .down, .down, .right, .z }) |k| try testing.expectEqual(Result.stay, press(&screen, &s, k));
     try testing.expect(screen.waiting and screen.input_row == .a and screen.column == 1);
     // A repeat is not a press.
@@ -619,7 +645,7 @@ test "INPUT CONFIGURATION: a key rebound swaps with the setting that had it; STA
     try testing.expectEqual(platform.Key.x, s.layout.players[1].keys[@backingInt(input.Button.a)]);
     // START (Enter, player 1's) goes back to the first page; there, START saves and leaves, as
     // player 2's (Tab) and Escape do.
-    try testing.expectEqual(Result.stay, press(&screen, &s, .enter));
+    try testing.expectEqual(Result.stay, pressTurning(&screen, &s, .enter));
     try testing.expectEqual(Page.main, screen.page);
     try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .enter));
     try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .tab));
@@ -662,7 +688,7 @@ test "the input method: the keyboard, then the gamepads connected; a gamepad tak
     _ = press(&screen, &s, .down);
     try testing.expectEqual(InputRow.settings_key, screen.input_row);
     _ = press(&screen, &s, .down);
-    _ = press(&screen, &s, .z);
+    _ = pressTurning(&screen, &s, .z);
     try testing.expectEqual(Page.main, screen.page);
 }
 
@@ -725,8 +751,8 @@ test "the rules' rows where the settings give the rules: lives 1 to 9, continues
     _ = press(&screen, &s, .down);
     _ = press(&screen, &s, .z);
     try testing.expect(!s.rules.friendly_hit);
-    // A blank row before the rules: FRIENDLY HIT on the ninth row.
-    try testing.expectEqual(@as(u16, Screen.first_row + 8), screen.screenRow(.friendly_hit));
+    // A blank row after INPUT CONFIGURATION... and before the rules: FRIENDLY HIT on the tenth.
+    try testing.expectEqual(@as(u16, Screen.first_row + 9), screen.screenRow(.friendly_hit));
 }
 
 test "the screen draws on a panel: the title, the rows, the arrow" {

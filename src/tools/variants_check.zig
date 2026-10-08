@@ -151,6 +151,19 @@ fn settingsClosed(r: *const Run) bool {
     return !r.game.settingsOpen();
 }
 
+fn onPage(r: *const Run, which: sorz.settings.screen.Page) bool {
+    const o = @constCast(&r.game.overlays).find(.settings) orelse return false;
+    return o.settings.page == which;
+}
+
+fn onInputPage(r: *const Run) bool {
+    return onPage(r, .input);
+}
+
+fn onFirstPage(r: *const Run) bool {
+    return onPage(r, .main);
+}
+
 /// From power-on to the game menu: START on the intro, then on the title.
 fn toMenu(f: *Flow, r: *Run) !void {
     while (r.updates < 500) try r.update();
@@ -268,13 +281,16 @@ fn extended(f: *Flow, r: *Run) !void {
     try f.check(r.game.state.tick == tick, "the settings hold the game");
     // INPUT CONFIGURATION, a key changed (player 1's up), START back; then EXIT WITHOUT SAVING
     // (up from the first row: the last): given back, as the settings fade out.
+    // The page turns once the panel has faded out, and fades in on the next.
     const before = r.game.settings;
     try r.press(.z);
+    try f.until(r, onInputPage, 80, "INPUT CONFIGURATION, faded out to it");
     try r.press(.down);
     try r.press(.z);
     try r.press(.q);
     try f.check(!std.meta.eql(before, r.game.settings), "a key changed");
     try r.press(.enter);
+    try f.until(r, onFirstPage, 80, "back on the first page");
     try r.press(.up);
     const saves = r.game.saves_written;
     try r.press(.z);
