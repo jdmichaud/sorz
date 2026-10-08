@@ -301,6 +301,10 @@ pub const Round = struct {
     /// The pause's text shows: in the pause, and a display tick after it ended (`resumed`).
     shown_pause: bool = false,
     resumed: bool = false,
+    /// The time over's text is among the sprites from the time over's first tick until play's
+    /// next logic tick draws the world's anew (the original puts it in its sprite table once).
+    time_over_text: bool = false,
+    shown_time_over: bool = false,
     join: Join = .{},
     /// Player 2 joins at the next logic tick as this character (network play's: `dropIn`).
     join_as: ?setup_mod.Character = null,
@@ -492,6 +496,7 @@ pub const Round = struct {
         self.shown_phase = self.phase;
         self.shown_pause = self.phase == .paused or self.resumed;
         self.resumed = false;
+        self.shown_time_over = self.time_over_text;
         self.shown_banner = self.banner;
         const cam = &self.play.world.camera;
         // The shake's move down, at an odd tick of it left (world/systems.zig).
@@ -601,7 +606,10 @@ pub const Round = struct {
                 return self.playTick(turn, a, false);
             } else self.waited(),
             .time_over => {
-                if (self.left == a.screen.time_over.ticks) turn.play(a.time_up);
+                if (self.left == a.screen.time_over.ticks) {
+                    turn.play(a.time_up);
+                    self.time_over_text = true;
+                }
                 self.left -|= 1;
                 if (self.left == 0) self.timeOverEnds(turn, a);
             },
@@ -1004,6 +1012,7 @@ pub const Round = struct {
             return null;
         }
         self.logic_ran = true;
+        self.time_over_text = false;
         self.trace_t += 1;
         // A player's continue: the original's new life draws the status bar's part anew, its
         // score cleared, at once.
@@ -1431,9 +1440,9 @@ pub const Round = struct {
                 try v.sprites.append(v.gpa, .of(s.number, 0, self.shown_banner));
                 try v.sprites.append(v.gpa, .of(a.banner_right, -self.shown_banner, 0));
             },
-            .time_over => try v.sprites.append(v.gpa, .of(a.time_over_text, 0, 0)),
             else => {},
         }
+        if (self.shown_time_over) try v.sprites.append(v.gpa, .of(a.time_over_text, 0, 0));
         if (self.shown_pause) try v.sprites.append(v.gpa, .of(a.pause_text, 0, 0));
         if (self.shown_game_over) try v.sprites.append(v.gpa, .of(a.game_over_text, 0, 0));
     }
