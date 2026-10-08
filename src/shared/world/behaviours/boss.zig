@@ -15,7 +15,9 @@ const tick = @import("../tick.zig");
 const fixed = @import("../fixed.zig");
 const entity = @import("../entity.zig");
 const behaviours = @import("../behaviours.zig");
+const kinds = @import("../kinds.zig");
 const script = @import("../script.zig");
+const player = @import("player.zig");
 
 const Fixed = fixed.Fixed;
 const Handle = entity.Handle;
@@ -464,13 +466,17 @@ pub fn Of(comptime M: type) type {
         }
 
         pub fn reactionOf(a: A, holder: *const Entity) Reaction {
-            // A blow on his holder asked for the hold in front again (systems.zig `heldInFront`).
             switch (holder.mind) {
-                .player => |m| if (m.front_asked) return .front,
+                .player => |m| {
+                    // A blow on his holder asked for the hold in front again (systems.zig
+                    // `heldInFront`).
+                    if (m.front_asked) return .front;
+                    // A throw over the shoulder that does not turn the thrower flings him behind it.
+                    if (m.state == .grab_blow and kinds.numbersOf(player, a.tick.kindOf(holder)).throw_turns == 0) return .fling;
+                },
                 else => {},
             }
             const name = behaviours.stateName(&holder.mind) orelse return .release;
-            _ = a;
             const table = [_]struct { []const u8, Reaction }{
                 .{ "grab", .front },
                 .{ "grab_behind", .behind },
