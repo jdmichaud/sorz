@@ -32,7 +32,7 @@ pub const Resampler = struct {
     /// Takes the next input sample; writes the output frames it completes into `out` (stereo
     /// interleaved) and returns their number. With an output rate below the input's it is 0 or
     /// 1, so `out` needs room for one frame; above, for rate / 53,267 rounded up.
-    pub fn push(r: *Resampler, x: Frame, out: []i16) usize {
+    pub inline fn push(r: *Resampler, x: Frame, out: []i16) usize {
         r.a = r.b;
         r.b = x;
         r.count += 1;
@@ -69,7 +69,7 @@ pub const Resampler = struct {
     }
 };
 
-fn interpolate(a: i32, b: i32, frac: u64, span: u64) i16 {
+inline fn interpolate(a: i32, b: i32, frac: u64, span: u64) i16 {
     const d: i64 = @as(i64, b) - a;
     const v = @as(i64, a) + @divFloor(d * @as(i64, @intCast(frac)), @as(i64, @intCast(span)));
     return @intCast(std.math.clamp(v, std.math.minInt(i16), std.math.maxInt(i16)));

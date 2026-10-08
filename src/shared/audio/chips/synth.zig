@@ -156,7 +156,7 @@ pub fn Synth(comptime Fm: type, comptime P: type) type {
                 for (block[0..count]) |f| {
                     const at = s.fm_count * Fm.cycles_per_sample;
                     // The PSG's level up to the sample's time; a step at that time is the next one's.
-                    s.psgTo(at);
+                    if (!s.psgSteadyTo(at)) s.psgTo(at);
                     if (s.fm_count > 0) n += s.mix(out[2 * n ..]);
                     s.fm_sample = f;
                     s.fm_count += 1;
@@ -169,6 +169,19 @@ pub fn Synth(comptime Fm: type, comptime P: type) type {
 
         /// The most YM2612 samples made at once.
         const block_samples = 256;
+
+        /// `psgTo(t)` when every step before `t` keeps the level, which only adds to the sum: the
+        /// steps are counted by the next `psgTo`, as they would be counted now (it counts them
+        /// from the same total, `psg_count + psg_steady`, whatever the split). Returns false, and
+        /// does nothing, when a step before `t` can change the level.
+        inline fn psgSteadyTo(s: *Self, t: u64) bool {
+            if ((s.psg_count + s.psg_steady) * P.cycles_per_sample < t) return false;
+            if (t > s.psg_mark) {
+                s.psg_sum += @as(i64, s.psg_level) * @as(i64, @intCast(t - s.psg_mark));
+                s.psg_mark = t;
+            }
+            return true;
+        }
 
         /// Runs the PSG's steps before master cycle `t` (step k is at k x cycles_per_sample) and
         /// adds its level x cycles to `psg_sum` up to `t`. The PSG changes its level only at some
@@ -239,10 +252,12 @@ pub fn Synth(comptime Fm: type, comptime P: type) type {
         }
 
         /// Mixes the YM2612's latest sample with the PSG's mean over its time, and resamples.
-        fn mix(s: *Self, out: []i16) usize {
-            const psg = @divFloor(s.psg_sum, Fm.cycles_per_sample);
+        inline fn mix(s: *Self, out: []i16) usize {
+            // The mean is the level when the level held over the whole sample.
+            const steady = s.psg_sum == @as(i64, s.psg_level) * Fm.cycles_per_sample;
+            const psg: i32 = if (steady) s.psg_level else @intCast(@divFloor(s.psg_sum, Fm.cycles_per_sample));
             s.psg_sum = 0;
-            const y = s.stage.process(s.fm_sample, @intCast(psg));
+            const y = s.stage.process(s.fm_sample, psg);
             return s.resampler.push(y, out);
         }
     };
@@ -440,6 +455,8 @@ test "the PSG's steady runs give the sums of its steps one by one, over every sa
             5 => r.uintLessThan(u8, 4),
             else => r.uintLessThan(u8, 0x80),
         };
+        // The steps counted (the samples leave theirs to the next `psgTo`) and not yet made.
+        b.psgTo(b.now);
         runs += b.psg_pending;
         a.writePsg(v);
         b.writePsg(v);

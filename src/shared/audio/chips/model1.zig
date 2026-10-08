@@ -22,7 +22,7 @@ pub const Model1 = struct {
 
     /// One sample of the mix: the YM2612's sample (scaled by the chip) and the PSG's mean level
     /// over the same sample time, through the filter when the stage is on.
-    pub fn process(m: *Model1, fm: Frame, psg: i32) Frame {
+    pub inline fn process(m: *Model1, fm: Frame, psg: i32) Frame {
         const x: Frame = .{ .left = fm.left + psg, .right = fm.right + psg };
         if (!m.enabled) return x;
         m.last = .{ .left = lowpass(m.last.left, x.left), .right = lowpass(m.last.right, x.right) };
@@ -31,7 +31,7 @@ pub const Model1 = struct {
 };
 
 /// BlastEm's one-pole filter in 16.16: (x alpha + y (1 - alpha)) >> 16.
-fn lowpass(last: i32, x: i32) i32 {
+inline fn lowpass(last: i32, x: i32) i32 {
     const v = (@as(i64, x) * lowpass_alpha + @as(i64, last) * (0x10000 - lowpass_alpha)) >> 16;
     return @intCast(v);
 }

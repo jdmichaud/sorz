@@ -452,20 +452,34 @@ pub const Ym2612 = struct {
         }
     }
 
-    /// A sample before the final scaling, scaled as ymfm scales it.
-    fn scale(y: *const Ym2612, raw: Frame) Frame {
-        return switch (y.variant) {
+    /// A sample before the final scaling, scaled as ymfm scales it (`scaled`).
+    inline fn scale(y: *const Ym2612, raw: Frame) Frame {
+        const table = &scale_tables[@backingInt(y.variant)];
+        return .{ .left = table[@intCast(raw.left + raw_max)], .right = table[@intCast(raw.right + raw_max)] };
+    }
+
+    /// The most a sample before the scaling reaches either way: six channels of 9 bits (-257 to
+    /// 256 after the clipping, or the DAC's -256 to 255), each moved by the YM2612's distortion.
+    const raw_max = 6 * 260;
+
+    /// A sum of the channels' outputs scaled as ymfm scales it.
+    fn scaled(variant: Variant, raw: i32) i32 {
+        return switch (variant) {
             // The discontinuity adds about 1/64 to the range: ymfm scales by 64/65 too.
-            .ym2612 => .{
-                .left = @divTrunc(raw.left * 128 * 64, 6 * 65),
-                .right = @divTrunc(raw.right * 128 * 64, 6 * 65),
-            },
-            .ym3438 => .{
-                .left = @divTrunc(raw.left * 128, 6),
-                .right = @divTrunc(raw.right * 128, 6),
-            },
+            .ym2612 => @divTrunc(raw * 128 * 64, 6 * 65),
+            .ym3438 => @divTrunc(raw * 128, 6),
         };
     }
+
+    /// `scaled` of each sum, for each variant: no division per sample.
+    const scale_tables: [2][2 * raw_max + 1]i32 = blk: {
+        @setEvalBranchQuota(100000);
+        var t: [2][2 * raw_max + 1]i32 = undefined;
+        for (0..2) |v| {
+            for (&t[v], 0..) |*x, i| x.* = scaled(@fromBackingInt(@as(u1, @intCast(v))), @as(i32, @intCast(i)) - raw_max);
+        }
+        break :blk t;
+    };
 
     /// One sample before the final scaling (see `render`).
     pub fn sampleRaw(y: *Ym2612) Frame {
