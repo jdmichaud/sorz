@@ -48,6 +48,8 @@ pub const Sound = enum { splinter };
 pub const splinter_kind = "bat_splinter";
 
 pub fn think(a: Actor) void {
+    // Among the entities at its depth, drawn behind the others, at each tick (the original's).
+    a.entity.flags.behind = true;
     if (a.mind.state == .held and a.mind.splinter_due and !a.mind.splintered) splinter(a);
     a.mind.splinter_due = false;
     if (C.act(a)) _ = C.leftBehind(a);

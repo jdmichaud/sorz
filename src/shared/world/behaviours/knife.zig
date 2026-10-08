@@ -46,6 +46,8 @@ pub const Numbers = struct {
 };
 
 pub fn think(a: Actor) void {
+    // Among the entities at its depth, drawn behind the others, at each tick (the original's).
+    a.entity.flags.behind = true;
     switch (a.mind.state) {
         .held => if (a.mind.thrown) return flies(a),
         .flying => return fly(a),

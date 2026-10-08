@@ -58,6 +58,8 @@ pub const Body = struct {
 };
 
 pub fn think(a: Actor) void {
+    // Among the entities at its depth, drawn behind the others, at each tick (the original's).
+    a.entity.flags.behind = true;
     const C = Of(@This());
     if (C.act(a)) _ = C.leftBehind(a);
 }

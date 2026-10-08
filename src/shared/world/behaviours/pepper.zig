@@ -77,6 +77,8 @@ pub const Tables = struct {
 };
 
 pub fn think(a: Actor) void {
+    // Among the entities at its depth, drawn behind the others, at each tick (the original's).
+    a.entity.flags.behind = true;
     const m = a.mind;
     a.entity.flags.still = true;
     if (m.state == .start) a.entity.flags.in_front = a.tick.thingsInFront();
