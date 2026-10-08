@@ -49,6 +49,9 @@ pub const Gamer = struct {
     continues: u8 = 0,
     /// The health its fighter had as the round ended (the round's clear shows it).
     health: u8 = 0,
+    /// Out of the game (as the original keeps it, until a new game): its part of the status bar
+    /// shows its name, its score and GAME OVER, and player 2's invitation does not show.
+    out: bool = false,
 };
 
 /// The game under way, kept from one round to the next (the original keeps it in its memory):

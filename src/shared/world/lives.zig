@@ -48,7 +48,7 @@ pub fn lifeOver(t: *Tick, h: Handle) void {
     // is drawn, not where it was.
     const c = &t.world.camera;
     if (c.follows) |rules| c.drawn[k] = c.x.add(.pixels(rules.cleared));
-    if (t.world.players[k].lives != 0) return newLife(t, k);
+    if (t.world.players[k].lives != 0 and !t.world.players[k].gone) return newLife(t, k);
     const kind = t.kinds.find(waiting_kind) orelse {
         std.log.warn("the content defines no {s}: player {d} is out of the game", .{ waiting_kind, @as(u8, k) + 1 });
         t.world.players[k].out = true;
@@ -60,7 +60,7 @@ pub fn lifeOver(t: *Tick, h: Handle) void {
     // enters its name before the continue's question.
     var enters = false;
     if (t.plan) |plan| if (plan.last_score) |last| {
-        enters = last.beatenBy(t.world.players[k].score);
+        enters = last.beatenBy(t.world.players[k].score) and !t.world.players[k].gone;
         t.out.rankings.append(.{ .player = k });
     };
     const health = t.world.get(h).?.health;
@@ -109,6 +109,7 @@ pub fn join(t: *Tick, k: u1, kind: entity.KindId, lives: u8, colours: ?u8) bool 
     p.colours = colours;
     p.lives = lives;
     p.out = false;
+    p.gone = false;
     newLife(t, k);
     return true;
 }

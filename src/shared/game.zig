@@ -233,8 +233,9 @@ pub const State = struct {
     }
 
     /// Player `who` leaves the game (network play's other player, who quit or did not come back):
-    /// out of the game in a round, as a player out of lives who does not continue; out of the next
-    /// round between two; the second player gone from the character select.
+    /// in a round its fighter dies, and it is out of the game, as a player out of lives who does
+    /// not continue; out of the next round between two; the second player gone from the character
+    /// select.
     pub fn dropOut(self: *State, who: u1, assets: *const scene.Assets) void {
         switch (self.scenes.base) {
             .select => |*s| if (who == 1) s.leave(&self.setup, &assets.select),

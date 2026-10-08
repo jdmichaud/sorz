@@ -14,15 +14,16 @@
 //! - play: a logic tick of the world every other display tick (its timer, its script). START at
 //!   a logic tick's start pauses, and at any tick of the pause resumes (each time the pause's
 //!   sound; the pause's text while it lasts); where the variant says so, it opens the settings in
-//!   place of the pause instead (`startOpensSettings`). The time running out is the time over: its sound
-//!   and text for its ticks, then the round's music again, and each player in play loses its
-//!   health. Player 2's invitation blinks while it does not play, and at a blink's tick with its
-//!   START held it joins (`joinTick`, `dropIn`): the character after player 1's, and its first
-//!   life drops in. A player dies, and its next life drops in (world/lives.zig); out of lives, it
-//!   enters its name on its part of the status bar when its score enters the high-score table (the
-//!   table takes its entry), then asks the continue's question there; out of the game, its part
-//!   shows its name, its score and a blinking GAME OVER; the last one out counts the game over
-//!   down, its text over the picture;
+//!   place of the pause instead (`startOpensSettings`). The time running out is the time over:
+//!   its sound and text for its ticks, then the round's music again, and each player in play
+//!   loses its health. Player 2's invitation blinks while it does not play and is not out of the
+//!   game, and at a blink's tick with its START held it joins (`joinTick`, `dropIn`): the
+//!   character after player 1's, and its first life drops in. A player dies, and its next life
+//!   drops in (world/lives.zig); out of lives, it enters its name on its part of the status bar
+//!   when its score enters the high-score table (the table takes its entry), then asks the
+//!   continue's question there; out of the game (until the game ends), its part shows its name,
+//!   its score and a blinking GAME OVER; the last one out counts the game over down, its text
+//!   over the picture;
 //! - the end: the round won (its boss beaten), the screen fades out, and the round's clear
 //!   follows, the game under way kept; or the game over, the screen fades out, and the high
 //!   scores follow.
@@ -865,6 +866,11 @@ pub const Round = struct {
             self.join.shown = false;
             return null;
         }
+        // Out of the game, player 2 is not invited again (the original skips the invitation then).
+        if (w.players[1].out) {
+            self.join.shown = false;
+            return null;
+        }
         if (!self.join.due(w.players[1].entity == null, self.waiting(0), j.blink)) return null;
         const first = turn.setup.characters[0];
         if (!turn.pads.pad2.start or w.special or !turn.second_pad or first == null) {
@@ -916,18 +922,33 @@ pub const Round = struct {
         return true;
     }
 
-    /// Player `k` leaves the game under way (network play's second player who quits): as the
-    /// original treats a player out of lives who does not continue, out of the game, its
-    /// fighter gone. Another may join later (`dropIn`).
+    /// Player `k` leaves the game under way (network play's player who quits or does not come
+    /// back): its fighter dies as at the time over, and its life over it is out of the game, as
+    /// a player out of lives who does not continue; out of lives already, it is out at once.
+    /// Another may join once its fighter is gone (`dropIn`).
     pub fn dropOut(self: *Round, k: u1) void {
         const w = &self.play.world;
         const p = &w.players[k];
-        if (p.entity) |h| w.remove(h);
-        p.entity = null;
-        p.lives = 0;
-        p.continues = 0;
-        p.out = true;
         if (self.join_as != null and k == 1) self.join_as = null;
+        const h = p.entity orelse return;
+        p.gone = true;
+        p.continues = 0;
+        const e = w.get(h) orelse return;
+        switch (e.mind) {
+            // Its health gone, as at the time over: it dies at a tick it is not down nor hurt, and
+            // its life over, it is out (lives.zig).
+            .player => e.health = 0,
+            // Out of lives: no name, no continue; out at its next tick.
+            .player_waiting => |*m| switch (m.state) {
+                .begin, .name_entry, .continue_choose, .continue_chosen, .join_first, .join_second => {
+                    m.entering = false;
+                    m.cursor = .no;
+                    m.state = .begin;
+                },
+                .both_out, .countdown, .game_over => {},
+            },
+            else => {},
+        }
     }
 
     /// The world's draw list made again into `out`, the world as it stands (a game loaded from
@@ -1121,6 +1142,7 @@ pub const Round = struct {
             .specials = wp.specials,
             .continues = wp.continues,
             .health = if (wp.entity) |h| if (w.getConst(h)) |e| healthOf(a, e) else 0 else 0,
+            .out = wp.out,
         };
     }
 
@@ -1159,7 +1181,7 @@ pub const Round = struct {
         var t: world.tick.Tick = .{ .world = w, .kinds = a.kinds, .random = turn.random.?, .out = out, .plan = &p };
         const r = s.script;
         for (&w.players, g.players, 0..) |*wp, gp, k| {
-            wp.* = .{ .lives = gp.lives, .specials = gp.specials, .score = gp.score, .extra_lives = gp.extra_lives, .continues = gp.continues };
+            wp.* = .{ .lives = gp.lives, .specials = gp.specials, .score = gp.score, .extra_lives = gp.extra_lives, .continues = gp.continues, .out = gp.out };
             self.drawn_scores[k] = gp.score;
             if (!gp.in_play) continue;
             const character = characters[k] orelse continue;

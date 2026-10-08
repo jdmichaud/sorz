@@ -64,6 +64,9 @@ pub const Player = struct {
     /// The continues left; out of the game (it answered no, or had none left).
     continues: u8 = 0,
     out: bool = false,
+    /// The player left the game (network play's, who did not come back): its fighter dies, and it
+    /// takes no next life, enters no name and takes no continue.
+    gone: bool = false,
     /// Points, as the original counts them: they hold at the world's `score_most`.
     score: u32 = 0,
     /// The lives its score gave it (lives.zig, `extraLife`): its next comes at the plan's

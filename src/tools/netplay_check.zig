@@ -324,6 +324,17 @@ fn same(f: *Flow, r: *Room, a: *Machine, b: *Machine, what: []const u8) !void {
     try f.check(ha == hb, "the same picture");
 }
 
+/// With `--pictures`, the picture `m` presented last (its overlays with it) as `name`.
+fn shot(r: *Room, m: *Machine, name: []const u8) !void {
+    const dir = pictures orelse return;
+    const frame = m.backend.captureFrame() orelse return;
+    const bytes = try agent.png.encode(r.gpa, frame.width, frame.height, frame.pixels[0 .. frame.stride * frame.height]);
+    defer r.gpa.free(bytes);
+    const path = try std.fs.path.join(r.gpa, &.{ dir, name });
+    defer r.gpa.free(path);
+    try std.Io.Dir.cwd().writeFile(tool_io, .{ .sub_path = path, .data = bytes });
+}
+
 /// Runs `n` updates of the room, the two games compared every 60.
 fn sameFor(f: *Flow, r: *Room, a: *Machine, b: *Machine, n: usize) !void {
     var done: usize = 0;
@@ -556,14 +567,20 @@ fn inRound(f: *Flow, r: *Room) !void {
     try sameFor(f, r, host, guest, 120);
     try same(f, r, host, watcher, "the observer's game the host's, on");
 
-    // The player quits: the host plays on, player 2 out of the game; the observer gets it again.
+    // The player quits: the host plays on, player 2's fighter dies and it is out of the game; the
+    // observer gets the game again.
     try guest.key(.escape, true);
     try guest.update();
     r.remove(guest);
     try r.step(30);
-    const w = &roundOf(host).?.play.world;
-    try f.check(!host.inSession() and w.players[1].entity == null and w.players[1].out, "player 2 out of the game");
+    try f.check(!host.inSession() and roundOf(host).?.play.world.players[1].gone, "player 2 gone from the game");
     try f.check(host.message() == .player_2_left, "the host is told");
+    try f.until(r, host, struct {
+        fn out(m: *Machine) bool {
+            const pl = &roundOf(m).?.play.world.players[1];
+            return pl.entity == null and pl.out;
+        }
+    }.out, 600, "player 2's fighter dead, out of the game");
     const ticks = host.game.state.tick;
     try r.step(60);
     try f.check(host.game.state.tick >= ticks + 60, "the host plays on");
@@ -629,7 +646,18 @@ fn away(f: *Flow, r: *Room) !void {
     const wait: usize = @intCast(net.session.rejoin_ns / frame_ns + 30);
     try r.step(wait);
     const w = &roundOf(host).?.play.world;
-    try f.check(!host.inSession() and w.players[1].entity == null and w.players[1].out, "the host gave player 2 up");
+    const fighter = w.getConst(w.players[1].entity.?).?;
+    try f.check(!host.inSession() and w.players[1].gone and fighter.health == 0, "the host gave player 2 up: its fighter's health gone");
+    // It dies, as at the time over, and is out of the game; no invitation over its part.
+    try f.until(r, host, struct {
+        fn out(m: *Machine) bool {
+            const pl = &roundOf(m).?.play.world.players[1];
+            return pl.entity == null and pl.out;
+        }
+    }.out, 600, "player 2's fighter dead, out of the game");
+    try r.step(40);
+    try shot(r, host, "dropped_out.png");
+    try f.check(!roundOf(host).?.join.shown, "no invitation over player 2's part");
     try f.check(host.game.state.tick > at + 60, "the host plays on alone");
     // The client's machine back: its session is over; its own menu again.
     guest.frozen = false;
