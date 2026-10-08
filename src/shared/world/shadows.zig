@@ -43,10 +43,13 @@ const owners_below = 50;
 /// A shadow in its place: the place of its entity (an entity's, or another shadow's), whether it
 /// holds a shadow of its own, where it lies (its entity's place across and in depth, on the
 /// floor), and whether it has had its first turn (only then is it drawn, and may go far off
-/// the screen).
+/// the screen). It is drawn in front of the planes as its entity was when it took its place (the
+/// original copies its entity's mark once): an acrobat leaping in from behind round 5's deck is
+/// in front only past its highest point, and its shadow stays behind the deck.
 pub const Shadow = struct {
     owner: u8,
     has_shadow: bool = false,
+    in_front: bool = false,
     position: Vec3 = .zero,
     turned: bool = false,
 };
@@ -64,12 +67,12 @@ pub fn afterTurn(t: *Tick, i: usize) void {
     if (i >= owners_below or !t.play_mode) return;
     if (at(w, i)) |s| {
         if (s.has_shadow) return;
-        if (take(w, i)) s.has_shadow = true;
+        if (take(w, i, s.in_front)) s.has_shadow = true;
         return;
     }
     const e = &w.entities[i];
     if (!e.alive() or e.flags.has_shadow or !takes(t, e)) return;
-    if (take(w, i)) e.flags.has_shadow = true;
+    if (take(w, i, e.flags.in_front)) e.flags.has_shadow = true;
 }
 
 /// Whether the entity takes a shadow (no mark against one).
@@ -79,11 +82,12 @@ fn takes(t: *const Tick, e: *const entity.Entity) bool {
     return d.shadow or d.shadow_place;
 }
 
-/// The first free place of the shadows' for the one in place `owner`.
-fn take(w: *World, owner: usize) bool {
+/// The first free place of the shadows' for the one in place `owner`, in front of the planes or
+/// not as it is.
+fn take(w: *World, owner: usize, in_front: bool) bool {
     for (0..count) |k| {
         if (w.shadows[k] != null or w.entities[first + k].alive()) continue;
-        w.shadows[k] = .{ .owner = @intCast(owner) };
+        w.shadows[k] = .{ .owner = @intCast(owner), .in_front = in_front };
         return true;
     }
     return false;

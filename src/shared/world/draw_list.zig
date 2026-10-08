@@ -151,7 +151,7 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
             const shadow = t.kinds.shadow orelse continue;
             const x = s.position.x.whole() - w.camera.x.whole();
             const y = s.position.screenY() - w.camera.y.whole();
-            out.sprites.append(.{ .frame = shadow, .x = x, .y = y, .palette = shadow.palette, .priority = shadow.priority or e.flags.in_front });
+            out.sprites.append(.{ .frame = shadow, .x = x, .y = y, .palette = shadow.palette, .priority = shadow.priority or s.in_front });
             out.sprite_info.append(.{ .place = shadowPlace(w, i), .rank = rank[i], .depth = @intCast(depthOf(e)), .band_depth = @intCast(depthOf(e)), .shadow = true });
             continue;
         }
@@ -163,7 +163,7 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
         if (t.kinds.shadow) |shadow| if (floor) |f| if (t.kindOf(e).definition.shadow and !e.flags.shadowless and e.flags.has_shadow and e.position.height.lessThan(f)) {
             var y = (e.position.depth.whole() >> 1) + f.whole();
             if (!e.flags.on_screen) y -= w.camera.y.whole();
-            out.sprites.append(.{ .frame = shadow, .x = p.x, .y = y, .palette = shadow.palette, .priority = shadow.priority or e.flags.in_front });
+            out.sprites.append(.{ .frame = shadow, .x = p.x, .y = y, .palette = shadow.palette, .priority = shadow.priority or shadowInFront(w, i) });
             out.sprite_info.append(.{ .place = shadowPlace(w, i), .rank = rank[i], .depth = @intCast(depthOf(e)), .band_depth = @intCast(depthOf(e)), .shadow = true });
         };
         out.sprites.append(.{
@@ -184,6 +184,13 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
 fn heldShadow(w: *const World, i: usize) ?shadows.Shadow {
     for (w.shadows) |s| if (s) |x| if (x.owner == i and x.turned) return x;
     return null;
+}
+
+/// Whether the shadow of the entity in place `i` is drawn in front of the planes: as its entity
+/// was when it took its place (shadows.zig), else as its entity is (one gone far off the screen).
+fn shadowInFront(w: *const World, i: usize) bool {
+    for (w.shadows) |s| if (s) |x| if (x.owner == i) return x.in_front;
+    return w.entities[i].flags.in_front;
 }
 
 /// The place of the shadow of the entity in place `i` (shadows.zig), or `no_place` when none holds
