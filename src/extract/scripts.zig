@@ -752,6 +752,44 @@ fn animation(arena: std.mem.Allocator, rom: []const u8, r: u32) Error!?round.Ani
     };
 }
 
+/// The palette cycles' wait for the camera (0x11210, the cycles' loop at each tick of play: in the
+/// round of its `cmpi.w #N,($FF02)`, 0x11272 for each cycle): on the frames of its `cmpi.w
+/// #N,(6,a5); beq` the delay counts down, as any cycle's; on the others, while fewer places are
+/// passed ($FFFB2E) than its `cmpi.w #N,($FB2E)`, the frame moves on when the place of that count
+/// (the words 0x112B8, `move.w (pc,d0.w),d1`) is at or right of the camera's X (`cmp.w
+/// ($E002),d1; bcs`): the count goes up, and the next frame comes at once (`jmp` 0x11228).
+fn cycleWait(arena: std.mem.Allocator, rom: []const u8, r: u32) Error!?round.CycleWait {
+    const loop: u32 = 0x1121A;
+    if (u16be(rom, loop) != 0x0C78 or u16be(rom, loop + 4) != 0xFF02 or u16be(rom, loop + 6) != 0x6750) return error.BadData;
+    if (u16be(rom, loop + 2) != r) return null;
+    const rule: u32 = loop + 8 + @as(u32, rom[loop + 7]);
+    var passing: std.ArrayList(u8) = .empty;
+    var at = rule;
+    while (u16be(rom, at) == 0x0C6D) : (at += 8) {
+        if (u16be(rom, at + 4) != 0x0006 or rom[at + 6] != 0x67) return error.BadData;
+        // Each `beq` goes to the countdown (0x11222: `subq.w #1,(2,a5)`).
+        if (at + 8 - @as(u32, 0x100 - @as(u32, rom[at + 7])) != loop + 8 or u16be(rom, loop + 8) != 0x536D) return error.BadData;
+        try passing.append(arena, @intCast(u16be(rom, at + 2)));
+    }
+    if (passing.items.len == 0) return error.BadData;
+    // cmpi.w #N,($FB2E); bcc; move.w ($FB2E),d0; add.w d0,d0; move.w (pc,d0.w,$16),d1; cmp.w ($E002),d1; bcs; addq.w #1,($FB2E)
+    if (u16be(rom, at) != 0x0C78 or u16be(rom, at + 4) != 0xFB2E or rom[at + 6] != 0x64) return error.BadData;
+    const places = u16be(rom, at + 2);
+    if (u32be(rom, at + 8) != 0x3038FB2E or u16be(rom, at + 12) != 0xD040 or u16be(rom, at + 14) != 0x323B or rom[at + 16] != 0x00) return error.BadData;
+    const table: u32 = at + 16 + @as(u32, rom[at + 17]);
+    if (u32be(rom, at + 18) != 0xB278E002 or rom[at + 22] != 0x65 or u32be(rom, at + 24) != 0x5278FB2E) return error.BadData;
+    if (places == 0 or places > 8) return error.BadData;
+    const camera = try arena.alloc(u16, places);
+    for (camera, 0..) |*x, i| x.* = u16be(rom, table + 2 * @as(u32, @intCast(i)));
+    var frames: std.ArrayList(u8) = .empty;
+    for (passing.items, 0..) |f, i| try frames.print(arena, "{s}{d}", .{ if (i == 0) "" else ", ", f });
+    return .{
+        .provenance = try std.fmt.allocPrint(arena, "the palette cycles' wait for the camera (0x11210, in this round: ROM 0x{X:0>5}; 0x{X:0>5}): the frames {s} pass at the cycle's pace (cmpi.w #N,(6,a5)), the others wait for the camera at or left of the next of ROM 0x{X:0>5}'s {d} places (cmpi.w #N,($FB2E) at ROM 0x{X:0>5})", .{ loop + 2, rule, frames.items, table, places, at + 2 }),
+        .passing = passing.items,
+        .camera = camera,
+    };
+}
+
 /// The first of the enemies' art slots a waiting enemy's art may take (0x966: its search from
 /// slot 0, but from slot 1 in round 1: `tst.w ($FFFF02)`, then `moveq #1,d1`).
 fn artFrom(rom: []const u8, r: u32) Error!u8 {
@@ -1168,6 +1206,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
         .room = room,
         .own_sound = try ownSound(arena, rom, r),
         .animation = try animation(arena, rom, r),
+        .cycle_wait = try cycleWait(arena, rom, r),
         .art_from = try artFrom(rom, r),
         .boss_art_full = @intCast(try immediate(rom, 0x9E8, &.{ 0x0C, 0x38, 0x00 }, 1)),
         .in_front = try inFront(arena, rom, r),

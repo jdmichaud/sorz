@@ -515,6 +515,8 @@ pub const Round = struct {
     own_sound: ?OwnSound = null,
     /// A part of its planes the round animates by itself.
     animation: ?Animation = null,
+    /// Its colour cycles' steps that wait for its camera.
+    cycle_wait: ?CycleWait = null,
     /// The first of the enemies' art slots a waiting enemy's art may take (round 1's second: its
     /// first stays), and a boss's art that leaves no slot to a waiting enemy's.
     art_from: u8 = 0,
@@ -654,6 +656,18 @@ pub const Animation = struct {
 };
 
 pub const AnimationStep = struct { map: []const u8, colours: []const u8 };
+
+/// The round's colour cycles wait for its camera at some of their steps (round 8's windows,
+/// brighter as the camera nears Mr. X's office, the sun rising): showing a step not among
+/// `passing`, a cycle waits until the camera, which goes left, is at or left of the next of
+/// `camera`'s places across; it then shows its next step at once, that place passed (the round
+/// counts them from its start). Past the last place, those steps wait for good. On `passing`'s
+/// steps, it goes on at its pace.
+pub const CycleWait = struct {
+    provenance: []const u8 = "",
+    passing: []const u8,
+    camera: []const u16,
+};
 
 /// A sound a round plays by itself (round 3's waves, round 5's horn): `sound` (a name of the
 /// sound content), `times` times (none: endlessly), the first at play's `first`th tick, then every
@@ -1065,6 +1079,16 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         .{ .key = "players", .value = .{ .bool = r.in_front.players } },
         .{ .key = "things", .value = .{ .bool = r.in_front.things } },
     }) });
+    if (r.cycle_wait) |cw| {
+        const passing = try arena.alloc(json.Value, cw.passing.len);
+        for (passing, cw.passing) |*v, x| v.* = json.Value.num(x);
+        const camera = try arena.alloc(json.Value, cw.camera.len);
+        for (camera, cw.camera) |*v, x| v.* = json.Value.num(x);
+        try fields.append(arena, .{ .key = "cycle_wait", .value = try withProvenance(arena, cw.provenance, &.{
+            .{ .key = "passing", .value = .{ .array = passing } },
+            .{ .key = "camera", .value = .{ .array = camera } },
+        }) });
+    }
     if (r.own_sound) |o| try fields.append(arena, .{ .key = "own_sound", .value = try withProvenance(arena, o.provenance, &.{
         .{ .key = "sound", .value = .{ .str = o.sound } },
         .{ .key = "first", .value = json.Value.num(o.first) },
@@ -1240,7 +1264,7 @@ fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Err
 
 /// Reads round `name`'s file (its parsed `root`); `a`, when given, must have its art set.
 pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*const art.Art) Error!Round {
-    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "art_from", "boss_art_full", "floor", "walk_off", "in_front", "lift", "exit", "depth_walls", "enemy_walk", "knocked_back_left", "room" });
+    try root.only(&.{ "provenance", "round", "art", "music", "ground", "load", "camera", "players", "timer", "sections", "special", "boss", "own_sound", "animation", "cycle_wait", "art_from", "boss_art_full", "floor", "walk_off", "in_front", "lift", "exit", "depth_walls", "enemy_walk", "knocked_back_left", "room" });
     const number = try root.get("round");
     var r: Round = .{
         .number = try number.int(u8),
@@ -1476,6 +1500,16 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
             .players = try (try f.get("players")).boolean(),
             .things = try (try f.get("things")).boolean(),
         };
+    }
+    if (try root.opt("cycle_wait")) |cw| {
+        try cw.only(&.{ "provenance", "passing", "camera" });
+        const pn = try cw.get("passing");
+        const passing = try arena.alloc(u8, try pn.len());
+        for (passing, 0..) |*x, i| x.* = try (try pn.at(i)).int(u8);
+        const cn = try cw.get("camera");
+        const camera = try arena.alloc(u16, try cn.len());
+        for (camera, 0..) |*x, i| x.* = try (try cn.at(i)).int(u16);
+        r.cycle_wait = .{ .provenance = try provenanceOf(cw), .passing = passing, .camera = camera };
     }
     if (try root.opt("own_sound")) |o| {
         try o.only(&.{ "provenance", "sound", "first", "every", "times", "per_section" });

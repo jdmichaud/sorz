@@ -226,6 +226,8 @@ pub const Round = struct {
     play: world.Play = .{},
     colours: Colours = .{},
     cycles: [max_cycles]Cycle = @splat(.{}),
+    /// The places of the camera its cycles' waits have passed (`content.round.CycleWait`).
+    cycle_places: u8 = 0,
     /// START pressed since the last logic tick began (the pause's), and by which player first.
     start_pressed: ?u1 = null,
     /// The logic tick ran at this display tick (the traces observe the world then).
@@ -1064,7 +1066,7 @@ pub const Round = struct {
         for (out.sounds.slice()) |s| if (a.sounds.find(s.name)) |id| {
             if (s.first) turn.playNow(id) else turn.play(id);
         };
-        self.cycle(a);
+        self.cycle(a, camera_before.x.whole());
         self.animate(a);
         self.noteLamps(a);
         const w = &self.play.world;
@@ -1240,6 +1242,7 @@ pub const Round = struct {
         self.colours.aim(a.play_colours);
         self.colours.aim(a.players_colours);
         for (s.set.cycles, self.cycles[0..s.set.cycles.len]) |c, *x| x.* = .{ .countdown = c.period };
+        self.cycle_places = 0;
     }
 
     /// The colours the world loaded at its tick, in their order, into the colours shown (or, at
@@ -1281,10 +1284,19 @@ pub const Round = struct {
         }
     }
 
-    /// The round's colour cycles, a step every period of logic ticks.
-    fn cycle(self: *Round, a: *const Assets) void {
-        const set = self.stage(a).set;
+    /// The round's colour cycles, a step every period of logic ticks, or, at the steps that wait
+    /// for the camera (`camera_x` as the tick began), a step once it passes its next place.
+    fn cycle(self: *Round, a: *const Assets, camera_x: i32) void {
+        const st = self.stage(a);
+        const set = st.set;
         for (set.cycles, self.cycles[0..set.cycles.len]) |c, *s| {
+            if (st.script.cycle_wait) |cw| if (std.mem.indexOfScalar(u8, cw.passing, @intCast(s.step)) == null) {
+                if (self.cycle_places >= cw.camera.len) continue;
+                // The original's compare of words, unsigned.
+                if (cw.camera[self.cycle_places] < @as(u16, @truncate(@as(u32, @bitCast(camera_x))))) continue;
+                self.cycle_places += 1;
+                s.countdown = 1;
+            };
             s.countdown -|= 1;
             if (s.countdown != 0) continue;
             s.countdown = c.period;
