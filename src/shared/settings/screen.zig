@@ -23,11 +23,12 @@
 //! pressed is the new one; one that another setting has is swapped with it, so that no key does
 //! two things), and START leaves the page: INPUT CONFIGURATION for the first page, the first page
 //! saving, as SAVE AND EXIT does (on EXIT WITHOUT SAVING, without saving, as A there); so do the
-//! gamepads' d-pad and buttons. Escape does what START does, and the arrows move, whatever the
-//! pads' keys are, so the screen is always usable. EXIT WITHOUT SAVING, the settings key (where
-//! the variant has it) and a gamepad's BACK leave without saving, giving back the settings the
-//! screen opened with. The changes apply at once (the input, and the rules of a game under way,
-//! when the screen closes: game.zig).
+//! gamepads' d-pad (or stick: game.zig gives it as the d-pad) and buttons (the players' gamepads'
+//! A, B, C and START, as INPUT CONFIGURATION sets them). Escape does what START does, and the
+//! arrows move, whatever the pads' keys are, so the screen is always usable. EXIT WITHOUT SAVING,
+//! the settings key (where the variant has it) and a gamepad's BACK leave without saving, giving
+//! back the settings the screen opened with. The changes apply at once (the input, and the rules
+//! of a game under way, when the screen closes: game.zig).
 //!
 //! The screen turns its page once the game has faded it out (`pending`, `turnPage`: game.zig fades
 //! the panel out, then in on the next page), and takes no event until then.

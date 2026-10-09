@@ -695,16 +695,17 @@ pub const Game = struct {
         return f.to == .black and f.then == .close;
     }
 
-    /// An event while the settings are open: they take the presses; the controls still see the
-    /// controllers come and go, and the focus.
+    /// An event while the settings are open: they take the presses (`pressOf`); the controls still
+    /// see the controllers come and go, and the focus.
     fn settingsEvent(self: *Game, e: platform.Event, p: *platform.Platform) void {
         const now_ns = p.nowNs();
         switch (e.payload) {
             .quit => self.finished = true,
-            .key_down, .controller_button_down => {
+            .key_down, .controller_button_down, .controller_axis => {
+                const press = self.pressOf(e) orelse return;
                 if (self.settingsFadingOut()) return;
                 const screen = &self.overlays.find(.settings).?.settings;
-                const result = screen.handle(&self.settings, e);
+                const result = screen.handle(&self.settings, press);
                 self.overlay_dirty = true;
                 if (result != .stay) return self.closeSettings(result, now_ns);
                 // Its next page: the panel fades out, then in on it.
@@ -745,19 +746,20 @@ pub const Game = struct {
         self.overlays.remove(.name_entry);
     }
 
-    /// An event while network play's screen is open: it takes the presses; a done network
-    /// options open the session, a done name entry is kept (and the host hears it).
+    /// An event while network play's screen is open: it takes the presses (`pressOf`); a done
+    /// network options open the session, a done name entry is kept (and the host hears it).
     fn modalEvent(self: *Game, e: platform.Event, p: *platform.Platform) void {
         switch (e.payload) {
             .quit => self.finished = true,
-            .key_down, .controller_button_down => {
+            .key_down, .controller_button_down, .controller_axis => {
+                const press = self.pressOf(e) orelse return;
                 if (self.settingsFadingOut()) return;
                 self.overlay_dirty = true;
                 if (self.overlays.find(.net_options)) |o| {
                     const x = &o.net_options;
-                    if (!network_play.lobbyAction(self, p, x, x.handle(&self.settings, e))) return;
+                    if (!network_play.lobbyAction(self, p, x, x.handle(&self.settings, press))) return;
                 } else if (self.overlays.find(.name_entry)) |o| {
-                    switch (o.name_entry.handle(&self.settings, e)) {
+                    switch (o.name_entry.handle(&self.settings, press)) {
                         .stay, .acted => return,
                         .done => {
                             self.settings.name = o.name_entry.name;
@@ -771,6 +773,20 @@ pub const Game = struct {
             },
             else => self.controlEvent(e, p),
         }
+    }
+
+    /// A press on the screens over the game (the settings, network play's): a key's, a gamepad's
+    /// button's, or a gamepad's stick newly held to a side, as its d-pad's (the controls keep the
+    /// stick: input.zig `Controls.stickPress`); null for another event.
+    fn pressOf(self: *Game, e: platform.Event) ?platform.Event {
+        return switch (e.payload) {
+            .key_down, .controller_button_down => e,
+            .controller_axis => |a| if (self.controls.stickPress(a)) |b| .{
+                .time_ns = e.time_ns,
+                .payload = .{ .controller_button_down = .{ .controller = a.controller, .button = b } },
+            } else null,
+            else => null,
+        };
     }
 
     /// An event for the controls. A gamepad that comes is known by its model, as the platform

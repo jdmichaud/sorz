@@ -23,7 +23,8 @@
 //!   or BACK leaves it as it was.
 //!
 //! The pads' keys of this machine's players work them as they work the menus, and the arrows and
-//! Escape whatever those keys are.
+//! Escape whatever those keys are; so do the gamepads, their d-pad (or stick: game.zig gives it as
+//! the d-pad) and their buttons.
 const std = @import("std");
 const platform = @import("../platform.zig");
 const netplay = @import("../net/netplay.zig");

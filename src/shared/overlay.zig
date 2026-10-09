@@ -9,9 +9,9 @@
 //! They are this machine's, not the game's: the game's canonical state (game.zig), which both
 //! machines of network play keep the same, has the scenes of the flow and their loads
 //! (scene.zig); these overlays are not in it, since one machine shows the settings while the other
-//! says why it waits. They take this machine's events (keys and gamepads' buttons, not the pads) and
-//! are drawn over the game's last picture with the panel (panel.zig), in the game's font and the
-//! colours of its menu.
+//! says why it waits. They take this machine's events (keys, gamepads' buttons and sticks, not the
+//! pads) and are drawn over the game's last picture with the panel (panel.zig), in the game's font
+//! and the colours of its menu.
 const std = @import("std");
 const settings_mod = @import("settings/root.zig");
 const panel_mod = @import("panel.zig");

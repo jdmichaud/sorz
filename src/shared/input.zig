@@ -437,6 +437,27 @@ pub const Controls = struct {
     fn axis(self: *Controls, e: platform.Event.ControllerAxisEvent) bool {
         const slot = self.slotOf(e.controller) orelse return false;
         _ = self.playerOfSlot(slot) orelse return false;
+        return self.moveStick(slot, e);
+    }
+
+    /// Gamepad `e`'s stick moved, any gamepad connected (a player's or not): the d-pad button of
+    /// the direction it holds now and did not, if any. The screens over the game take the stick
+    /// as the d-pad (a pad's d-pad may come as a stick: SDL's generic mapping, a browser's pad
+    /// without the standard mapping).
+    pub fn stickPress(self: *Controls, e: platform.Event.ControllerAxisEvent) ?platform.ControllerButton {
+        const slot = self.slotOf(e.controller) orelse return null;
+        const before = self.stick[slot];
+        if (!self.moveStick(slot, e)) return null;
+        const pressed = self.stick[slot] & ~before;
+        const directions = [_]Button{ .up, .down, .left, .right };
+        const dpad = [_]platform.ControllerButton{ .dpad_up, .dpad_down, .dpad_left, .dpad_right };
+        for (directions, dpad) |d, b| if (pressed & @as(u8, 1) << @backingInt(d) != 0) return b;
+        return null;
+    }
+
+    /// The left stick of the gamepad at `slot` moved to `e`: the directions it holds. False for
+    /// another axis.
+    fn moveStick(self: *Controls, slot: usize, e: platform.Event.ControllerAxisEvent) bool {
         switch (e.axis) {
             .left_x => {
                 set(&self.stick[slot], .left, e.value < -stick_threshold);
@@ -539,6 +560,27 @@ test "one player: player 1 alone, its keys or its gamepad" {
     try std.testing.expect(!c.handle(.{ .time_ns = 0, .payload = .{ .controller_button_down = .{ .controller = second, .button = .start } } }));
     try std.testing.expect(!c.uses(.tab) and !c.uses(.w) and !c.uses(.enter));
     try std.testing.expectEqual(@as(u8, 0), @as(u8, @bitCast(c.pads().pad2)));
+}
+
+test "the screens over the game: any gamepad's stick as its d-pad" {
+    var c: Controls = .{};
+    const id: platform.ControllerId = @fromBackingInt(@intCast(3));
+    _ = c.add(id, named("6B"));
+    // Its pad's d-pad as a stick (SDL's generic mapping): a press as it goes past the dead zone,
+    // none while it stays, another once let go and pushed again; the other axes none.
+    const at = struct {
+        fn f(x: platform.ControllerId, a: platform.ControllerAxis, v: i16) platform.Event.ControllerAxisEvent {
+            return .{ .controller = x, .axis = a, .value = v };
+        }
+    }.f;
+    try std.testing.expectEqual(@as(?platform.ControllerButton, .dpad_down), c.stickPress(at(id, .left_y, 32767)));
+    try std.testing.expectEqual(@as(?platform.ControllerButton, null), c.stickPress(at(id, .left_y, 32000)));
+    try std.testing.expectEqual(@as(?platform.ControllerButton, null), c.stickPress(at(id, .left_y, 0)));
+    try std.testing.expectEqual(@as(?platform.ControllerButton, .dpad_left), c.stickPress(at(id, .left_x, -32768)));
+    try std.testing.expectEqual(@as(?platform.ControllerButton, null), c.stickPress(at(id, .right_x, 32767)));
+    // A gamepad no player has: its stick too.
+    c.layout.assign(0, null);
+    try std.testing.expectEqual(@as(?platform.ControllerButton, .dpad_up), c.stickPress(at(id, .left_y, -32768)));
 }
 
 test "autofire: the attack button held is held and let go in turn" {
