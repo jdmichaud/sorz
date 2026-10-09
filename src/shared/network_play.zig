@@ -403,6 +403,24 @@ pub fn lists(g: *Game, p: *platform.Platform) void {
     g.overlay_dirty = true;
 }
 
+/// Network play's stats over the picture (DESIGN.md 9): with the settings' NETWORK STATS on, in
+/// a session's rounds from its first second, while no screen of this machine's is open; drawn
+/// again when they change.
+pub fn stats(g: *Game) void {
+    const np = g.netplay orelse return;
+    const shown = g.settings.network_stats and g.state.inRounds() and !g.settingsOpen() and !g.modalOpen();
+    const now = (if (shown) np.stats() else null) orelse {
+        if (g.overlays.find(.net_stats) != null) {
+            g.overlays.remove(.net_stats);
+            g.overlay_dirty = true;
+        }
+        return;
+    };
+    if (g.overlays.find(.net_stats)) |o| if (std.meta.eql(o.net_stats, now)) return;
+    g.overlays.push(.{ .net_stats = now });
+    g.overlay_dirty = true;
+}
+
 // --- the client --------------------------------------------------------------------------------
 
 /// The client's step: its own select's asks; a watch left with START or ended with its game; its

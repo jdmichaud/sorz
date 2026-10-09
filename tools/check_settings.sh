@@ -30,7 +30,7 @@ enter_state="$(field "$out" state_hash)"
 mkdir -p "$dir/kept"
 cat >"$dir/kept/settings.json" <<'EOF'
 {
-  "version": 4,
+  "version": 5,
   "players": {
     "player1": { "input": "keyboard", "keys": { "up": "up", "down": "down", "left": "left", "right": "right", "a": "z", "b": "x", "c": "c", "start": "p" }, "autofire": false },
     "player2": { "input": "keyboard", "keys": { "up": "w", "down": "s", "left": "a", "right": "d", "a": "f", "b": "g", "c": "h", "start": "tab" }, "autofire": false },
@@ -42,7 +42,8 @@ cat >"$dir/kept/settings.json" <<'EOF'
   "sound": { "volume": 70, "mute": false },
   "window": { "scale": 2, "fullscreen": false },
   "rules": { "lives": 3, "continues": 3, "friendly_hit": true },
-  "name": "BOB"
+  "name": "BOB",
+  "network_stats": false
 }
 EOF
 out="$("$bin" --saves "$dir/kept" --frames 20 --key 5:p)"
@@ -54,7 +55,7 @@ out="$("$bin" --saves "$dir/kept" --frames 20 --key 5:enter)"
 [ "$(field "$out" state_hash)" != "$enter_state" ] || fail "Enter is still pad 1's Start with the record: $out"
 
 # 3. Damaged records.
-for record in '{"version": 4, "sound": {"volume": "loud", "mute": true}}' 'not JSON' '{"version": 4}'; do
+for record in '{"version": 5, "sound": {"volume": "loud", "mute": true}}' 'not JSON' '{"version": 5}'; do
   rm -rf "$dir/damaged"
   mkdir "$dir/damaged"
   printf '%s' "$record" >"$dir/damaged/settings.json"
@@ -72,10 +73,10 @@ done
 # 4. Another version's record.
 rm -rf "$dir/old"
 mkdir "$dir/old"
-printf '%s' '{"version": 3, "keys": {}}' >"$dir/old/settings.json"
+printf '%s' '{"version": 4, "keys": {}}' >"$dir/old/settings.json"
 out="$("$bin" --saves "$dir/old" --frames 2)"
 [ "$(field "$out" notice)" = none ] || fail "another version's record is told: $out"
 [ "$(field "$out" settings)" = "$defaults" ] || fail "another version's record does not give the defaults: $out"
 [ ! -e "$dir/old/settings-damaged.json" ] || fail "another version's record was kept aside"
-grep -q '"version": 4' "$dir/old/settings.json" || fail "another version's record was not written over"
+grep -q '"version": 5' "$dir/old/settings.json" || fail "another version's record was not written over"
 echo "check_settings: a record was read at the start and its keys played; damaged records gave the defaults, were told once and kept aside; another version's was written over, untold"

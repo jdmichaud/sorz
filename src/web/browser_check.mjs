@@ -559,7 +559,7 @@ function multiple(view) {
 const buttons = { a: 'x', b: 'a', c: 'b', start: 'start' };
 const noKeys = { up: 'none', down: 'none', left: 'none', right: 'none', a: 'none', b: 'none', c: 'none', start: 'none' };
 const keptRecord = JSON.stringify({
-  version: 4,
+  version: 5,
   players: {
     player1: { input: 'gamepad 1', keys: { up: 'up', down: 'down', left: 'left', right: 'right', a: 'z', b: 'x', c: 'c', start: 'p' }, autofire: false },
     player2: { input: 'keyboard', keys: { up: 'w', down: 's', left: 'a', right: 'd', a: 'f', b: 'g', c: 'h', start: 'tab' }, autofire: false },
@@ -572,6 +572,7 @@ const keptRecord = JSON.stringify({
   window: { scale: 1, fullscreen: false },
   rules: { lives: 3, continues: 3, friendly_hit: true },
   name: 'BOB',
+  network_stats: false,
 }, null, 2);
 
 // Part `settings`: the record kept before the page loads is the game's at the start, and the page

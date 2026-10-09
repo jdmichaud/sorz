@@ -651,6 +651,7 @@ pub const Game = struct {
             .players = @intCast(self.controls.players()),
             .settings_key = self.policies().settings_key,
             .rules = self.policies().settings_rules and !self.isClient(),
+            .network = self.netplay != null,
             .gamepads = self.controls.connected(),
         }) });
         self.overlay_dirty = true;
@@ -967,6 +968,7 @@ pub const Game = struct {
             }
         };
         network_play.lists(self, p);
+        network_play.stats(self);
         if (self.holding()) {
             self.hold(p);
         } else switch (self.pacing) {

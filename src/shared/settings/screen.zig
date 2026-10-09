@@ -6,7 +6,8 @@
 //!
 //! Two pages, in the cartridge's options' style (the chosen row bright, the others dim, the menu's
 //! arrow at the choice). The first: INPUT CONFIGURATION..., the sound and its volume, the window's
-//! scale and full screen; the game's rules where the settings give them (the lives, the
+//! scale and full screen, network play's stats (NETWORK STATS, on a machine with network play:
+//! DESIGN.md 9); the game's rules where the settings give them (the lives, the
 //! continues, the friendly hits: setup.zig `Rules`); the defaults; and the two ways out, SAVE AND
 //! EXIT and EXIT WITHOUT SAVING. INPUT CONFIGURATION has a column for each player of this machine
 //! (one with network play or a browser): its input method (the keyboard, or a gamepad connected:
@@ -50,6 +51,7 @@ pub const Row = enum(u8) {
     volume,
     scale,
     fullscreen,
+    network_stats,
     lives,
     continues,
     friendly_hit,
@@ -108,6 +110,8 @@ pub const Facts = struct {
     settings_key: bool = true,
     /// The game's rules are the settings' here (variant.zig): their rows.
     rules: bool = false,
+    /// This machine has network play (a host's or a client's game): its stats' row.
+    network: bool = false,
     /// The labels of the gamepads connected, the lowest first (input.zig `Controls.connected`):
     /// the input methods a player may take.
     gamepads: [input.Controls.max_controllers]?u16 = @splat(null),
@@ -146,6 +150,7 @@ pub const Screen = struct {
 
     /// Whether the first page has the row here.
     fn shows(self: *const Screen, row: Row) bool {
+        if (row == .network_stats) return self.facts.network;
         return !row.rule() or self.facts.rules;
     }
 
@@ -379,6 +384,7 @@ pub const Screen = struct {
             .sound => settings.sound.mute = !settings.sound.mute,
             .scale => settings.window.scale = if (up) @min(settings.window.scale + 1, record.max_scale) else @max(settings.window.scale - 1, 1),
             .fullscreen => settings.window.fullscreen = !settings.window.fullscreen,
+            .network_stats => settings.network_stats = !settings.network_stats,
             .lives => settings.rules.lives = if (up) @min(settings.rules.lives + 1, record.max_lives) else @max(settings.rules.lives - 1, 1),
             .continues => settings.rules.continues = if (up) @min(settings.rules.continues + 1, record.max_continues) else settings.rules.continues -| 1,
             .friendly_hit => settings.rules.friendly_hit = !settings.rules.friendly_hit,
@@ -580,6 +586,7 @@ pub const Screen = struct {
             .volume => "VOLUME",
             .scale => "WINDOW SCALE",
             .fullscreen => "FULL SCREEN",
+            .network_stats => "NETWORK STATS",
             .lives => "LIVES",
             .continues => "CONTINUES",
             .friendly_hit => "FRIENDLY HIT",
@@ -613,6 +620,7 @@ pub const Screen = struct {
             .volume => std.fmt.bufPrint(buf, "{d}", .{settings.sound.volume}) catch unreachable,
             .scale => std.fmt.bufPrint(buf, "{d}", .{settings.window.scale}) catch unreachable,
             .fullscreen => if (settings.window.fullscreen) "ON" else "OFF",
+            .network_stats => if (settings.network_stats) "ON" else "OFF",
             .lives => std.fmt.bufPrint(buf, "{d}", .{settings.rules.lives}) catch unreachable,
             .continues => std.fmt.bufPrint(buf, "{d}", .{settings.rules.continues}) catch unreachable,
             .friendly_hit => if (settings.rules.friendly_hit) "ON" else "OFF",
@@ -894,6 +902,21 @@ test "EXIT WITHOUT SAVING gives back the settings, with A or START there; START 
     _ = press(&screen, &s, .z);
     try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .enter));
     try testing.expect(!s.rules.friendly_hit);
+}
+
+test "NETWORK STATS where the machine has network play: after FULL SCREEN, on and off" {
+    var s: Settings = .{};
+    var screen: Screen = .open(&s, .{ .rules = true });
+    for (0..5) |_| _ = press(&screen, &s, .down);
+    try testing.expectEqual(Row.lives, screen.row);
+    screen = .open(&s, .{ .rules = true, .network = true });
+    for (0..5) |_| _ = press(&screen, &s, .down);
+    try testing.expectEqual(Row.network_stats, screen.row);
+    try testing.expectEqual(screen.screenRow(.fullscreen) + 1, screen.screenRow(.network_stats));
+    _ = press(&screen, &s, .right);
+    try testing.expect(s.network_stats);
+    _ = press(&screen, &s, .z);
+    try testing.expect(!s.network_stats);
 }
 
 test "the rules' rows where the settings give the rules: lives 1 to 9, continues 0 to 9, friendly hits" {
