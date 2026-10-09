@@ -17,7 +17,7 @@ const web_page = @import("web_page");
 
 const usage =
     \\usage: sorz-agent [--frames N] [--key FRAME:NAME[:HOLD]]... [--button FRAME:NAME[:HOLD]]...
-    \\                  [--shot FRAME:PATH]... [--wav PATH]
+    \\                  [--axis FRAME:NAME:VALUE[:HOLD]]... [--shot FRAME:PATH]... [--wav PATH]
     \\                  [DIR|ROM] [--saves DIR] [--original | --page]
     \\       sorz-agent [DIR|ROM] (--netplay [ADDRESS:]PORT [--delay N] | --join ws://ADDRESS:PORT)
     \\                  [--frames N] [--until-session N] [--key FRAME:NAME[:HOLD]]...
@@ -34,6 +34,9 @@ const usage =
     \\  --frames N       run N frames, a display tick each (default 120)
     \\  --button FRAME:NAME[:HOLD]  press the button NAME of a gamepad connected at the first frame
     \\                   (a platform.ControllerButton, as `a` or `dpad_left`), as --key does
+    \\  --axis FRAME:NAME:VALUE[:HOLD]  hold that gamepad's axis NAME (a platform.ControllerAxis,
+    \\                   as `left_x`) at VALUE (-32768 to 32767) from FRAME, back at 0 HOLD frames later
+    \\                   (default 1)
     \\  --unplug FRAME, --plug FRAME  disconnect that gamepad at FRAME, connect it again
     \\  --key FRAME:NAME[:HOLD]  press the key NAME (a platform.Key, as `enter` or `left`) at
     \\                   frame FRAME, release it HOLD frames later (default 1); repeats
@@ -112,6 +115,8 @@ pub fn main(init: std.process.Init) !void {
     defer presses.deinit(gpa);
     var buttons: std.ArrayList(ButtonPress) = .empty;
     defer buttons.deinit(gpa);
+    var moves: std.ArrayList(AxisMove) = .empty;
+    defer moves.deinit(gpa);
     var plugs: std.ArrayList(struct { frame: u64, in: bool }) = .empty;
     defer plugs.deinit(gpa);
     var shots: std.ArrayList(Shot) = .empty;
@@ -153,6 +158,8 @@ pub fn main(init: std.process.Init) !void {
             try presses.append(gpa, parsePress(args.next() orelse return fail(io)) orelse return fail(io));
         } else if (std.mem.eql(u8, arg, "--button")) {
             try buttons.append(gpa, parseButton(args.next() orelse return fail(io)) orelse return fail(io));
+        } else if (std.mem.eql(u8, arg, "--axis")) {
+            try moves.append(gpa, parseAxis(args.next() orelse return fail(io)) orelse return fail(io));
         } else if (std.mem.eql(u8, arg, "--unplug") or std.mem.eql(u8, arg, "--plug")) {
             const frame = std.fmt.parseInt(u64, args.next() orelse return fail(io), 10) catch return fail(io);
             try plugs.append(gpa, .{ .frame = frame, .in = std.mem.eql(u8, arg, "--plug") });
@@ -295,20 +302,24 @@ pub fn main(init: std.process.Init) !void {
     var p = backend.asPlatform();
     var frame: u64 = 0;
     var shots_written: usize = 0;
-    // With buttons to press, one gamepad, connected at the first frame.
+    // With buttons to press or axes to move, one gamepad, connected at the first frame.
     const pad: sorz.platform.ControllerId = @fromBackingInt(1);
     while (frame < frames) : (frame += 1) {
         for (presses.items) |press| {
             if (press.frame == frame) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .key_down = .{ .key = press.key } } });
             if (press.frame +| press.hold == frame) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .key_up = .{ .key = press.key } } });
         }
-        if (frame == 0 and buttons.items.len != 0) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .controller_added = pad } });
+        if (frame == 0 and buttons.items.len + moves.items.len != 0) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .controller_added = pad } });
         for (plugs.items) |plug| if (plug.frame == frame) {
             try backend.inject(.{ .time_ns = backend.clock_ns, .payload = if (plug.in) .{ .controller_added = pad } else .{ .controller_removed = pad } });
         };
         for (buttons.items) |press| {
             if (press.frame == frame) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .controller_button_down = .{ .controller = pad, .button = press.button } } });
             if (press.frame +| press.hold == frame) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .controller_button_up = .{ .controller = pad, .button = press.button } } });
+        }
+        for (moves.items) |move| {
+            if (move.frame == frame) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .controller_axis = .{ .controller = pad, .axis = move.axis, .value = move.value } } });
+            if (move.frame +| move.hold == frame) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .controller_axis = .{ .controller = pad, .axis = move.axis, .value = 0 } } });
         }
         if (try game.update(&p) == .finished) break;
         for (shots.items) |shot| if (shot.frame == frame) {
@@ -355,6 +366,20 @@ fn parseButton(text: []const u8) ?ButtonPress {
     const hold = if (it.next()) |h| std.fmt.parseInt(u64, h, 10) catch return null else 1;
     if (it.next() != null or hold == 0) return null;
     return .{ .frame = frame, .button = button, .hold = hold };
+}
+
+/// A gamepad's axis held at `value` from `frame` for `hold` frames.
+const AxisMove = struct { frame: u64, axis: sorz.platform.ControllerAxis, value: i16, hold: u64 = 1 };
+
+/// `FRAME:NAME:VALUE[:HOLD]`, as `30:left_y:-32768` or `400:left_x:32767:5`.
+fn parseAxis(text: []const u8) ?AxisMove {
+    var it = std.mem.splitScalar(u8, text, ':');
+    const frame = std.fmt.parseInt(u64, it.next() orelse return null, 10) catch return null;
+    const axis = std.meta.stringToEnum(sorz.platform.ControllerAxis, it.next() orelse return null) orelse return null;
+    const value = std.fmt.parseInt(i16, it.next() orelse return null, 10) catch return null;
+    const hold = if (it.next()) |h| std.fmt.parseInt(u64, h, 10) catch return null else 1;
+    if (it.next() != null or hold == 0) return null;
+    return .{ .frame = frame, .axis = axis, .value = value, .hold = hold };
 }
 
 /// `FRAME:PATH`, as `250:/tmp/sor/frame.png`.
