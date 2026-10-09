@@ -1,7 +1,7 @@
 //! The SDL platform module, of Linux and Windows: the only code that links SDL2.
 const std = @import("std");
 const sorz = @import("sorz");
-pub const c = @import("sdl.zig");
+pub const c = @import("c");
 pub const backend = @import("backend.zig");
 pub const eventlog = @import("eventlog.zig");
 pub const host = @import("host.zig");
@@ -13,7 +13,7 @@ test {
 
 /// The linked SDL2 release, as "major.minor.patch".
 pub fn linkedVersion(buf: []u8) []const u8 {
-    var v: c.Version = undefined;
+    var v: c.SDL_version = undefined;
     c.SDL_GetVersion(&v);
     return std.fmt.bufPrint(buf, "{d}.{d}.{d}", .{ v.major, v.minor, v.patch }) catch unreachable;
 }

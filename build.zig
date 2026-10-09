@@ -98,10 +98,14 @@ pub fn build(b: *std.Build) void {
             .{ .name = "native", .module = native },
         },
     });
+    // SDL2's declarations: its own headers, translated (src/sdl/sdl.h), the system's on Linux and
+    // the `sdl2` package's for Windows.
+    const sdl_h = b.addTranslateC(.{ .root_source_file = b.path("src/sdl/sdl.h"), .target = target, .optimize = optimize });
     if (target.result.os.tag == .windows)
-        linkPackagedSdl(b, sdl, target, versions)
+        linkPackagedSdl(b, sdl, sdl_h, target, versions)
     else
-        linkSdl(b, sdl, sdl_linkage, versions);
+        linkSdl(b, sdl, sdl_h, sdl_linkage, versions);
+    sdl.addImport("c", sdl_h.createModule());
 
     const agent_exe = b.addExecutable(.{
         .name = "sorz-agent",
@@ -806,12 +810,21 @@ fn soundCheck(b: *std.Build, target: std.Build.ResolvedTarget, fast: std.builtin
     return run;
 }
 
-/// Links SDL2 into `m`, and records the SDL2 version that pkg-config reports as the `sdl` build
-/// option. Static linkage uses the archive that pkg-config names and the system libraries of its
-/// static link line. Those libraries stay dynamic, because static builds of X11, Wayland or
-/// PulseAudio are not practical. Dynamic linkage uses the shared library.
-fn linkSdl(b: *std.Build, m: *std.Build.Module, linkage: SdlLinkage, versions: *std.Build.Step.Options) void {
+/// Links SDL2 into `m`, gives `headers` SDL2's include directories, and records the SDL2 version
+/// that pkg-config reports as the `sdl` build option. Static linkage uses the archive that
+/// pkg-config names and the system libraries of its static link line. Those libraries stay
+/// dynamic, because static builds of X11, Wayland or PulseAudio are not practical. Dynamic linkage
+/// uses the shared library.
+fn linkSdl(b: *std.Build, m: *std.Build.Module, headers: *std.Build.Step.TranslateC, linkage: SdlLinkage, versions: *std.Build.Step.Options) void {
     var code: u8 = 0;
+    const cflags = b.runAllowFail(&.{ "pkg-config", "--cflags-only-I", "sdl2" }, &code, .ignore) catch {
+        std.log.err("SDL2's headers need pkg-config (pkg-config --cflags-only-I sdl2 failed)", .{});
+        std.process.exit(1);
+    };
+    var dirs = std.mem.tokenizeAny(u8, cflags, " \t\r\n");
+    while (dirs.next()) |flag| {
+        if (std.mem.startsWith(u8, flag, "-I")) headers.addSystemIncludePath(.{ .cwd_relative = b.dupe(flag[2..]) });
+    }
     if (b.runAllowFail(&.{ "pkg-config", "--modversion", "sdl2" }, &code, .ignore)) |out| {
         const found = std.mem.trim(u8, out, " \t\r\n");
         versions.addOption([]const u8, "sdl", found);
@@ -848,11 +861,17 @@ fn linkSdl(b: *std.Build, m: *std.Build.Module, linkage: SdlLinkage, versions: *
 }
 
 /// A Windows build: SDL2 compiled from source by Zig for the target (the `sdl2` package), linked
-/// statically with the Windows libraries that it needs. The package is fetched on the first Windows
-/// build; Linux builds never fetch it. SDL is optimised whatever the game's mode, as the system
-/// library of a Linux build is.
-fn linkPackagedSdl(b: *std.Build, m: *std.Build.Module, target: std.Build.ResolvedTarget, versions: *std.Build.Step.Options) void {
+/// statically with the Windows libraries that it needs, and its headers given to `headers`. The
+/// package is fetched on the first Windows build; Linux builds never fetch it. SDL is optimised
+/// whatever the game's mode, as the system library of a Linux build is.
+fn linkPackagedSdl(b: *std.Build, m: *std.Build.Module, headers: *std.Build.Step.TranslateC, target: std.Build.ResolvedTarget, versions: *std.Build.Step.Options) void {
     versions.addOption([]const u8, "sdl", package_sdl_version);
     const dep = b.lazyDependency("sdl2", .{ .target = target, .optimize = .ReleaseFast }) orelse return;
     m.linkLibrary(dep.artifact("SDL2"));
+    // The include directories that the package compiles SDL with, rather than the library's
+    // installed headers: those are a copy of these directories that skips the entries whose kind
+    // the file system does not report (sshfs, once a directory has been listed), and comes out
+    // empty there (docs/lessons.md).
+    headers.addIncludePath(dep.path("include"));
+    headers.addIncludePath(dep.path("include-pregen"));
 }

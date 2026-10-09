@@ -94,12 +94,15 @@ time once.
   sockets fail (Wine lacks the AFD device), a child process's timeout never fires and killing it
   aborts (a missing `RtlReportSilentProcessExit`), XTEST pointer motion does not reach a game on a
   bare Xvfb, and Wine emulates DPI scaling. The Windows gate needs Windows.
-- **Zig development versions** move: `@cImport` was removed (declare SDL's externs by hand);
-  `zig fmt` rewrites renamed builtins such as `@enumFromInt` into `@fromBackingInt(@intCast(...))`,
-  so run it before every commit; `**` array repetition is refused (use `@splat`); standard output
-  needs a streaming writer; directory entries can report an unknown kind; `std.process.Args.iterate`
-  does not compile for Windows (use `iterateAllocator`); `setenv` does not exist there (set SDL's
-  hints with override priority instead).
+- **Zig development versions** move: `@cImport` was removed, but build.zig still translates C
+  headers (`b.addTranslateC`, then its module): SDL's declarations come from its headers, never by
+  hand; `zig fmt` rewrites renamed builtins such as `@enumFromInt` into
+  `@fromBackingInt(@intCast(...))`, so run it before every commit; `**` array repetition is refused
+  (use `@splat`); standard output needs a streaming writer; directory entries can report an unknown
+  kind (on sshfs, once the directory has been listed), and the build's directory copies (a
+  library's installed headers) skip those entries; `std.process.Args.iterate` does not compile for
+  Windows (use `iterateAllocator`); `setenv` does not exist there (set SDL's hints with override
+  priority instead).
 - **The browser build without compiler-rt** imports the helpers the compiler calls (128-bit
   multiply and divide, some math): the page provides them, tested against compiler-rt, and the
   build checks the import list. A Debug build can import more than a release build.

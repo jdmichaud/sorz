@@ -9,7 +9,7 @@
 const std = @import("std");
 const sorz = @import("sorz");
 const native = @import("native");
-const c = @import("sdl.zig");
+const c = @import("c");
 const version = @import("root.zig");
 const SdlBackend = @import("backend.zig").SdlBackend;
 
