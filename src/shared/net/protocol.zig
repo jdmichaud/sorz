@@ -37,8 +37,9 @@
 //! |               | back, 3 the rules change), character u8 (0-2 for a coming    |              |
 //! |               | back, else 255), lives u8, continues u8, friendly hit u8     |              |
 //! |               | (0/1; the rules', 0 for the others)                          |              |
-//! | 20 load       | ticks u8, busy u8 (0-100), wait u8 (0-100): the sender's game| 4            |
-//! |               | over its last second of the session                          |              |
+//! | 20 load       | ticks u8, busy u8 (0-100), wait u8 (0-100), ping u16 (ms,    | 6            |
+//! |               | 0-9999): the sender's game over its last second of the       |              |
+//! |               | session, and the round trip it measured last                 |              |
 //!
 //! The guest opens with `hello`; the host answers `welcome` (after pings that measure the round
 //! trip and give the input delay) or `reject`. Welcomed, the two machines play their own games:
@@ -69,8 +70,8 @@
 //! host chooses, ahead of its pads for that tick: its player leaving the game (Escape, the game
 //! going on for its client) or coming back, or the game's rules (its settings). `load` says, every
 //! second of a session, what the sender's game did over the last one (the ticks it ran, the
-//! percent of the time it was busy and the percent it waited for the receiver's pads): network
-//! play's stats.
+//! percent of the time it was busy and the percent it waited for the receiver's pads), with the
+//! round trip it measured last: network play's stats.
 const std = @import("std");
 
 pub const version: u16 = 5;
@@ -217,8 +218,10 @@ pub const Pads = struct {
 pub const Hash = struct { tick: u32, hash: u64 };
 
 /// What a machine's game did over its last second of a session: the ticks it ran, and the percent
-/// of the time it was busy (its work) and waited for the other machine's pads.
-pub const Load = struct { ticks: u8 = 0, busy: u8 = 0, wait: u8 = 0 };
+/// of the time it was busy (its work) and waited for the other machine's pads; and the round trip
+/// it measured last, in milliseconds (at most `max_ping`).
+pub const Load = struct { ticks: u8 = 0, busy: u8 = 0, wait: u8 = 0, ping: u16 = 0 };
+pub const max_ping = 9999;
 
 pub const State = struct { tick: u32, length: u32, offset: u32, bytes: []const u8 };
 
@@ -368,6 +371,7 @@ pub fn encode(m: Message, out: []u8) []u8 {
             w.byte(l.ticks);
             w.byte(l.busy);
             w.byte(l.wait);
+            w.int(u16, l.ping);
         },
         .event => |e| {
             w.int(u32, e.tick);
@@ -499,8 +503,8 @@ pub fn decode(bytes: []const u8) DecodeError!Message {
             break :blk .{ .event = .{ .tick = tick, .what = @fromBackingInt(what), .character = character, .lives = lives, .continues = continues, .friendly_hit = friendly == 1 } };
         },
         .load => blk: {
-            const l: Load = .{ .ticks = try r.byte(), .busy = try r.byte(), .wait = try r.byte() };
-            if (l.busy > 100 or l.wait > 100) return error.Malformed;
+            const l: Load = .{ .ticks = try r.byte(), .busy = try r.byte(), .wait = try r.byte(), .ping = try r.int(u16) };
+            if (l.busy > 100 or l.wait > 100 or l.ping > max_ping) return error.Malformed;
             break :blk .{ .load = l };
         },
         .ticks => blk: {
@@ -595,8 +599,8 @@ test "every message round trips, and its truncations are malformed" {
     try roundTrip(.{ .event = .{ .tick = 1300, .what = .rules, .lives = 5, .continues = 0, .friendly_hit = true } });
     try roundTrip(.{ .status = .{ .game = .play, .character = 0, .open = true, .join_in_progress = true } });
     try roundTrip(.{ .ticks = .{ .first = 300, .pads = &.{ 1, 2, 3, 4 } } });
-    try roundTrip(.{ .load = .{ .ticks = 60, .busy = 35, .wait = 0 } });
-    try roundTrip(.{ .load = .{ .ticks = 255, .busy = 100, .wait = 100 } });
+    try roundTrip(.{ .load = .{ .ticks = 60, .busy = 35, .wait = 0, .ping = 40 } });
+    try roundTrip(.{ .load = .{ .ticks = 255, .busy = 100, .wait = 100, .ping = max_ping } });
     try roundTrip(.{ .join = no_character });
     try roundTrip(.{ .join = 2 });
     try roundTrip(.{ .reject = .data });
@@ -653,9 +657,10 @@ test "fields out of range are malformed" {
     try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 3, no_character, 0, 3, 1 }));
     try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 1, no_character, 3, 0, 0 }));
     try testing.expectError(error.Malformed, decode(&.{ 14, 2 }));
-    // A share past 100 %.
-    try testing.expectError(error.Malformed, decode(&.{ 20, 60, 101, 0 }));
-    try testing.expectError(error.Malformed, decode(&.{ 20, 60, 0, 101 }));
+    // A share past 100 %, a round trip past its most.
+    try testing.expectError(error.Malformed, decode(&.{ 20, 60, 101, 0, 0, 0 }));
+    try testing.expectError(error.Malformed, decode(&.{ 20, 60, 0, 101, 0, 0 }));
+    try testing.expectError(error.Malformed, decode(&.{ 20, 60, 0, 0, 0x10, 0x27 }));
     try testing.expectError(error.Malformed, decode(&.{ 18, 2, 0 }));
     try testing.expectError(error.Malformed, decode(&.{ 18, 1, 3 }));
     // Ticks: none, or more than a message may carry, or an odd byte.

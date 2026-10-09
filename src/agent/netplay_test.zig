@@ -251,10 +251,10 @@ test "the stats: each machine's second, and the other's beside it; a busy machin
     const g = guest.np.stats().?;
     try std.testing.expect(h.local.ticks >= 59 and h.local.ticks <= 61 and h.local.busy == 0 and h.local.wait == 0);
     try std.testing.expect(g.local.busy >= 88 and g.local.busy <= 92);
-    // Each has the other's: the host sees its guest busy, by its name; the guest sees its host.
+    // Each has the other's: the host sees its guest busy.
     try std.testing.expectEqual(g.local, h.peer.?);
     try std.testing.expectEqual(h.local, g.peer.?);
-    try std.testing.expect(h.peer_name != null and g.peer_name == null);
+    try std.testing.expect(h.host and !g.host);
     try std.testing.expectEqual(@as(u8, 3), h.delay);
 
     // A delay too short for an 80 ms link: both wait, and run fewer ticks; the ping shows it.
@@ -268,7 +268,7 @@ test "the stats: each machine's second, and the other's beside it; a busy machin
     try runUntil(h2, g2, 200, 2000);
     const s2 = h2.np.stats().?;
     try std.testing.expect(s2.local.wait > 20 and s2.peer.?.wait > 20 and s2.local.ticks < 50 and s2.local.busy == 0);
-    try std.testing.expect(s2.ping_ms >= 150);
+    try std.testing.expect(s2.local.ping >= 150 and s2.peer.?.ping >= 150);
     // Outside a session: none.
     const apart = try Peer.create(&n2, .guest, null, guestScript);
     defer apart.destroy();

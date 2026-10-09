@@ -20,8 +20,8 @@
 //!   notes of that session alone.
 //! - **The stats** (DESIGN.md 9): in a session of play, each second, the ticks this machine's game
 //!   ran, the percent of the time it worked (the game's `worked`) and the percent it held for the
-//!   other's pads, told to the other machine; `stats` gives both, with the round trip and the
-//!   input delay.
+//!   other's pads, with the round trip it measured last, told to the other machine; `stats` gives
+//!   both, and the input delay.
 //!
 //! What happens is logged (`std.log`, scope `netplay`): the connections, the welcomes and their
 //! delays, the sessions, the holds, a refusal, a mismatch and its first differing field.
@@ -104,15 +104,15 @@ const Meter = struct {
     last: ?protocol.Load = null,
 };
 
-/// Network play's stats of the session of play (DESIGN.md 9): this machine's last second, the
-/// other's as it said it, the round trip, the input delay, and the other's name (the client's,
-/// on the host; null on the client, whose other is the host).
+/// Network play's stats of the session of play (DESIGN.md 9): this machine's last second and the
+/// other's as it said it (none before its first), each with the round trip it measured; the input
+/// delay; whether this machine is the host; and the client's name.
 pub const Stats = struct {
     local: protocol.Load,
     peer: ?protocol.Load,
-    ping_ms: u16,
     delay: u8,
-    peer_name: ?protocol.Name,
+    host: bool,
+    client: protocol.Name,
 };
 
 /// `part` of `whole`, in percent (at most 100).
@@ -881,6 +881,7 @@ pub const Netplay = struct {
             .ticks = @intCast(@min(255, (@as(u64, m.ticks) * std.time.ns_per_s + span / 2) / span)),
             .busy = percent(m.busy_ns, span),
             .wait = percent(m.wait_ns, span),
+            .ping = @intCast(@min(s.rtt_ns / std.time.ns_per_ms, protocol.max_ping)),
         };
         m.* = .{ .since_ns = self.now_ns, .hold_from = if (m.hold_from != null) self.now_ns else null, .last = l };
         s.sayLoad(l);
@@ -893,9 +894,9 @@ pub const Netplay = struct {
         return .{
             .local = self.meter.last orelse return null,
             .peer = s.peer_load,
-            .ping_ms = @intCast(@min(s.rtt_ns / std.time.ns_per_ms, 9999)),
             .delay = s.delay,
-            .peer_name = if (self.role == .host) s.peer_name else null,
+            .host = self.role == .host,
+            .client = if (self.role == .host) s.peer_name else s.config.name,
         };
     }
 
