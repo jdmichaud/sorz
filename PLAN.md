@@ -220,6 +220,12 @@
 
 ## F7 — Platforms and exactness
 
+- [ ] **28 — SDL's declarations from its headers** — Depends: 01.
+  - The SDL host's SDL2 types, constants and functions come from SDL2's own headers, translated
+    by build.zig (translate-c): the system's on Linux, the `sdl2` package's for Windows. The
+    hand declarations and their layout test go. SDL2 stays.
+  - Gate: the SDL host builds for Linux and Windows; the unit tests pass; the game played in the
+    SDL build (picture, sound, keys, a gamepad, the mouse, full screen) as before.
 - [ ] **21 — Windows acceptance** — Depends: 17. Tests and the game on Windows itself.
   - Checked 2026-10-08 on Linux: `zig build all` cross-builds the Windows executables. Under
     Wine, 419 of 430 unit tests pass: the 10 of the native transport fail on Wine's missing
