@@ -24,6 +24,8 @@
 //! - **Clock balancing.** Each peer measures its slack, how many of the peer's pads it holds beyond
 //!   the tick it runs, and sends it; the peer ahead (the one with less slack) stretches its sound
 //!   (`stretchPpm`) until they are level.
+//! - **Stats.** Every second of a session, each peer says what its game did over the last one
+//!   (`sayLoad`: the driver's measure), and keeps the other's (`peer_load`).
 //! - **The settings screen.** A game whose player opens it holds, and sends no pads: the other
 //!   holds too once the pads it has run out (D ticks at most). Each side says when its player
 //!   opens or closes the screen (`inSettings`), so that the other can tell its player why it holds
@@ -242,6 +244,9 @@ pub const Session = struct {
     remote: [window]u8 = @splat(0),
     have: std.StaticBitSet(window) = .empty,
 
+    /// The peer's game over its last second of this session (its `load`), for the stats.
+    peer_load: ?protocol.Load = null,
+
     /// The balancing: our slack and the peer's, in 1/256 tick.
     slack: i32 = 0,
     peer_slack: ?i32 = null,
@@ -435,6 +440,7 @@ pub const Session = struct {
             .observe => |yes| self.onObserve(yes),
             .ticks => |t| self.onTicks(t),
             .event => |e| self.onEvent(e),
+            .load => |l| self.onLoad(l),
             .away => |seconds| blk: {
                 if (self.config.role != .guest or !self.welcomed) break :blk .unexpected;
                 self.note(.{ .away = seconds });
@@ -866,6 +872,7 @@ pub const Session = struct {
         for (0..self.delay) |i| self.have.set(i);
         self.slack = 0;
         self.peer_slack = null;
+        self.peer_load = null;
         self.own = @splat(null);
         self.theirs = @splat(null);
         self.snapshots = .{ null, null };
@@ -906,6 +913,21 @@ pub const Session = struct {
         const one_way = rtt_ns / 2;
         const ticks = (one_way + tick_ns - 1) / tick_ns + 1;
         return @intCast(std.math.clamp(ticks, protocol.min_delay, protocol.max_delay));
+    }
+
+    // --- the stats ---------------------------------------------------------------------------
+
+    /// What our game did over its last second of the session: the peer is told.
+    pub fn sayLoad(self: *Session, l: protocol.Load) void {
+        if (self.welcomed and self.phase == .playing) self.send(.{ .load = l });
+    }
+
+    /// One that crosses the session's end is of no use any more.
+    fn onLoad(self: *Session, l: protocol.Load) Verdict {
+        if (!self.welcomed) return .unexpected;
+        if (self.phase != .playing) return .stale;
+        self.peer_load = l;
+        return .accepted;
     }
 
     // --- the settings screen -----------------------------------------------------------------
@@ -1763,6 +1785,29 @@ test "the peer ahead stretches its sound, up to 0.5 %" {
     // Behind: no stretch.
     s.slack = 5 * 256;
     try testing.expectEqual(@as(u32, 0), s.stretchPpm());
+}
+
+test "the stats: each peer's load crosses in a session, none outside it" {
+    var host = try testSession(.host, 3);
+    defer host.deinit();
+    var guest = try testSession(.guest, null);
+    defer guest.deinit();
+    try welcomePair(&host, &guest);
+    // In the lobby: nothing is said.
+    guest.sayLoad(.{ .ticks = 60 });
+    try testing.expectEqual(@as(usize, 0), guest.outbox.items.len);
+    var buf: [canonical.maxSize(TestState)]u8 = undefined;
+    try joinPair(&host, &guest, canonical.write(TestState, &.{}, &buf));
+    guest.sayLoad(.{ .ticks = 58, .busy = 97, .wait = 0 });
+    try testing.expectEqual(Verdict.accepted, pump(&guest, &host, 0));
+    try testing.expectEqual(@as(?protocol.Load, .{ .ticks = 58, .busy = 97, .wait = 0 }), host.peer_load);
+    host.sayLoad(.{ .ticks = 58, .busy = 30, .wait = 12 });
+    _ = pump(&host, &guest, 0);
+    try testing.expectEqual(@as(u8, 12), guest.peer_load.?.wait);
+    // One that comes after the session's end is stale.
+    var msg: [protocol.max_len]u8 = undefined;
+    host.end(.game_over);
+    try testing.expectEqual(Verdict.stale, host.receive(encodeMsg(.{ .load = .{} }, &msg), 0));
 }
 
 test "the settings screen: the peer is told, holds once its pads run out, and both go on in step" {

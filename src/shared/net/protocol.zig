@@ -1,4 +1,4 @@
-//! The messages of the netplay session (DESIGN.md 9), version 4: one message per transport message,
+//! The messages of the netplay session (DESIGN.md 9), version 5: one message per transport message,
 //! its first byte its kind, then fixed fields in little-endian order. Decoding is strict: an
 //! unknown kind, a wrong length or a field out of its range is `Malformed`, and nothing is
 //! half-read.
@@ -37,6 +37,8 @@
 //! |               | back, 3 the rules change), character u8 (0-2 for a coming    |              |
 //! |               | back, else 255), lives u8, continues u8, friendly hit u8     |              |
 //! |               | (0/1; the rules', 0 for the others)                          |              |
+//! | 20 load       | ticks u8, busy u8 (0-100), wait u8 (0-100): the sender's game| 4            |
+//! |               | over its last second of the session                          |              |
 //!
 //! The guest opens with `hello`; the host answers `welcome` (after pings that measure the round
 //! trip and give the input delay) or `reject`. Welcomed, the two machines play their own games:
@@ -65,10 +67,13 @@
 //! until it starts it again. A player who leaves the game but not the program says `bye` (`ended`):
 //! the session ends, the connection stays. `event` changes the game in a session at a tick the
 //! host chooses, ahead of its pads for that tick: its player leaving the game (Escape, the game
-//! going on for its client) or coming back, or the game's rules (its settings).
+//! going on for its client) or coming back, or the game's rules (its settings). `load` says, every
+//! second of a session, what the sender's game did over the last one (the ticks it ran, the
+//! percent of the time it was busy and the percent it waited for the receiver's pads): network
+//! play's stats.
 const std = @import("std");
 
-pub const version: u16 = 4;
+pub const version: u16 = 5;
 pub const magic = "SZNP";
 
 /// The longest run of pads in one message.
@@ -100,6 +105,7 @@ pub const Kind = enum(u8) {
     name = 17,
     where = 18,
     event = 19,
+    load = 20,
     _,
 };
 
@@ -210,6 +216,10 @@ pub const Pads = struct {
 
 pub const Hash = struct { tick: u32, hash: u64 };
 
+/// What a machine's game did over its last second of a session: the ticks it ran, and the percent
+/// of the time it was busy (its work) and waited for the other machine's pads.
+pub const Load = struct { ticks: u8 = 0, busy: u8 = 0, wait: u8 = 0 };
+
 pub const State = struct { tick: u32, length: u32, offset: u32, bytes: []const u8 };
 
 pub const Message = union(Kind) {
@@ -237,6 +247,8 @@ pub const Message = union(Kind) {
     /// Where the client's player is in its own game.
     where: Where,
     event: Event,
+    /// The sender's game over its last second of the session.
+    load: Load,
 };
 
 /// A change of the game in a session, before tick `tick` on both machines.
@@ -351,6 +363,11 @@ pub fn encode(m: Message, out: []u8) []u8 {
         .where => |x| {
             w.byte(@backingInt(x.at));
             w.byte(x.cursor);
+        },
+        .load => |l| {
+            w.byte(l.ticks);
+            w.byte(l.busy);
+            w.byte(l.wait);
         },
         .event => |e| {
             w.int(u32, e.tick);
@@ -481,6 +498,11 @@ pub fn decode(bytes: []const u8) DecodeError!Message {
             if (!rules_ok) return error.Malformed;
             break :blk .{ .event = .{ .tick = tick, .what = @fromBackingInt(what), .character = character, .lives = lives, .continues = continues, .friendly_hit = friendly == 1 } };
         },
+        .load => blk: {
+            const l: Load = .{ .ticks = try r.byte(), .busy = try r.byte(), .wait = try r.byte() };
+            if (l.busy > 100 or l.wait > 100) return error.Malformed;
+            break :blk .{ .load = l };
+        },
         .ticks => blk: {
             const first = try r.int(u32);
             const count = try r.byte();
@@ -573,6 +595,8 @@ test "every message round trips, and its truncations are malformed" {
     try roundTrip(.{ .event = .{ .tick = 1300, .what = .rules, .lives = 5, .continues = 0, .friendly_hit = true } });
     try roundTrip(.{ .status = .{ .game = .play, .character = 0, .open = true, .join_in_progress = true } });
     try roundTrip(.{ .ticks = .{ .first = 300, .pads = &.{ 1, 2, 3, 4 } } });
+    try roundTrip(.{ .load = .{ .ticks = 60, .busy = 35, .wait = 0 } });
+    try roundTrip(.{ .load = .{ .ticks = 255, .busy = 100, .wait = 100 } });
     try roundTrip(.{ .join = no_character });
     try roundTrip(.{ .join = 2 });
     try roundTrip(.{ .reject = .data });
@@ -629,6 +653,9 @@ test "fields out of range are malformed" {
     try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 3, no_character, 0, 3, 1 }));
     try testing.expectError(error.Malformed, decode(&.{ 19, 0, 0, 0, 0, 1, no_character, 3, 0, 0 }));
     try testing.expectError(error.Malformed, decode(&.{ 14, 2 }));
+    // A share past 100 %.
+    try testing.expectError(error.Malformed, decode(&.{ 20, 60, 101, 0 }));
+    try testing.expectError(error.Malformed, decode(&.{ 20, 60, 0, 101 }));
     try testing.expectError(error.Malformed, decode(&.{ 18, 2, 0 }));
     try testing.expectError(error.Malformed, decode(&.{ 18, 1, 3 }));
     // Ticks: none, or more than a message may carry, or an odd byte.

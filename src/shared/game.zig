@@ -357,6 +357,8 @@ pub const Game = struct {
     fade_buffer: []i16 = &.{},
 
     update_count: u64 = 0,
+    /// When the update under way began (network play's stats: its work).
+    update_began_ns: u64 = 0,
     frames_presented: u64 = 0,
     events_consumed: u64 = 0,
     saves_written: u64 = 0,
@@ -901,6 +903,7 @@ pub const Game = struct {
             return err;
         };
         self.update_count += 1;
+        self.update_began_ns = p.nowNs();
         var buf: [32]platform.Event = undefined;
         while (true) {
             const n = p.pollEvents(&buf);
@@ -1264,6 +1267,8 @@ pub const Game = struct {
             self.overlay_shown = false;
             break :blk self.scenesFrame();
         };
+        // The update's work, for network play's stats: the presenting may wait for the display.
+        if (self.netplay) |np| np.worked(p.nowNs() -| self.update_began_ns);
         try p.present(f);
         self.frames_presented += 1;
     }

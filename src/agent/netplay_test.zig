@@ -63,6 +63,8 @@ const Peer = struct {
     alone: u32 = 0,
     /// Test hook: the tick before which one byte of the state is corrupted.
     corrupt_at: ?u32 = null,
+    /// The work its game does in each update (the stats' busy share).
+    work_ns: u64 = 0,
 
     fn create(network: *net.memory.Network, role: net.netplay.Role, delay: ?u8, script: *const fn (u32) Pad) !*Peer {
         const gpa = std.testing.allocator;
@@ -113,6 +115,7 @@ const Peer = struct {
             for (buf[0..n]) |e| _ = peer.np.handle(&p, e);
         }
         peer.np.update(&p);
+        peer.np.worked(peer.work_ns);
         for (peer.np.pending()) |note| switch (note) {
             .joined => {
                 try canonical.read(FakeState, peer.np.gameForm(), &peer.state);
@@ -232,6 +235,44 @@ test "with latency, the round trip picks the delay and the game holds when a pad
     try runUntil(h2, g2, 300, 2000);
     try std.testing.expect(h2.held > 100 and g2.held > 100);
     try expectSameGame(h2, g2, 300);
+}
+
+test "the stats: each machine's second, and the other's beside it; a busy machine, a slow link" {
+    var network = net.memory.Network.init(std.testing.allocator);
+    defer network.deinit();
+    const host = try Peer.create(&network, .host, 3, hostScript);
+    defer host.destroy();
+    const guest = try Peer.create(&network, .guest, null, guestScript);
+    defer guest.destroy();
+    // The guest's game works 15 ms of each update's 16.7.
+    guest.work_ns = 15 * std.time.ns_per_ms;
+    try runUntil(host, guest, 300, 400);
+    const h = host.np.stats().?;
+    const g = guest.np.stats().?;
+    try std.testing.expect(h.local.ticks >= 59 and h.local.ticks <= 61 and h.local.busy == 0 and h.local.wait == 0);
+    try std.testing.expect(g.local.busy >= 88 and g.local.busy <= 92);
+    // Each has the other's: the host sees its guest busy, by its name; the guest sees its host.
+    try std.testing.expectEqual(g.local, h.peer.?);
+    try std.testing.expectEqual(h.local, g.peer.?);
+    try std.testing.expect(h.peer_name != null and g.peer_name == null);
+    try std.testing.expectEqual(@as(u8, 3), h.delay);
+
+    // A delay too short for an 80 ms link: both wait, and run fewer ticks; the ping shows it.
+    var n2 = net.memory.Network.init(std.testing.allocator);
+    defer n2.deinit();
+    n2.latency_ns = 80 * std.time.ns_per_ms;
+    const h2 = try Peer.create(&n2, .host, 2, hostScript);
+    defer h2.destroy();
+    const g2 = try Peer.create(&n2, .guest, null, guestScript);
+    defer g2.destroy();
+    try runUntil(h2, g2, 200, 2000);
+    const s2 = h2.np.stats().?;
+    try std.testing.expect(s2.local.wait > 20 and s2.peer.?.wait > 20 and s2.local.ticks < 50 and s2.local.busy == 0);
+    try std.testing.expect(s2.ping_ms >= 150);
+    // Outside a session: none.
+    const apart = try Peer.create(&n2, .guest, null, guestScript);
+    defer apart.destroy();
+    try std.testing.expectEqual(@as(?net.netplay.Stats, null), apart.np.stats());
 }
 
 test "a dropped connection holds both games; the guest reconnects and the same session resumes" {

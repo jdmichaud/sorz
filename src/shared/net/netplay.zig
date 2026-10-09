@@ -18,6 +18,10 @@
 //!   display tick's pads (`pads`), the tick's end (`ran`) and the state checks (`checkDue`,
 //!   `check`); what happened comes to the game as notes (`pending`, which the game clears), the
 //!   notes of that session alone.
+//! - **The stats** (DESIGN.md 9): in a session of play, each second, the ticks this machine's game
+//!   ran, the percent of the time it worked (the game's `worked`) and the percent it held for the
+//!   other's pads, told to the other machine; `stats` gives both, with the round trip and the
+//!   input delay.
 //!
 //! What happens is logged (`std.log`, scope `netplay`): the connections, the welcomes and their
 //! delays, the sessions, the holds, a refusal, a mismatch and its first differing field.
@@ -89,6 +93,33 @@ pub const Entry = struct {
 /// The host's own line on its screens.
 pub const local_line = "LOCAL - PLAYER 1";
 
+/// The stats' measure of a second of this machine's game in a session of play: the ticks it ran,
+/// its work, and its holds for the other's pads (the hold under way counted from `hold_from`).
+const Meter = struct {
+    since_ns: ?u64 = null,
+    ticks: u32 = 0,
+    busy_ns: u64 = 0,
+    wait_ns: u64 = 0,
+    hold_from: ?u64 = null,
+    last: ?protocol.Load = null,
+};
+
+/// Network play's stats of the session of play (DESIGN.md 9): this machine's last second, the
+/// other's as it said it, the round trip, the input delay, and the other's name (the client's,
+/// on the host; null on the client, whose other is the host).
+pub const Stats = struct {
+    local: protocol.Load,
+    peer: ?protocol.Load,
+    ping_ms: u16,
+    delay: u8,
+    peer_name: ?protocol.Name,
+};
+
+/// `part` of `whole`, in percent (at most 100).
+fn percent(part: u64, whole: u64) u8 {
+    return @intCast(@min(100, (part * 100 + whole / 2) / whole));
+}
+
 pub const Netplay = struct {
     allocator: std.mem.Allocator,
     role: Role,
@@ -117,6 +148,8 @@ pub const Netplay = struct {
     /// The time the current hold began, and whether it was logged.
     held_since: ?u64 = null,
     hold_logged: bool = false,
+    /// The stats' second under way, and the last one's.
+    meter: Meter = .{},
     /// A refused connection was logged (the client retries quietly until one opens).
     refused_logged: bool = false,
     now_ns: u64 = 0,
@@ -396,6 +429,7 @@ pub const Netplay = struct {
     pub fn update(self: *Netplay, p: *platform.Platform) void {
         self.now_ns = @max(self.now_ns, p.nowNs());
         if (!self.started) return;
+        self.measure();
         if (self.role == .guest and self.hostPeer().connection == null and self.connecting == null) {
             if (self.reconnect_at) |t| if (self.now_ns >= t) self.connect(p);
         }
@@ -760,6 +794,14 @@ pub const Netplay = struct {
         const next = s.next;
         self.flushAll(p);
         if (self.role == .host) self.takeNotes(self.player.?) else self.takeNotes(self.hostPeer());
+        if (playing) {
+            if (merged == null) {
+                if (self.meter.hold_from == null) self.meter.hold_from = self.now_ns;
+            } else if (self.meter.hold_from) |from| {
+                self.meter.wait_ns += self.now_ns -| from;
+                self.meter.hold_from = null;
+            }
+        }
         if (merged == null) {
             if (self.held_since == null) {
                 self.held_since = self.now_ns;
@@ -807,6 +849,54 @@ pub const Netplay = struct {
     /// The tick that `pads` gave the pads of ran.
     pub fn ran(self: *Netplay) void {
         if (self.main()) |s| s.ran();
+        self.meter.ticks += 1;
+    }
+
+    /// The game worked `ns` in an update (its events, ticks and picture; not its presenting,
+    /// which may wait for the display): the stats' busy share.
+    pub fn worked(self: *Netplay, ns: u64) void {
+        if (self.meter.since_ns != null) self.meter.busy_ns += ns;
+    }
+
+    /// The stats' second: once one has gone by in a session of play, its measure is kept and told
+    /// to the other machine (sent with the update's messages); outside one, nothing is measured.
+    fn measure(self: *Netplay) void {
+        const s = self.main() orelse {
+            self.meter = .{};
+            return;
+        };
+        if (s.phase != .playing) {
+            self.meter = .{};
+            return;
+        }
+        const m = &self.meter;
+        const since = m.since_ns orelse {
+            m.* = .{ .since_ns = self.now_ns };
+            return;
+        };
+        const span = self.now_ns -| since;
+        if (span < std.time.ns_per_s) return;
+        if (m.hold_from) |from| m.wait_ns += self.now_ns -| from;
+        const l: protocol.Load = .{
+            .ticks = @intCast(@min(255, (@as(u64, m.ticks) * std.time.ns_per_s + span / 2) / span)),
+            .busy = percent(m.busy_ns, span),
+            .wait = percent(m.wait_ns, span),
+        };
+        m.* = .{ .since_ns = self.now_ns, .hold_from = if (m.hold_from != null) self.now_ns else null, .last = l };
+        s.sayLoad(l);
+    }
+
+    /// The stats of the session of play, from its first second on (null before, or outside one).
+    pub fn stats(self: *const Netplay) ?Stats {
+        const s = self.main() orelse return null;
+        if (s.phase != .playing) return null;
+        return .{
+            .local = self.meter.last orelse return null,
+            .peer = s.peer_load,
+            .ping_ms = @intCast(@min(s.rtt_ns / std.time.ns_per_ms, 9999)),
+            .delay = s.delay,
+            .peer_name = if (self.role == .host) s.peer_name else null,
+        };
     }
 
     /// Whether the state before the next tick is due for a check (then give it to `check`): the
