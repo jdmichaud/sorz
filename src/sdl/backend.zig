@@ -919,41 +919,63 @@ pub const SdlBackend = struct {
 
 const ScancodeKey = struct { u16, platform.Key };
 
-/// SDL scancode to project key. Every key of the `Key` enum has an entry (a test checks this).
-/// The keypad Enter is also `enter`, and a scancode without an entry is `unknown`.
+/// SDL scancode to project key. Every key of the `Key` enum has an entry (a test checks this), and
+/// a scancode without an entry is `unknown`.
 const scancode_keys = [_]ScancodeKey{
-    .{ 41, .escape },      .{ 40, .enter },        .{ 88, .enter },        .{ 44, .space },
-    .{ 43, .tab },         .{ 42, .backspace },    .{ 80, .left },         .{ 79, .right },
-    .{ 82, .up },          .{ 81, .down },         .{ 74, .home },         .{ 77, .end },
-    .{ 75, .page_up },     .{ 78, .page_down },    .{ 73, .insert },       .{ 76, .delete },
-    .{ 225, .left_shift }, .{ 229, .right_shift }, .{ 224, .left_ctrl },   .{ 228, .right_ctrl },
-    .{ 226, .left_alt },   .{ 230, .right_alt },   .{ 4, .a },             .{ 5, .b },
-    .{ 6, .c },            .{ 7, .d },             .{ 8, .e },             .{ 9, .f },
-    .{ 10, .g },           .{ 11, .h },            .{ 12, .i },            .{ 13, .j },
-    .{ 14, .k },           .{ 15, .l },            .{ 16, .m },            .{ 17, .n },
-    .{ 18, .o },           .{ 19, .p },            .{ 20, .q },            .{ 21, .r },
-    .{ 22, .s },           .{ 23, .t },            .{ 24, .u },            .{ 25, .v },
-    .{ 26, .w },           .{ 27, .x },            .{ 28, .y },            .{ 29, .z },
-    .{ 39, .digit_0 },     .{ 30, .digit_1 },      .{ 31, .digit_2 },      .{ 32, .digit_3 },
-    .{ 33, .digit_4 },     .{ 34, .digit_5 },      .{ 35, .digit_6 },      .{ 36, .digit_7 },
-    .{ 37, .digit_8 },     .{ 38, .digit_9 },      .{ 58, .f1 },           .{ 59, .f2 },
-    .{ 60, .f3 },          .{ 61, .f4 },           .{ 62, .f5 },           .{ 63, .f6 },
-    .{ 64, .f7 },          .{ 65, .f8 },           .{ 66, .f9 },           .{ 67, .f10 },
-    .{ 68, .f11 },         .{ 69, .f12 },          .{ 45, .minus },        .{ 46, .equals },
-    .{ 54, .comma },       .{ 55, .period },       .{ 56, .slash },        .{ 51, .semicolon },
-    .{ 52, .apostrophe },  .{ 53, .grave },        .{ 47, .left_bracket }, .{ 48, .right_bracket },
-    .{ 49, .backslash },   .{ 87, .keypad_plus },  .{ 86, .keypad_minus },
-    // The keypad's other keys are the keys that they double with Num Lock off: 0 is Insert, the
-    // period Delete, and 8, 2, 4 and 6 the arrows. The digits that a text field takes arrive as
-    // text input. Change this when the game reads the keypad differently.
-    .{ 98, .insert },
-    .{ 99, .delete },      .{ 96, .up },           .{ 90, .down },         .{ 92, .left },
-    .{ 94, .right },       .{ 95, .home },         .{ 97, .page_up },      .{ 89, .end },
-    .{ 91, .page_down },
+    .{ c.SDL_SCANCODE_ESCAPE, .escape },              .{ c.SDL_SCANCODE_RETURN, .enter },
+    .{ c.SDL_SCANCODE_SPACE, .space },                .{ c.SDL_SCANCODE_TAB, .tab },
+    .{ c.SDL_SCANCODE_BACKSPACE, .backspace },        .{ c.SDL_SCANCODE_LEFT, .left },
+    .{ c.SDL_SCANCODE_RIGHT, .right },                .{ c.SDL_SCANCODE_UP, .up },
+    .{ c.SDL_SCANCODE_DOWN, .down },                  .{ c.SDL_SCANCODE_HOME, .home },
+    .{ c.SDL_SCANCODE_END, .end },                    .{ c.SDL_SCANCODE_PAGEUP, .page_up },
+    .{ c.SDL_SCANCODE_PAGEDOWN, .page_down },         .{ c.SDL_SCANCODE_INSERT, .insert },
+    .{ c.SDL_SCANCODE_DELETE, .delete },              .{ c.SDL_SCANCODE_LSHIFT, .left_shift },
+    .{ c.SDL_SCANCODE_RSHIFT, .right_shift },         .{ c.SDL_SCANCODE_LCTRL, .left_ctrl },
+    .{ c.SDL_SCANCODE_RCTRL, .right_ctrl },           .{ c.SDL_SCANCODE_LALT, .left_alt },
+    .{ c.SDL_SCANCODE_RALT, .right_alt },             .{ c.SDL_SCANCODE_A, .a },
+    .{ c.SDL_SCANCODE_B, .b },                        .{ c.SDL_SCANCODE_C, .c },
+    .{ c.SDL_SCANCODE_D, .d },                        .{ c.SDL_SCANCODE_E, .e },
+    .{ c.SDL_SCANCODE_F, .f },                        .{ c.SDL_SCANCODE_G, .g },
+    .{ c.SDL_SCANCODE_H, .h },                        .{ c.SDL_SCANCODE_I, .i },
+    .{ c.SDL_SCANCODE_J, .j },                        .{ c.SDL_SCANCODE_K, .k },
+    .{ c.SDL_SCANCODE_L, .l },                        .{ c.SDL_SCANCODE_M, .m },
+    .{ c.SDL_SCANCODE_N, .n },                        .{ c.SDL_SCANCODE_O, .o },
+    .{ c.SDL_SCANCODE_P, .p },                        .{ c.SDL_SCANCODE_Q, .q },
+    .{ c.SDL_SCANCODE_R, .r },                        .{ c.SDL_SCANCODE_S, .s },
+    .{ c.SDL_SCANCODE_T, .t },                        .{ c.SDL_SCANCODE_U, .u },
+    .{ c.SDL_SCANCODE_V, .v },                        .{ c.SDL_SCANCODE_W, .w },
+    .{ c.SDL_SCANCODE_X, .x },                        .{ c.SDL_SCANCODE_Y, .y },
+    .{ c.SDL_SCANCODE_Z, .z },                        .{ c.SDL_SCANCODE_0, .digit_0 },
+    .{ c.SDL_SCANCODE_1, .digit_1 },                  .{ c.SDL_SCANCODE_2, .digit_2 },
+    .{ c.SDL_SCANCODE_3, .digit_3 },                  .{ c.SDL_SCANCODE_4, .digit_4 },
+    .{ c.SDL_SCANCODE_5, .digit_5 },                  .{ c.SDL_SCANCODE_6, .digit_6 },
+    .{ c.SDL_SCANCODE_7, .digit_7 },                  .{ c.SDL_SCANCODE_8, .digit_8 },
+    .{ c.SDL_SCANCODE_9, .digit_9 },                  .{ c.SDL_SCANCODE_F1, .f1 },
+    .{ c.SDL_SCANCODE_F2, .f2 },                      .{ c.SDL_SCANCODE_F3, .f3 },
+    .{ c.SDL_SCANCODE_F4, .f4 },                      .{ c.SDL_SCANCODE_F5, .f5 },
+    .{ c.SDL_SCANCODE_F6, .f6 },                      .{ c.SDL_SCANCODE_F7, .f7 },
+    .{ c.SDL_SCANCODE_F8, .f8 },                      .{ c.SDL_SCANCODE_F9, .f9 },
+    .{ c.SDL_SCANCODE_F10, .f10 },                    .{ c.SDL_SCANCODE_F11, .f11 },
+    .{ c.SDL_SCANCODE_F12, .f12 },                    .{ c.SDL_SCANCODE_MINUS, .minus },
+    .{ c.SDL_SCANCODE_EQUALS, .equals },              .{ c.SDL_SCANCODE_COMMA, .comma },
+    .{ c.SDL_SCANCODE_PERIOD, .period },              .{ c.SDL_SCANCODE_SLASH, .slash },
+    .{ c.SDL_SCANCODE_SEMICOLON, .semicolon },        .{ c.SDL_SCANCODE_APOSTROPHE, .apostrophe },
+    .{ c.SDL_SCANCODE_GRAVE, .grave },                .{ c.SDL_SCANCODE_LEFTBRACKET, .left_bracket },
+    .{ c.SDL_SCANCODE_RIGHTBRACKET, .right_bracket }, .{ c.SDL_SCANCODE_BACKSLASH, .backslash },
+    .{ c.SDL_SCANCODE_KP_PLUS, .keypad_plus },        .{ c.SDL_SCANCODE_KP_MINUS, .keypad_minus },
+    // The keypad's Enter is Enter, and its other keys are the keys that they double with Num Lock
+    // off: 0 is Insert, the period Delete, and 8, 2, 4 and 6 the arrows. The digits that a text
+    // field takes arrive as text input. Change this when the game reads the keypad differently.
+    .{ c.SDL_SCANCODE_KP_ENTER, .enter },             .{ c.SDL_SCANCODE_KP_0, .insert },
+    .{ c.SDL_SCANCODE_KP_PERIOD, .delete },           .{ c.SDL_SCANCODE_KP_8, .up },
+    .{ c.SDL_SCANCODE_KP_2, .down },                  .{ c.SDL_SCANCODE_KP_4, .left },
+    .{ c.SDL_SCANCODE_KP_6, .right },                 .{ c.SDL_SCANCODE_KP_7, .home },
+    .{ c.SDL_SCANCODE_KP_9, .page_up },               .{ c.SDL_SCANCODE_KP_1, .end },
+    .{ c.SDL_SCANCODE_KP_3, .page_down },
 };
 
-const key_table: [512]platform.Key = blk: {
-    var table: [512]platform.Key = @splat(.unknown);
+const key_table: [c.SDL_NUM_SCANCODES]platform.Key = blk: {
+    var table: [c.SDL_NUM_SCANCODES]platform.Key = @splat(.unknown);
     for (scancode_keys) |entry| table[entry[0]] = entry[1];
     break :blk table;
 };
@@ -1414,7 +1436,7 @@ test "a joystick without a gamepad mapping is opened with the generic one" {
     var p = backend.asPlatform();
     const caps = try p.start();
     if (!caps.controllers) return error.SkipZigTest;
-    const index = c.SDL_JoystickAttachVirtual(0, 3, 10, 0);
+    const index = c.SDL_JoystickAttachVirtual(c.SDL_JOYSTICK_TYPE_UNKNOWN, 3, 10, 0);
     if (index < 0) return error.SkipZigTest;
     defer _ = c.SDL_JoystickDetachVirtual(index);
     try std.testing.expect(c.SDL_IsGameController(index) == 0);
