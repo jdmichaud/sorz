@@ -1351,14 +1351,23 @@ pub fn bossR2Claws(arena: std.mem.Allocator, rom: []const u8) Error!entity.Defin
 
 /// Round 2's boss's trail (type $99, handler 0x16C24, made at 0x16BC6): his look as he dodges and
 /// dashes, his animation and frame where he is, for a few ticks (fewer for twins, or with two
-/// players).
+/// players). A look only: its handler counts its ticks and meets nothing, so its frames have no
+/// boxes (his have).
 pub fn bossR2Trail(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition {
     const set = u32be(rom, boss_sets);
     var d: Def = .{ .arena = arena, .rom = rom, .dir = "round2_boss", .set = set, .box_table = entities.object_boxes, .frame_addresses = try sprites.frameAddresses(arena, rom, set) };
     for ([_]struct { name: []const u8, word: i32 }{
         .{ .name = "stand", .word = try moveq(rom, 0x15888, 0) },
         .{ .name = "swing", .word = try moveq(rom, 0x1628E, 0) },
-    }) |an| try d.animations.append(arena, .{ .name = an.name, .loop = true, .frames = try enemyFrames(&d, an.name, try wordEntry(an.word)) });
+    }) |an| {
+        const frames = try enemyFrames(&d, an.name, try wordEntry(an.word));
+        for (frames) |*f| {
+            f.body = null;
+            f.attack = null;
+        }
+        try d.animations.append(arena, .{ .name = an.name, .loop = true, .frames = frames });
+    }
+    d.boxes.clearRetainingCapacity();
     try d.number("ticks_twins", try moveq(rom, 0x16C0A, 1), "ROM 0x16C0A: moveq #N,d1 (a twin's trail)");
     try d.number("ticks_two", try moveq(rom, 0x16C12, 1), "ROM 0x16C12: moveq #N,d1 (two players in play)");
     try d.number("ticks", try moveq(rom, 0x16C1C, 1), "ROM 0x16C1C: moveq #N,d1");
