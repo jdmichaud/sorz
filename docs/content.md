@@ -558,7 +558,7 @@ play).
 - `colours` (a section's; the boss's `section_colours`): the enemies' colours it loads as it
   begins, by number (`screens/round`'s `enemy_colours`): its `first`, its `second` and, when
   given, its `other` (else the other keeps its own). The boss's `colours`: its own, a palette of
-  the art, loaded over the first as its section opens and as its fight begins. An enemy that
+  the art, loaded over the first as its section opens. An enemy that
   appears shows on the line of the colours that hold its own (the other's for a kind's own; the
   first's when the first holds them; else the second's); one that arrives from the reserve takes
   the colours that hold its own, or ones no enemy has shown on since the reserve began.

@@ -584,8 +584,7 @@ pub fn run(t: *Tick) void {
         .boss_wave => {
             s.ticks -|= 1;
             if (s.ticks != 0) return;
-            // The boss's fight: its colours again.
-            bossColours(t);
+            // The boss's fight (its colours loaded again only in round 8's, which has a room).
             s.stage = .wave;
             s.next = 0;
             nextWave(t, p);
@@ -986,7 +985,8 @@ fn holdColours(t: *Tick, c: content_round.Colours) void {
     if (c.second) |n| t.out.colour_loads.append(.{ .enemies = .{ .colours = n, .into = Held.second } });
 }
 
-/// The boss's colours loaded (0x576), over the first's, which no kind's then match.
+/// The boss's colours loaded (0x576) as his section opens, over the first's, which no kind's
+/// then match.
 fn bossColours(t: *Tick) void {
     t.out.colours = true;
     t.out.colour_loads.append(.boss);
