@@ -209,6 +209,14 @@
   - Gate: the flows played (a native host and native and page clients: join at the select and in
     play, observe, drops, the host leaving); netplay-check's flows for them; variants-check,
     smoke and the browser check pass.
+- [ ] **27 — Network play's stats** — Depends: 26.
+  - Each machine of a session measures, every second, the ticks it ran, its busy share of the
+    time (its updates' work, the presenting aside) and its wait for the other's pads; the two
+    send theirs to each other (protocol version 5). The settings' NETWORK STATS (off by default,
+    kept in the record, version 5) shows both machines' lines, with the ping and the input
+    delay, at the bottom left during a session's rounds.
+  - Gate: the lines seen in a session of a native host and a page; netplay-check, variants-check
+    and the browser check pass; the user's play.
 
 ## F7 — Platforms and exactness
 
