@@ -833,7 +833,8 @@ pub const Round = struct {
     /// way (by the pad: across, up, down, or across and up or down) and side, armed or not;
     /// null for one not playing.
     /// Another state's side is not a state of its own: the original turns a blow or a jump in
-    /// place (its art not copied again).
+    /// place (its art not copied again). The slam's fall is the slam's pose: the original sets
+    /// that state itself at the slam's last step, without copying its art.
     fn poseOf(e: *const world.Entity) ?u16 {
         const m = switch (e.mind) {
             .player => |m| m,
@@ -842,7 +843,8 @@ pub const Round = struct {
         const walks = m.state == .walk or m.state == .armed_walk;
         const way: u16 = if (walks) @backingInt(m.way) else 0;
         const side: u16 = if (walks) @intFromBool(e.facingLeft()) else 0;
-        return @as(u16, @backingInt(m.state)) << 4 | way << 1 | side;
+        const state = if (m.state == .thrown_fall) .slammed else m.state;
+        return @as(u16, @backingInt(state)) << 4 | way << 1 | side;
     }
 
     /// Each player's health bar's partial cell is built again when its health changed.
