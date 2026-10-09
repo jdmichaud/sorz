@@ -289,7 +289,8 @@ pub const specialCalled = C.specialCalled;
 pub const knockedBack = C.knockedBack;
 
 /// A blow meets him as it meets the bosses' body (boss.zig), but none lands while he dodges or
-/// dashes (the original undoes the striker's hit); grabs still take him.
+/// dashes (the original undoes the striker's hit), nor one met at the tick he began to dodge,
+/// dropped at his next (`begin`); grabs still take him.
 pub fn struck(a: Actor, blow: tick.Blow) bool {
     if (a.mind.invulnerable) return false;
     return C.struck(a, blow);
@@ -321,6 +322,8 @@ pub fn begin(a: Actor) void {
             m.invulnerable = false;
         },
     }
+    // Out of the blows' reach, the blow met at his last tick, as he began to dodge, does nothing.
+    if (m.invulnerable) m.damage = 0;
     if (ended) return C.end(a);
     switch (m.state) {
         .appear => {
