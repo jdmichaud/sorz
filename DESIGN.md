@@ -514,11 +514,12 @@ sound. It is the upgrade if the delay is felt.
   the sound fades rather than breaks.
 - **Stats** (the user, 2026-10-09). Each machine of a session measures, every second, the ticks it
   ran, its busy share of the time (its updates' work, without the presenting, which may wait for
-  the display) and its wait for the other's pads, and sends them to the other. With the settings'
-  NETWORK STATS on (off by default), a machine shows during the session's rounds, at the bottom
-  left over the picture, its own line (LOCAL) and the other's (the client's name on the host, HOST
-  on the client), with the ping and the input delay. A machine busy near 100 % is the slow one;
-  waits while neither is busy are the link's, its ping near or past what the delay covers.
+  the display) and its wait for the other's pads, and sends them to the other with the round trip
+  it measured. With the settings' NETWORK STATS on (off by default), a machine shows during the
+  session's rounds, at the bottom left over the picture, the same lines as the other: the host's
+  (HOST), then the client's (its name), each with those numbers, its ping and the input delay. A
+  machine busy near 100 % is the slow one; waits while neither is busy are the link's, its ping
+  near or past what the delay covers.
 - **Game data.** A page loads the game's files of the native game that serves it (section 5.3):
   the host's copy, or the server's. A native client uses its own. The handshake compares the
   data's identity, its content tree's digest (a ROM's is the digest of the tree extracted from it,
