@@ -245,6 +245,10 @@ pub const Round = struct {
     /// The words of the twins' art the copy's last step took (`World.art_copy`), after the
     /// players' art.
     copy_due: u16 = 0,
+    /// The bosses' bars' entry was set as the last logic tick ended, and as the one before did:
+    /// their rectangle is written from the frame after the tick that follows their first.
+    bosses_held: bool = false,
+    bosses_written: bool = false,
     /// Each player's state as the original numbers it, at the last tick (`poseOf`).
     pose: [2]?u16 = .{ null, null },
     colours_due: bool = false,
@@ -734,10 +738,11 @@ pub const Round = struct {
         }
         f.tiles.add(self.copy_due);
         self.copy_due = 0;
-        // The bosses' bars' rectangle, written whole while they show; their partial cells built
+        // The bosses' bars' rectangle, written whole from the tick after the one that set their
+        // entry (the original looks at it before the objects' turns); their partial cells built
         // at every frame from a boss's first tick, but at a frame that builds player 2's (the
         // original returns before them then).
-        if (self.shown_bar.bosses != null and !self.done) {
+        if (self.bosses_written and !self.done) {
             f.bosses_rows = @intCast(a.bosses_bars.height);
             f.bosses_cells = @intCast(@as(u32, a.bosses_bars.width) * a.bosses_bars.height);
         }
@@ -826,6 +831,8 @@ pub const Round = struct {
             };
         }
         if (out.art_copied != 0) self.copy_due = out.art_copied;
+        self.bosses_written = self.bosses_held;
+        self.bosses_held = w.boss_bar != null;
         self.noteBars();
     }
 
