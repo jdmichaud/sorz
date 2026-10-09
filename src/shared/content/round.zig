@@ -221,8 +221,11 @@ pub const Boss = struct {
     /// The boss's art, then the section's and the boss's again, streamed in from the last
     /// section's clear.
     streamed: []const Streamed = &.{},
-    /// The boss's art again after the special attack, as a section's (`Section.again`).
+    /// The boss's art again after the special attack, as a section's (`Section.again`); or, when
+    /// `copies_art` (round 5's twins), copied again from the players' art instead, as the first
+    /// twin's coming has it copied (behaviours/boss_r5.zig).
     again: []const Streamed = &.{},
+    copies_art: bool = false,
     /// The enemies' colours its section holds as it begins (`Section.colours`), and the boss's
     /// own (a palette of the art, full name), shown as its music is asked for.
     section_colours: Colours = .{},
@@ -1103,6 +1106,7 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
         .{ .key = "wave_after", .value = json.Value.num(b.wave_after) },
         .{ .key = "streamed", .value = try streamedValue(arena, b.streamed) },
         .{ .key = "again", .value = try streamedValue(arena, b.again) },
+        .{ .key = "copies_art", .value = .{ .bool = b.copies_art } },
         .{ .key = "section_colours", .value = try coloursValue(arena, b.section_colours) },
         .{ .key = "art", .value = try artValue(arena, b.art) },
         .{ .key = "colours", .value = if (b.colours) |name| .{ .str = name } else .null },
@@ -1526,7 +1530,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
         if (r.own_sound.?.every == 0) return (try o.get("every")).fail("not 1 or more");
     }
     if (try root.opt("boss")) |b| {
-        try b.only(&.{ "provenance", "fade", "music", "music_after", "wave_after", "streamed", "again", "section_colours", "colours", "art", "wave", "reserve" });
+        try b.only(&.{ "provenance", "fade", "music", "music_after", "wave_after", "streamed", "again", "copies_art", "section_colours", "colours", "art", "wave", "reserve" });
         r.boss = .{
             .provenance = try provenanceOf(b),
             .fade = try (try b.get("fade")).string(),
@@ -1535,6 +1539,7 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
             .wave_after = try (try b.get("wave_after")).int(u16),
             .streamed = try readStreamed(arena, try b.get("streamed")),
             .again = if (try b.opt("again")) |x| try readStreamed(arena, x) else &.{},
+            .copies_art = if (try b.opt("copies_art")) |x| try x.boolean() else false,
             .section_colours = if (try b.opt("section_colours")) |x| try readColours(x) else .{},
             .colours = if (try b.opt("colours")) |x| try x.string() else null,
             .art = if (try b.opt("art")) |x| try readArt(x) else .{ 0, 0, 0, 0 },

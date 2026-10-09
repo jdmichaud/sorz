@@ -81,9 +81,8 @@ pub const Mind = struct {
     holding: bool = false,
     alternate: bool = false,
     targeted: bool = false,
-    /// He asked for his art to be copied (the first of twins), and the tick it is over.
+    /// He asked for the twins' art to be copied (the first of twins: once).
     copying: bool = false,
-    copy_until: u32 = 0,
     /// He got up (the body notes it as he lies alive).
     rose: bool = false,
     // The body's (boss.zig) -------------------------------------------------------------------
@@ -136,12 +135,13 @@ pub const Sound = enum { hurt, cry, thud, jump, land, shout };
 pub const Tables = struct {
     /// Carried over a thrower's head, step by step: back from the thrower, then down.
     carried: [10]i8,
+    /// The copy of the twins' art (`World.art_copy`): each step's length in words, which the
+    /// picture's next frame transfers; the tick after the last ends it.
+    copy_words: [42]u16,
 };
 
 pub const Numbers = struct {
     // His own ---------------------------------------------------------------------------------
-    /// The ticks from his art's copy asked for to the first it is over.
-    copy_ticks: u8,
     /// His pounce: his target in depth nearer than `pounce_far` but not than `pounce_near`,
     /// across nearer than `pounce_reach`; his count from a walk. Nearer than `leap_near` across
     /// he leaps back. His stand's ticks.
@@ -392,10 +392,10 @@ fn appear(a: Actor) void {
     const e = a.entity;
     e.flags.hidden = true;
     e.flags.in_front = false;
-    if (copyUnderWay(a)) return;
+    if (a.tick.world.art_copy != null) return;
     if (!e.spawn.traits.twin and !m.copying) {
         m.copying = true;
-        m.copy_until = a.tick.world.tick + a.numbers().copy_ticks;
+        a.tick.world.art_copy = 0;
         // His count's first bit marks the copy asked for: his first stand is a tick shorter.
         m.tally = 1;
         return;
@@ -416,17 +416,26 @@ fn appear(a: Actor) void {
     a.animate(.stand);
 }
 
-/// Whether the copy of the twins' art asked for is under way: his own, or the first twin's.
-fn copyUnderWay(a: Actor) bool {
-    const now = a.tick.world.tick;
-    if (a.mind.copying) return now < a.mind.copy_until;
-    for (2..34) |i| {
-        if (i == a.handle.index) continue;
-        const h = a.tick.world.handleAt(i) orelse continue;
-        const o = a.tick.actor(@This(), h) orelse continue;
-        if (o.mind.copying) return now < o.mind.copy_until;
+/// The kind whose tables give the copy of the twins' art its steps.
+pub const kind_name = "boss_r5";
+
+/// The copy of the twins' art (`World.art_copy`, asked for by the first twin's coming, or by the
+/// special attack's end in their section) takes its step at the tick's end, after the turns: the
+/// step's words of art, transferred at the next frame (`Output.art_copied`); the tick after the
+/// last step ends it.
+pub fn copyStep(t: *tick.Tick) void {
+    const step = t.world.art_copy orelse return;
+    const id = t.kinds.find(kind_name) orelse {
+        t.world.art_copy = null;
+        return;
+    };
+    const tables: *const Tables = @ptrCast(@alignCast(t.kinds.get(id).tables.?));
+    if (step >= tables.copy_words.len) {
+        t.world.art_copy = null;
+        return;
     }
-    return false;
+    t.out.art_copied = tables.copy_words[step];
+    t.world.art_copy = step + 1;
 }
 
 /// The player he sets on: his holder when held; the only one in play (the first when none is);

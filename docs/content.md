@@ -549,6 +549,9 @@ play).
 - `again` (a section's, the boss's): its enemies' art that the special attack's police car took
   the place of (the boss's, or the section's second art kind's), streamed in again as the camera
   runs back ahead, close to where it was at the call; as `streamed`, from the tick it is queued.
+  The boss's `copies_art` (round 5's twins): none streamed; the twins' art is copied again from
+  the players' art instead, as their first one's coming has it copied (a step a tick, each the
+  transfer of the twins' definition's `copy_words` at the next frame; the twins wait meanwhile).
 - `special.streamed`: the special attack's art, by its caller (player 1's, player 2's): the
   police car's and the caller's weapon's, queued as the car comes, once nothing else streams in;
   the car shows when it is all in.

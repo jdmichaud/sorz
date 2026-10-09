@@ -1377,14 +1377,16 @@ fn bossSection(arena: std.mem.Allocator, rom: []const u8, r: u32, at: u32, l: *L
     var boss_loads: std.ArrayList(stream.Load) = .empty;
     try boss_loads.append(arena, .{ .after = 1, .blocks = try loadStream(arena, rom, boss_load) });
     try artLoads(arena, rom, kinds, @intCast(wait), &boss_loads);
+    const copies = try copiesBossArt(rom, r);
     return .{
-        .provenance = try std.fmt.allocPrint(arena, "the boss's section (0x59C): the fade's request at ROM 0x{X:0>5}, the boss's art (load {d}, 0x1C378) streamed, then the wait of ROM 0x{X:0>5}, the music's request at ROM 0x{X:0>5}; then the section's art and the boss's (0xD70) before its wave", .{ 0x5A7, boss_load, 0x5D0, 0x5E3 }),
+        .provenance = try std.fmt.allocPrint(arena, "the boss's section (0x59C): the fade's request at ROM 0x{X:0>5}, the boss's art (load {d}, 0x1C378) streamed, then the wait of ROM 0x{X:0>5}, the music's request at ROM 0x{X:0>5}; then the section's art and the boss's (0xD70) before its wave{s}", .{ 0x5A7, boss_load, 0x5D0, 0x5E3, if (copies) "; after the special attack, the boss's art copied again from the players' (0x18EC2: the round of ROM 0x18EB2's cmpi.w), not loaded" else "" }),
         .fade = try soundName(@intCast(fade)),
         .music = try soundName(@intCast(music)),
         .music_after = @intCast(music_after),
         .wave_after = @intCast(wave_after),
         .streamed = try stream.schedule(arena, boss_loads.items),
-        .again = if (try copiesBossArt(rom, r)) &.{} else try againStream(arena, rom, kinds),
+        .again = if (copies) &.{} else try againStream(arena, rom, kinds),
+        .copies_art = copies,
         .section_colours = try sectionColours(rom, at),
         .colours = try palettes.bossColoursName(arena, rom, u32be(rom, round_bosses + 6 * r)) orelse return error.BadData,
         // The section's art kinds, the boss's in the last slot (0x59C: its art load).

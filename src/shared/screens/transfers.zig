@@ -33,7 +33,8 @@ pub const Frame = struct {
     /// The scroll by lines of play, both planes', a transfer each (round 3's).
     plane_lines: bool = false,
     /// Tiles the game copies, a transfer each (Axel's picture revealed, the title's set-up, the
-    /// select's portraits' frames, a player's new frame in play).
+    /// select's portraits' frames, a player's new frame in play, a step of the copy of round 5's
+    /// twins' art).
     tiles: Tiles = .{},
     /// Drawn play's way (the scroll by cells, the status bar), not a screen's: play, the Sega
     /// logo's and the high scores' frames.

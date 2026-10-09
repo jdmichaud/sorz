@@ -157,7 +157,7 @@ fn step(w: *World, f: *const Fixture, rng: *random.Random, out: *Output, pads: i
 test "the systems run in their order" {
     var names: [systems.pipeline.len][]const u8 = undefined;
     for (&names, systems.pipeline) |*n, s| n.* = s.name;
-    const want = [_][]const u8{ "timer", "own_sound", "offer", "commands", "control", "players_move", "join", "section", "camera", "between_players", "turns", "movement", "pickups", "script", "animate", "animation", "sounds", "draw_list", "drawn" };
+    const want = [_][]const u8{ "timer", "own_sound", "offer", "commands", "control", "players_move", "join", "section", "camera", "between_players", "turns", "movement", "pickups", "script", "animate", "art_copy", "animation", "sounds", "draw_list", "drawn" };
     try testing.expectEqual(want.len, names.len);
     for (want, names) |a, b| try testing.expectEqualStrings(a, b);
 }

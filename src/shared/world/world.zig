@@ -234,6 +234,9 @@ pub const World = struct {
     /// The player a rolling trolley rolls at next (behaviours/trolley.zig): the second when
     /// set (turned at each).
     trolley_second: bool = false,
+    /// The copy of round 5's twins' art from the players' under way (behaviours/boss_r5.zig): the
+    /// step it takes at this tick's end. The twins wait hidden while it runs.
+    art_copy: ?u8 = null,
     /// The shadows in the weapons' places (shadows.zig): a place a shadow holds is not free.
     shadows: [shadows_mod.count]?shadows_mod.Shadow = @splat(null),
     /// Round 8's last room's script (room.zig).

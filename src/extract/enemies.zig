@@ -1575,11 +1575,21 @@ pub fn bossR5(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definition
     try d.moves.append(arena, .{ .name = "pounce", .provenance = "the pounce (state 2, 0x15D0C): a blow that lands knocks the player down (0x15D44: move.b #1,(125,a1)), its damage his power (0x15D12)", .animation = d.animationIndex("kick").?, .damage = power, .reaction = .knock_down });
     try bossBody(&d, kind);
     // His art copied from the players' (0x17FC2, a step each tick after the objects', asked at
-    // 0x1590E): its steps (cmpi.w #N,d0 by steps of addi.w #N,($FB54)), then the tick that ends
-    // it; he comes out at the next.
+    // 0x1590E while $FFFA5A is clear): its steps (cmpi.w #N,d0 by steps of addi.w #N,($FB54)),
+    // each a transfer as the next frame starts (0x181BC), its length in words the registers $93
+    // and $94 of its entry of the table at 0x18018 (10 bytes an entry: move.w at 0x17FEC, the
+    // registers' long at 0x18000); then the tick that ends it; he comes out at the next.
     if (u16be(rom, 0x17FCE) != 0x0C40 or u16be(rom, 0x17FE6) != 0x0678 or u16be(rom, 0x17FEA) != 0xFB54 or u32be(rom, 0x1590E) != 0x11FC0001 or u16be(rom, 0x15912) != 0xFA5A) return error.BadData;
+    if (u32be(rom, 0x17FEC) != 0x323B002A or u32be(rom, 0x18000) != 0x21FB0018) return error.BadData;
     const copy_steps = @divExact(u16be(rom, 0x17FD0), u16be(rom, 0x17FE8));
-    try d.number("copy_ticks", copy_steps + 1, "ROM 0x17FD0 over ROM 0x17FE8: the copy's steps (0x17FC2), a tick each from the one asking, then the tick that ends it");
+    if (u16be(rom, 0x17FE8) != 10) return error.BadData;
+    const copy_words = try arena.alloc(i32, copy_steps);
+    for (copy_words, 0..) |*w, k| {
+        const e = 0x18018 + 10 * k;
+        if (rom[e + 2] != 0x93 or rom[e + 4] != 0x94) return error.BadData;
+        w.* = @as(i32, rom[e + 5]) << 8 | rom[e + 3];
+    }
+    try d.table("copy_words", copy_words, "ROM 0x18018: the copy's steps (0x17FC2: ROM 0x17FD0 over ROM 0x17FE8, a tick each from the one asking, then the tick that ends it), each its transfer's length in words (the registers $93 and $94 of its 10-byte entry), from the next frame's start (0x181BC)");
     // His target (0x15946) and his measures; state 1 (0x159C2): the pounce's band in depth, its
     // reach across; the leap back's; standing; walking (0x1792C, 0x17924: whole pixels toward his
     // target; 0x17954: in depth toward or away by the band; 0x1797E: toward it, by the depth).

@@ -242,6 +242,9 @@ pub const Round = struct {
     /// new frame (its copies' tiles), its health bar's partial cell built (`health` the health
     /// it shows, null before its first), the planes' columns the camera brought in.
     art_due: [2][2]u16 = @splat(.{ 0, 0 }),
+    /// The words of the twins' art the copy's last step took (`World.art_copy`), after the
+    /// players' art.
+    copy_due: u16 = 0,
     /// Each player's state as the original numbers it, at the last tick (`poseOf`).
     pose: [2]?u16 = .{ null, null },
     colours_due: bool = false,
@@ -729,6 +732,8 @@ pub const Round = struct {
             for (due) |tiles| f.tiles.add(tiles * transfers.words_per_tile);
             due.* = .{ 0, 0 };
         }
+        f.tiles.add(self.copy_due);
+        self.copy_due = 0;
         // The bosses' bars' rectangle, written whole while they show; their partial cells built
         // at every frame from a boss's first tick, but at a frame that builds player 2's (the
         // original returns before them then).
@@ -802,8 +807,9 @@ pub const Round = struct {
         };
     }
 
-    /// After the world's tick (`out` its output): each player's new frame's art, and its health
-    /// bar's partial cell when its health changed, are due at the next picture.
+    /// After the world's tick (`out` its output): each player's new frame's art, the copy's step
+    /// of the twins' art, and a player's health bar's partial cell when its health changed, are
+    /// due at the next picture.
     fn noteTransfers(self: *Round, kinds: *const world.Kinds, out: *const world.Output) void {
         const w = &self.play.world;
         for (w.players, 0..) |p, k| {
@@ -819,6 +825,7 @@ pub const Round = struct {
                 self.art_due[k] = .{ if (c.len > 0) c[0] else 0, if (c.len > 1) c[1] else 0 };
             };
         }
+        if (out.art_copied != 0) self.copy_due = out.art_copied;
         self.noteBars();
     }
 

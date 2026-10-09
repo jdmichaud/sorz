@@ -128,6 +128,11 @@ pub fn think(a: Actor) void {
                 m.again = true;
                 a.tick.out.colour_loads.append(.back);
                 a.tick.out.streamed = .{ .part = w.script.part, .again = true };
+                // In the boss's section of round 5, the twins' art is copied again from the
+                // players' rather than loaded (one copy at a time: one under way goes on).
+                if (a.tick.plan) |p| if (p.round.boss) |b| if (b.copies_art and p.round.room == null and w.script.part >= p.round.sections.len) {
+                    if (w.art_copy == null) w.art_copy = 0;
+                };
             }
         }
     };

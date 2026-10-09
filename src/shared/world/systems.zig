@@ -42,8 +42,8 @@ pub const System = struct {
 /// and move, a section due opens (its wall), and the camera follows them; the players' blows and
 /// grabs on each other land; then the others take their turns one after the other (each begins
 /// its tick, takes the blows and the grabs of the tick where it stands and decides), and move;
-/// the round's script brings who comes. Where the players are drawn at the tick's end is what the
-/// camera follows at the next (`noteDrawn`).
+/// the round's script brings who comes; the copy of the twins' art takes its step. Where the
+/// players are drawn at the tick's end is what the camera follows at the next (`noteDrawn`).
 pub const pipeline = [_]System{
     .{ .name = "timer", .run = script.timer },
     .{ .name = "own_sound", .run = script.ownSound },
@@ -60,6 +60,7 @@ pub const pipeline = [_]System{
     .{ .name = "pickups", .run = pickups },
     .{ .name = "script", .run = script.run },
     .{ .name = "animate", .run = script.animate },
+    .{ .name = "art_copy", .run = behaviours.boss_r5.copyStep },
     .{ .name = "animation", .run = animation },
     .{ .name = "sounds", .run = sounds },
     .{ .name = "draw_list", .run = draw_list.build },
