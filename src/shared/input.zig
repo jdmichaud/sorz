@@ -245,6 +245,18 @@ pub const Layout = struct {
         return out[0..n];
     }
 
+    /// The pad button the gamepad button `b` presses on the screens over the game (the settings,
+    /// network play's): by the buttons of the gamepad of one of the first `players` players (its
+    /// model's), else by the first buttons. Not the d-pad's.
+    pub fn faceOf(self: *const Layout, players: usize, b: platform.ControllerButton) ?Button {
+        for (self.players[0..players]) |p| {
+            const g = self.pad(p.gamepad orelse continue) orelse continue;
+            if (std.mem.indexOfScalar(platform.ControllerButton, &g.buttons, b)) |i| return face_buttons[i];
+        }
+        if (std.mem.indexOfScalar(platform.ControllerButton, &default_buttons, b)) |i| return face_buttons[i];
+        return null;
+    }
+
     /// Gamepad `label` came: player 1 takes it when it plays on the keyboard and no player has
     /// it. Returns whether it did.
     pub fn came(self: *Layout, label: u16) bool {
@@ -581,6 +593,18 @@ test "the screens over the game: any gamepad's stick as its d-pad" {
     // A gamepad no player has: its stick too.
     c.layout.assign(0, null);
     try std.testing.expectEqual(@as(?platform.ControllerButton, .dpad_up), c.stickPress(at(id, .left_y, -32768)));
+}
+
+test "the screens over the game: a gamepad's buttons, the first ones or its player's" {
+    var l: Layout = .{};
+    _ = l.identify("6B", "6B", &.{});
+    try std.testing.expectEqual(@as(?Button, .a), l.faceOf(2, .x));
+    // Player 1 has it, its buttons rebound: its model's.
+    l.assign(0, 1);
+    l.padMut(1).?.buttons = .{ .y, .x, .a, .back };
+    try std.testing.expectEqual(@as(?Button, .a), l.faceOf(2, .y));
+    try std.testing.expectEqual(@as(?Button, .start), l.faceOf(2, .back));
+    try std.testing.expectEqual(@as(?Button, .b), l.faceOf(2, .x));
 }
 
 test "autofire: the attack button held is held and let go in turn" {

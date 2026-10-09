@@ -189,7 +189,7 @@ pub const Screen = struct {
                     .dpad_left => .left,
                     .dpad_right => .right,
                     .back => .leave,
-                    else => navOf(self.faceOf(settings, b.button) orelse return .stay),
+                    else => navOf(settings.layout.faceOf(self.facts.players, b.button) orelse return .stay),
                 };
                 return self.navigate(settings, nav);
             },
@@ -216,17 +216,6 @@ pub const Screen = struct {
     fn padButton(self: *const Screen, settings: *const Settings, key: platform.Key) ?input.Button {
         const place = settings.layout.find(key) orelse return null;
         return if (place.player < self.facts.players) place.button else null;
-    }
-
-    /// The pad button a gamepad's button presses for a player of this machine (its gamepad's
-    /// model's), or by the first buttons.
-    fn faceOf(self: *const Screen, settings: *const Settings, b: platform.ControllerButton) ?input.Button {
-        for (settings.layout.players[0..self.facts.players]) |p| {
-            const pad = settings.layout.pad(p.gamepad orelse continue) orelse continue;
-            if (std.mem.indexOfScalar(platform.ControllerButton, &pad.buttons, b)) |i| return input.face_buttons[i];
-        }
-        if (std.mem.indexOfScalar(platform.ControllerButton, &input.default_buttons, b)) |i| return input.face_buttons[i];
-        return null;
     }
 
     fn navigate(self: *Screen, settings: *Settings, nav: Nav) Result {

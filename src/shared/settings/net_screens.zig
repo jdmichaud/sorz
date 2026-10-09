@@ -42,7 +42,8 @@ pub const Result = enum { stay, acted, done, cancel };
 /// A press, as the screens take it.
 const Nav = enum { up, down, left, right, choose, start, back };
 
-/// The press `e` is on this machine: a player's key (pad 1 or 2's) or a gamepad's button, by the
+/// The press `e` is on this machine: a player's key (pad 1 or 2's) or a gamepad's button (its
+/// d-pad, or its A, B, C and START as the players' gamepads have them: `Layout.faceOf`), by the
 /// players' layout, or the arrows, Enter and Escape whatever the keys are; null for another.
 fn navOf(settings: *const Settings, players: usize, e: platform.Event) ?Nav {
     switch (e.payload) {
@@ -71,9 +72,7 @@ fn navOf(settings: *const Settings, players: usize, e: platform.Event) ?Nav {
             .dpad_left => .left,
             .dpad_right => .right,
             .back => .back,
-            else => for (input.default_buttons, input.face_buttons) |x, face| {
-                if (x == b.button) break navOfButton(face);
-            } else null,
+            else => if (settings.layout.faceOf(players, b.button)) |face| navOfButton(face) else null,
         },
         else => return null,
     }
@@ -461,4 +460,17 @@ test "the name entry: letters up and down, the cursor round, A keeps it" {
     try testing.expectEqualSlices(u8, "9BB", &e.name);
     try testing.expectEqual(Result.done, e.handle(&s, key(.z)));
     try testing.expectEqual(Result.cancel, e.handle(&s, key(.escape)));
+    // A gamepad: its d-pad, and its A, B or C as player 1's gamepad has them; its BACK leaves.
+    var g: Settings = .{};
+    _ = g.layout.identify("6B", "6B", &.{});
+    g.layout.assign(0, 1);
+    _ = g.bindButton(1, 0, .right_shoulder);
+    _ = e.handle(&g, button(.dpad_down));
+    try testing.expectEqualSlices(u8, "9BC", &e.name);
+    try testing.expectEqual(Result.done, e.handle(&g, button(.right_shoulder)));
+    try testing.expectEqual(Result.cancel, e.handle(&g, button(.back)));
+}
+
+fn button(b: platform.ControllerButton) platform.Event {
+    return .{ .time_ns = 0, .payload = .{ .controller_button_down = .{ .controller = @fromBackingInt(1), .button = b } } };
 }
