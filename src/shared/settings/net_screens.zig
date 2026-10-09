@@ -349,7 +349,7 @@ pub const NameEntry = struct {
         const col = (panel_mod.columns - 5) / 2;
         for (self.name, 0..) |ch, i| try p.text(col + 2 * i, 12, &.{ch}, if (i == self.at) .bright else .dim);
         if (arrow) p.arrowAt(@intCast(col + 2 * @as(usize, self.at) - 1), 12);
-        try p.text(label_col, panel_mod.rows - 3, "UP, DOWN: THE LETTER. A, B, C: DONE.", .dim);
+        try p.text(label_col, panel_mod.rows - 3, "UP, DOWN: THE LETTER. A, B, C: DONE.", .plain);
     }
 };
 
