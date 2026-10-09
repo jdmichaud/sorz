@@ -1426,10 +1426,11 @@ pub fn boomerang(arena: std.mem.Allocator, rom: []const u8) Error!entity.Definit
     if (try moveq(rom, 0x17314, 7) != try moveq(rom, 0x1747E, 7)) return error.BadData;
     return .{
         .name = "boomerang",
-        .provenance = try std.fmt.allocPrint(arena, "Antonio's boomerang (type $96, handler 0x17262): his animation set at ROM 0x{X:0>5}, the boxes (0x1A68E, 0x1AB8E){s}", .{ set, d.number_notes.items }),
+        .provenance = try std.fmt.allocPrint(arena, "Antonio's boomerang (type $96, handler 0x17262): his animation set at ROM 0x{X:0>5}, the boxes (0x1A68E, 0x1AB8E); its palette line his (move.w #N,(14,a1) at ROM 0x1722A){s}", .{ set, d.number_notes.items }),
         .family = .projectile,
         .team = .enemy,
         .behaviour = "boomerang",
+        .palette = try lineOfArtGiven(rom, 0x1722A),
         .shadow = true,
         .numbers = d.numbers.items,
         .sounds = d.sounds.items,
