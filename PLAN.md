@@ -228,6 +228,12 @@
     menu on the agent host (the CPU fights, continues, refuses Mr. X); netplay-check's flows with
     a guest taking and leaving the CPU's player; variants-check and the original's checks
     unchanged; the user's play.
+  - [x] Checked 2026-10-10: unit tests of the CPU's fight, name entry, continue and no to Mr. X
+    (the room's own choice); variants-check's `extended_cpu` (menu, both selects, the CPU
+    scoring in round 1); netplay-check's `cpu` and `cpu_select` (a client takes the CPU's place
+    mid-round and at the select, the same state and picture on both; it quits and the CPU takes
+    player 2 back); all flows of both checks, screens-check against sor-remaster, smoke and
+    verify. Played in the SDL build under Xvfb. The user's play is pending.
 
 ## F7 — Platforms and exactness
 
