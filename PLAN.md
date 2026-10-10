@@ -293,6 +293,24 @@
     flows; netplay-check's CPU flows. In the SDL build under Xvfb: the line 0 PLAYERS - 2 CPU,
     the labels CPU 1 and CPU 2, round 1 fought by the two CPUs, START and Escape. The user's play
     is pending.
+- [ ] **34 — The CPUs play the whole game** — Depends: 31, 33.
+  - Two CPUs play the eight rounds through as people would. CPU 1 leads: it goes on the way the
+    round goes (left in round 8), and CPU 2 keeps out of its way. Their walks keep off the
+    floor's holes and walls and from under a press about to drop; a walk that does not move
+    them gives up what they went for and takes the shortest way round, and one in a solid thing
+    walks out. Barriers, blocks and crates are knocked away; a foe waiting at the screen's edge
+    is gone for; one still coming in is none yet.
+  - In the fight: a foe within the jab's reach (its first blow's box on the foe's body) struck
+    at once, from the jab's far end, out of a punk's punch, the combo finished; blows that do
+    not hurt make it back off. A boss is come at out of its line, from behind while the partner
+    draws it; what comes at it in its line (a knife, a boomerang, a rush) is stepped out of; a
+    boss too heavy is kneed, not thrown; the police called on a boss and when a life is at
+    stake. The user found the CPU hesitant, not punching a foe in front of it.
+  - `zig build cpus-check -Drom=ROM` plays the game with the two CPUs from power-on to the
+    ending or the game's end, its rounds measured: lives lost, time overs, the damage taken by
+    the kind that dealt it.
+  - Gate: cpus-check reaches round 8 with the default lives and the ending with the options' 7
+    in most seeds; the unit tests; variants-check's CPU flows; the user's play.
 - [x] **32 — The code review's follow-ups** — Depends: none.
   - The review of 2026-10-10 found these besides its bugs (fixed in their own commits).
   - The overlays drawn again only when they change, and mixed with the picture only on their
