@@ -244,20 +244,37 @@ pub const State = struct {
     pub fn joining(self: *const State, character: ?setup_mod.Character) Joining {
         return switch (self.scenes.base) {
             .select => |*s| if (self.scenes.next == null and s.joinable()) .now else if (character == null) .character else .later,
-            .round => |*r| if (character == null) .character else if (r.play.world.players[1].entity == null) .now else .later,
+            .round => |*r| if (character == null) .character else if (r.play.world.players[1].entity == null or self.setup.cpu[1]) .now else .later,
             .round_clear, .next_round => if (character == null) .character else .later,
             else => .later,
         };
     }
 
     /// The second player joins (`joining` said `now`): at the character select (its cursor where
-    /// it was at its own select, `cursor`, its choice kept), or in the round as `character`.
+    /// it was at its own select, `cursor`, its choice kept), or in the round as `character`. A
+    /// player 2 of the CPU's is the newcomer's: in the round, the CPU's fighter goes at the next
+    /// logic tick, as the newcomer's drops in.
     pub fn join(self: *State, character: ?setup_mod.Character, cursor: ?setup_mod.Character, assets: *const scene.Assets) void {
         switch (self.scenes.base) {
             .select => |*s| s.join(&self.setup, &assets.select, cursor orelse character, character != null),
-            .round => |*r| _ = r.dropIn(1, character.?),
+            .round => |*r| if (self.setup.cpu[1]) r.takeOver(1, character.?) else {
+                _ = r.dropIn(1, character.?);
+            },
             else => {},
         }
+        self.setup.cpu[1] = false;
+    }
+
+    /// Player `who` goes back to the CPU it was taken from (network play's client who left a
+    /// game whose player 2 the CPU played): the CPU plays its fighter on; at the select its
+    /// cursor goes, and player 1 chooses for the CPU once it has chosen.
+    pub fn toCpu(self: *State, who: u1, assets: *const scene.Assets) void {
+        switch (self.scenes.base) {
+            .select => |*s| if (who == 1) s.leave(&self.setup, &assets.select),
+            else => {},
+        }
+        self.setup.players = .two;
+        self.setup.cpu[who] = true;
     }
 
     /// Player `who` comes back to the round under way as `character` (network play's host's

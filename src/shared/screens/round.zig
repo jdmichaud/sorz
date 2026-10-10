@@ -875,6 +875,11 @@ pub const Round = struct {
         const w = &self.play.world;
         if (self.join_as) |d| {
             self.join_as = null;
+            // In the CPU's place, its fighter goes first.
+            if (d.replace) if (w.players[d.player].entity) |h| {
+                w.players[d.player].entity = null;
+                w.remove(h);
+            };
             if (w.players[d.player].entity == null) if (self.joinOf(turn, a, d)) |x| return x;
         }
         // The special attack holds the invitation as it is (its count, its blink); in its closed
@@ -934,7 +939,9 @@ pub const Round = struct {
     }
 
     /// A player and the character it joins as.
-    pub const Drop = struct { player: u1, character: setup_mod.Character };
+    /// A join: who, as which character, and whether it takes the place of the fighter there
+    /// (the CPU's: `takeOver`).
+    pub const Drop = struct { player: u1, character: setup_mod.Character, replace: bool = false };
 
     /// Player `k` joins the round under way as `character` at its next logic tick, its first life
     /// dropping in as the original's PRESS 2UP START's does (network play's second player joining
@@ -944,6 +951,13 @@ pub const Round = struct {
         if (self.play.world.players[k].entity != null) return false;
         self.join_as = .{ .player = k, .character = character };
         return true;
+    }
+
+    /// Player `k`, the CPU's, is another's as `character` at the next logic tick (network play's
+    /// client taking the CPU's player, `State.join`): the CPU's fighter goes, and the newcomer's
+    /// drops in as `dropIn`'s does.
+    pub fn takeOver(self: *Round, k: u1, character: setup_mod.Character) void {
+        self.join_as = .{ .player = k, .character = character, .replace = true };
     }
 
     /// Player `k` leaves the game under way (network play's player who quits or does not come

@@ -51,7 +51,9 @@
 //! play, its player 2 free in the round, when JOIN IN PROGRESS allows; nothing between rounds,
 //! in a local game of two, nor outside a game. A client asks only what the offer allows; the
 //! host takes it if its game still offers it, else answers with its status, and the client
-//! decides again.
+//! decides again. The CPU's player 2 (PLAN item 30) is a place: a client that joins takes it
+//! from the CPU (at the select, where player 1 has not yet chosen for the CPU, or in the round,
+//! as a join drops in), and the CPU takes it back as the client leaves.
 const std = @import("std");
 const platform = @import("platform.zig");
 const net = @import("net/root.zig");
@@ -81,6 +83,8 @@ pub const NetPlay = struct {
     options: Options = .{},
     /// The host's game is a local game of two (its 2 PLAYERS): it offers no place.
     local_two: bool = false,
+    /// The host's client took player 2 from the CPU: the CPU takes it back as the client leaves.
+    cpu_seat: bool = false,
     /// A client's own set-up while its game is the host's.
     own_setup: ?Setup = null,
     /// A client's count of a player's dropped connection (the seconds left, as the host said).
@@ -131,10 +135,12 @@ fn hostNote(g: *Game, p: *platform.Platform, np: *net.Netplay, n: net.netplay.No
     switch (n) {
         .started => |st| if (!st.resumed) g.notify(null),
         // The client left the game (quit, Escape, or not back in time) while the host's player
-        // was in it, or out of it for its client: player 2 dies and is out, the observers get
-        // the game again. (The host's own leaving ends the session too: nothing to say.)
+        // was in it, or out of it for its client: player 2 dies and is out, or goes back to the
+        // CPU it was taken from; the observers get the game again. (The host's own leaving ends
+        // the session too: nothing to say.)
         .ended => |why| if (why != .game_over and (g.net.host == .game or g.net.host == .left or g.net.host == .watching) and g.state.inGame()) {
-            if (g.scene_assets) |*a| g.state.dropOut(1, a);
+            if (g.scene_assets) |*a| if (g.net.cpu_seat) g.state.toCpu(1, a) else g.state.dropOut(1, a);
+            g.net.cpu_seat = false;
             g.notify(.player_2_left);
             var buf: [Game.join_max]u8 = undefined;
             np.resync(p, g.joinForm(&buf));
@@ -193,13 +199,15 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     const assets = if (g.scene_assets) |*a| a else return;
     switch (g.net.host) {
         .front, .starting => if (g.state.inGame()) {
-            // START GAME's game, or a local one from the menu (with two players: no place).
-            g.net.local_two = g.net.host == .front and g.state.setup.players == .two;
+            // START GAME's game, or a local one from the menu (with two players: no place, but
+            // the CPU's).
+            g.net.local_two = g.net.host == .front and g.state.setup.players == .two and !g.state.setup.cpu[1];
             g.net.host = .game;
         },
         .game => if (!g.state.inGame()) {
             g.net.host = .front;
             g.net.local_two = false;
+            g.net.cpu_seat = false;
         },
         // The game the host's player left is over (its rounds, or no client left in it): the
         // observers let go, the menu under the lobby.
@@ -224,6 +232,7 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
         const character: ?Character = if (ask_.character == protocol.no_character) null else @fromBackingInt(@as(u8, ask_.character));
         const cursor: ?Character = if (ask_.cursor == protocol.no_character) null else @fromBackingInt(@as(u8, ask_.cursor));
         if (g.net.host == .game and !np.inSession() and takes(&g.state, g.net.local_two, np.join_in_progress, character)) {
+            g.net.cpu_seat = g.state.setup.cpu[1];
             g.state.join(character, cursor, assets);
             var buf: [Game.join_max]u8 = undefined;
             const form = g.joinForm(&buf);
@@ -246,7 +255,7 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
 /// What the host's game offers, as its clients hear it: its front end (`none`, a place free for
 /// a client to wait at its own select), its select (a place free once it shows, one player at
 /// it), or play with player 1's character, a place free while player 2 has no fighter in the
-/// round. Between rounds, in a local game of two, or a select not shown yet: no place now; a
+/// round or is the CPU's. Between rounds, in a local game of two, or a select not shown yet: no place now; a
 /// game to watch all the same. (Netplay adds the session's flags: open, a player already in,
 /// JOIN IN PROGRESS.)
 pub fn statusOf(s: *const State, local_two: bool) protocol.Status {
@@ -259,7 +268,7 @@ pub fn statusOf(s: *const State, local_two: bool) protocol.Status {
     };
     const c = s.setup.characters[0] orelse return .{};
     const place = !local_two and switch (s.scenes.base) {
-        .round => |*r| s.scenes.next == null and r.play.world.players[1].entity == null,
+        .round => |*r| s.scenes.next == null and (r.play.world.players[1].entity == null or s.setup.cpu[1]),
         else => false,
     };
     return .{ .game = .play, .character = @backingInt(c), .place = place };

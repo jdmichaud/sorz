@@ -471,7 +471,8 @@ pub const Select = struct {
     }
 
     pub fn joinable(self: *const Select) bool {
-        return self.players == .one and switch (self.phase) {
+        // Not where player 1 chooses for the CPU.
+        return self.players == .one and !self.cpu_pass and switch (self.phase) {
             .setup, .placing, .fade_in, .first_half, .second_half => true,
             .wait, .fade_out, .leaving => false,
         };

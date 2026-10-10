@@ -60,6 +60,14 @@
 //!   back at their menus, told; the host's lobby over its menu.
 //! - local_two: the server open, the host's 2 PLAYERS: both pads play, the client's JOIN dimmed,
 //!   OBSERVE lit.
+//! - cpu: the server open, the host's 1 PLAYER - 1 CPU (PLAN item 30): not a local game of two;
+//!   player 1 chooses for itself, then for the CPU at the select's second time; round 1 with the
+//!   CPU as player 2; a client joins mid-round in the CPU's place, as the character it chose, the
+//!   CPU's fighter gone; the same game on both; the client quits: the CPU takes player 2 back,
+//!   its fighter playing on.
+//! - cpu_select: the same at the host's select: the client joins it in the CPU's place, both
+//!   cursors there; the client quits: player 1 alone again, and once it has chosen, the select
+//!   again for the CPU's character.
 //! - lobby_silence: the host's lobby over the game its client plays: its sound is silence.
 //! - rules: in round 1 with a client, the host's settings change FRIENDLY HIT: both games take it
 //!   at one tick, and stay the same.
@@ -1295,6 +1303,97 @@ fn localTwo(f: *Flow, r: *Room) !void {
     try f.check(selectOf(host).?.cursors[1].place != before, "player 2's local pad plays");
 }
 
+/// The CPU's player 2 is a client's place, and the CPU's again when the client quits.
+fn cpuPlace(f: *Flow, r: *Room) !void {
+    const host = try r.add(.host);
+    try toMenu(f, r, host);
+    try openOptions(f, r, host);
+    try pressOption(r, host, .server, .z);
+    try pressOption(r, host, .exit, .z);
+    try f.until(r, host, choosing, 600, "the host's menu");
+    while (menuChoice(host) != .two_players) try r.press(host, .down);
+    try r.press(host, .right);
+    try f.check(host.game.state.scenes.base.menu.cpu, "1 PLAYER - 1 CPU");
+    try r.press(host, .z);
+    try f.until(r, host, inSelect, 600, "the host's select");
+    try f.check(!host.game.net.local_two and selectOf(host).?.players == .one, "player 1 alone at its select, not a local game of two");
+    try r.press(host, .z);
+    try f.until(r, host, struct {
+        fn again(m: *Machine) bool {
+            return inSelect(m) and selectOf(m).?.cpu_pass;
+        }
+    }.again, 600, "the select again, for the CPU");
+    try r.press(host, .right);
+    try r.step(4);
+    try r.press(host, .z);
+    try f.until(r, host, playing, 2400, "round 1 with the CPU");
+    const setup = &host.game.state.setup;
+    try f.check(setup.cpu[1] and setup.characters[1] == .axel and roundOf(host).?.play.world.players[1].entity != null, "the CPU plays player 2, as Axel");
+    try r.step(120);
+
+    // A client's own select, and its join in the CPU's place.
+    const guest = try r.add(.guest);
+    try clientJoins(f, r, guest);
+    try f.until(r, guest, inSelect, 600, "the client's own select");
+    try r.step(30);
+    try r.press(guest, .right);
+    try r.step(4);
+    const chosen = selectOf(guest).?.cursors[0].place;
+    try r.press(guest, .z);
+    try f.until(r, guest, inSession, 600, "the client joins the round");
+    try f.check(!setup.cpu[1], "player 2 the client's");
+    // The CPU's fighter goes at the next logic tick, as the client's drops in.
+    try r.step(4);
+    try f.check(setup.characters[1] == chosen and roundOf(host).?.play.world.players[1].entity != null, "the client's player drops in, as the character it chose");
+    try same(f, r, host, guest, "the same round after the join");
+    try sameFor(f, r, host, guest, 300);
+    f.note("\"joined_at\":{d},\"character\":\"{s}\"", .{ host.game.state.tick, @tagName(chosen) });
+
+    // The client quits: player 2 is the CPU's again, its fighter playing on.
+    try guest.quit();
+    r.remove(guest);
+    try r.step(30);
+    try f.check(!host.inSession() and setup.cpu[1], "player 2 the CPU's again");
+    const p2 = &roundOf(host).?.play.world.players[1];
+    try f.check(p2.entity != null and !p2.gone and !p2.out, "its fighter plays on");
+    try r.step(300);
+    try f.check(roundOf(host).?.play.world.players[1].entity != null and setup.cpu[1], "and on");
+}
+
+/// The CPU's player 2 is a client's place at the select, and the CPU's again as it quits there.
+fn cpuSelect(f: *Flow, r: *Room) !void {
+    const host = try r.add(.host);
+    const guest = try r.add(.guest);
+    try toMenu(f, r, host);
+    try openOptions(f, r, host);
+    try pressOption(r, host, .server, .z);
+    try pressOption(r, host, .exit, .z);
+    try f.until(r, host, choosing, 600, "the host's menu");
+    while (menuChoice(host) != .two_players) try r.press(host, .down);
+    try r.press(host, .right);
+    try r.press(host, .z);
+    try f.until(r, host, inSelect, 600, "the host's select");
+    try clientJoins(f, r, guest);
+    try f.until(r, guest, inSession, 900, "the client joins the select");
+    try f.until(r, guest, inSelect, 200, "the select on the client");
+    const setup = &host.game.state.setup;
+    try f.check(!setup.cpu[1] and selectOf(host).?.players == .two, "both players' cursors, no CPU");
+    try same(f, r, host, guest, "the same select");
+    try guest.quit();
+    r.remove(guest);
+    try r.step(30);
+    try f.check(!host.inSession() and setup.cpu[1] and selectOf(host).?.players == .one, "player 1 alone, player 2 the CPU's again");
+    try r.press(host, .z);
+    try f.until(r, host, struct {
+        fn again(m: *Machine) bool {
+            return inSelect(m) and selectOf(m).?.cpu_pass;
+        }
+    }.again, 600, "the select again, for the CPU");
+    try r.press(host, .z);
+    try f.until(r, host, playing, 2400, "round 1 with the CPU");
+    try f.check(setup.cpu[1] and roundOf(host).?.play.world.players[1].entity != null, "the CPU plays player 2");
+}
+
 /// The host's lobby over the game its client plays: the host's sound is silence.
 fn lobbySilence(f: *Flow, r: *Room) !void {
     const pair = try inRoundTogether(f, r);
@@ -1477,6 +1576,8 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "event_reconnect", .run = eventReconnect },
         .{ .name = "stop_left", .run = stopLeft },
         .{ .name = "local_two", .run = localTwo },
+        .{ .name = "cpu", .run = cpuPlace },
+        .{ .name = "cpu_select", .run = cpuSelect },
         .{ .name = "lobby_silence", .run = lobbySilence },
         .{ .name = "rules", .run = rulesChange },
         .{ .name = "friendly", .run = friendly },
