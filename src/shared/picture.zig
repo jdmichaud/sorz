@@ -1,7 +1,9 @@
-//! The picture the game presents (DESIGN.md 3.2): the console's 320 x 224 pixels, four bytes each
-//! (R, G, B, A). The renderer (PLAN item 07) composes the game's layers and sprites into it; until
-//! then the test pattern (scene.zig) draws rectangles. Only what changed is drawn again
-//! (DESIGN.md 10.5 R4), and the picture's hash is worked out when asked, not with each frame.
+//! A picture the game presents without its scenes (DESIGN.md 3.2): the console's 320 x 224
+//! pixels, four bytes each (R, G, B, A). The test pattern (screens/test_pattern.zig) draws its
+//! rectangles here, and the overlays go over it, black, when no scene's picture is under them;
+//! the scenes' pictures are the renderer's own (view.zig, render/compose.zig). Only what changed
+//! is drawn again (DESIGN.md 10.5 R4), and the picture's hash is worked out when asked, not with
+//! each frame.
 const std = @import("std");
 const platform = @import("platform.zig");
 

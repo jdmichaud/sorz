@@ -2,7 +2,7 @@
 //!
 //! Logical names follow the shared rules (`platform.validateAssetName`): ASCII, with directory
 //! components separated by `/`. Matching against the host entries is DOS-style, that is ASCII
-//! case-insensitive: `game.cfg` opens `GAME.CFG`, and `GAME.CFG` opens `game.cfg`. An entry with
+//! case-insensitive: `Menu/Art.json` opens `menu/art.json`, and the other way round. An entry with
 //! the exact case wins over a case-insensitive match. Host paths keep their platform encoding;
 //! only the logical names are ASCII. An entry whose host name is not a valid logical name (a
 //! leading dot, a space, non-ASCII bytes) is invisible: it cannot be listed or opened.

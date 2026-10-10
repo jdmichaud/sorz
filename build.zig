@@ -188,9 +188,9 @@ pub fn build(b: *std.Build) void {
     web_module.rdynamic = true;
     web_module.import_memory = true;
     // No compiler-rt (DESIGN.md 5.3): the functions of it that the game calls are imports, which
-    // the script gives. The placeholder game calls one, `__multi3`, the 128-bit product in
-    // `std.hash.Wyhash`. `web-check` checks the script's helpers against compiler-rt, and
-    // `src/web/module_check.zig` checks the list of imports.
+    // the script gives (`__multi3`, a 128-bit product, among them). `web-check` checks the
+    // script's helpers against compiler-rt, and `src/web/module_check.zig` checks the list of
+    // imports.
     web_module.bundle_compiler_rt = false;
     web_module.import_symbols = true;
     // The script reads these limits from the module's import. The stack is the size of a native

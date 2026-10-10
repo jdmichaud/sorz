@@ -62,9 +62,10 @@ pub const SdlBackend = struct {
     /// destination of a poll. They come before new SDL events, so the order stays correct.
     pending: std.ArrayList(platform.Event) = .empty,
     pending_next: usize = 0,
-    /// Whether the game has the pointer. The game reads the mouse as a DOS driver reports it:
-    /// relative counts, with no desktop pointer. On a desktop the pointer must thus be captured,
-    /// else it leaves the window during a stroke and the window edge stops it. Escape is a game
+    /// Whether the game has the pointer. A game that asks for the mouse's relative counts
+    /// (`relative_wanted`, the platform contract's; this game does not ask) has no desktop
+    /// pointer: on a desktop the pointer must thus be captured, else it leaves the window during
+    /// a stroke and the window edge stops it. Escape is a game
     /// key, so Ctrl+F10 (the DOSBox chord) releases the pointer. Focus loss also releases it,
     /// and a click captures it again.
     captured: bool = false,

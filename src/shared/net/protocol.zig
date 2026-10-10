@@ -22,7 +22,7 @@
 //! |               | 0-2, 255 none), flags u8 (1 open, 2 a place free, 4          |              |
 //! |               | observers taken, 8 the same character, 16 joins in progress) |              |
 //! | 12 join       | character u8 (0-2, 255 none)                                 | 2            |
-//! | 13 game       | session u64, delay u8, observe u8 (0/1), length u32, offset  | 23 + chunk   |
+//! | 13 game       | session u64, delay u8, observe u8 (0/1), length u32, offset  | 19 + chunk   |
 //! |               | u32, chunk of the game's form                                |              |
 //! | 14 observe    | yes u8 (0/1): the client's player watches, or no longer      | 2            |
 //! | 15 ticks      | first u32, count u8 (1-64), pads [2 count] (player 1's then  | 6 + 2 count  |

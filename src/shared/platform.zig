@@ -627,14 +627,15 @@ pub fn validateName(name: []const u8) error{InvalidName}!void {
 pub const asset_separator: u8 = '/';
 /// A logical asset name is at most this long, separators included.
 pub const max_asset_name_len = 128;
-/// A logical asset name has at most this many components (`DATA/1_1.MVE` has two).
+/// A logical asset name has at most this many components (`entities/axel.json` has two).
 pub const max_asset_depth = 8;
 
-/// Logical asset names add directory components to the flat rules: `GAME.CFG`, `DATA/1_1.MVE`.
+/// Logical asset names add directory components to the flat rules: `manifest.json`,
+/// `sound/effects/menu_move.txt`.
 /// Each component obeys `validateName`. One `/` separates two components; a leading, trailing
 /// or doubled separator is invalid. A name has at most `max_asset_depth` components and
 /// `max_asset_name_len` bytes. Providers match names DOS-style, that is ASCII case-insensitive
-/// (`assetNameEql`), so `game.cfg` opens `GAME.CFG`. Listings return the upper-case form
+/// (`assetNameEql`), so `Menu/Art.json` opens `menu/art.json`. Listings return the upper-case form
 /// (`canonicalAssetName`), and `list` matches its prefix the same way.
 pub fn validateAssetName(name: []const u8) error{InvalidName}!void {
     if (name.len == 0 or name.len > max_asset_name_len) return error.InvalidName;
