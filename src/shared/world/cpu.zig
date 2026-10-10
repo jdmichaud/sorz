@@ -275,7 +275,7 @@ fn lookAround(w: *const World, kinds: *const Kinds, m: *Memory, k: u1, p: *const
 /// there its while.
 fn goalOf(w: *const World, kinds: *const Kinds, m: *Memory, p: *const Entity, partner: ?*const Entity) Goal {
     const left = w.camera.x.whole();
-    const full: i32 = kinds.get(p.kind.?).definition.health;
+    const share = healthShare(kinds, p);
     var best: Goal = .{ .roam = roamSpot(w, m, p, partner) };
     var best_score: i32 = 30 + @as(i32, m.draw(16));
     for (&w.entities, 0..) |*e, i| {
@@ -296,9 +296,9 @@ fn goalOf(w: *const World, kinds: *const Kinds, m: *Memory, p: *const Entity, pa
         } else if (kind.family() == .item and e.mind == .item and e.mind.item.state == .lying and e.holder == null) {
             goal = .{ .take = h };
             if (isFood(kind)) {
-                if (p.health * 100 >= full * peckish) continue;
+                if (share >= peckish) continue;
                 if (partner) |q| if (q.health < p.health and apart(q, e) < apart(p, e)) continue;
-                score = (if (p.health * 100 < full * starving) @as(i32, 140) else 80) - @divTrunc(far, 4);
+                score = (if (share < starving) @as(i32, 140) else 80) - @divTrunc(far, 4);
             } else score = 75 - @divTrunc(far, 4);
             if (foesNear(w, kinds, e, 48) > 0) score -= 40;
         } else if (breakable(e)) {
