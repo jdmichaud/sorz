@@ -12,6 +12,9 @@
 //!   key of the game); EXIT WITHOUT SAVING gives the settings back and OPTIONS goes on; 1 PLAYER,
 //!   the select, the round, where START opens the settings in place of the pause (the round not
 //!   paused, the game held, the pause's jingle), and Escape goes back to play.
+//! - extended, 1 PLAYER - 1 CPU (PLAN item 30): right on 2 PLAYERS turns it; player 1 chooses
+//!   Adam, then, at the select's second time, Axel for the CPU; round 1 with both, the CPU as
+//!   player 2: as player 1 walks on, the CPU fights and scores.
 //! - network, as a browser's page plays it alone (one player): 2 PLAYERS and OPTIONS; ADVANCED
 //!   SETTINGS opens one player's settings; 2 PLAYERS to the select with this machine's player
 //!   alone, then the round, where START opens the settings.
@@ -223,6 +226,35 @@ fn toRound(f: *Flow, r: *Run, line: usize) !void {
     try f.until(r, playing, 2400, "the round's play");
 }
 
+fn cpuGame(f: *Flow, r: *Run) !void {
+    try toMenu(f, r);
+    try down(r, 1);
+    try r.press(.right);
+    try f.check(r.menu().?.cpu, "1 PLAYER - 1 CPU");
+    try r.press(.enter);
+    try f.until(r, inSelect, 600, "the select");
+    try r.press(.z);
+    try f.until(r, struct {
+        fn again(x: *const Run) bool {
+            return inSelect(x) and x.game.state.scenes.base.select.cpu_pass;
+        }
+    }.again, 600, "the select again, for the CPU");
+    try r.press(.right);
+    try r.press(.z);
+    try f.until(r, playing, 2400, "the round's play");
+    const setup = &r.game.state.setup;
+    try f.check(setup.cpu[1] and setup.characters[0] == .adam and setup.characters[1] == .axel, "player 1 Adam, the CPU Axel");
+    // Player 1 walks on now and then: the camera follows, the enemies come, the CPU fights them.
+    var n: u32 = 0;
+    while (roundOf(r).?.play.world.players[1].score == 0) : (n += 1) {
+        if (n == 6000) return f.check(false, "the CPU scores");
+        try r.key(.right, n % 200 < 60);
+        try r.update();
+    }
+    try r.key(.right, false);
+    try f.check(true, "the CPU scores");
+}
+
 fn original(f: *Flow, r: *Run) !void {
     try toMenu(f, r);
     try f.check(std.mem.eql(sorz.variant.MenuLine, lines(r), &.{ .one_player, .two_players, .options }), "the cartridge's menu");
@@ -396,6 +428,7 @@ pub fn main(init: std.process.Init) !void {
     for ([_]Single{
         .{ .name = "original", .variant = .original, .run = original },
         .{ .name = "extended", .variant = .extended, .run = extended },
+        .{ .name = "extended_cpu", .variant = .extended, .run = cpuGame },
         .{ .name = "network_page", .variant = .network, .page = true, .run = page },
         .{ .name = "network_guest_options", .variant = .network, .page = true, .guest = true, .run = guestOptions },
     }) |sg| {
