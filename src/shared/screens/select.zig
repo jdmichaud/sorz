@@ -69,9 +69,12 @@ const eye_open_ticks = 300;
 const eye_closed_ticks = 8;
 /// The port's: the display ticks each of two players' labels on one portrait is in front.
 const label_turn = 32;
-/// The CPU's label, and its place in a label's 64 pixels (in the middle).
+/// The CPU's label, and its place in a label's 64 pixels (in the middle); the colour of the
+/// game's font around its letters (black in the menus), which the label leaves out, as the
+/// cartridge's labels do.
 const cpu_label = "CPU 1";
 const cpu_label_x: i16 = (64 - cpu_label.len * art.tile_side) / 2;
+const font_ground = 2;
 
 pub const Portrait = struct {
     state: State = .standing,
@@ -625,7 +628,7 @@ pub const Select = struct {
             if (self.cpu_pass) {
                 for (cpu_label, 0..) |ch, k| if (ch != ' ') {
                     const x = label_x.get(place) + cpu_label_x + @as(i16, @intCast(k * art.tile_side));
-                    try v.sprites.append(v.gpa, .of(try v.glyphFrame(a.text, &.{ch}), x, label_y));
+                    try v.sprites.append(v.gpa, .of(try v.glyphFrame(a.text, &.{ch}, font_ground), x, label_y));
                 };
             } else try v.sprites.append(v.gpa, .of(a.labels[i], label_x.get(place), label_y));
         }

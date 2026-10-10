@@ -34,7 +34,7 @@ pub const View = struct {
     boards: std.EnumArray(Plane, ?*render.Board) = .initFill(null),
     sprites: std.ArrayList(render.Sprite) = .empty,
     /// Frames the game makes (a font's glyph shown as a sprite), kept for as long as the picture.
-    made_frames: std.ArrayList(*art.Frame) = .empty,
+    made_frames: std.ArrayList(MadeFrame) = .empty,
     /// Tiles the game makes (a picture drawn a part at a time), kept for as long as the picture.
     made_tiles: std.ArrayList(*art.Tile) = .empty,
     /// A block of tiles the game makes, for as long as the picture (`tileBlock`).
@@ -69,7 +69,7 @@ pub const View = struct {
     fn forget(self: *View) void {
         // The composer keeps the last picture's sprites, to know the lines they covered.
         self.composer.forgetSprites();
-        for (self.made_frames.items) |f| self.gpa.destroy(f);
+        for (self.made_frames.items) |m| self.gpa.destroy(m.frame);
         self.made_frames.clearRetainingCapacity();
         for (self.made_tiles.items) |t| self.gpa.destroy(t);
         self.made_tiles.clearRetainingCapacity();
@@ -148,16 +148,23 @@ pub const View = struct {
     }
 
     /// A frame of one tile of a font, its glyph for `glyph` (an arrow shown as a sprite), with
-    /// its origin at its top-left corner; it lives as long as the picture.
-    pub fn glyphFrame(self: *View, t: Text, glyph: []const u8) error{ OutOfMemory, NoGlyph }!*const art.Frame {
+    /// its origin at its top-left corner; colour `ground` (the font's around its letters), when
+    /// given, left out, transparent. It lives as long as the picture.
+    pub fn glyphFrame(self: *View, t: Text, glyph: []const u8, ground: ?u4) error{ OutOfMemory, NoGlyph }!*const art.Frame {
         const g = t.font.glyphAt(glyph) orelse return error.NoGlyph;
         if (g.len != glyph.len) return error.NoGlyph;
-        // One frame a glyph for the picture: the same at each draw.
-        for (self.made_frames.items) |f| if (f.pixels.ptr == @as([*]const u8, &t.sheet.tiles[g.tile])) return f;
+        const tile = &t.sheet.tiles[g.tile];
+        // One frame a glyph and ground for the picture: the same at each draw.
+        for (self.made_frames.items) |m| if (m.tile == tile and m.ground == ground) return m.frame;
+        const pixels: *const art.Tile = if (ground) |c| left: {
+            const out = try self.makeTile();
+            for (out, tile) |*p, from| p.* = if (from == c) 0 else from;
+            break :left out;
+        } else tile;
+        try self.made_frames.ensureUnusedCapacity(self.gpa, 1);
         const f = try self.gpa.create(art.Frame);
-        errdefer self.gpa.destroy(f);
-        f.* = .{ .name = "glyph", .file = "", .width = art.tile_side, .height = art.tile_side, .origin_x = 0, .origin_y = 0, .pixels = &t.sheet.tiles[g.tile] };
-        try self.made_frames.append(self.gpa, f);
+        f.* = .{ .name = "glyph", .file = "", .width = art.tile_side, .height = art.tile_side, .origin_x = 0, .origin_y = 0, .pixels = pixels };
+        self.made_frames.appendAssumeCapacity(.{ .frame = f, .tile = tile, .ground = ground });
         return f;
     }
 
@@ -184,6 +191,9 @@ pub const View = struct {
     }
 };
 
+/// A frame the game made: a font's glyph (its tile), and the colour it leaves out.
+const MadeFrame = struct { frame: *art.Frame, tile: *const art.Tile, ground: ?u4 };
+
 const testing = std.testing;
 
 test "a picture begins with its boards empty and black, and composes its texts" {
@@ -205,7 +215,7 @@ test "a picture begins with its boards empty and black, and composes its texts" 
     try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 255 }, f.pixels[(8 * f.width + 24) * 4 ..][0..4]);
     // A glyph as a sprite, composed, and a made tile; the next picture forgets them, the
     // composer its sprites (their frames gone), and keeps its board.
-    const arrow = try v.glyphFrame(t, "A");
+    const arrow = try v.glyphFrame(t, "A", null);
     try v.sprites.append(testing.allocator, render.Sprite.of(arrow, 100, 100));
     _ = try v.compose();
     try testing.expectEqual(@as(usize, 1), v.composer.sprite_key.items.len);
@@ -216,5 +226,27 @@ test "a picture begins with its boards empty and black, and composes its texts" 
     try testing.expectEqual(@as(usize, 0), v.sprites.items.len + v.made_frames.items.len + v.made_tiles.items.len);
     try testing.expect(v.composer.sprite_key.items.len == 0 and v.composer.sprite_lines == null);
     try testing.expectEqual(@as(?u32, 2), v.shows);
-    try testing.expectError(error.NoGlyph, v.glyphFrame(t, "B"));
+    try testing.expectError(error.NoGlyph, v.glyphFrame(t, "B", null));
+}
+
+test "a glyph as a sprite leaves its font's ground out, one frame a glyph and ground" {
+    var v = try View.init(testing.allocator);
+    defer v.deinit();
+    try v.begin(1, .{});
+    const letter: art.Tile = comptime blk: {
+        var l: art.Tile = @splat(2);
+        l[9] = 1;
+        break :blk l;
+    };
+    const tiles = [_]art.Tile{letter};
+    const sheet: art.TileSheet = .{ .name = "main", .file = "main.png", .tiles = &tiles };
+    const glyphs = [_]art.Glyph{.{ .text = "C", .tile = 0 }};
+    const font: art.Font = .{ .name = "main", .sheet = "fonts/main", .glyphs = &glyphs };
+    const t: Text = .{ .font = &font, .sheet = &sheet };
+    const clear = try v.glyphFrame(t, "C", 2);
+    try testing.expect(clear.pixels[0] == 0 and clear.pixels[9] == 1 and clear.pixels[63] == 0);
+    try testing.expectEqual(clear, try v.glyphFrame(t, "C", 2));
+    const whole = try v.glyphFrame(t, "C", null);
+    try testing.expect(whole != clear and whole.pixels[0] == 2 and whole.pixels[9] == 1);
+    try testing.expectEqual(@as(usize, 1), v.made_tiles.items.len);
 }
