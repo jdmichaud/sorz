@@ -217,6 +217,17 @@
     delay, at the bottom left during a session's rounds.
   - Gate: the lines seen in a session of a native host and a page; netplay-check, variants-check
     and the browser check pass; the user's play.
+- [ ] **30 — A CPU player** — Depends: 19, 26.
+  - Outside the original, left and right on the game menu's 2 PLAYERS make it 1 PLAYER - 1 CPU:
+    player 2 is the CPU. The select comes twice, player 1 choosing its character and then the
+    CPU's (its label CPU 1). In play the CPU's pads come from the game's state at each tick, on
+    every machine alike, by the agent host's bot rule moved into the game: it continues while it
+    has continues, and answers no to Mr. X. In network play a guest's join takes the CPU's
+    player, and a guest that leaves gives it back. Strength by difficulty comes later.
+  - Gate: the CPU's pads tested on synthetic play; a game of 1 PLAYER - 1 CPU played from the
+    menu on the agent host (the CPU fights, continues, refuses Mr. X); netplay-check's flows with
+    a guest taking and leaving the CPU's player; variants-check and the original's checks
+    unchanged; the user's play.
 
 ## F7 — Platforms and exactness
 
