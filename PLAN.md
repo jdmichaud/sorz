@@ -279,6 +279,15 @@
   - Only if similar is not good enough (the user): traces equal tick by tick from power-on,
     pictures and sound equal.
 
+- [ ] **33 — Two CPUs: 0 PLAYERS - 2 CPU** — Depends: 30, 31.
+  - Outside the original, the game menu's 2 PLAYERS line has a third reading: right goes 2
+    PLAYERS, 1 PLAYER - 1 CPU, 0 PLAYERS - 2 CPU (and round), left back; without a second pad,
+    2 PLAYERS is passed. With two CPUs, player 1's pad chooses both characters, the select's
+    label CPU 1 then CPU 2, and the CPUs play both players (item 31's play, each the other's
+    partner); player 1's START still pauses the game. In network play a guest takes player 2
+    as from one CPU.
+  - Gate: the menu's and the select's tests; variants-check's flow from the menu to a round the
+    two CPUs play; the user's play.
 - [x] **32 — The code review's follow-ups** — Depends: none.
   - The review of 2026-10-10 found these besides its bugs (fixed in their own commits).
   - The overlays drawn again only when they change, and mixed with the picture only on their
