@@ -269,7 +269,7 @@ virtual-time and wall-clock limits that the response names. Grow only what the c
 The agent host is how the port is driven end to end without a display, and how a test reproduces
 a defect. It is not the game the user runs: gates also run the SDL build (`docs/testing.md`).
 
-### 5.2 The SDL host (`sorz-sdl`)
+### 5.2 The SDL host (`sorz`)
 
 The interactive game on Linux and Windows. The first positional argument names the game
 directory. The window's scale and full screen are the settings' (section 7); options select the
@@ -557,9 +557,9 @@ native game serves the browser build from inside itself: `build.zig` embeds the 
 and the module into each executable (the generated module `web_page`, with `@embedFile`), so there
 is no `web` directory to serve and no option to serve one.
 
-**Server mode** (`sorz DATA --server [ADDRESS:]PORT`): `sorz-sdl --server` and `sorz-agent
+**Server mode** (`sorz DATA --server [ADDRESS:]PORT`): `sorz --server` and `sorz-agent
 --server` run no game; `sorz-server`, a program of its own that links nothing, does the same on a
-machine without the display and sound libraries that `sorz-sdl` needs to start. It serves the
+machine without the display and sound libraries that `sorz` needs to start. It serves the
 page built into it and the game's files of DATA, and relays the session's binary messages between
 the host's page and its clients' pages, never parsing them. The first page to connect is the
 host; each other page is a client, given a number that is not used again. The server tells each
