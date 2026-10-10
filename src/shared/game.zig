@@ -619,6 +619,7 @@ pub const Game = struct {
         const s = try self.allocator.create(State);
         defer self.allocator.destroy(s);
         try canonical.read(State, join[4..][0..n], s);
+        if (!fitsContent(s, if (self.scene_assets) |*a| a.round.kinds else null)) return error.Malformed;
         self.state = s.*;
         self.rebuild(p);
         if (self.view) |*v| if (self.scene_assets) |*a| scene.redrawOutput(&self.state.scenes, &v.world_out, a);
@@ -631,6 +632,29 @@ pub const Game = struct {
             if (!carried) if (self.scene_assets) |*a| if (scene.music(&self.state.scenes, a)) |m| so.ask(m);
         }
         self.loads_done += 1;
+    }
+
+    /// Whether a state read from another machine's form fits this machine's content: what the
+    /// game indexes with it (the scene stack's overlays; its round's kinds, their animations'
+    /// frames and their moves; the players' characters) is there. Reading a form checks its
+    /// shape; this, its meaning, so that a bad form is refused rather than crash the game.
+    fn fitsContent(s: *const State, kinds_: ?*const world.Kinds) bool {
+        if (s.scenes.overlay_count > scene.Stack.overlays_most) return false;
+        const kinds = kinds_ orelse return true;
+        const r = switch (s.scenes.base) {
+            .round => |*r| r,
+            else => return true,
+        };
+        for (&r.play.world.entities) |*e| {
+            if (!e.alive()) continue;
+            const id = e.kind orelse continue;
+            if (id >= kinds.list.len) return false;
+            const k = kinds.get(id);
+            if (e.animation.index) |i| if (i >= k.frames.len or e.animation.frame >= k.frames[i].len) return false;
+            if (e.move) |m| if (m >= k.definition.moves.len) return false;
+        }
+        for (r.play.world.players) |pl| if (pl.character) |c| if (c >= kinds.list.len) return false;
+        return true;
     }
 
     /// Whether the other player of network play is on the settings screen.
@@ -1394,6 +1418,20 @@ pub const Game = struct {
 
 const testing = std.testing;
 const memory = @import("memory.zig");
+
+test "a state the content cannot hold is refused, as a bad form from another machine" {
+    const none: world.Kinds = .{};
+    var s: State = .{};
+    try std.testing.expect(Game.fitsContent(&s, &none));
+    s.scenes.overlay_count = scene.Stack.overlays_most + 1;
+    try std.testing.expect(!Game.fitsContent(&s, &none));
+    s.scenes.overlay_count = 0;
+    s.scenes.base = .{ .round = .{} };
+    try std.testing.expect(Game.fitsContent(&s, &none));
+    // A player's character that the content has no kind for.
+    s.scenes.base.round.play.world.players[0].character = 0;
+    try std.testing.expect(!Game.fitsContent(&s, &none));
+}
 
 test "the same pads from power-on give the same state, and other pads another" {
     var a: State = .{};
