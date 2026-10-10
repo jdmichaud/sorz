@@ -139,7 +139,7 @@ pub const DirectoryStorage = struct {
         defer file.close(io);
         const st = file.stat(io) catch |err| return mapError(err);
         if (st.kind == .directory) return error.NotFound;
-        if (st.size > std.math.maxInt(usize)) return error.Io;
+        if (st.size > platform.max_save_len) return error.Io;
         const len: usize = @intCast(st.size);
         const buf = self.allocator.alloc(u8, len) catch return error.OutOfMemory;
         errdefer self.allocator.free(buf);
@@ -258,6 +258,12 @@ test "directory storage ignores leftovers and opens or creates its directory" {
     try std.testing.expectEqual(@as(usize, 1), names.names.len);
     try std.testing.expectEqualStrings("GAME0001.PT", names.names[0]);
     try std.testing.expectError(error.NotFound, s.load("FOLDER"));
+    // A file past the records' length is not read: the storage says it cannot give it.
+    const big = try std.testing.allocator.alloc(u8, platform.max_save_len + 1);
+    defer std.testing.allocator.free(big);
+    @memset(big, 'x');
+    try store.dir.writeFile(io, .{ .sub_path = "HUGE.CFG", .data = big });
+    try std.testing.expectError(error.Io, s.load("HUGE.CFG"));
 }
 
 fn directoryStorageUnderAllocator(allocator: std.mem.Allocator, dir: std.Io.Dir) !void {

@@ -578,6 +578,11 @@ pub const StorageError = error{
     Canceled,
 };
 
+/// The longest record a storage gives back: the game's records are far shorter (the settings'
+/// at most 64 KiB), and a longer file in the saves' place is not one of them (`Io`), never read
+/// whole into memory.
+pub const max_save_len = 1 << 20;
+
 /// Persistent named byte records in one flat collection.
 pub const Storage = struct {
     context: *anyopaque,
