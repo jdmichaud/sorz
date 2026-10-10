@@ -1107,15 +1107,17 @@ test "the CPU as a person: late to a punk off its line, then knocks it down at a
     try testing.expect(breath);
 }
 
-test "the CPU weighs food at any health a character's definition gives" {
+test "the CPU weighs food at any health a character's definition gives, and eats it when hurt" {
     var r = try Round.init();
     defer r.deinit();
     _ = try r.w.spawn(&r.f.kinds, r.f.kinds.find("apple").?, .pixels(860, 64, 160), .right);
     // A health whose hundredfold is past an i16's: the food's weighing must not overflow.
     r.player().health = 400;
     for (0..60) |_| r.step(.{ .pad1 = cpu.pad(&r.w, &r.f.kinds, &r.w.players[0].cpu, &.{}, .{}, 0) });
+    // Hurt: it goes for the apple (an item whose definition gives health) and eats it.
     r.player().health = 10;
-    for (0..60) |_| r.step(.{ .pad1 = cpu.pad(&r.w, &r.f.kinds, &r.w.players[0].cpu, &.{}, .{}, 0) });
+    for (0..150) |_| r.step(.{ .pad1 = cpu.pad(&r.w, &r.f.kinds, &r.w.players[0].cpu, &.{}, .{}, 0) });
+    try testing.expectEqual(@as(i16, 30), r.player().health);
 }
 
 test "the CPU calls the police near its end among foes, not while it is fine" {

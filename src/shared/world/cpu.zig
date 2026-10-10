@@ -440,8 +440,9 @@ fn breakable(e: *const Entity) bool {
     };
 }
 
+/// Food: an item whose definition gives health (the apple, the beef, a mod's own).
 fn isFood(kind: *const kinds_mod.Kind) bool {
-    return std.mem.eql(u8, kind.name(), "apple") or std.mem.eql(u8, kind.name(), "beef");
+    return kind.behaviour == .item and kinds_mod.numbersOf(behaviours.module(.item), kind).health > 0;
 }
 
 /// The foes within `px` (across plus in depth) of `e`.
@@ -674,7 +675,8 @@ pub fn fight(w: *const World, kinds: *const Kinds, k: u1, now: u64) ?input.Pad {
     return out;
 }
 
-/// The nearest entity (across plus in depth) the rule looks for: a foe (`isFoe`), or food lying.
+/// The nearest entity (across plus in depth) the rule looks for: a foe (`isFoe`), or food
+/// (`isFood`).
 fn nearest(w: *const World, kinds: *const Kinds, px: i32, pd: i32, what: enum { foe, food }) ?*const Entity {
     var best: ?*const Entity = null;
     var best_d: u32 = std.math.maxInt(u32);
@@ -682,10 +684,7 @@ fn nearest(w: *const World, kinds: *const Kinds, px: i32, pd: i32, what: enum { 
         if (!e.alive() or e.flags.hidden) continue;
         switch (what) {
             .foe => if (!isFoe(kinds, e)) continue,
-            .food => {
-                const n = kinds.get(e.kind.?).name();
-                if (!std.mem.eql(u8, n, "apple") and !std.mem.eql(u8, n, "beef")) continue;
-            },
+            .food => if (!isFood(kinds.get(e.kind.?))) continue,
         }
         const d = @abs(e.position.x.whole() - px) + @abs(e.position.depth.whole() - pd);
         if (d < best_d) {
