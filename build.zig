@@ -1,13 +1,13 @@
 //! sorz build graph.
 //!
 //! Targets:
-//!   sorz-agent  headless debugging host (shared game + AgentBackend), never links SDL
-//!   sorz-sdl    SDL interactive host (Linux, Windows)
-//!   sorz-sdl-standalone  sorz-sdl with the user's ROM built in (needs -Drom)
-//!   sorz-server the relay of network play between two browsers (server mode), links nothing
-//!   web/            the browser build: sorz.wasm, index.html, sorz.js
+//!   sorz-agent       headless debugging host (shared game + AgentBackend), never links SDL
+//!   sorz             SDL interactive host (Linux, Windows)
+//!   sorz-standalone  sorz with the user's ROM built in (needs -Drom)
+//!   sorz-server      the relay of network play between two browsers (server mode), links nothing
+//!   web/             the browser build: sorz.wasm, index.html, sorz.js
 //! Steps: `zig build` installs the three binaries; `agent`, `sdl` and `server` install one;
-//! `standalone` installs sorz-sdl-standalone, with the ROM `-Drom=ROM` built in; `web`
+//! `standalone` installs sorz-standalone, with the ROM `-Drom=ROM` built in; `web`
 //! installs the browser build and checks its module's imports; `web-check` checks the page's
 //! helper functions against compiler-rt (it needs Node.js); `test` runs the unit tests of every
 //! module and the engine's rule against the console's terms (tools/engine_terms.zig); `smoke`
@@ -135,7 +135,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "native", .module = native },
         },
     };
-    const sdl_exe = b.addExecutable(.{ .name = "sorz-sdl", .root_module = b.createModule(sdl_main) });
+    const sdl_exe = b.addExecutable(.{ .name = "sorz", .root_module = b.createModule(sdl_main) });
     sdl_exe.root_module.addImport("built_in", builtIn(b, null));
 
     // Server mode (DESIGN.md 9): the relay between two browsers, with no game and no library, so
@@ -237,9 +237,9 @@ pub fn build(b: *std.Build) void {
 
     // The SDL game with the user's ROM built in (DESIGN.md 5.4), which it plays without a game
     // path: the one build that embeds the ROM, and only with `-Drom=PATH`.
-    const standalone_step = b.step("standalone", "Build and install sorz-sdl-standalone, the SDL host with the ROM -Drom=PATH built in");
+    const standalone_step = b.step("standalone", "Build and install sorz-standalone, the SDL host with the ROM -Drom=PATH built in");
     if (rom_path) |rom| {
-        const standalone = b.addExecutable(.{ .name = "sorz-sdl-standalone", .root_module = b.createModule(sdl_main) });
+        const standalone = b.addExecutable(.{ .name = "sorz-standalone", .root_module = b.createModule(sdl_main) });
         standalone.root_module.addImport("web_page", web_page);
         standalone.root_module.addImport("built_in", builtIn(b, rom));
         standalone_step.dependOn(&b.addInstallArtifact(standalone, .{}).step);

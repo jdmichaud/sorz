@@ -2,9 +2,9 @@
 //! the data it is given (a game directory) on one port, and relays network play between the
 //! browsers (`native.relay`); it runs no game, links no library, and runs until it is stopped.
 //!
-//! `sorz-sdl --server` and `sorz-agent --server` run the same relay. This binary is the one for a
+//! `sorz --server` and `sorz-agent --server` run the same relay. This binary is the one for a
 //! machine without the display and sound libraries (X11, Wayland, PulseAudio, ALSA) that
-//! `sorz-sdl` needs to start: it is static.
+//! `sorz` needs to start: it is static.
 const std = @import("std");
 const native = @import("native");
 const web_page = @import("web_page");

@@ -8,7 +8,7 @@
 //! The game path is a game directory, the content tree on disk (a previous extraction, or a mod of
 //! one), or the user's ROM, whose content is extracted into memory (`Providers.extractRom`, the
 //! one place where the extraction plugs in); without one, the ROM built into the executable, if
-//! any (sorz-sdl-standalone). Both are `AssetSource`s, so the game does not know which it has.
+//! any (sorz-standalone). Both are `AssetSource`s, so the game does not know which it has.
 //! `--saves` defaults to the per-user application data directory, which is created on first use.
 const std = @import("std");
 const builtin = @import("builtin");
@@ -49,7 +49,7 @@ pub const TakeError = error{ MissingValue, DuplicateAssets, BadValue };
 
 pub const Options = struct {
     assets: ?[]const u8 = null,
-    /// The ROM built into the executable (sorz-sdl-standalone, DESIGN.md 5.4), opened when no
+    /// The ROM built into the executable (sorz-standalone, DESIGN.md 5.4), opened when no
     /// game path is given. Not an argument.
     built_in_rom: ?[]const u8 = null,
     saves: ?[]const u8 = null,

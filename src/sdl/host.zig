@@ -21,11 +21,11 @@ pub const fallback_hz: u32 = 60;
 pub const assets_required = false;
 
 pub const usage =
-    \\usage: sorz-sdl [OPTIONS] [DIR|ROM]
-    \\       sorz-sdl DIR|ROM --server [ADDRESS:]PORT
+    \\usage: sorz [OPTIONS] [DIR|ROM]
+    \\       sorz DIR|ROM --server [ADDRESS:]PORT
     \\  DIR|ROM              the game directory (its content tree), or the user's ROM, whose
     \\                       content is extracted in memory; without either, the ROM built
-    \\                       into sorz-sdl-standalone, else a test pattern
+    \\                       into sorz-standalone, else a test pattern
     \\  --help, -h           show this help
     \\  --scale N            window scale, 1 to 64, for this run (default: the settings',
     \\                       3 at first)
@@ -362,37 +362,37 @@ test "the window follows the settings; leaving the screen without saving gives b
 }
 
 test "the host options are parsed, bounded and defaulted" {
-    const defaults = try parseArgs(SliceArgs{ .items = &.{"sorz-sdl"} });
+    const defaults = try parseArgs(SliceArgs{ .items = &.{"sorz"} });
     try std.testing.expectEqual(@as(?u32, null), defaults.scale);
     try std.testing.expectEqual(@as(?bool, null), defaults.vsync);
     try std.testing.expectEqual(@as(?u64, null), defaults.deadlineNs());
 
-    const all = try parseArgs(SliceArgs{ .items = &.{ "sorz-sdl", "--scale", "2", "--no-vsync", "--software", "--event-log", "1.5", "--run-for", "1", "game", "--saves", "saves" } });
+    const all = try parseArgs(SliceArgs{ .items = &.{ "sorz", "--scale", "2", "--no-vsync", "--software", "--event-log", "1.5", "--run-for", "1", "game", "--saves", "saves" } });
     try std.testing.expectEqual(@as(?u32, 2), all.scale);
     try std.testing.expectEqual(@as(?bool, false), all.vsync);
     try std.testing.expect(all.software);
     try std.testing.expectEqual(@as(?u64, 1_000_000_000), all.deadlineNs());
     try std.testing.expectEqualStrings("game", all.providers.assets.?);
     try std.testing.expectEqualStrings("saves", all.providers.saves.?);
-    const hosting = try parseArgs(SliceArgs{ .items = &.{ "sorz-sdl", "game", "--netplay", "0.0.0.0:7000", "--delay", "4" } });
+    const hosting = try parseArgs(SliceArgs{ .items = &.{ "sorz", "game", "--netplay", "0.0.0.0:7000", "--delay", "4" } });
     try std.testing.expectEqualStrings("0.0.0.0:7000", hosting.providers.netplay.?);
     try std.testing.expectEqual(@as(?u8, 4), hosting.providers.delay);
-    const joining = try parseArgs(SliceArgs{ .items = &.{ "sorz-sdl", "--join", "ws://10.0.0.2:7000" } });
+    const joining = try parseArgs(SliceArgs{ .items = &.{ "sorz", "--join", "ws://10.0.0.2:7000" } });
     try std.testing.expectEqualStrings("ws://10.0.0.2:7000", joining.providers.join.?);
     // Server mode serves the game's data to its pages.
-    try std.testing.expectError(error.MissingAssets, parseArgs(SliceArgs{ .items = &.{ "sorz-sdl", "--server", "7000" } }));
+    try std.testing.expectError(error.MissingAssets, parseArgs(SliceArgs{ .items = &.{ "sorz", "--server", "7000" } }));
 
     for ([_][]const []const u8{
-        &.{ "sorz-sdl", "--scale", "0" },
-        &.{ "sorz-sdl", "--scale", "99999" },
-        &.{ "sorz-sdl", "--event-log", "-1" },
-        &.{ "sorz-sdl", "--fps", "0" },
-        &.{ "sorz-sdl", "--frobnicate" },
-        &.{ "sorz-sdl", "first", "second" },
-        &.{ "sorz-sdl", "game", "--netplay", "nowhere:x" },
-        &.{ "sorz-sdl", "game", "--server", "7000", "--saves", "s" },
-        &.{ "sorz-sdl", "game", "--join", "ws://h:1", "--delay", "3" },
-        &.{ "sorz-sdl", "game", "--original", "--netplay", "7000" },
+        &.{ "sorz", "--scale", "0" },
+        &.{ "sorz", "--scale", "99999" },
+        &.{ "sorz", "--event-log", "-1" },
+        &.{ "sorz", "--fps", "0" },
+        &.{ "sorz", "--frobnicate" },
+        &.{ "sorz", "first", "second" },
+        &.{ "sorz", "game", "--netplay", "nowhere:x" },
+        &.{ "sorz", "game", "--server", "7000", "--saves", "s" },
+        &.{ "sorz", "game", "--join", "ws://h:1", "--delay", "3" },
+        &.{ "sorz", "game", "--original", "--netplay", "7000" },
     }) |args| try std.testing.expectError(error.BadArguments, parseArgs(SliceArgs{ .items = args }));
 }
 

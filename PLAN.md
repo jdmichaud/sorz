@@ -227,11 +227,11 @@
   - Gate: the SDL host builds for Linux and Windows; the unit tests pass; the game played in the
     SDL build (picture, sound, keys, a gamepad, the mouse, full screen) as before.
 - [x] **29 — The SDL game with the ROM inside** — Depends: 01.
-  - `zig build standalone -Drom=ROM` builds `sorz-sdl-standalone`, the SDL host with the user's
+  - `zig build standalone -Drom=ROM` builds `sorz-standalone`, the SDL host with the user's
     ROM built in (DESIGN.md 5.4). Without a game path it plays that ROM, its content extracted in
     memory as from a ROM given on the command line. No other build embeds it.
   - Gate: the standalone, copied alone into an empty directory, plays with no argument;
-    `sorz-sdl` with none still shows the test pattern.
+    `sorz` with none still shows the test pattern.
 - [ ] **21 — Windows acceptance** — Depends: 17. Tests and the game on Windows itself.
   - Checked 2026-10-08 on Linux: `zig build all` cross-builds the Windows executables. Under
     Wine, 419 of 430 unit tests pass: the 10 of the native transport fail on Wine's missing

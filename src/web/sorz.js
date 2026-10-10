@@ -1313,7 +1313,7 @@ function sorzTransport(Socket, events, limits = {}) {
       listing = JSON.parse(decoder.decode(await fetchBytes('assets/manifest.json')));
     } catch (e) {
       stop('THIS PAGE HAS NO GAME FILES', 'Its server sends none. Open the page from the game, which ' +
-        'serves it with its files: sorz-server DIR --server PORT, or sorz-sdl DIR --netplay PORT.');
+        'serves it with its files: sorz-server DIR --server PORT, or sorz DIR --netplay PORT.');
       return;
     }
     code = await fetchBytes('sorz.wasm');

@@ -1,9 +1,9 @@
 //! The native binaries' log lines, on standard error, one form for all: the program's name, the
 //! scope when there is one, the level when it is not news, then the message:
 //!
-//!     sorz-sdl: settings: kept, window scale 3, settings key f1
-//!     sorz-sdl: netplay: hosting at 0.0.0.0:8080; waiting for the guest
-//!     sorz-sdl: warning: the settings cannot be saved: AccessDenied
+//!     sorz: settings: kept, window scale 3, settings key f1
+//!     sorz: netplay: hosting at 0.0.0.0:8080; waiting for the guest
+//!     sorz: warning: the settings cannot be saved: AccessDenied
 //!
 //! Each binary makes `logFn` its `std_options.logFn` and sets `program` first thing. The hosts'
 //! own lines and the shared code's (`std.log`, scoped or not) then read alike. The browser's
