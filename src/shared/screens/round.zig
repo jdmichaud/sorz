@@ -1274,7 +1274,7 @@ pub const Round = struct {
         self.join = .{ .ticks = a.screen.status_bar.join.blink };
         self.colours.palettes = .{};
         self.colours.aim(s.colours);
-        // The first section's enemies' colours, after the round's (0xE5C).
+        // The first section's enemies' colours, after the round's.
         self.loadColours(a, first_colours.slice(), .target);
         self.colours.aim(a.play_colours);
         self.colours.aim(a.players_colours);

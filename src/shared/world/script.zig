@@ -33,6 +33,9 @@
 //!
 //! The original's level events do not run during the special attack, nor does its timer: the
 //! script and the timer wait while it lasts.
+//!
+//! The original's routines for the enemies' art slots and colour lines, which the script models,
+//! are named in sor-re's gameplay port map (3.8), not here (DESIGN.md P1).
 const std = @import("std");
 const content_round = @import("../content/round.zig");
 const content_screens = @import("../content/screens.zig");
@@ -104,7 +107,7 @@ pub const Held = struct {
         return second;
     }
 
-    /// Which of them an arriving enemy of `colours` takes (0xA66): its own, the other when it holds
+    /// Which of them an arriving enemy of `colours` takes: its own, the other when it holds
     /// them or none shows on it; else the first or the second that holds them, else the first or
     /// the second none shows on; null when none can be had.
     pub fn take(self: *const Held, colours: u8, own: bool) ?u2 {
@@ -674,7 +677,7 @@ fn nextWave(t: *Tick, p: *const Plan) void {
     s.ticks = 2;
 }
 
-/// The first of the reserve's records still to come whose art and colours can be had (0x936):
+/// The first of the reserve's records still to come whose art and colours can be had:
 /// it takes their slots (`chosen_art`, `taking`).
 fn chooseWaiting(t: *Tick, p: *const Plan, list: []const Spawn) ?u8 {
     const s = &t.world.script;
@@ -685,7 +688,7 @@ fn chooseWaiting(t: *Tick, p: *const Plan, list: []const Spawn) ?u8 {
         s.chosen_art = art.slot;
         s.chosen_loaded = art.loaded;
         s.taking = colours.slot;
-        // A reserve's boss's colours hold the first line too from now (0xB4C).
+        // A reserve's boss's colours hold the first line too from now.
         if (rec.reserve_boss) |b| s.held.colours[Held.first] = b.colours;
         return @intCast(k);
     }
@@ -716,13 +719,13 @@ const boss_slot = 3;
 const Slot = struct { slot: ?u3, loaded: bool = false };
 const ColoursSlot = struct { slot: ?u2 };
 
-/// Whether a waiting record's art can be had (0x966), and the art slot it takes: its art's own,
+/// Whether a waiting record's art can be had, and the art slot it takes: its art's own,
 /// else one no enemy shows (round 1's from its second); in the boss's fight (or a section that
 /// holds a boss's art) only the first, and none with a boss's art that leaves no slot. A record
 /// without the enemies' art takes none.
 fn artSlot(w: anytype, p: *const Plan, rec: *const Spawn) ?Slot {
     const s = &w.script;
-    // A reserve's boss's (0xA02): the boss's slot, holding its art already, or once no enemy
+    // A reserve's boss's: the boss's slot, holding its art already, or once no enemy
     // shows the second's, the third's or the boss's.
     if (rec.reserve_boss) |b| {
         if (s.art[boss_slot] == b.art) return .{ .slot = boss_slot, .loaded = true };
@@ -741,11 +744,11 @@ fn artSlot(w: anytype, p: *const Plan, rec: *const Spawn) ?Slot {
     return null;
 }
 
-/// Whether a waiting record's colours can be had (0xA66), and those it takes (`Held.take`); in
+/// Whether a waiting record's colours can be had, and those it takes (`Held.take`); in
 /// the boss's fight (or a section that holds a boss's art) only the second's, never a kind's own.
 fn coloursSlot(w: anytype, p: *const Plan, rec: *const Spawn) ?ColoursSlot {
     const s = &w.script;
-    // A reserve's boss's (0xB24): the other's, holding them already, or once no enemy shows on
+    // A reserve's boss's: the other's, holding them already, or once no enemy shows on
     // the first or the other (its colours go over the first line).
     if (rec.reserve_boss) |b| {
         if (s.held.colours[Held.other] == b.colours) return .{ .slot = Held.other };
@@ -884,7 +887,7 @@ fn beginRoom(t: *Tick, p: *const Plan) void {
     s.enemies = countEnemies(t);
 }
 
-/// The room's fight's step (0x4CA): at its first, Mr. X's colours, a player out of the game
+/// The room's fight's step: at its first, Mr. X's colours, a player out of the game
 /// leaves, the players walk in, the art slots the room's; then, once Mr. X has laughed, the
 /// fight's music and its first wave; after it, once he has laughed again, its next wave.
 fn roomFight(t: *Tick, p: *const Plan) void {
@@ -919,12 +922,12 @@ fn roomFight(t: *Tick, p: *const Plan) void {
     nextWave(t, p);
 }
 
-/// The art the room's first slot holds from the fight's start (0x4CA: $F, none of the enemies'),
-/// and from Mr. X's standing up (0x4B4: 1).
+/// The art the room's first slot holds from the fight's start ($F, none of the enemies'),
+/// and from Mr. X's standing up (1).
 const room_slot_art = 0xF;
 const room_stand_art = 1;
 
-/// The room's fight after a wave (0x464): once no enemy is left, the fight's next step (the next
+/// The room's fight after a wave: once no enemy is left, the fight's next step (the next
 /// wave waits for Mr. X's laugh); the second time, the music fades and the last art loads; once
 /// it is in, Mr. X stands up to the last music and the art after it loads; once that is in, the
 /// fight's step again (its last wave).
@@ -970,7 +973,7 @@ fn roomEnemies(t: *Tick) u8 {
     return n;
 }
 
-/// A section's colours loaded (0xF46): the other's first when it gives one (else the other keeps
+/// A section's colours loaded: the other's first when it gives one (else the other keeps
 /// its own), then the first's, then the second's.
 fn holdColours(t: *Tick, c: content_round.Colours) void {
     const h = &t.world.script.held;
@@ -985,7 +988,7 @@ fn holdColours(t: *Tick, c: content_round.Colours) void {
     if (c.second) |n| t.out.colour_loads.append(.{ .enemies = .{ .colours = n, .into = Held.second } });
 }
 
-/// The boss's colours loaded (0x576) as his section opens, over the first's, which no kind's
+/// The boss's colours loaded as his section opens, over the first's, which no kind's
 /// then match.
 fn bossColours(t: *Tick) void {
     t.out.colours = true;
@@ -993,7 +996,7 @@ fn bossColours(t: *Tick) void {
     t.world.script.held.colours[Held.first] = null;
 }
 
-/// As the reserve begins (0x810), the enemies in the world are added to the tallies: each to
+/// As the reserve begins, the enemies in the world are added to the tallies: each to
 /// its art's slot (art none holds: uncounted) and to the colours it shows on, by the line it
 /// took (those not yet out are not counted; one out but hidden is, an acrobat's leap in).
 fn tally(t: *Tick, p: *const Plan) void {
@@ -1044,7 +1047,7 @@ fn place(t: *Tick, rec: *const Spawn, x: i32) void {
         return;
     };
     const position: fixed.Vec3 = .{ .x = .pixels(x), .depth = .pixels(rec.depth), .height = t.world.ground };
-    // In the enemies' places, as the original's script takes its objects' (0xE46).
+    // In the enemies' places, as the original's script takes its objects'.
     const places = World.enemy_places;
     const how = placing(rec);
     const made = switch (t.kinds.get(kind).family()) {
