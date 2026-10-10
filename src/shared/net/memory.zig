@@ -60,6 +60,18 @@ pub const Network = struct {
         }
     }
 
+    /// Breaks the link of `at`'s connection `id` on `at`'s side alone (its own network failing):
+    /// `at`'s game hears the connection lost; the other end hears nothing, what it sends going
+    /// nowhere, until its own silence ends it.
+    pub fn breakOneSide(self: *Network, at: *Endpoint, id: ConnectionId) void {
+        const link, const i = at.find(id) orelse return;
+        if (link.state != .open) return;
+        link.state = .half_open;
+        link.broke_at = i;
+        at.dropEventsOf(id);
+        at.queue(.{ .due_ns = self.now_ns, .id = id, .kind = .{ .disconnected = .lost } }) catch {};
+    }
+
     fn newId(self: *Network) ConnectionId {
         defer self.next_id += 1;
         return @fromBackingInt(@intCast(self.next_id));
@@ -68,7 +80,9 @@ pub const Network = struct {
 
 const Link = struct {
     ends: [2]End,
-    state: enum { open, closed } = .open,
+    state: enum { open, closed, half_open } = .open,
+    /// Half open: the end that saw the link break; the other still takes it for open.
+    broke_at: usize = 0,
 
     const End = struct {
         endpoint: *Endpoint,
@@ -203,6 +217,8 @@ pub const Endpoint = struct {
         const self = cast(ctx);
         const net = self.network;
         const link, const i = self.find(id) orelse return error.NotConnected;
+        // Half open, from the end that did not see it break: sent, and lost.
+        if (link.state == .half_open and i != link.broke_at) return;
         if (link.state != .open or !link.ends[i].opened) return error.NotConnected;
         const peer = &link.ends[1 - i];
         if (peer.pending_messages >= net.queue_messages or peer.pending_bytes + bytes.len > net.queue_bytes) return error.QueueFull;

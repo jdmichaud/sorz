@@ -299,6 +299,23 @@ test "a dropped connection holds both games; the guest reconnects and the same s
     try expectSameGame(host, guest, 600);
 }
 
+test "a guest that reconnects before the host sees its old connection go resumes its session" {
+    var network = net.memory.Network.init(std.testing.allocator);
+    defer network.deinit();
+    const host = try Peer.create(&network, .host, 4, hostScript);
+    defer host.destroy();
+    const guest = try Peer.create(&network, .guest, null, guestScript);
+    defer guest.destroy();
+    try runUntil(host, guest, 200, 300);
+    // The guest's side alone breaks (its network roams): the host hears nothing, and still has
+    // the old connection when the guest's comes back, a second later.
+    const endpoint: *net.memory.Endpoint = @ptrCast(@alignCast(guest.backend.transport.?.context));
+    network.breakOneSide(endpoint, guest.np.peers.items[0].connection.?);
+    try runUntil(host, guest, 600, 800);
+    try std.testing.expectEqual(@as(u32, 1), host.np.sessions);
+    try expectSameGame(host, guest, 600);
+}
+
 test "a byte corrupted on one side is found within a second and its field is named" {
     var network = net.memory.Network.init(std.testing.allocator);
     defer network.deinit();

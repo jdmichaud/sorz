@@ -366,10 +366,16 @@ pub const Netplay = struct {
             },
             .net_received => |m| {
                 const peer = self.peerOf(m.connection) orelse return true;
-                // A player whose connection came back: its hello names the session it plays.
+                // A player whose connection came back: its hello names the session it plays. Its
+                // old connection, not yet seen gone (the player's side broke first), is lost now:
+                // the newer one wins.
                 if (self.role == .host and peer != self.player) if (self.player) |pl| {
-                    if (pl.connection == null and pl.session.phase == .playing) if (protocol.decode(m.bytes)) |msg| switch (msg) {
+                    if (pl.session.phase == .playing) if (protocol.decode(m.bytes)) |msg| switch (msg) {
                         .hello => |h| if (h.session == pl.session.id) {
+                            if (pl.connection) |old| {
+                                p.netClose(old);
+                                self.lost(pl, .lost);
+                            }
                             pl.connection = m.connection;
                             peer.connection = null;
                             self.removePeer(peer);
