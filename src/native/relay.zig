@@ -28,7 +28,10 @@
 //! its page's connection, close code 1009); a page that sends a malformed frame is ended (1002);
 //! each connection's outgoing queue is bounded (`net.Options.send_queue_bytes`), and a page that
 //! does not take what is sent to it is dropped at once when its queue is full, so that it never
-//! holds another back. The relay pings every page (`keepalive_ms`) and drops one silent through
+//! holds another back. A client sends its host at most `client_rate` bytes a second (a burst of
+//! `client_burst`), far above a game's needs: one that floods its host is ended (close code
+//! 1008) before the host's queue fills with its messages, which would end the host and the
+//! others' game. The relay pings every page (`keepalive_ms`) and drops one silent through
 //! three pings: a host whose machine went to sleep must not keep its clients waiting.
 const std = @import("std");
 const sorz = @import("sorz");
@@ -57,6 +60,12 @@ pub const number_len = 2;
 /// The longest message a page sends: a message of the game's, a client's number before it.
 pub const framed_max_len = platform.max_message_len + number_len;
 
+/// What a client may send its host: its bytes a second, and at once. A game's client sends its
+/// pads (some 600 bytes a second) and its words; the burst is well below a host's queue
+/// (`net.Options.send_queue_bytes`).
+pub const client_rate = 32 * 1024;
+pub const client_burst = 128 * 1024;
+
 /// The transport's options for the relay: room for a host and its clients, and pings every five
 /// seconds (a silent page is dropped after fifteen). The server takes text from the pages and the
 /// host's framed messages whatever the options say.
@@ -78,7 +87,24 @@ pub const Relay = struct {
     framed: [framed_max_len]u8 = undefined,
     log_enabled: bool = true,
 
-    pub const Client = struct { id: ConnectionId, number: u16 };
+    /// A client, and the bytes it may still send its host (`spend`).
+    pub const Client = struct {
+        id: ConnectionId,
+        number: u16,
+        budget: u32 = client_burst,
+        refilled_ns: ?u64 = null,
+
+        /// Whether the client may send its host `n` bytes more at `now_ns`: its budget refills
+        /// at `client_rate` a second, up to `client_burst`.
+        fn spend(c: *Client, n: usize, now_ns: u64) bool {
+            const since: u64 = @min(now_ns -| (c.refilled_ns orelse now_ns), std.time.ns_per_s * 8);
+            c.refilled_ns = now_ns;
+            c.budget = @intCast(@min(client_burst, c.budget + since * client_rate / std.time.ns_per_s));
+            if (n > c.budget) return false;
+            c.budget -= @intCast(n);
+            return true;
+        }
+    };
 
     pub fn deinit(self: *Relay) void {
         self.clients.deinit(self.gpa);
@@ -170,6 +196,11 @@ pub const Relay = struct {
                 if (self.log_enabled) log.warn("client {d} sent a message too long: ended", .{number});
                 self.transport.closeWith(from, ws.CloseCode.too_big);
                 return self.gone(from, "too_large");
+            }
+            if (!self.clients.items[i].spend(bytes.len, @intCast(Io.Clock.awake.now(self.transport.io).toNanoseconds()))) {
+                if (self.log_enabled) log.warn("client {d} floods its host: ended", .{number});
+                self.transport.closeWith(from, ws.CloseCode.policy_violation);
+                return self.gone(from, "flooding");
             }
             const host = self.host orelse return;
             std.mem.writeInt(u16, self.framed[0..number_len], number, .little);
@@ -584,6 +615,47 @@ fn awaitWord(r: *Raw, word: []const u8, state: *std.atomic.Value(u8)) Io.Cancela
     const f = r.next() catch return state.store(2, .release);
     const heard = f.opcode == .text and std.mem.eql(u8, f.payload, word);
     state.store(if (heard) 1 else 2, .release);
+}
+
+/// Reads `r`'s messages until the relay says `word`: 1 when it does, 2 when the connection ends.
+fn awaitWordPast(r: *Raw, word: []const u8, state: *std.atomic.Value(u8)) Io.Cancelable!void {
+    while (true) {
+        const f = r.next() catch return state.store(2, .release);
+        if (f.opcode == .binary) continue;
+        return state.store(if (f.opcode == .text and std.mem.eql(u8, f.payload, word)) 1 else 2, .release);
+    }
+}
+
+test "a client that floods its host is ended, and the host plays on" {
+    var h: Harness = undefined;
+    try h.start(.{});
+    defer h.stop();
+    const chunk = try testing.allocator.alloc(u8, platform.max_message_len);
+    defer testing.allocator.free(chunk);
+    @memset(chunk, 0x5A);
+    const a = try h.page();
+    defer a.close();
+    try expectText(a, words.host);
+    const c = try h.page();
+    defer c.close();
+    try expectText(c, words.client);
+    try expectSaid(a, words.peer, 1);
+    // The host reads all along; the client sends and sends, past its budget: it is ended, and
+    // the host hears that it left (its queue had room for the word).
+    var state: std.atomic.Value(u8) = .init(0);
+    var reader: Io.Group = .init;
+    defer reader.cancel(testing.io);
+    try reader.concurrent(testing.io, awaitWordPast, .{ a, "left 1", &state });
+    var sent: usize = 0;
+    while (sent < 64) : (sent += 1) c.message(.binary, chunk) catch break;
+    try reader.await(testing.io);
+    try testing.expectEqual(@as(u8, 1), state.load(.acquire));
+    try testing.expectEqual(ws.CloseCode.policy_violation, try c.closeCode());
+    // The host is the host still: the next client is its.
+    const d = try h.page();
+    defer d.close();
+    try expectText(d, words.client);
+    try expectSaid(a, words.peer, 2);
 }
 
 test "a page that does not take its messages is dropped, and the others go on" {

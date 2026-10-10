@@ -51,6 +51,7 @@ pub const CloseCode = struct {
     pub const going_away: u16 = 1001;
     pub const protocol_error: u16 = 1002;
     pub const unsupported_data: u16 = 1003;
+    pub const policy_violation: u16 = 1008;
     pub const too_big: u16 = 1009;
 };
 
