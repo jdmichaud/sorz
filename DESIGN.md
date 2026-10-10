@@ -692,7 +692,10 @@ that it never holds another back; a page silent for 15 seconds is dropped.
 
   The renderer composes it into 320 × 224 indexed pixels, then RGBA.
 - **R2 Art by name:** tiles, maps and sprite frames are assets with names; the renderer keeps them
-  ready to draw. There is no VRAM to manage, and no tile slots.
+  ready to draw. There is no VRAM to manage, and no tile slots. One quirk (P4): the round's
+  script keeps the original's count of the enemies by art slot and colour line, because whether
+  a reserve's enemy may come in depends on it (world/script.zig); it holds no art, which is
+  drawn by name all the same.
 - **R3 Exactness of pixels** is reachable because the layers' rules are the console's: priority,
   transparency, the 8-pixel cells. The sprite limits are not reproduced (decision D4).
 - **R4 Efficiency:**
