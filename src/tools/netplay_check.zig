@@ -1316,7 +1316,7 @@ fn cpuPlace(f: *Flow, r: *Room) !void {
     try f.until(r, host, choosing, 600, "the host's menu");
     while (menuChoice(host) != .two_players) try r.press(host, .down);
     try r.press(host, .right);
-    try f.check(host.game.state.scenes.base.menu.cpu, "1 PLAYER - 1 CPU");
+    try f.check(host.game.state.scenes.base.menu.cpus == 1, "1 PLAYER - 1 CPU");
     try r.press(host, .z);
     try f.until(r, host, inSelect, 600, "the host's select");
     try f.check(!host.game.net.local_two and selectOf(host).?.players == .one, "player 1 alone at its select, not a local game of two");
