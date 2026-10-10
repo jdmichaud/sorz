@@ -20,6 +20,7 @@ const tick_mod = @import("tick.zig");
 const behaviours = @import("behaviours.zig");
 const script = @import("script.zig");
 const lives = @import("lives.zig");
+const cpu = @import("cpu.zig");
 const content_round = @import("../content/round.zig");
 
 const Fixed = fixed.Fixed;
@@ -1048,6 +1049,24 @@ test "the combo on a punk: the chain's blows land, the fourth knocks it down" {
     }
     try testing.expect(std.mem.indexOf(u8, chain.items, "attack2 attack3 attack4") != null);
     try testing.expect(knocked_at != null);
+}
+
+test "the CPU's fight: it walks to a punk off its line, lines up, faces it and jabs it down" {
+    var r = try Round.init();
+    defer r.deinit();
+    const p = try r.holder(1000);
+    r.w.get(p).?.position.depth = .pixels(40);
+    var knocked_at: ?usize = null;
+    for (0..200) |i| {
+        r.step(.{ .pad1 = cpu.fight(&r.w, &r.f.kinds, 0, i).? });
+        if (r.w.get(p).?.mind.galsia.state == .knocked_down) {
+            knocked_at = i;
+            break;
+        }
+    }
+    try testing.expect(knocked_at != null);
+    // Not a fighter: no pad of the rule.
+    try testing.expectEqual(@as(?input.Pad, null), cpu.fight(&r.w, &r.f.kinds, 1, 0));
 }
 
 test "a grab: the walk's reach catches the punk; two knees, and the last knocks it down" {

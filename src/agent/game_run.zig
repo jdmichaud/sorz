@@ -609,91 +609,12 @@ pub const Run = struct {
     }
 
     /// Player 1's pad at the script's tick `now` by the bot's rule (`bot TICKS`, sor-remaster's
-    /// runner's), from what the round shows: out of play (the continue's question, a screen),
-    /// START now and then; holding a foe, the knees; hurt, food lying goes first; else the
-    /// nearest enemy or boss out of hiding, which it lines up with in depth, comes to the jab's
-    /// reach of from across, faces, and jabs at every other tick; with none, it walks right,
-    /// jabbing at a solid thing that stops it.
+    /// runner's): out of play (the continue's question, a screen), START now and then; in play,
+    /// the CPU's fight (world/cpu.zig).
     pub fn bot(self: *Run, now: u64) input.Pad {
-        const r = self.round() orelse return .{ .start = now % 16 == 0 };
-        const w = &r.play.world;
-        const ph = w.players[0].entity orelse return .{ .start = now % 16 == 0 };
-        const p = w.getConst(ph) orelse return .{ .start = now % 16 == 0 };
-        if (p.mind != .player) return .{ .start = now % 16 == 0 };
-        const px = p.position.x.whole();
-        const pd = p.position.depth.whole();
-        const left = p.facing == .left;
-        const jab = now % 2 == 0;
-        const state = world.behaviours.stateName(&p.mind) orelse "";
-        if (std.mem.startsWith(u8, state, "grab")) return .{ .b = jab };
-        var pad: input.Pad = .{};
-        if (p.health < bot_hungry) if (self.nearest(w, px, pd, .food)) |e| {
-            const dx = e.position.x.whole() - px;
-            const dd = e.position.depth.whole() - pd;
-            if (@abs(dd) > 2) {
-                pad.up = dd < 0;
-                pad.down = dd > 0;
-            }
-            if (@abs(dx) > 6) {
-                pad.left = dx < 0;
-                pad.right = dx > 0;
-            }
-            if (@as(u8, @bitCast(pad)) == 0) pad.b = jab;
-            return pad;
-        };
-        const foe = self.nearest(w, px, pd, .foe) orelse {
-            // No foe: right, but a solid thing ahead at its depth stops the walk, and is jabbed.
-            for (&w.entities) |*e| {
-                if (!e.alive() or !e.flags.solid or e.flags.hidden) continue;
-                const dx = e.position.x.whole() - px;
-                if (dx >= 0 and dx <= bot_blocked and @abs(e.position.depth.whole() - pd) <= bot_blocked_depth and !left) return .{ .b = jab };
-            }
-            return .{ .right = true };
-        };
-        const dx = foe.position.x.whole() - px;
-        const dd = foe.position.depth.whole() - pd;
-        if (@abs(dd) > bot_level) {
-            pad.up = dd < 0;
-            pad.down = dd > 0;
-        }
-        if (@abs(dx) > bot_reach) {
-            pad.left = dx < 0;
-            pad.right = dx > 0;
-        } else if (@abs(dx) < bot_close) {
-            pad.right = dx < 0;
-            pad.left = dx >= 0;
-        } else if ((dx < 0) != left) {
-            pad.left = dx < 0;
-            pad.right = dx >= 0;
-        } else if (@as(u8, @bitCast(pad)) == 0) pad.b = jab;
-        return pad;
-    }
-
-    /// The nearest entity (across plus in depth) the bot looks for: an enemy or a boss out of
-    /// hiding with health left, or food lying.
-    fn nearest(self: *const Run, w: *const world.World, px: i32, pd: i32, what: enum { foe, food }) ?*const world.Entity {
-        var best: ?*const world.Entity = null;
-        var best_d: u32 = std.math.maxInt(u32);
-        for (&w.entities) |*e| {
-            if (!e.alive() or e.flags.hidden) continue;
-            const k = self.content.kinds.get(e.kind.?);
-            switch (what) {
-                .foe => {
-                    const f = k.family();
-                    if (f != .enemy and f != .boss) continue;
-                    if (e.health < 0) continue;
-                    const now = world.behaviours.stateName(&e.mind) orelse "";
-                    if (std.mem.eql(u8, now, "appear") or std.mem.eql(u8, now, "knocked_out")) continue;
-                },
-                .food => if (!std.mem.eql(u8, k.name(), "apple") and !std.mem.eql(u8, k.name(), "beef")) continue,
-            }
-            const d = @abs(e.position.x.whole() - px) + @abs(e.position.depth.whole() - pd);
-            if (d < best_d) {
-                best_d = d;
-                best = e;
-            }
-        }
-        return best;
+        const out_of_play: input.Pad = .{ .start = now % 16 == 0 };
+        const r = self.round() orelse return out_of_play;
+        return world.cpu.fight(&r.play.world, &self.content.kinds, 0, now) orelse out_of_play;
     }
 
     /// The scene as the traces name it, a load's the one it holds (sor-remaster's runner sees the
@@ -743,13 +664,3 @@ fn traceName(k: scene.Kind) []const u8 {
         else => @tagName(k),
     };
 }
-
-/// The bot's rule's distances (sor-remaster's runner's): the depth within which it is level with
-/// its foe, the reach it jabs from across (its jab's), the least across it keeps; the health
-/// under which food comes first; how far ahead across and in depth a solid thing stops its walk.
-const bot_level = 3;
-const bot_reach = 34;
-const bot_close = 14;
-const bot_hungry = 40;
-const bot_blocked = 48;
-const bot_blocked_depth = 12;

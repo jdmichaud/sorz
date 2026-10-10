@@ -26,6 +26,7 @@ pub const trace = @import("trace.zig");
 pub const script = @import("script.zig");
 pub const room = @import("room.zig");
 pub const lives = @import("lives.zig");
+pub const cpu = @import("cpu.zig");
 const world = @import("world.zig");
 
 pub const Fixed = fixed.Fixed;
