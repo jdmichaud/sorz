@@ -279,22 +279,21 @@
   - Only if similar is not good enough (the user): traces equal tick by tick from power-on,
     pictures and sound equal.
 
-- [ ] **32 — The code review's follow-ups** — Depends: none.
-  - The review of 2026-10-10 found these besides its bugs (fixed in their own commits); each is
-    done on the user's word.
-  - The overlays drawn again only when they or the picture under them changed, and blended only
-    on their rows: with one up, a frame costs some 2.15 ms in Debug, against 0.47 ms without
-    (DESIGN.md G4's few per cent of a core).
-  - The content tree's version: a tree that is not the extractor's own refused with "extract
-    again" (a stamp of the extractor's build in the manifest, or the version raised with each
-    change to the schema); the user chooses.
-  - What the engine finds by name every tick (food, a foe's `knocked_down`, `appear`) resolved
-    once at binding into traits; the bosses' duplicated `throwPlace` (boss_r3.zig, mr_x.zig) one
-    helper keyed by the character.
-  - The ROM's places that the engine's comments cite as three-digit hex (script.zig,
-    round.zig) moved to sor-re's port maps, out of the engine (P1); the original's art slots,
-    which the engine models, named in DESIGN.md as a quirk (P4), with the user's approval.
-  - Gate: each point as the user takes it up.
+- [x] **32 — The code review's follow-ups** — Depends: none.
+  - The review of 2026-10-10 found these besides its bugs (fixed in their own commits).
+  - The overlays drawn again only when they change, and mixed with the picture only on their
+    rows.
+  - The content tree's version raised (2) and, in its comment, the rule to raise it with each
+    change to the schema.
+  - The states several behaviours share found when compiled (`behaviours.inState`), food known
+    by what its definition gives, the bosses' placing by a throw one routine.
+  - The ROM's places cited in the round script's comments moved to sor-re's port map; the art
+    slots named in DESIGN.md as a quirk (that commit awaits the user's approval).
+  - `Game.load` and the CPU's `hold` renamed where the words met others.
+  - Gate: each point's own check.
+  - [x] Checked 2026-10-10: the overlays' frames as before at 1.20 ms a frame in Debug with a
+    notice up (2.60 before); a version 1 tree refused; a misspelt state name stops the build;
+    the CPU eats the fixture's apple; zig build test, variants-check, netplay-check (25 flows).
 
 ## Standing rule
 
@@ -326,5 +325,3 @@
 - [x] **D13 — The logic tick**: the original's 30 Hz in play (2026-10-02, design Q1).
 - [x] **D14 — Scenarios**: converted states for the players and common enemies, scripted
   scenarios for the rest (2026-10-02, design Q2).
-- [x] **D15 — The code review's declined point** (2026-10-10): the house style's names stay,
-  none renamed for its own sake (the review found "load" and "hold" overloaded in a few places).
