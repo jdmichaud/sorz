@@ -231,6 +231,13 @@ pub const Composer = struct {
         self.gpa.destroy(self);
     }
 
+    /// Forgets the sprites last composed, whose frames are about to go (the frames a picture
+    /// made): the next composition draws every line again, and reads none of them.
+    pub fn forgetSprites(self: *Composer) void {
+        self.sprite_key.clearRetainingCapacity();
+        self.sprite_lines = null;
+    }
+
     /// Composes `p` into `indices` and `rgba`, drawing again only what changed: a board is known
     /// by its address and revision, a frame by its address. Only the lines where something
     /// changed are mixed and turned into RGBA again: every line when a layer or the backdrop

@@ -67,6 +67,8 @@ pub const View = struct {
     }
 
     fn forget(self: *View) void {
+        // The composer keeps the last picture's sprites, to know the lines they covered.
+        self.composer.forgetSprites();
         for (self.made_frames.items) |f| self.gpa.destroy(f);
         self.made_frames.clearRetainingCapacity();
         for (self.made_tiles.items) |t| self.gpa.destroy(t);
@@ -201,14 +203,18 @@ test "a picture begins with its boards empty and black, and composes its texts" 
     const px = f.pixels[(8 * f.width + 16) * 4 ..][0..4];
     try testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, px);
     try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 255 }, f.pixels[(8 * f.width + 24) * 4 ..][0..4]);
-    // A glyph as a sprite, and a made tile; the next picture forgets them and keeps its board.
+    // A glyph as a sprite, composed, and a made tile; the next picture forgets them, the
+    // composer its sprites (their frames gone), and keeps its board.
     const arrow = try v.glyphFrame(t, "A");
     try v.sprites.append(testing.allocator, render.Sprite.of(arrow, 100, 100));
+    _ = try v.compose();
+    try testing.expectEqual(@as(usize, 1), v.composer.sprite_key.items.len);
     _ = try v.makeTile();
     const kept = v.board(.a);
     try v.begin(2, .{ .a = .{ .width = 64, .height = 32 } });
     try testing.expect(v.board(.a) == kept and v.board(.a).cell(2, 1).isEmpty());
     try testing.expectEqual(@as(usize, 0), v.sprites.items.len + v.made_frames.items.len + v.made_tiles.items.len);
+    try testing.expect(v.composer.sprite_key.items.len == 0 and v.composer.sprite_lines == null);
     try testing.expectEqual(@as(?u32, 2), v.shows);
     try testing.expectError(error.NoGlyph, v.glyphFrame(t, "B"));
 }
