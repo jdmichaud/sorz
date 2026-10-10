@@ -20,7 +20,8 @@
 //!
 //! 1 PLAYER - 1 CPU (PLAN item 30, `Setup.cpu`): player 1 chooses alone; as the fade out ends,
 //! the select comes again (`cpu_pass`), its music playing on, and player 1 chooses the CPU's
-//! character there, its label CPU 1 in the font.
+//! character there, its label CPU 1 in the font. 0 PLAYERS - 2 CPU (item 33): player 1's pad
+//! chooses both CPUs' characters the same way, the labels CPU 1 then CPU 2.
 const std = @import("std");
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
@@ -69,11 +70,11 @@ const eye_open_ticks = 300;
 const eye_closed_ticks = 8;
 /// The port's: the display ticks each of two players' labels on one portrait is in front.
 const label_turn = 32;
-/// The CPU's label, and its place in a label's 64 pixels (in the middle); the colour of the
-/// game's font around its letters (black in the menus), which the label keeps only as its
+/// The CPUs' labels, and their place in a label's 64 pixels (in the middle); the colour of the
+/// game's font around its letters (black in the menus), which the labels keep only as their
 /// letters' outline, as the cartridge's labels have it.
-const cpu_label = "CPU 1";
-const cpu_label_x: i16 = (64 - cpu_label.len * art.tile_side) / 2;
+const cpu_labels = [2][]const u8{ "CPU 1", "CPU 2" };
+const cpu_label_x: i16 = (64 - cpu_labels[0].len * art.tile_side) / 2;
 const font_ground = 2;
 
 pub const Portrait = struct {
@@ -226,9 +227,11 @@ pub const Select = struct {
     /// The player a lone cursor's label names: player 2 on a client of network play, whose
     /// player joins the host's game as player 2.
     seat: u1 = 0,
-    /// The select's second time in a game of 1 PLAYER - 1 CPU: player 1 chooses the CPU's
-    /// character (player 2's).
+    /// The select's second time in a game with the CPU: player 1 chooses the CPU's character
+    /// (player 2's).
     cpu_pass: bool = false,
+    /// The CPU whose character this time chooses (its label: CPU 1, CPU 2); none, a player's.
+    cpu_label: u2 = 0,
     /// By place: Adam's, Axel's, Blaze's.
     portraits: [3]Portrait = @splat(.{}),
     /// The eye: the ticks to its next blink or opening, and whether it is closed.
@@ -343,8 +346,9 @@ pub const Select = struct {
         switch (self.phase) {
             .setup => {
                 turn.releasePads();
-                // With the CPU, player 1 chooses alone, each time.
+                // With the CPU, player 1 chooses alone, each time; for a CPU, under its label.
                 self.players = if (turn.setup.cpu[1]) .one else turn.setup.players;
+                self.cpu_label = if (self.cpu_pass) (if (turn.setup.cpu[0]) 2 else 1) else if (turn.setup.cpu[0]) 1 else 0;
                 self.seat = if (turn.net.role == .client and self.players == .one) 1 else 0;
                 if (!self.cpu_pass) turn.setup.characters = .{ null, null };
                 self.colours.aim(a.colours);
@@ -625,8 +629,8 @@ pub const Select = struct {
         const back_first: [2]usize = if (one_place and (self.ticks / label_turn) % 2 == 1) .{ 0, 1 } else .{ 1, 0 };
         for (back_first) |i| {
             const place = self.shown.labels[i] orelse continue;
-            if (self.cpu_pass) {
-                try v.sprites.append(v.gpa, .of(try v.outlinedText(a.text, cpu_label, font_ground), label_x.get(place) + cpu_label_x, label_y));
+            if (self.cpu_label != 0) {
+                try v.sprites.append(v.gpa, .of(try v.outlinedText(a.text, cpu_labels[self.cpu_label - 1], font_ground), label_x.get(place) + cpu_label_x, label_y));
             } else try v.sprites.append(v.gpa, .of(a.labels[i], label_x.get(place), label_y));
         }
         var k: usize = places.len;
@@ -806,8 +810,9 @@ test "1 PLAYER - 1 CPU: player 1 chooses, the select comes again, its music on, 
     var s: Select = .start(&setup);
     var turn: scene.Turn = .{ .setup = &setup };
     for (0..66) |_| _ = s.tick(&turn, &a);
-    // One cursor, pad 1's: Adam chosen for player 1.
+    // One cursor, pad 1's, player 1's own label: Adam chosen for player 1.
     try testing.expectEqual(setup_mod.Players.one, s.players);
+    try testing.expectEqual(@as(u2, 0), s.cpu_label);
     turn = .{ .setup = &setup, .pressed = .{ .pad1 = .{ .a = true } } };
     _ = s.tick(&turn, &a);
     for (0..1 + 18 + 64) |_| {
@@ -816,10 +821,12 @@ test "1 PLAYER - 1 CPU: player 1 chooses, the select comes again, its music on, 
     }
     try testing.expectEqual(@as(?Character, .adam), setup.characters[0]);
     try testing.expect(s.cpu_pass and s.phase == .setup);
-    // Again from its set-up, the music not asked again: right to Axel, chosen, the CPU's.
+    // Again from its set-up, the music not asked again, its label CPU 1: right to Axel, chosen,
+    // the CPU's.
     turn = .{ .setup = &setup };
     _ = s.tick(&turn, &a);
     try testing.expectEqual(@as(usize, 0), turn.requests.slice().len);
+    try testing.expectEqual(@as(u2, 1), s.cpu_label);
     for (0..65) |_| _ = s.tick(&turn, &a);
     for ([_]input.Pad{ .{ .right = true }, .{}, .{ .a = true }, .{}, .{}, .{} }) |p| {
         turn = .{ .setup = &setup, .pressed = .{ .pad1 = p } };
@@ -833,4 +840,31 @@ test "1 PLAYER - 1 CPU: player 1 chooses, the select comes again, its music on, 
         exit = s.tick(&turn, &a);
     }
     try testing.expectEqual(flow.Exit.missing, exit.?);
+}
+
+test "0 PLAYERS - 2 CPU: player 1's pad chooses for CPU 1, then, the select again, for CPU 2" {
+    var tp: TestPoses = .{};
+    tp.init();
+    const a = testAssets(&tp);
+    var setup: Setup = .{ .players = .two, .cpu = .{ true, true } };
+    var s: Select = .start(&setup);
+    var turn: scene.Turn = .{ .setup = &setup };
+    for (0..66) |_| _ = s.tick(&turn, &a);
+    try testing.expect(s.players == .one and s.cpu_label == 1);
+    turn = .{ .setup = &setup, .pressed = .{ .pad1 = .{ .a = true } } };
+    _ = s.tick(&turn, &a);
+    for (0..1 + 18 + 64) |_| {
+        turn = .{ .setup = &setup };
+        _ = s.tick(&turn, &a);
+    }
+    try testing.expect(s.cpu_pass and setup.characters[0] == .adam);
+    turn = .{ .setup = &setup };
+    _ = s.tick(&turn, &a);
+    try testing.expectEqual(@as(u2, 2), s.cpu_label);
+    for (0..65) |_| _ = s.tick(&turn, &a);
+    for ([_]input.Pad{ .{ .right = true }, .{}, .{ .a = true }, .{}, .{}, .{} }) |p| {
+        turn = .{ .setup = &setup, .pressed = .{ .pad1 = p } };
+        _ = s.tick(&turn, &a);
+    }
+    try testing.expectEqual([2]?Character{ .adam, .axel }, setup.characters);
 }
