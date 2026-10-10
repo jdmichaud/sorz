@@ -285,7 +285,9 @@ pub const RoundClear = struct {
             .fade_in, .fade_out => if (self.colours.stepFade()) self.next(),
             .header => {
                 self.now.header = true;
-                self.writes = .{ .rows = @intCast(a.header.height), .cells = @intCast(@as(u32, a.header.width) * a.header.height) };
+                // Counts of the frame's writes: a header map past the screen's (an edited one)
+                // counts as the most they hold, not a crash.
+                self.writes = .{ .rows = std.math.lossyCast(u8, a.header.height), .cells = std.math.lossyCast(u16, @as(u32, a.header.width) * a.header.height) };
                 self.next();
             },
             .wait => self.wait(c),

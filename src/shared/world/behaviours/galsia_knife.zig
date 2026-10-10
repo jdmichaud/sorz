@@ -61,6 +61,8 @@ pub const walks_off_as_it_was = true;
 
 pub const Animation = enum { walk, down, reel, stand, thrown, slammed, walk_knife, jump_in, stab, throw };
 pub const Move = enum { stab, jump_in };
+/// The boxes it reads (binding refuses a definition without them).
+pub const Box = enum { stab_reach };
 pub const Sound = enum { hurt, thud, cry, cry_odd, throw };
 
 pub const Numbers = enemy.Numbers(struct {

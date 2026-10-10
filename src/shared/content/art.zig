@@ -185,6 +185,10 @@ pub const Frame = struct {
     view: [palette_size]Colour = grey,
 };
 
+/// The tiles a copy of art carries at most (a frame's `copied`, a pose's): a transfer counts
+/// 16-bit words, sixteen a tile.
+pub const max_copy_tiles = std.math.maxInt(u16) / 16;
+
 /// A glyph of a font: its text and the tile of the font's sheet that draws it.
 pub const Glyph = struct { text: []const u8, tile: u16 };
 

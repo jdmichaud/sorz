@@ -727,7 +727,10 @@ fn loadFrames(p: Pass, node: json.Node, root: json.Node) Error![]const art.Frame
             .pieces = pieces,
             .copied = if (try e.value.opt("copied")) |c| blk: {
                 const copied = try p.arena.alloc(u16, try c.len());
-                for (copied, 0..) |*o, i| o.* = try (try c.at(i)).int(u16);
+                for (copied, 0..) |*o, i| {
+                    o.* = try (try c.at(i)).int(u16);
+                    if (o.* > art.max_copy_tiles) return (try c.at(i)).fail("more tiles than a copy carries");
+                }
                 break :blk copied;
             } else &.{},
             .view = pic.view,

@@ -506,7 +506,15 @@ pub const Sequencer = struct {
         const t = &s.tracks[index];
         const kind = t.kind(index);
         var pos = t.pos;
-        while (true) {
+        // A jump back with no note, rest nor end on the way (an edited track) would run its
+        // commands for good: past this many at once (each event 256 times, a loop's count), the
+        // track fails.
+        var left = t.events.len * 256 + 256;
+        while (true) : (left -= 1) {
+            if (left == 0) {
+                s.fail("a track's commands loop with no note");
+                return null;
+            }
             if (pos >= t.events.len) {
                 s.fail("a track ran past its last event");
                 return null;
@@ -1168,6 +1176,18 @@ test "a song's first update: everything stops, then the instrument, the volume, 
     chips.silence(&e, .fm1);
     try testing.expect(find(s.update().items(), e.items()) != null);
     try testing.expect(!s.tracks[0].flags.playing);
+}
+
+test "a track whose commands loop with no note fails, at once, rather than run for good" {
+    // An edited track: its instrument, then a jump back to it, no note on the way.
+    const fm1 = [_]Event{ .{ .instrument = 0 }, .{ .jump = 0 } };
+    const songs = [_]content.Song{testSong(&fm1, &resting, &resting, &.{})};
+    const sounds = [_]content.Sound{.{ .name = "song", .priority = 128, .plays = .{ .song = 0 } }};
+    const c: content.Content = .{ .driver = testDriver(), .songs = &songs, .sounds = &sounds };
+    var s: Sequencer = .init(&c);
+    s.request(0);
+    _ = s.update();
+    try testing.expectEqualStrings("a track's commands loop with no note", s.fault.?.what);
 }
 
 test "an effect holds FM3, then gives it back with the song's instrument" {

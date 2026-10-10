@@ -1260,7 +1260,11 @@ fn readSpawn(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Erro
     return s;
 }
 
+/// The records of a reserve at most: the script marks those taken in a 32-bit mask.
+pub const max_reserve = 32;
+
 fn readSpawns(arena: std.mem.Allocator, n: json.Node, comptime where: Where) Error![]const Spawn {
+    if (where == .reserve and try n.len() > max_reserve) return n.fail("more than 32 records in a reserve");
     const out = try arena.alloc(Spawn, try n.len());
     for (out, 0..) |*s, i| s.* = try readSpawn(arena, try n.at(i), where);
     return out;

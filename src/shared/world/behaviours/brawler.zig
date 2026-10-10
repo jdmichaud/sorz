@@ -61,6 +61,8 @@ pub const Mind = struct {
 
 pub const Animation = enum { walk, down, reel, stand, thrown, slammed, punch };
 pub const Move = enum { punch };
+/// The boxes it reads (binding refuses a definition without them).
+pub const Box = enum { punch_reach };
 pub const Sound = enum { hurt, thud, cry, cry_odd, shrug };
 
 pub const Numbers = enemy.Numbers(enemy.merged(struct {

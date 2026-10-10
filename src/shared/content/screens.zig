@@ -1095,7 +1095,10 @@ fn readSteps(arena: std.mem.Allocator, n: json.Node, a: ?*const art.Art) Error![
         if (try e.opt("copied")) |c| {
             const copied = try arena.alloc(u16, try c.len());
             if (copied.len > max_copies) return c.fail("more copies than a frame has");
-            for (copied, 0..) |*t, k| t.* = try (try c.at(k)).int(u16);
+            for (copied, 0..) |*t, k| {
+                t.* = try (try c.at(k)).int(u16);
+                if (t.* > art.max_copy_tiles) return (try c.at(k)).fail("more tiles than a copy carries");
+            }
             s.copied = copied;
         }
         if (a) |x| if (x.frame(s.frame) == null) return frame.fail("no frame of this name in the art");
