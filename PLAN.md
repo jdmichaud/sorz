@@ -234,6 +234,22 @@
     mid-round and at the select, the same state and picture on both; it quits and the CPU takes
     player 2 back); all flows of both checks, screens-check against sor-remaster, smoke and
     verify. Played in the SDL build under Xvfb. The user's play is pending.
+- [ ] **31 — The CPU plays as a person** — Depends: 30.
+  - The CPU of item 30 plays as a partner, not a machine, in two steps, the second after the
+    user has played the first.
+  - First, its pace and its place: it looks at the fight a few times a second, so it reacts
+    late and keeps its foe in between; it presses at a person's pace, a few blows and a breath;
+    it stops near enough, not on the pixel. With nothing to fight it stays by player 1 rather
+    than ahead, and never walks into it (which would grab it). It helps against a foe on player
+    1, leaves player 1's foe when another is free, and leaves food to a player 1 more hurt.
+  - Then, caution and variety: out of a close foe's line when it faces it, the back attack on a
+    foe behind, throws, a jump kick now and then, the special attack rarely, when surrounded.
+  - Its memory is the world's (its player's), its random draws its own: the game's draws stay
+    the original's, and both machines of network play play it alike. The agent host's bot keeps
+    item 30's rule.
+  - Gate: unit tests on synthetic play (its presses at a person's pace, its reaction late, by
+    player 1 with no foe and never grabbing it, a punk still knocked down); variants-check's
+    `extended_cpu` and netplay-check's CPU flows; the user's play.
 
 ## F7 — Platforms and exactness
 
