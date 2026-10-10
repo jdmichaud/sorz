@@ -88,8 +88,8 @@ pub fn main(init: std.process.Init) !void {
     for (screens) |s| {
         var stage: Stage = .{ .gpa = gpa, .art = &content.art };
         defer stage.deinit();
-        // Before the stage's made frames go.
-        defer composer.forgetSprites();
+        // Before the stage's boards and made frames go.
+        defer composer.forget();
         s.make(&stage) catch |e| return fail(io, try std.fmt.allocPrint(arena, "{s}: {s}\n", .{ s.name, @errorName(e) }));
         const start = std.Io.Timestamp.now(io, .awake);
         _ = try composer.compose(&stage.screen);

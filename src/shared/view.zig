@@ -70,8 +70,8 @@ pub const View = struct {
     }
 
     fn forget(self: *View) void {
-        // The composer keeps the last picture's sprites, to know the lines they covered.
-        self.composer.forgetSprites();
+        // The composer keys the last picture by its boards' and frames' addresses.
+        self.composer.forget();
         for (self.made_frames.items) |f| self.gpa.destroy(f);
         self.made_frames.clearRetainingCapacity();
         for (self.made_tiles.items) |t| self.gpa.destroy(t);
@@ -280,6 +280,7 @@ test "a picture begins with its boards empty and black, and composes its texts" 
     try testing.expect(v.board(.a) == kept and v.board(.a).cell(2, 1).isEmpty());
     try testing.expectEqual(@as(usize, 0), v.sprites.items.len + v.made_frames.items.len + v.made_tiles.items.len);
     try testing.expect(v.composer.sprite_key.items.len == 0 and v.composer.sprite_lines == null);
+    try testing.expect(v.composer.back_key == null and v.composer.front_key == null);
     try testing.expectEqual(@as(?u32, 2), v.shows);
     try testing.expectError(error.NoGlyph, v.glyphFrame(t, "B"));
 }

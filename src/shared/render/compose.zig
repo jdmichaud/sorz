@@ -231,11 +231,15 @@ pub const Composer = struct {
         self.gpa.destroy(self);
     }
 
-    /// Forgets the sprites last composed, whose frames are about to go (the frames a picture
-    /// made): the next composition draws every line again, and reads none of them.
-    pub fn forgetSprites(self: *Composer) void {
+    /// Forgets what it last composed from, its boards and frames being about to go (a new
+    /// picture's): a board or a frame made again at a freed one's address, its revision begun
+    /// again, would pass for the old. The next composition draws every line again, and reads
+    /// none of the last's sprites.
+    pub fn forget(self: *Composer) void {
         self.sprite_key.clearRetainingCapacity();
         self.sprite_lines = null;
+        self.back_key = null;
+        self.front_key = null;
     }
 
     /// Composes `p` into `indices` and `rgba`, drawing again only what changed: a board is known
