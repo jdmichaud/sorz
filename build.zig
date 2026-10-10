@@ -22,9 +22,10 @@
 //! -Dremaster=DIR`), `screens-check` the screens' pictures and sound, tick by tick from
 //! power-on (the same options), `similar-check` Axel's moves in the catalogue's scenarios and
 //! `round-check` round 1's scenes from power-on (`-Drom=ROM -Dremaster=DIR|AGENT`);
-//! `variants-check` plays each variant's flow from power-on on the ROM's content (`-Drom=ROM`), and
+//! `variants-check` plays each variant's flow from power-on on the ROM's content (`-Drom=ROM`),
 //! `netplay-check` network play's flows on it (the joins, leaving, a dropped connection, a
-//! difference named; two agent hosts over WebSockets).
+//! difference named; two agent hosts over WebSockets), and `cpus-check` the whole game played by
+//! the two CPUs.
 const std = @import("std");
 
 /// The SDL2 release that the Linux host is built and tested against.
@@ -371,6 +372,38 @@ pub fn build(b: *std.Build) void {
         variants_check_step.dependOn(&check.step);
     } else {
         variants_check_step.dependOn(&b.addFail("variants-check needs the user's ROM: -Drom=PATH").step);
+    }
+
+    // `cpus-check`, the two CPUs' whole game (PLAN item 34, src/tools/cpus_check.zig): from
+    // power-on to the ending or the game's end on the ROM's content, its rounds measured. Build it
+    // fast: -Doptimize=ReleaseFast.
+    const cpus_lives = b.option(u8, "cpus-lives", "cpus-check's lives a game and a continue give (default 3)");
+    const cpus_seeds = b.option([]const u8, "cpus-seeds", "cpus-check's seeds of the CPUs' draws, one game each (default 1)");
+    const cpus_shots = b.option([]const u8, "cpus-shots", "cpus-check writes its pictures (rounds cleared, lives lost, the end) into this directory");
+    const cpus_check_step = b.step("cpus-check", "Play the whole game with the two CPUs on the content of -Drom=ROM, its rounds measured");
+    if (rom_path) |rom| {
+        const cpus_exe = b.addExecutable(.{
+            .name = "sorz-cpus-check",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/tools/cpus_check.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "sorz", .module = shared },
+                    .{ .name = "agent", .module = agent },
+                    .{ .name = "extract", .module = extract },
+                },
+            }),
+        });
+        const check = b.addRunArtifact(cpus_exe);
+        check.addArg(rom);
+        if (cpus_lives) |n| check.addArgs(&.{ "--lives", b.fmt("{d}", .{n}) });
+        if (cpus_seeds) |seeds| check.addArgs(&.{ "--seeds", seeds });
+        if (cpus_shots) |dir| check.addArgs(&.{ "--shots", dir });
+        check.has_side_effects = true;
+        cpus_check_step.dependOn(&check.step);
+    } else {
+        cpus_check_step.dependOn(&b.addFail("cpus-check needs the user's ROM: -Drom=PATH").step);
     }
 
     // `sound-check`: the sound against sor-remaster's driver (PLAN 09), from the user's ROM and a
