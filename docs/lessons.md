@@ -109,6 +109,13 @@ time once.
   for it forever: a game hung at audio start on Ubuntu 24.04 unless `SDL_AUDIODRIVER=pipewire`.
   The SDL host, which links C libraries, sets `.signal_stack_size = null` in its `std_options`
   (a stack overflow then loses Zig's trace); `readelf -lW BINARY | grep TLS` shows the size.
+- **Zig 0.17's `Io` gives a task its cancelation once**, as `error.Canceled` from its next
+  cancelable call; after that its calls are no longer cancelation points. A best-effort call
+  that drops its error (`stream.shutdown(io, .both) catch {}`, a socket shutdown being
+  cancelable) can take the cancelation: the task's waits then time out and loop for good, and
+  whoever canceled it waits forever. The relay's test hung about one run in a hundred this way.
+  Run such a call with `io.swapCancelProtection(.blocked)`, or pass `error.Canceled` on; gdb
+  shows the thread's status word ending in `0b111` (canceled) while it still runs.
 - **The browser build without compiler-rt** imports the helpers the compiler calls (128-bit
   multiply and divide, some math): the page provides them, tested against compiler-rt, and the
   build checks the import list. A Debug build can import more than a release build.

@@ -153,7 +153,7 @@ pub const WebSocketTransport = struct {
             if (oldest == null or x.order < self.waiting[oldest.?].?.order) oldest = i;
         };
         const i = oldest orelse return false;
-        self.waiting[i].?.stream.shutdown(self.io, .both) catch {};
+        shutDown(self.io, self.waiting[i].?.stream, .both);
         self.waiting[i] = null;
         return true;
     }
@@ -278,7 +278,7 @@ pub const WebSocketTransport = struct {
         c.out.clearRetainingCapacity();
         c.out_bytes = 0;
         c.endLocked(.lost, null);
-        if (c.stream) |s| s.shutdown(self.io, .both) catch {};
+        if (c.stream) |s| shutDown(self.io, s, .both);
     }
 
     /// Ends a connection as the transport ends a peer that breaks its rules: what it had to send
@@ -919,7 +919,7 @@ fn writeLoop(c: *Conn) Io.Cancelable!void {
                     var payload = ws.closePayload(ws.CloseCode.going_away);
                     writeFrame(c, w, .close, &payload) catch {};
                     w.flush() catch {};
-                    stream.shutdown(io, .send) catch {};
+                    shutDown(io, stream, .send);
                     return error.Canceled;
                 },
             };
@@ -927,7 +927,7 @@ fn writeLoop(c: *Conn) Io.Cancelable!void {
         if (silent) {
             // The peer is gone: no close frame would reach it. The reader stops too.
             c.endLocked(.lost, null);
-            stream.shutdown(io, .both) catch {};
+            shutDown(io, stream, .both);
         }
         std.mem.swap(std.ArrayList(Frame), &batch, &c.out);
         c.out_bytes = 0;
@@ -957,7 +957,7 @@ fn writeLoop(c: *Conn) Io.Cancelable!void {
                 w.flush() catch {};
             }
             if (game_closed) c.end(.closed, null);
-            stream.shutdown(io, .send) catch {};
+            shutDown(io, stream, .send);
             return;
         }
     }
@@ -995,7 +995,18 @@ const Keepalive = struct {
 fn failWrite(c: *Conn, stream: Io.net.Stream) void {
     c.end(.lost, null);
     // The reader stops too.
-    stream.shutdown(c.t.io, .both) catch {};
+    shutDown(c.t.io, stream, .both);
+}
+
+/// Shuts `stream` down (`how`) with no cancelation point: a shutdown does not wait, and its error
+/// is of no use to its callers. A cancelation asked meanwhile stays for the task's next wait,
+/// which ends the task. Zig's Io gives a task its cancelation once: a shutdown that took it, its
+/// error dropped, left the task's waits no longer cancelable, and whoever canceled it waiting
+/// for good (the relay's task, its harness stopping it as a page left).
+fn shutDown(io: Io, stream: Io.net.Stream, how: Io.net.ShutdownHow) void {
+    const was = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(was);
+    stream.shutdown(io, how) catch {};
 }
 
 fn writeFrame(c: *Conn, w: *Io.Writer, opcode: ws.Opcode, bytes: []u8) Io.Writer.Error!void {
@@ -1317,6 +1328,42 @@ test "the same port serves the browser build's files, those built in, and the ga
         const len = try std.fmt.parseInt(usize, ws.headerValue(head, "Content-Length").?, 10);
         try testing.expectEqualStrings(case.body, try raw.reader.interface.take(len));
     }
+}
+
+test "a shutdown leaves a cancelation asked meanwhile to the task's next wait" {
+    var server = WebSocketTransport.init(testing.allocator, testing.io, .{});
+    defer server.deinit();
+    try server.transport().listen("127.0.0.1:0");
+    const peer = try Raw.open(server.port);
+    defer peer.close();
+    // A task canceled while it runs (its cancelation asked before it goes on), which then shuts a
+    // socket down: its next cancelation point still sees the cancelation.
+    const Task = struct {
+        go: std.atomic.Value(bool) = .init(false),
+        saw: bool = false,
+
+        fn run(t: *@This(), stream: Io.net.Stream) Io.Cancelable!void {
+            while (!t.go.load(.acquire)) std.atomic.spinLoopHint();
+            shutDown(testing.io, stream, .both);
+            testing.io.checkCancel() catch |e| {
+                t.saw = true;
+                return e;
+            };
+        }
+
+        fn release(t: *@This()) Io.Cancelable!void {
+            try testing.io.sleep(.fromMilliseconds(50), .awake);
+            t.go.store(true, .release);
+        }
+    };
+    var task: Task = .{};
+    var group: Io.Group = .init;
+    try group.concurrent(testing.io, Task.run, .{ &task, peer.stream });
+    var releaser: Io.Group = .init;
+    try releaser.concurrent(testing.io, Task.release, .{&task});
+    group.cancel(testing.io);
+    try releaser.await(testing.io);
+    try testing.expect(task.saw);
 }
 
 test "the relay's calls: text, a wait for events, pings, a connection dropped at once" {
