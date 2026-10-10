@@ -46,6 +46,8 @@ pub const View = struct {
     /// The scene whose drawing the boards hold (its number, `scene.Stack.serial`); null: none, the
     /// next scene draws whole.
     shows: ?u32 = null,
+    /// Whether the last composition drew anything again (the picture changed).
+    changed: bool = true,
     /// What the last logic tick of a round's world gave out (its draw list among it): the
     /// presentation's, which the scene's tick fills and its drawing reads.
     world_out: world.Output = .{},
@@ -219,7 +221,7 @@ pub const View = struct {
     /// layers. Returns the frame to present.
     pub fn compose(self: *View) error{OutOfMemory}!platform.RgbaFrame {
         self.screen.sprites = self.sprites.items;
-        _ = try self.composer.compose(&self.screen);
+        self.changed = try self.composer.compose(&self.screen);
         return self.composer.frame();
     }
 

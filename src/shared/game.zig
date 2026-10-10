@@ -361,10 +361,12 @@ pub const Game = struct {
     /// notice; and what they are drawn with (the content's font and menu colours).
     overlays: overlay.Stack = .{},
     panel: ?*panel_mod.Panel = null,
-    /// The overlays were drawn over the last frame presented (the frame is the panel's), and
-    /// whether they need drawing again (they changed, or the picture under them did).
+    /// The overlays were drawn over the last frame presented (the frame is the panel's); whether
+    /// they changed (drawn and composed again), and whether the picture under them did (mixed
+    /// with them again).
     overlay_shown: bool = false,
     overlay_dirty: bool = true,
+    under_changed: bool = true,
     /// The settings' arrow as last drawn (it blinks while they wait for a key), and the light of
     /// a fading gamepad's message.
     arrow_shown: bool = true,
@@ -1315,13 +1317,14 @@ pub const Game = struct {
     fn present(self: *Game, p: *platform.Platform) !void {
         if (self.redraw) {
             self.redraw = false;
-            self.overlay_dirty = true;
             if (self.state.scenes.topKind() == .test_pattern) {
                 self.state.scenes.base.test_pattern.draw(self.state.tick, &self.pic, &self.pattern_drawn);
+                self.under_changed = true;
             } else {
                 const v = &self.view.?;
                 try scene.draw(&self.state.scenes, &self.drawn, v, &self.scene_assets.?);
                 _ = try v.compose();
+                if (v.changed) self.under_changed = true;
             }
         }
         const f = if (self.overlays.len != 0) try self.overlaid(p.nowNs(), self.scenesFrame()) else blk: {
@@ -1386,15 +1389,20 @@ pub const Game = struct {
             self.overlay_shown = false;
             return under orelse self.pic.frame();
         }
-        if (self.overlay_dirty or !self.overlay_shown) {
+        // The overlays drawn and composed again when they changed; mixed with the picture again
+        // when they or the picture under them did.
+        const redrawn = self.overlay_dirty or !self.overlay_shown;
+        if (redrawn) {
             self.overlay_dirty = false;
             p.begin();
             if (shade) |f| p.faded(f.to, f.steps) else p.faded(null, 0);
             for (self.overlays.slice()) |*o| {
                 try o.draw(p, &self.settings, arrow);
             }
-            _ = try p.finish(under, self.overlays.dims(), light);
+            try p.compose();
         }
+        if (redrawn or self.under_changed) _ = p.blend(under, self.overlays.dims(), light);
+        self.under_changed = false;
         self.overlay_shown = true;
         return self.frame();
     }

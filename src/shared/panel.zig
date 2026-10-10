@@ -215,27 +215,50 @@ pub const Panel = struct {
         return row;
     }
 
-    /// Composes the picture; over `under`, where the panel is empty (its backdrop), the picture
-    /// under it, at a quarter of its light when `dim`; and the panel's own pixels mixed with it at
-    /// `light` 255ths (a fading message).
+    /// Composes the picture, then blends it over `under` (`blend`).
     pub fn finish(self: *Panel, under: ?platform.RgbaFrame, dim: bool, light: u8) Error![]const u8 {
+        try self.compose();
+        return self.blend(under, dim, light);
+    }
+
+    /// Composes the panel's picture (after its drawing: `begin`, the texts and boxes).
+    pub fn compose(self: *Panel) Error!void {
         _ = try self.composer.compose(&self.screen);
+    }
+
+    /// The panel's picture as composed last over `under`: where the panel is empty (its
+    /// backdrop), the picture under it, at a quarter of its light when `dim`; and the panel's own
+    /// pixels mixed with it at `light` 255ths (a fading message). A row without the panel's
+    /// pixels, not dimmed, is the picture's own (a line of text over a round mixes its rows only).
+    pub fn blend(self: *Panel, under: ?platform.RgbaFrame, dim: bool, light: u8) []const u8 {
         const f = self.composer.frame();
-        @memcpy(self.rgba, f.pixels[0 .. width * height * 4]);
-        const u = under orelse return self.rgba;
-        for (0..height) |y| for (0..width) |x| {
-            const from = u.pixels[y * u.stride + x * 4 ..][0..4];
-            const to = self.rgba[(y * width + x) * 4 ..][0..4];
-            if (self.composer.indices[y * width + x] != 0) {
-                if (light != 255) for (0..3) |c| {
-                    to[c] = @intCast((@as(u16, to[c]) * light + @as(u16, from[c]) * (255 - light)) / 255);
-                };
+        const u = under orelse {
+            @memcpy(self.rgba, f.pixels[0 .. width * height * 4]);
+            return self.rgba;
+        };
+        for (0..height) |y| {
+            const row = self.rgba[y * width * 4 ..][0 .. width * 4];
+            const from_row = u.pixels[y * u.stride ..][0 .. width * 4];
+            const indices = self.composer.indices[y * width ..][0..width];
+            if (!dim and std.mem.allEqual(u8, indices, 0)) {
+                @memcpy(row, from_row);
                 continue;
             }
-            if (dim) {
-                to.* = .{ from[0] / 4, from[1] / 4, from[2] / 4, 255 };
-            } else to.* = from.*;
-        };
+            @memcpy(row, f.pixels[y * width * 4 ..][0 .. width * 4]);
+            for (indices, 0..) |index, x| {
+                const from = from_row[x * 4 ..][0..4];
+                const to = row[x * 4 ..][0..4];
+                if (index != 0) {
+                    if (light != 255) for (0..3) |c| {
+                        to[c] = @intCast((@as(u16, to[c]) * light + @as(u16, from[c]) * (255 - light)) / 255);
+                    };
+                    continue;
+                }
+                if (dim) {
+                    to.* = .{ from[0] / 4, from[1] / 4, from[2] / 4, 255 };
+                } else to.* = from.*;
+            }
+        }
         return self.rgba;
     }
 };
