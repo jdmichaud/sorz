@@ -536,7 +536,7 @@ pub fn taken(g: *const Game) ?Character {
 /// and runs it from now on; a game that does not load is left.
 fn loadGame(g: *Game, p: *platform.Platform, np: *net.Netplay, as: ClientPlayer) void {
     if (g.net.own_setup == null) g.net.own_setup = g.state.setup;
-    g.load(p, np.gameForm()) catch |err| {
+    g.takeGame(p, np.gameForm()) catch |err| {
         std.log.err("the host's game does not load ({s}): this client leaves it", .{@errorName(err)});
         np.leaveGame(p);
         backToMenu(g, p);

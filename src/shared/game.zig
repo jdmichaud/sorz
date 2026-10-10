@@ -16,7 +16,7 @@
 //!
 //! Network play (DESIGN.md 9, `startNetplay`, network_play.zig): each machine plays its own game
 //! with its player's pad (pad 1's keys and every controller); the players meet in one game, which
-//! the host's canonical form carries to the guest (`load`). In a session, each tick's pads come
+//! the host's canonical form carries to the guest (`takeGame`). In a session, each tick's pads come
 //! from it instead of the local controls; a tick runs once both pads for it are in; until then
 //! the game holds: no tick, the same picture. The peer that gets ahead stretches its sound (or its
 //! clock) by up to 0.5 %. A state mismatch stops it. Without network play, nothing of this runs.
@@ -617,7 +617,7 @@ pub const Game = struct {
     /// made again from it: the picture whole; the sound from the other machine's, at the same
     /// place (or, without it, the scenes' music from its start). (Network play keeps this
     /// machine's own set-up: network_play.zig.)
-    pub fn load(self: *Game, p: *platform.Platform, join: []const u8) !void {
+    pub fn takeGame(self: *Game, p: *platform.Platform, join: []const u8) !void {
         if (join.len < 4) return error.Malformed;
         const n = std.mem.readInt(u32, join[0..4], .little);
         if (n > join.len - 4) return error.Malformed;

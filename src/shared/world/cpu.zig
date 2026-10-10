@@ -69,7 +69,7 @@ pub const Memory = struct {
     beat: u8 = 0,
     breath: u8 = 0,
     /// The foe it holds, and the knees it gives it before it throws it.
-    held: ?Handle = null,
+    foe_held: ?Handle = null,
     knees: u8 = 0,
     /// Its side of player 1's line: above it (farther away) or below.
     above: bool = false,
@@ -222,8 +222,8 @@ fn partnerOf(w: *const World, k: u1) ?*const Entity {
 fn play(w: *const World, kinds: *const Kinds, m: *Memory, k: u1, p: *const Entity) Actions {
     const partner = partnerOf(w, k);
     noteStuck(m, p);
-    if (p.holding) |h| return hold(w, m, k, p, h);
-    m.held = null;
+    if (p.holding) |h| return withFoeHeld(w, m, k, p, h);
+    m.foe_held = null;
     if (m.look == 0) {
         lookAround(w, kinds, m, k, p, partner);
         m.look = @intCast(between(m, look_ticks));
@@ -375,11 +375,11 @@ fn noteStuck(m: *Memory, p: *const Entity) void {
 
 /// Holding `h`: player 1 (walked into after all), let go, away from it; a foe, its knees at its
 /// pace, then the throw (away from it, and the blow).
-fn hold(w: *const World, m: *Memory, k: u1, p: *const Entity, h: Handle) Actions {
+fn withFoeHeld(w: *const World, m: *Memory, k: u1, p: *const Entity, h: Handle) Actions {
     const away: Actions = if (p.facing == .left) .{ .right = true } else .{ .left = true };
     if (w.players[1 - k].entity) |q| if (q.eql(h)) return away;
-    if (m.held == null or !m.held.?.eql(h)) {
-        m.held = h;
+    if (m.foe_held == null or !m.foe_held.?.eql(h)) {
+        m.foe_held = h;
         m.knees = @intCast(between(m, knees));
     }
     if (!strike(m)) return .{};
