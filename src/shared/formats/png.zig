@@ -187,7 +187,11 @@ pub fn decode(gpa: std.mem.Allocator, bytes: []const u8) DecodeError!Image {
     var in: std.Io.Reader = .fixed(idat.items);
     var window: [std.compress.flate.max_window_len]u8 = undefined;
     var inflate: std.compress.flate.Decompress = .init(&in, .zlib, &window);
-    const raw = inflate.reader.allocRemaining(gpa, .limited(expected + 1)) catch return error.BadData;
+    const raw = inflate.reader.allocRemaining(gpa, .limited(expected + 1)) catch |e| return switch (e) {
+        error.OutOfMemory => error.OutOfMemory,
+        // The stream's data is damaged, or longer than the picture.
+        error.ReadFailed, error.StreamTooLong => error.BadData,
+    };
     defer gpa.free(raw);
     if (raw.len != expected) return error.BadData;
     // Unfilter in place.

@@ -211,7 +211,7 @@ const AssetReader = struct {
     arena: std.mem.Allocator,
     assets: platform.AssetSource,
 
-    pub fn read(r: AssetReader, path: []const u8) ![]const u8 {
+    pub fn read(r: AssetReader, path: []const u8) platform.AssetError![]const u8 {
         var owned = try r.assets.readAll(path, 16 << 20);
         defer owned.deinit();
         return r.arena.dupe(u8, owned.bytes);
@@ -232,9 +232,17 @@ fn indexOf(arena: std.mem.Allocator, names: *std.ArrayList([]const u8), name: []
     return @intCast(names.items.len - 1);
 }
 
+/// A file of `source` (its `read` fails with the asset sources' errors), told apart when it
+/// cannot be read: missing, its name refused, too large; out of memory is no fault of the file.
 fn readFile(source: anytype, path: []const u8, diag: *json.Diagnostic) Error![]const u8 {
-    return source.read(path) catch {
-        diag.* = .{ .file = path, .message = "missing" };
+    return source.read(path) catch |e| {
+        diag.* = .{ .file = path, .message = switch (@as(platform.AssetError, e)) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.NotFound => "missing",
+            error.InvalidName => "not a valid file name",
+            error.TooLarge => "too large",
+            else => "cannot be read",
+        } };
         return error.BadAsset;
     };
 }
@@ -338,9 +346,9 @@ const testing = std.testing;
 
 const MemorySource = struct {
     files: []const File,
-    pub fn read(m: MemorySource, path: []const u8) error{FileNotFound}![]const u8 {
+    pub fn read(m: MemorySource, path: []const u8) platform.AssetError![]const u8 {
         for (m.files) |f| if (std.mem.eql(u8, f.path, path)) return f.bytes;
-        return error.FileNotFound;
+        return error.NotFound;
     }
 };
 
