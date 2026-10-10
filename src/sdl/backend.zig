@@ -794,7 +794,10 @@ pub const SdlBackend = struct {
             .samples = 1024,
         };
         var obtained: c.SDL_AudioSpec = undefined;
-        const device = c.SDL_OpenAudioDevice(null, 0, &desired, &obtained, c.SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | c.SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
+        // The device's own rate is taken (the game resamples), not its channels: SDL mixes the
+        // game's down or up to a surround device's (WASAPI reports a 5.1 or 7.1 output's own
+        // layout when allowed to change it, and the game plays stereo only).
+        const device = c.SDL_OpenAudioDevice(null, 0, &desired, &obtained, c.SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
         if (device == 0) {
             std.log.err("SDL_OpenAudioDevice failed: {s}", .{c.SDL_GetError()});
             return error.DeviceFailure;
