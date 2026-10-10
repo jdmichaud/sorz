@@ -288,6 +288,11 @@
     as from one CPU.
   - Gate: the menu's and the select's tests; variants-check's flow from the menu to a round the
     two CPUs play; the user's play.
+  - [x] Checked 2026-10-10: the menu's and the select's tests; variants-check's
+    `extended_cpus` (the CPUs score with no key pressed; START opens the settings) and all its
+    flows; netplay-check's CPU flows. In the SDL build under Xvfb: the line 0 PLAYERS - 2 CPU,
+    the labels CPU 1 and CPU 2, round 1 fought by the two CPUs, START and Escape. The user's play
+    is pending.
 - [x] **32 — The code review's follow-ups** — Depends: none.
   - The review of 2026-10-10 found these besides its bugs (fixed in their own commits).
   - The overlays drawn again only when they change, and mixed with the picture only on their
