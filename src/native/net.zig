@@ -580,11 +580,20 @@ const Conn = struct {
     }
 
     /// Queues a control frame (a pong) for the writer. Takes the mutex.
+    /// Queues a control frame: a pong. One not yet sent gives its place to the latest (RFC 6455
+    /// 5.5.3 lets a peer answer the last ping only): a peer that pings and never reads holds one
+    /// pong in its queue, not one a ping.
     fn queueControl(c: *Conn, opcode: ws.Opcode, payload: []const u8) void {
         const t = c.t;
         t.lock();
         defer t.unlock();
         const copy = t.gpa.dupe(u8, payload) catch return;
+        if (opcode == .pong) for (c.out.items) |*f| if (f.opcode == .pong) {
+            t.gpa.free(f.bytes);
+            f.bytes = copy;
+            c.wake.signal(t.io);
+            return;
+        };
         c.out.append(t.gpa, .{ .opcode = opcode, .bytes = copy }) catch {
             t.gpa.free(copy);
             return;
@@ -1328,6 +1337,21 @@ test "the same port serves the browser build's files, those built in, and the ga
         const len = try std.fmt.parseInt(usize, ws.headerValue(head, "Content-Length").?, 10);
         try testing.expectEqualStrings(case.body, try raw.reader.interface.take(len));
     }
+}
+
+test "a pong not yet sent gives its place to the latest: a peer that pings and never reads holds one" {
+    var t = WebSocketTransport.init(testing.allocator, testing.io, .{});
+    defer t.deinit();
+    const c = try t.newConn(false);
+    for (0..1000) |i| {
+        var payload: [2]u8 = .{ @truncate(i), @truncate(i >> 8) };
+        c.queueControl(.pong, &payload);
+    }
+    try testing.expectEqual(@as(usize, 1), c.out.items.len);
+    try testing.expectEqualSlices(u8, &.{ @truncate(999), @truncate(999 >> 8) }, c.out.items[0].bytes);
+    t.lock();
+    t.discard(c);
+    t.unlock();
 }
 
 test "a shutdown leaves a cancelation asked meanwhile to the task's next wait" {
