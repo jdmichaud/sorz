@@ -230,30 +230,10 @@ pub const State = struct {
         };
     }
 
-    /// What a second player joining the game can do now.
-    pub const Joining = enum {
-        /// Join at once: the character select's second cursor, or the round's drop-in at its next
-        /// logic tick.
-        now,
-        /// Not now: between two rounds, or no game yet.
-        later,
-        /// The game plays: the second player must have a character first.
-        character,
-    };
-
-    pub fn joining(self: *const State, character: ?setup_mod.Character) Joining {
-        return switch (self.scenes.base) {
-            .select => |*s| if (self.scenes.next == null and s.joinable()) .now else if (character == null) .character else .later,
-            .round => |*r| if (character == null) .character else if (r.play.world.players[1].entity == null or self.setup.cpu[1]) .now else .later,
-            .round_clear, .next_round => if (character == null) .character else .later,
-            else => .later,
-        };
-    }
-
-    /// The second player joins (`joining` said `now`): at the character select (its cursor where
-    /// it was at its own select, `cursor`, its choice kept), or in the round as `character`. A
-    /// player 2 of the CPU's is the newcomer's: in the round, the CPU's fighter goes at the next
-    /// logic tick, as the newcomer's drops in.
+    /// The second player joins (network play's host's game takes it now, `network_play.takes`):
+    /// at the character select (its cursor where it was at its own select, `cursor`, its choice
+    /// kept), or in the round as `character`. A player 2 of the CPU's is the newcomer's: in the
+    /// round, the CPU's fighter goes at the next logic tick, as the newcomer's drops in.
     pub fn join(self: *State, character: ?setup_mod.Character, cursor: ?setup_mod.Character, assets: *const scene.Assets) void {
         switch (self.scenes.base) {
             .select => |*s| s.join(&self.setup, &assets.select, cursor orelse character, character != null),
