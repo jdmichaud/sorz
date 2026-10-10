@@ -24,7 +24,8 @@ pub const usage =
     \\usage: sorz-sdl [OPTIONS] [DIR|ROM]
     \\       sorz-sdl DIR|ROM --server [ADDRESS:]PORT
     \\  DIR|ROM              the game directory (its content tree), or the user's ROM, whose
-    \\                       content is extracted in memory; without either, a test pattern
+    \\                       content is extracted in memory; without either, the ROM built
+    \\                       into sorz-sdl-standalone, else a test pattern
     \\  --help, -h           show this help
     \\  --scale N            window scale, 1 to 64, for this run (default: the settings',
     \\                       3 at first)

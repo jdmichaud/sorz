@@ -6,10 +6,10 @@
 //! player for them (DESIGN.md 5.3).
 //!
 //! The game path is a game directory, the content tree on disk (a previous extraction, or a mod of
-//! one), or the user's ROM, whose content is extracted into memory (`Providers.openRom`, the one
-//! place where the extraction plugs in). Both are `AssetSource`s, so the game does not know which
-//! it has. `--saves` defaults to the per-user application data directory, which is created on
-//! first use.
+//! one), or the user's ROM, whose content is extracted into memory (`Providers.extractRom`, the
+//! one place where the extraction plugs in); without one, the ROM built into the executable, if
+//! any (sorz-sdl-standalone). Both are `AssetSource`s, so the game does not know which it has.
+//! `--saves` defaults to the per-user application data directory, which is created on first use.
 const std = @import("std");
 const builtin = @import("builtin");
 const sorz = @import("sorz");
@@ -49,6 +49,9 @@ pub const TakeError = error{ MissingValue, DuplicateAssets, BadValue };
 
 pub const Options = struct {
     assets: ?[]const u8 = null,
+    /// The ROM built into the executable (sorz-sdl-standalone, DESIGN.md 5.4), opened when no
+    /// game path is given. Not an argument.
+    built_in_rom: ?[]const u8 = null,
     saves: ?[]const u8 = null,
     /// Network play (DESIGN.md 9): the address to host at, or the URL to join; server mode's
     /// address.
@@ -236,7 +239,7 @@ pub const Providers = struct {
     pub const empty: Providers = .{};
 
     /// Opens the save directory, and creates it if it does not exist. If the options give a game
-    /// path, also opens the asset source at that path.
+    /// path, also opens the asset source at that path; else the built-in ROM's, if any.
     pub fn open(
         self: *Providers,
         allocator: std.mem.Allocator,
@@ -251,8 +254,8 @@ pub const Providers = struct {
         else
             try defaultSaveDirectory(allocator, environ);
         self.saves = try mapOpen(DirectoryStorage.open(allocator, io, self.saves_path, true));
-        const path = options.assets orelse return;
-        try self.openPath(io, path);
+        if (options.assets) |path| return self.openPath(io, path);
+        if (options.built_in_rom) |bytes| try self.extractRom(bytes);
     }
 
     /// Opens only the asset source at `path`, and no save directory: a server's, which runs no
@@ -279,9 +282,7 @@ pub const Providers = struct {
         try self.openRom(io, path);
     }
 
-    /// The ROM at `path`, its content extracted into memory: the one place where the extraction
-    /// plugs in. The file is checked to be the ROM the game follows (its size and digest) before
-    /// anything of it is read; the tree's files stay in `rom_tree`, which `assets_memory` lists.
+    /// The ROM at `path`, its content extracted into memory.
     fn openRom(self: *Providers, io: std.Io, path: []const u8) OpenError!void {
         const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, self.allocator, .limited(extract.rom.size + 1)) catch |err| return switch (err) {
             error.FileNotFound => error.NotFound,
@@ -292,6 +293,13 @@ pub const Providers = struct {
             else => error.Io,
         };
         defer self.allocator.free(bytes);
+        try self.extractRom(bytes);
+    }
+
+    /// The ROM `bytes`' content extracted into memory: the one place where the extraction plugs
+    /// in. The ROM is checked to be the one the game follows (its size and digest) before
+    /// anything of it is read; the tree's files stay in `rom_tree`, which `assets_memory` lists.
+    fn extractRom(self: *Providers, bytes: []const u8) OpenError!void {
         self.rom_tree = extract.extract(self.allocator, bytes) catch |err| return switch (err) {
             error.WrongRom => error.WrongRom,
             error.OutOfMemory => error.OutOfMemory,
@@ -566,5 +574,14 @@ test "the options open a game directory, or none; a file that is not the ROM is 
         try std.testing.expectError(error.WrongRom, providers.openAssets(allocator, io, rom_sized));
         try std.testing.expectEqual(AssetKind.none, providers.kind);
         try std.testing.expect(std.mem.find(u8, openErrorText(error.WrongRom), "not the ROM") != null);
+    }
+
+    // A built-in ROM: opened without a game path, and checked as a file's is; a game path wins.
+    {
+        var providers: Providers = .empty;
+        try std.testing.expectError(error.WrongRom, providers.open(allocator, io, &env, .{ .built_in_rom = "not the ROM", .saves = paths[1] }));
+        try providers.open(allocator, io, &env, .{ .assets = paths[0], .built_in_rom = "not the ROM", .saves = paths[1] });
+        defer providers.deinit();
+        try std.testing.expectEqual(AssetKind.directory, providers.kind);
     }
 }

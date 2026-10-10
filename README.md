@@ -84,7 +84,8 @@ The placeholder name of the project is `sorz`.
   storage, their shared contract tests, the command line (a content tree, or a ROM whose content
   is extracted in memory), the WebSocket transport, the game's files a server gives its pages, the relay of
   server mode, and the binaries' log lines.
-- `src/sdl`: `sorz-sdl`, the interactive host on SDL2, for Linux and Windows.
+- `src/sdl`: `sorz-sdl`, the interactive host on SDL2, for Linux and Windows, and
+  `sorz-sdl-standalone`, the same with the user's ROM built in.
 - `src/server`: `sorz-server`, the relay of network play between two browsers (server mode), with
   no game and no library.
 - `src/web`: the browser build: the WebAssembly module, its backend, the page and its script, and
