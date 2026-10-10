@@ -268,7 +268,7 @@ pub fn statusOf(s: *const State, local_two: bool) protocol.Status {
     };
     const c = s.setup.characters[0] orelse return .{};
     const place = !local_two and switch (s.scenes.base) {
-        .round => |*r| s.scenes.next == null and (r.play.world.players[1].entity == null or s.setup.cpu[1]),
+        .round => |*r| s.scenes.next == null and r.takesJoins() and (r.play.world.players[1].entity == null or s.setup.cpu[1]),
         else => false,
     };
     return .{ .game = .play, .character = @backingInt(c), .place = place };
@@ -685,7 +685,12 @@ pub fn applyEvent(g: *Game, p: *platform.Platform, np: *net.Netplay, e: protocol
             if (np.role == .guest) g.notify(.player_1_left);
         },
         .back => {
-            const in_round = g.state.scenes.next == null and std.meta.activeTag(g.state.scenes.base) == .round;
+            // In a round that still takes a join (not fading out to its end); else the host's
+            // player is back at its lobby, to come back to the next.
+            const in_round = g.state.scenes.next == null and switch (g.state.scenes.base) {
+                .round => |*r| r.takesJoins(),
+                else => false,
+            };
             if (in_round and e.character < protocol.characters) {
                 g.state.dropIn(0, @fromBackingInt(e.character));
             } else if (np.role == .host) {
@@ -761,6 +766,10 @@ test "the host's status: its front end, a select once it shows, play with player
     try std.testing.expectEqual(protocol.Status{ .game = .play, .character = 2 }, statusOf(&s, false));
     s.scenes.base = .{ .round = .{} };
     try std.testing.expectEqual(protocol.Status{ .game = .play, .character = 2, .place = true }, statusOf(&s, false));
+    // The round fading out to its end: no place (a join would be made at no play tick).
+    s.scenes.base.round.phase = .leaving;
+    try std.testing.expect(!statusOf(&s, false).place);
+    s.scenes.base.round.phase = .play;
     // Player 2 in the round: no room; between rounds: none now.
     s.scenes.base.round.play.world.players[1].entity = .{ .index = 1, .generation = 0 };
     try std.testing.expect(!statusOf(&s, false).place);

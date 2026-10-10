@@ -943,20 +943,27 @@ pub const Round = struct {
     /// (the CPU's: `takeOver`).
     pub const Drop = struct { player: u1, character: setup_mod.Character, replace: bool = false };
 
+    /// Whether a join asked now is made (`dropIn`, `takeOver`): at the round's next play tick,
+    /// which a round fading out to its end does not have.
+    pub fn takesJoins(self: *const Round) bool {
+        return self.phase != .leaving;
+    }
+
     /// Player `k` joins the round under way as `character` at its next logic tick, its first life
     /// dropping in as the original's PRESS 2UP START's does (network play's second player joining
     /// a game, or its host's player coming back to it: DESIGN.md 9). False when that player plays
-    /// already.
+    /// already, or the round takes no join.
     pub fn dropIn(self: *Round, k: u1, character: setup_mod.Character) bool {
-        if (self.play.world.players[k].entity != null) return false;
+        if (self.play.world.players[k].entity != null or !self.takesJoins()) return false;
         self.join_as = .{ .player = k, .character = character };
         return true;
     }
 
     /// Player `k`, the CPU's, is another's as `character` at the next logic tick (network play's
     /// client taking the CPU's player, `State.join`): the CPU's fighter goes, and the newcomer's
-    /// drops in as `dropIn`'s does.
+    /// drops in as `dropIn`'s does. Nothing while the round takes no join.
     pub fn takeOver(self: *Round, k: u1, character: setup_mod.Character) void {
+        if (!self.takesJoins()) return;
         self.join_as = .{ .player = k, .character = character, .replace = true };
     }
 
