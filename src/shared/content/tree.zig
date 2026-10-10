@@ -16,9 +16,12 @@ const screens = @import("screens.zig");
 const round = @import("round.zig");
 
 /// The tree's format and version (`manifest.json`). A tree of another version is refused, not
-/// converted.
+/// converted ("extract the tree again"). The version goes up with each change to the tree's
+/// schema (a field added, moved or read otherwise): a tree of the last version loads as it was
+/// meant, never with a field silently missing. 2: the fields added since version 1 was set (the
+/// enemies' `levels`, among others).
 pub const format_name = "sorz-content";
-pub const version = 1;
+pub const version = 2;
 
 pub const manifest_file = "manifest.json";
 pub const art_file = "art.json";
@@ -910,13 +913,13 @@ test "a refused tree names the file and the field" {
     try std.testing.expectEqualStrings("manifest.json: missing", try std.fmt.bufPrint(&buf, "{f}", .{&diag}));
 
     try source.add("manifest.json",
-        \\{"format": "sorz-content", "version": 2, "extractor": "x", "rom": {"sha256": "0", "size": 1}, "art": []}
+        \\{"format": "sorz-content", "version": 1, "extractor": "x", "rom": {"sha256": "0", "size": 1}, "art": []}
     );
     try std.testing.expectError(error.BadAsset, load(arena, source.assetSource(), &diag));
-    try std.testing.expectEqualStrings("manifest.json: field version: not version 1: extract the tree again", try std.fmt.bufPrint(&buf, "{f}", .{&diag}));
+    try std.testing.expectEqualStrings("manifest.json: field version: not version 2: extract the tree again", try std.fmt.bufPrint(&buf, "{f}", .{&diag}));
 
     try source.add("manifest.json",
-        \\{"format": "sorz-content", "version": 1, "extractor": "x", "rom": {"sha256": "0", "size": 1}, "art": ["title"]}
+        \\{"format": "sorz-content", "version": 2, "extractor": "x", "rom": {"sha256": "0", "size": 1}, "art": ["title"]}
     );
     try source.add("title/art.json",
         \\{"palettes": {"sky": {"colours": {"1": [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, [8, 0, 0]]}}}}

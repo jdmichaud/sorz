@@ -50,7 +50,7 @@ an enemy's (`axel`, `galsia`), or art several screens share (`fonts`, `play`).
 ```json
 {
   "format": "sorz-content",
-  "version": 1,
+  "version": 2,
   "extractor": "sorz-extract 1",
   "rom": {"sha256": "…", "size": 524288},
   "art": ["fonts", "segalogo", "title", "round1", "axel"],

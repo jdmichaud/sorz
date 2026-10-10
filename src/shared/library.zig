@@ -476,7 +476,7 @@ test "a broken or stale tree is refused with its file named, after the content's
     // A record the manifest names, missing; then one of another format (its fields missing).
     // The file's name is made in the content's arena, which the refusal frees.
     try source.add("manifest.json",
-        \\{"format": "sorz-content", "version": 1, "extractor": "x", "rom": {"sha256": "0", "size": 1}, "art": [], "screens": ["round"]}
+        \\{"format": "sorz-content", "version": 2, "extractor": "x", "rom": {"sha256": "0", "size": 1}, "art": [], "screens": ["round"]}
     );
     try testing.expectError(error.BadContent, load(testing.allocator, source.assetSource(), &diag));
     try testing.expectEqualStrings("screens/round.json: missing", try std.fmt.bufPrint(&buf, "{f}", .{&diag}));
