@@ -56,9 +56,10 @@ pub const Options = struct {
     assets: ?*const served.Assets = null,
     /// The open WebSocket connections at most; a handshake beyond gets 503.
     max_connections: usize = 4,
-    /// The HTTP requests being read or served at once at most (at most `max_waiting`). When all are
-    /// taken, the oldest connection still waiting for its request gives its place up; with none
-    /// waiting, a new connection is closed at once.
+    /// The HTTP requests being read or answered at once at most (at most `max_waiting`). When all
+    /// are taken, the oldest of them gives its place up, its stream shut down (a peer that sends
+    /// no request, or reads no answer, holds no place for good); with none, a new connection is
+    /// closed at once.
     max_requests: usize = 16,
     /// The bytes of a connection's messages waiting to be sent.
     send_queue_bytes: usize = 1024 * 1024,
@@ -113,14 +114,14 @@ pub const WebSocketTransport = struct {
     /// How long `deinit` waits for the peers to answer the close frames.
     pub const shutdown_grace_ms = 250;
 
-    /// The connections waiting for their request that can give their place up, at most.
+    /// The requests being read or answered that can give their place up, at most.
     pub const max_waiting = 64;
 
     const Waiting = struct { stream: Io.net.Stream, order: u64 };
     const Place = struct { index: usize, order: u64 };
 
-    /// Notes an accepted connection as waiting for its request; its place among `waiting`, or
-    /// null when they are all taken (it then cannot be asked to give its place up).
+    /// Notes an accepted connection's request as being read or answered; its place among
+    /// `waiting`, or null when they are all taken (it then cannot be asked to give its place up).
     fn startWaiting(self: *WebSocketTransport, stream: Io.net.Stream) ?Place {
         self.lock();
         defer self.unlock();
@@ -133,8 +134,9 @@ pub const WebSocketTransport = struct {
         return null;
     }
 
-    /// The connection at `place` has its request (or has failed): it no longer waits. Before its
-    /// stream is closed, so that `giveUpOldest` never shuts a closed one down.
+    /// The request at `place` is answered (or failed), or its WebSocket connection owns its
+    /// stream: it no longer waits. Before its stream is closed, so that `giveUpOldest` never shuts
+    /// a closed one down.
     fn stopWaiting(self: *WebSocketTransport, place: ?Place) void {
         const p = place orelse return;
         self.lock();
@@ -144,9 +146,9 @@ pub const WebSocketTransport = struct {
         };
     }
 
-    /// The oldest connection still waiting for its request gives its place up: its stream is
-    /// shut down, so that its reader ends and its task frees the place. Under the mutex. False
-    /// when none waits.
+    /// The oldest request still being read or answered gives its place up: its stream is shut
+    /// down, so that its read or its write ends and its task frees the place. Under the mutex.
+    /// False when none waits.
     fn giveUpOldest(self: *WebSocketTransport) bool {
         var oldest: ?usize = null;
         for (self.waiting, 0..) |w, i| if (w) |x| {
@@ -667,24 +669,24 @@ fn serveRequest(t: *WebSocketTransport, stream: Io.net.Stream) Io.Cancelable!voi
     var wbuf: [4096]u8 = undefined;
     var writer = stream.writer(io, &wbuf);
     const w = &writer.interface;
+    // Until it is answered, or its WebSocket connection owns its stream, the request may give
+    // its place up: a peer that does not read its answer stalls no place for good.
     const place = t.startWaiting(stream);
-    const head_len = readHead(&reader.interface) catch {
+    var owned = false;
+    defer if (!owned) {
         t.stopWaiting(place);
         stream.close(io);
-        return;
     };
-    t.stopWaiting(place);
+    const head_len = readHead(&reader.interface) catch return;
     const head = reader.interface.buffered()[0..head_len];
     const req = ws.parseRequest(head) catch {
         ws.writeStatus(w, "400 Bad Request", "", "bad request\n") catch {};
         w.flush() catch {};
-        stream.close(io);
         return;
     };
     if (!req.upgrade) {
         serveFile(t, w, req);
         w.flush() catch {};
-        stream.close(io);
         return;
     }
     // The opening handshake (RFC 6455 section 4.2).
@@ -695,15 +697,15 @@ fn serveRequest(t: *WebSocketTransport, stream: Io.net.Stream) Io.Cancelable!voi
     if (!std.mem.eql(u8, req.method, "GET") or !key_ok) {
         ws.writeStatus(w, "400 Bad Request", "", "bad WebSocket handshake\n") catch {};
         w.flush() catch {};
-        stream.close(io);
         return;
     }
     if (!std.mem.eql(u8, req.version orelse "", "13")) {
         ws.writeStatus(w, "426 Upgrade Required", "Sec-WebSocket-Version: 13\r\n", "WebSocket version 13 only\n") catch {};
         w.flush() catch {};
-        stream.close(io);
         return;
     }
+    t.stopWaiting(place);
+    owned = true;
     t.lock();
     const c = if (t.openCount() < t.options.max_connections) t.newConn(false) catch null else null;
     if (c) |conn| {
@@ -1337,6 +1339,29 @@ test "the same port serves the browser build's files, those built in, and the ga
         const len = try std.fmt.parseInt(usize, ws.headerValue(head, "Content-Length").?, 10);
         try testing.expectEqualStrings(case.body, try raw.reader.interface.take(len));
     }
+}
+
+test "a peer that reads no answer gives its place up to a later request" {
+    // An answer larger than the sockets' buffers: a peer that reads none of it stalls its write.
+    const big = try testing.allocator.alloc(u8, 32 << 20);
+    defer testing.allocator.free(big);
+    @memset(big, ' ');
+    var server = WebSocketTransport.init(testing.allocator, testing.io, .{ .max_requests = 2, .manifest = big });
+    defer server.deinit();
+    try server.transport().listen("127.0.0.1:0");
+    var stalled: [2]*Raw = undefined;
+    for (&stalled) |*r| {
+        r.* = try Raw.open(server.port);
+        try r.*.write("GET /" ++ manifest_name ++ " HTTP/1.1\r\nHost: x\r\n\r\n");
+    }
+    defer for (stalled) |r| r.close();
+    try testing.io.sleep(.fromMilliseconds(100), .awake);
+    // Both places taken by answers nobody reads: a third request is answered all the same, the
+    // oldest stalled answer giving its place up.
+    const late = try Raw.open(server.port);
+    defer late.close();
+    try late.write("HEAD /" ++ manifest_name ++ " HTTP/1.1\r\nHost: x\r\n\r\n");
+    try testing.expect(std.mem.startsWith(u8, try late.head(), "HTTP/1.1 200"));
 }
 
 test "a pong not yet sent gives its place to the latest: a peer that pings and never reads holds one" {
