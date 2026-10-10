@@ -487,8 +487,7 @@ fn fightFoe(m: *Memory, p: *const Entity, f: *const Entity, partner: ?*const Ent
         const qx = q.position.x.whole();
         if ((qx - fx) * side > 0 and @abs(qx - fx) <= @as(i32, m.reach) + reach_room and @abs(q.position.depth.whole() - f.position.depth.whole()) <= line) side = -side;
     }
-    const now = behaviours.stateName(&f.mind) orelse "";
-    if (std.mem.eql(u8, now, "knocked_down")) {
+    if (behaviours.inState(&f.mind, "knocked_down")) {
         // Down: it waits at its reach, out of the way of its getting up.
         var a: Actions = .{};
         go(&a, fx + side * @as(i32, reach_px[1]) - px, dd, 6, m.slack);
@@ -637,8 +636,10 @@ pub fn fight(w: *const World, kinds: *const Kinds, k: u1, now: u64) ?input.Pad {
     const pd = p.position.depth.whole();
     const left = p.facing == .left;
     const jab = now % 2 == 0;
-    const state = behaviours.stateName(&p.mind) orelse "";
-    if (std.mem.startsWith(u8, state, "grab")) return .{ .b = jab };
+    switch (p.mind.player.state) {
+        .grab, .grab_behind, .grab_blow => return .{ .b = jab },
+        else => {},
+    }
     var out: input.Pad = .{};
     if (p.health < hungry) if (nearest(w, kinds, px, pd, .food)) |e| {
         const dx = e.position.x.whole() - px;
@@ -701,6 +702,5 @@ fn isFoe(kinds: *const Kinds, e: *const Entity) bool {
     const f = kinds.get(e.kind.?).family();
     if (f != .enemy and f != .boss) return false;
     if (e.health < 0) return false;
-    const now = behaviours.stateName(&e.mind) orelse "";
-    return !std.mem.eql(u8, now, "appear") and !std.mem.eql(u8, now, "knocked_out");
+    return !behaviours.inState(&e.mind, "appear") and !behaviours.inState(&e.mind, "knocked_out");
 }

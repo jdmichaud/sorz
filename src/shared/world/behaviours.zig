@@ -278,6 +278,27 @@ pub fn stateName(m: *const Mind) ?[]const u8 {
     }
 }
 
+/// Whether the entity is in its state named `name`, a state several behaviours have (an enemy's
+/// `appear`, `knocked_down`, `knocked_out`): each behaviour's own state, found when compiled, no
+/// name compared as it runs; false for a behaviour without one. A name no behaviour has is
+/// refused when compiled (a misspelling, a state renamed).
+pub fn inState(m: *const Mind, comptime name: []const u8) bool {
+    comptime {
+        var any = false;
+        for (@typeInfo(Mind).@"union".field_types) |T| {
+            if (T != void and @hasField(T, "state") and @hasField(@FieldType(T, "state"), name)) any = true;
+        }
+        if (!any) @compileError("no behaviour has a state named " ++ name);
+    }
+    switch (m.*) {
+        .none => return false,
+        inline else => |*x| {
+            const S = @TypeOf(x.state);
+            return @hasField(S, name) and x.state == @field(S, name);
+        },
+    }
+}
+
 /// The way in of an enemy that has come in already (one that came out of a shutter or waited):
 /// its module's `plain_entrance`, else closing in.
 pub fn plainEntrance(m: *const Mind) @import("entity.zig").Entrance {
@@ -318,5 +339,6 @@ test "a behaviour's first state and its name" {
     const m = initial(.sparring);
     try std.testing.expectEqualStrings("stand", stateName(&m).?);
     try std.testing.expectEqual(@as(?[]const u8, null), stateName(&initial(.none)));
+    try std.testing.expect(inState(&m, "stand") and !inState(&m, "appear") and !inState(&initial(.none), "stand"));
     try std.testing.expectEqual(Behaviour.pawn, tagOf(pawn));
 }

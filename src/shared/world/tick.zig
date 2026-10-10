@@ -696,8 +696,7 @@ pub const Tick = struct {
             const e = &t.world.entities[i];
             if (!e.alive() or e.flags.hidden) continue;
             if (t.kindOf(e).family() != .enemy) continue;
-            const name = behaviours.stateName(&e.mind) orelse "";
-            if (std.mem.eql(u8, name, "knocked_out")) continue;
+            if (behaviours.inState(&e.mind, "knocked_out")) continue;
             const h = t.world.handleAt(i).?;
             const lost = e.health + 1;
             if (!t.specialKnockDown(h, null, .beaten)) continue;

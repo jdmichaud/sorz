@@ -1000,7 +1000,7 @@ fn tally(t: *Tick, p: *const Plan) void {
     const s = &t.world.script;
     for (&t.world.entities) |*e| {
         if (!e.alive()) continue;
-        if (e.flags.hidden) if (behaviours.stateName(&e.mind)) |name| if (std.mem.eql(u8, name, "appear")) continue;
+        if (e.flags.hidden and behaviours.inState(&e.mind, "appear")) continue;
         const c = e.spawn.colours orelse continue;
         if (e.spawn.art) |a| if (a & 0x80 == 0) {
             if (std.mem.indexOfScalar(u8, &s.art, a)) |i| s.art_counts[i] +%= 1;
