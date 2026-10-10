@@ -1068,19 +1068,7 @@ fn grabbedStruck(a: Actor, by: Handle) void {
 /// for a negative `way`) and in height.
 fn throwPlace(a: Actor, row: usize, way: i16) void {
     const t = target(a) orelse return;
-    const tb = a.tables();
-    const name = a.tick.kindOf(t).definition.name;
-    const xs: *const [12]i16, const hs: *const [12]i16 = if (std.mem.eql(u8, name, "adam"))
-        .{ &tb.throw_x_adam, &tb.throw_height_adam }
-    else if (std.mem.eql(u8, name, "blaze"))
-        .{ &tb.throw_x_blaze, &tb.throw_height_blaze }
-    else
-        .{ &tb.throw_x_axel, &tb.throw_height_axel };
-    const i = row * 4 + @min(t.animation.frame, 3);
-    var dx: i32 = xs[i];
-    if (way < 0) dx = -dx;
-    a.entity.position.x = a.entity.position.x.add(.pixels(dx));
-    a.entity.position.height = a.entity.position.height.add(.pixels(hs[i]));
+    boss_r3.placeThrown(a.entity, t, a.tick.kindOf(t).definition.name, a.tables(), row, way);
 }
 
 /// Held from behind: facing as his target does, at his holder's place by the hold's places, a

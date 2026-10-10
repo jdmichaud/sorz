@@ -1234,22 +1234,27 @@ fn reaction(a: Actor) void {
 /// The one thrown's places by the holder's character, row `row` at the holder's frame: across
 /// (the other way for a negative `way`) and in height.
 fn throwPlace(a: Actor, row: usize, way: i16) void {
-    const m = a.mind;
-    const hh = m.hitter orelse return;
+    const hh = a.mind.hitter orelse return;
     const holder = a.other(hh) orelse return;
-    const t = a.tables();
-    const name = a.tick.kindOf(holder).definition.name;
-    const xs: *const [12]i16, const hs: *const [12]i16 = if (std.mem.eql(u8, name, "adam"))
+    placeThrown(a.entity, holder, a.tick.kindOf(holder).definition.name, a.tables(), row, way);
+}
+
+/// Places `e`, thrown by `holder` (of the kind named `holder_name`: Adam, Blaze, else Axel), by
+/// that character's rows of `t`'s throw tables (`throw_x_*`, `throw_height_*`): row `row` at the
+/// holder's frame, across (the other way for a negative `way`) and in height. The bosses that
+/// players throw share it (this boss, Mr. X).
+pub fn placeThrown(e: *entity.Entity, holder: *const entity.Entity, holder_name: []const u8, t: anytype, row: usize, way: i16) void {
+    const xs: *const [12]i16, const hs: *const [12]i16 = if (std.mem.eql(u8, holder_name, "adam"))
         .{ &t.throw_x_adam, &t.throw_height_adam }
-    else if (std.mem.eql(u8, name, "blaze"))
+    else if (std.mem.eql(u8, holder_name, "blaze"))
         .{ &t.throw_x_blaze, &t.throw_height_blaze }
     else
         .{ &t.throw_x_axel, &t.throw_height_axel };
     const i = row * 4 + @min(holder.animation.frame, 3);
     var dx: i32 = xs[i];
     if (way < 0) dx = -dx;
-    a.entity.position.x = a.entity.position.x.add(.pixels(dx));
-    a.entity.position.height = a.entity.position.height.add(.pixels(hs[i]));
+    e.position.x = e.position.x.add(.pixels(dx));
+    e.position.height = e.position.height.add(.pixels(hs[i]));
 }
 
 /// At his holder's place.
