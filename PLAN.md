@@ -311,6 +311,11 @@
     the kind that dealt it.
   - Gate: cpus-check reaches round 8 with the default lives and the ending with the options' 7
     in most seeds; the unit tests; variants-check's CPU flows; the user's play.
+  - [x] Checked 2026-10-11: cpus-check, seeds 1 to 8. On the default lives all eight reach round
+    8 and end in its boss rush (33 to 38 lives lost, none in round 1); with 7 lives seven reach
+    the ending, and one stops in round 7: a brawler that fell off the lift standing was deleted
+    far off the screen, not knocked out, and the reserve waits for it (an engine fault, apart).
+    The unit tests; variants-check, all flows. The user's play is pending.
 - [x] **32 — The code review's follow-ups** — Depends: none.
   - The review of 2026-10-10 found these besides its bugs (fixed in their own commits).
   - The overlays drawn again only when they change, and mixed with the picture only on their
