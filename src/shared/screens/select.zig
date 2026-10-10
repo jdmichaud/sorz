@@ -17,6 +17,10 @@
 //! Network play (DESIGN.md 9): a second player may come to a select of one (`join`), its cursor
 //! on the first portrait free from Blaze's, and go (`leave`); a character another machine's
 //! player plays (`Turn.taken`) is passed and cannot be chosen.
+//!
+//! 1 PLAYER - 1 CPU (PLAN item 30, `Setup.cpu`): player 1 chooses alone; as the fade out ends,
+//! the select comes again (`cpu_pass`), its music playing on, and player 1 chooses the CPU's
+//! character there, its label CPU 1 in the font.
 const std = @import("std");
 const flow = @import("../flow.zig");
 const scene = @import("../scene.zig");
@@ -65,6 +69,9 @@ const eye_open_ticks = 300;
 const eye_closed_ticks = 8;
 /// The port's: the display ticks each of two players' labels on one portrait is in front.
 const label_turn = 32;
+/// The CPU's label, and its place in a label's 64 pixels (in the middle).
+const cpu_label = "CPU 1";
+const cpu_label_x: i16 = (64 - cpu_label.len * art.tile_side) / 2;
 
 pub const Portrait = struct {
     state: State = .standing,
@@ -216,6 +223,9 @@ pub const Select = struct {
     /// The player a lone cursor's label names: player 2 on a client of network play, whose
     /// player joins the host's game as player 2.
     seat: u1 = 0,
+    /// The select's second time in a game of 1 PLAYER - 1 CPU: player 1 chooses the CPU's
+    /// character (player 2's).
+    cpu_pass: bool = false,
     /// By place: Adam's, Axel's, Blaze's.
     portraits: [3]Portrait = @splat(.{}),
     /// The eye: the ticks to its next blink or opening, and whether it is closed.
@@ -252,6 +262,8 @@ pub const Select = struct {
         axel_lit: *const art.Palette,
         blaze_lit: *const art.Palette,
         labels: [2]*const art.Frame,
+        /// The CPU's label's letters.
+        text: library.Text,
         poses: library.Poses,
         music: library.Sound,
         move: library.Sound,
@@ -282,6 +294,7 @@ pub const Select = struct {
             .axel_lit = "select/frame_lit_2",
             .blaze_lit = "select/frame_lit_3",
             .labels = "select/label",
+            .text = "fonts/main",
             .poses = "screens/select",
             .music = "select music",
             .move = "menu move",
@@ -327,9 +340,10 @@ pub const Select = struct {
         switch (self.phase) {
             .setup => {
                 turn.releasePads();
-                self.players = turn.setup.players;
+                // With the CPU, player 1 chooses alone, each time.
+                self.players = if (turn.setup.cpu[1]) .one else turn.setup.players;
                 self.seat = if (turn.net.role == .client and self.players == .one) 1 else 0;
-                turn.setup.characters = .{ null, null };
+                if (!self.cpu_pass) turn.setup.characters = .{ null, null };
                 self.colours.aim(a.colours);
                 self.colours.aim(if (self.players == .two) a.two_players else a.one_player);
                 // Alone, the cursor starts on the first character no other machine's player has.
@@ -338,7 +352,7 @@ pub const Select = struct {
                     self.colours.aim(a.dim(t));
                     self.colours.aim(a.lit(self.cursors[0].place));
                 };
-                turn.play(a.music);
+                if (!self.cpu_pass) turn.play(a.music);
                 self.phase = .placing;
                 // The next display tick is the tick's second half.
                 turn.frame = null;
@@ -386,7 +400,10 @@ pub const Select = struct {
                 }
             },
             .fade_out => if (self.colours.stepFade()) {
-                self.phase = .leaving;
+                // The CPU's character next: the select again, from its set-up.
+                if (turn.setup.cpu[1] and !self.cpu_pass) {
+                    self.* = .{ .ticks = self.ticks, .cpu_pass = true };
+                } else self.phase = .leaving;
             },
             .leaving => {
                 turn.play(a.stop);
@@ -422,7 +439,7 @@ pub const Select = struct {
         if (pressed.a or pressed.b or pressed.c or pressed.start) {
             if (turn.taken == c.place) return;
             c.chosen = true;
-            turn.setup.characters[i] = c.place;
+            turn.setup.characters[if (self.cpu_pass) 1 else i] = c.place;
             turn.play(a.choose);
             return;
         }
@@ -604,7 +621,12 @@ pub const Select = struct {
         const back_first: [2]usize = if (one_place and (self.ticks / label_turn) % 2 == 1) .{ 0, 1 } else .{ 1, 0 };
         for (back_first) |i| {
             const place = self.shown.labels[i] orelse continue;
-            try v.sprites.append(v.gpa, .of(a.labels[i], label_x.get(place), label_y));
+            if (self.cpu_pass) {
+                for (cpu_label, 0..) |ch, k| if (ch != ' ') {
+                    const x = label_x.get(place) + cpu_label_x + @as(i16, @intCast(k * art.tile_side));
+                    try v.sprites.append(v.gpa, .of(try v.glyphFrame(a.text, &.{ch}), x, label_y));
+                };
+            } else try v.sprites.append(v.gpa, .of(a.labels[i], label_x.get(place), label_y));
         }
         var k: usize = places.len;
         while (k > 0) {
@@ -644,31 +666,36 @@ const TestPoses = struct {
     }
 };
 
-test "the select: lost presses before its first tick, a move, a choice, the wait and the fade" {
-    var tp: TestPoses = .{};
-    tp.init();
-    const palette: art.Palette = .{ .name = "p" };
-    const map: art.TileMap = .{ .name = "m", .file = "m.tmj", .width = 1, .height = 1, .sheets = &.{}, .tiles = &.{}, .cells = &.{} };
-    const a: Select.Assets = .{
-        .frame = &map,
-        .eye_open = &map,
-        .eye_closed = &map,
-        .adam_name = &map,
-        .axel_name = &map,
-        .blaze_name = &map,
-        .adam_stats = &map,
-        .axel_stats = &map,
-        .blaze_stats = &map,
-        .colours = &palette,
-        .one_player = &palette,
-        .two_players = &palette,
-        .adam_dim = &palette,
-        .axel_dim = &palette,
-        .blaze_dim = &palette,
-        .adam_lit = &palette,
-        .axel_lit = &palette,
-        .blaze_lit = &palette,
+const test_palette: art.Palette = .{ .name = "p" };
+const test_map: art.TileMap = .{ .name = "m", .file = "m.tmj", .width = 1, .height = 1, .sheets = &.{}, .tiles = &.{}, .cells = &.{} };
+const test_tiles = [_]art.Tile{@splat(1)};
+const test_glyphs = [_]art.Glyph{ .{ .text = "C", .tile = 0 }, .{ .text = "P", .tile = 0 }, .{ .text = "U", .tile = 0 }, .{ .text = "1", .tile = 0 } };
+const test_font: art.Font = .{ .name = "main", .sheet = "fonts/main", .glyphs = &test_glyphs };
+const test_sheet: art.TileSheet = .{ .name = "main", .file = "main.png", .tiles = &test_tiles };
+
+/// The select's assets of the tests: `tp`'s poses, one map and one palette for every picture.
+fn testAssets(tp: *const TestPoses) Select.Assets {
+    return .{
+        .frame = &test_map,
+        .eye_open = &test_map,
+        .eye_closed = &test_map,
+        .adam_name = &test_map,
+        .axel_name = &test_map,
+        .blaze_name = &test_map,
+        .adam_stats = &test_map,
+        .axel_stats = &test_map,
+        .blaze_stats = &test_map,
+        .colours = &test_palette,
+        .one_player = &test_palette,
+        .two_players = &test_palette,
+        .adam_dim = &test_palette,
+        .axel_dim = &test_palette,
+        .blaze_dim = &test_palette,
+        .adam_lit = &test_palette,
+        .axel_lit = &test_palette,
+        .blaze_lit = &test_palette,
         .labels = .{ &tp.frame, &tp.frame },
+        .text = .{ .font = &test_font, .sheet = &test_sheet },
         .poses = tp.poses,
         .music = 1,
         .move = 2,
@@ -678,6 +705,12 @@ test "the select: lost presses before its first tick, a move, a choice, the wait
         .stop = 6,
         .rounds = .{},
     };
+}
+
+test "the select: lost presses before its first tick, a move, a choice, the wait and the fade" {
+    var tp: TestPoses = .{};
+    tp.init();
+    const a = testAssets(&tp);
     var setup: Setup = .{};
     var s: Select = .start(&setup);
     var turn: scene.Turn = .{ .setup = &setup };
@@ -731,37 +764,7 @@ test "the select: lost presses before its first tick, a move, a choice, the wait
 test "two players: a move skips the other player's portrait; Blaze's jumps keep the fraction" {
     var tp: TestPoses = .{};
     tp.init();
-    const palette: art.Palette = .{ .name = "p" };
-    const map: art.TileMap = .{ .name = "m", .file = "m.tmj", .width = 1, .height = 1, .sheets = &.{}, .tiles = &.{}, .cells = &.{} };
-    const a: Select.Assets = .{
-        .frame = &map,
-        .eye_open = &map,
-        .eye_closed = &map,
-        .adam_name = &map,
-        .axel_name = &map,
-        .blaze_name = &map,
-        .adam_stats = &map,
-        .axel_stats = &map,
-        .blaze_stats = &map,
-        .colours = &palette,
-        .one_player = &palette,
-        .two_players = &palette,
-        .adam_dim = &palette,
-        .axel_dim = &palette,
-        .blaze_dim = &palette,
-        .adam_lit = &palette,
-        .axel_lit = &palette,
-        .blaze_lit = &palette,
-        .labels = .{ &tp.frame, &tp.frame },
-        .poses = tp.poses,
-        .music = 1,
-        .move = 2,
-        .choose = 3,
-        .swing = 4,
-        .landing = 5,
-        .stop = 6,
-        .rounds = .{},
-    };
+    const a = testAssets(&tp);
     var setup: Setup = .{ .players = .two };
     var s: Select = .start(&setup);
     var turn: scene.Turn = .{ .setup = &setup };
@@ -792,4 +795,41 @@ test "two players: a move skips the other player's portrait; Blaze's jumps keep 
     try testing.expectEqual(@as(i16, 208 - 31), highest);
     try testing.expectEqual(@as(i16, 208), p.y());
     try testing.expect(@mod(p.z, one) != 0);
+}
+
+test "1 PLAYER - 1 CPU: player 1 chooses, the select comes again, its music on, and chooses the CPU's" {
+    var tp: TestPoses = .{};
+    tp.init();
+    const a = testAssets(&tp);
+    var setup: Setup = .{ .players = .two, .cpu = .{ false, true } };
+    var s: Select = .start(&setup);
+    var turn: scene.Turn = .{ .setup = &setup };
+    for (0..66) |_| _ = s.tick(&turn, &a);
+    // One cursor, pad 1's: Adam chosen for player 1.
+    try testing.expectEqual(setup_mod.Players.one, s.players);
+    turn = .{ .setup = &setup, .pressed = .{ .pad1 = .{ .a = true } } };
+    _ = s.tick(&turn, &a);
+    for (0..1 + 18 + 64) |_| {
+        turn = .{ .setup = &setup };
+        _ = s.tick(&turn, &a);
+    }
+    try testing.expectEqual(@as(?Character, .adam), setup.characters[0]);
+    try testing.expect(s.cpu_pass and s.phase == .setup);
+    // Again from its set-up, the music not asked again: right to Axel, chosen, the CPU's.
+    turn = .{ .setup = &setup };
+    _ = s.tick(&turn, &a);
+    try testing.expectEqual(@as(usize, 0), turn.requests.slice().len);
+    for (0..65) |_| _ = s.tick(&turn, &a);
+    for ([_]input.Pad{ .{ .right = true }, .{}, .{ .a = true }, .{}, .{}, .{} }) |p| {
+        turn = .{ .setup = &setup, .pressed = .{ .pad1 = p } };
+        _ = s.tick(&turn, &a);
+    }
+    try testing.expectEqual(@as(?Character, .adam), setup.characters[0]);
+    try testing.expectEqual(@as(?Character, .axel), setup.characters[1]);
+    var exit: ?flow.Exit = null;
+    while (exit == null) {
+        turn = .{ .setup = &setup };
+        exit = s.tick(&turn, &a);
+    }
+    try testing.expectEqual(flow.Exit.missing, exit.?);
 }
