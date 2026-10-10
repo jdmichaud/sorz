@@ -181,7 +181,14 @@ pub const Netplay = struct {
             .assets = if (source) |s| try served.Assets.read(allocator, s) else null,
             .allocator = allocator,
         };
-        self.transport = WebSocketTransport.init(allocator, io, .{ .page = page, .manifest = manifest, .assets = if (self.assets) |*a| a else null });
+        // Network play's clients and one more, which it turns away as `busy` (the transport's own
+        // limit would refuse it unheard, and the client would wait for a host to come).
+        self.transport = WebSocketTransport.init(allocator, io, .{
+            .page = page,
+            .manifest = manifest,
+            .assets = if (self.assets) |*a| a else null,
+            .max_connections = sorz.net.netplay.max_clients + 1,
+        });
     }
 
     pub fn deinit(self: *Netplay) void {
@@ -379,6 +386,13 @@ fn testEnviron(allocator: std.mem.Allocator, pairs: []const [2][]const u8) !std.
     var map = std.process.Environ.Map.init(allocator);
     for (pairs) |pair| try map.put(pair[0], pair[1]);
     return map;
+}
+
+test "the native host's transport takes network play's clients, and one more to turn away" {
+    var np: Netplay = undefined;
+    try np.init(std.testing.allocator, std.testing.io, .{ .index_html = "", .script_js = "", .module_wasm = "" }, null);
+    defer np.deinit();
+    try std.testing.expectEqual(sorz.net.netplay.max_clients + 1, np.transport.options.max_connections);
 }
 
 test "the save directory follows the platform's application data convention" {
