@@ -1081,7 +1081,7 @@ test "the CPU as a person: late to a punk off its line, then knocks it down at a
     var n: usize = 0;
     var last: input.Pad = .{};
     for (0..600) |i| {
-        const pad = cpu.pad(&r.w, &r.f.kinds, &r.w.players[0].cpu, &.{}, .{}, 0);
+        const pad = cpu.pad(&r.w, .{ .kinds = &r.f.kinds }, &r.w.players[0].cpu, 0);
         if (first_move == null and @as(u8, @bitCast(pad)) != 0) first_move = i;
         if (pad.b and !last.b and n < presses.len) {
             presses[n] = i;
@@ -1107,16 +1107,47 @@ test "the CPU as a person: late to a punk off its line, then knocks it down at a
     try testing.expect(breath);
 }
 
+test "the CPU strikes a punk standing in front of it within its reach at once" {
+    var r = try Round.init();
+    defer r.deinit();
+    const p = try r.holder(840);
+    var first: ?usize = null;
+    for (0..10) |i| {
+        const pad = cpu.pad(&r.w, .{ .kinds = &r.f.kinds }, &r.w.players[0].cpu, 0);
+        if (pad.b) {
+            first = i;
+            break;
+        }
+        r.step(.{ .pad1 = pad });
+    }
+    // No reaction's wait, no walk to a place of its own first: its first tick's press.
+    try testing.expectEqual(@as(?usize, 0), first);
+    try testing.expect(r.w.get(p) != null);
+}
+
+test "two CPUs on top of each other: CPU 1 leads on, neither waits for the other" {
+    var r = try Round.init();
+    defer r.deinit();
+    const h = try secondPlayer(&r, 804, .left);
+    for (0..150) |_| r.step(.{
+        .pad1 = cpu.pad(&r.w, .{ .kinds = &r.f.kinds, .leads = true }, &r.w.players[0].cpu, 0),
+        .pad2 = cpu.pad(&r.w, .{ .kinds = &r.f.kinds }, &r.w.players[1].cpu, 1),
+    });
+    // CPU 1 went on ahead, out of CPU 2's body; neither held the other.
+    try testing.expect(r.player().position.x.whole() - r.w.get(h).?.position.x.whole() > 16);
+    try testing.expect(r.player().holding == null and r.w.get(h).?.holding == null);
+}
+
 test "the CPU weighs food at any health a character's definition gives, and eats it when hurt" {
     var r = try Round.init();
     defer r.deinit();
     _ = try r.w.spawn(&r.f.kinds, r.f.kinds.find("apple").?, .pixels(860, 64, 160), .right);
     // A health whose hundredfold is past an i16's: the food's weighing must not overflow.
     r.player().health = 400;
-    for (0..60) |_| r.step(.{ .pad1 = cpu.pad(&r.w, &r.f.kinds, &r.w.players[0].cpu, &.{}, .{}, 0) });
+    for (0..60) |_| r.step(.{ .pad1 = cpu.pad(&r.w, .{ .kinds = &r.f.kinds }, &r.w.players[0].cpu, 0) });
     // Hurt: it goes for the apple (an item whose definition gives health) and eats it.
     r.player().health = 10;
-    for (0..150) |_| r.step(.{ .pad1 = cpu.pad(&r.w, &r.f.kinds, &r.w.players[0].cpu, &.{}, .{}, 0) });
+    for (0..150) |_| r.step(.{ .pad1 = cpu.pad(&r.w, .{ .kinds = &r.f.kinds }, &r.w.players[0].cpu, 0) });
     try testing.expectEqual(@as(i16, 30), r.player().health);
 }
 
@@ -1133,7 +1164,7 @@ test "the CPU calls the police near its end among foes, not while it is fine" {
             x.player().health = @intCast(@divTrunc(full * share, 100));
             x.w.players[0].specials = specials;
             for (0..90) |_| {
-                const pad = cpu.pad(&x.w, &x.f.kinds, &x.w.players[0].cpu, &.{}, .{}, 0);
+                const pad = cpu.pad(&x.w, .{ .kinds = &x.f.kinds }, &x.w.players[0].cpu, 0);
                 if (pad.a) return true;
                 x.step(.{ .pad1 = pad });
             }
@@ -1152,7 +1183,7 @@ test "the CPU by player 1: out of its line, aside as player 1 walks through, nev
     const h = try secondPlayer(&r, 900, .left);
     const cpu_of = struct {
         fn step(x: *Round, p1: input.Pad) void {
-            x.step(.{ .pad1 = p1, .pad2 = cpu.pad(&x.w, &x.f.kinds, &x.w.players[1].cpu, &.{}, .{}, 1) });
+            x.step(.{ .pad1 = p1, .pad2 = cpu.pad(&x.w, .{ .kinds = &x.f.kinds }, &x.w.players[1].cpu, 1) });
         }
     }.step;
     // Player 1 standing: the CPU goes to a place of its own, out of player 1's line.
@@ -1670,7 +1701,7 @@ test "the CPU out of lives: its name CPU entered, then yes to the continue's que
     const letters = [_][]const u8{ "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "END" };
     var entered: ?[behaviours.player_waiting.places]?u8 = null;
     for (0..600) |_| {
-        r.stepPlan(.{ .pad1 = cpu.pad(&r.w, &r.f.kinds, &r.w.players[0].cpu, &letters, .{}, 0) }, &plan);
+        r.stepPlan(.{ .pad1 = cpu.pad(&r.w, .{ .kinds = &r.f.kinds, .letters = &letters }, &r.w.players[0].cpu, 0) }, &plan);
         for (r.out.rankings.slice()) |x| if (x.name) |n| {
             entered = n;
         };
@@ -1726,7 +1757,7 @@ test "the CPU at Mr. X's offer: its mark moved to no, then its answer, by the ro
     var last: input.Pad = .{};
     var ticks: usize = 0;
     while (!r.w.room.answered[0] and ticks < 12) : (ticks += 1) {
-        const pad = cpu.pad(&r.w, &r.f.kinds, &r.w.players[0].cpu, &.{}, .{}, 0);
+        const pad = cpu.pad(&r.w, .{ .kinds = &r.f.kinds }, &r.w.players[0].cpu, 0);
         try testing.expect(!pad.start);
         r.w.players[0].command = systems.commandOf(last, pad, .{});
         last = pad;
@@ -1735,7 +1766,7 @@ test "the CPU at Mr. X's offer: its mark moved to no, then its answer, by the ro
     }
     try testing.expect(r.w.room.answered[0] and r.w.room.on_no[0]);
     // Answered: the CPU plays no more there.
-    try testing.expectEqual(input.Pad{}, cpu.pad(&r.w, &r.f.kinds, &r.w.players[0].cpu, &.{}, .{}, 0));
+    try testing.expectEqual(input.Pad{}, cpu.pad(&r.w, .{ .kinds = &r.f.kinds }, &r.w.players[0].cpu, 0));
 }
 
 test "the name entry ends at the end mark taken, or the last place's letter" {
