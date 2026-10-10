@@ -205,8 +205,12 @@ pub const Session = struct {
     /// connection gets it again); the client's, as it heard it, and the tick of the last it made.
     event: ?protocol.Event = null,
     event_made: ?u32 = null,
-    /// The client asked to watch (on both sides, until the host's game comes or it stops).
+    /// The client asked to watch (on both sides, until the host's game comes or it stops); the
+    /// host also hears it from a client that watches already, which asks for its game again.
     observe_asked: bool = false,
+    /// An observer whose ticks outran its window (`onTicks`) asked for the host's game again,
+    /// once, until it comes.
+    resync_asked: bool = false,
     /// The host: the ticks of an observer's game sent so far, and the pads still to send (a pair
     /// a tick, from tick `ticks_first`).
     ticks_sent: u32 = 0,
@@ -723,7 +727,8 @@ pub const Session = struct {
     fn onObserve(self: *Session, yes: bool) Verdict {
         if (self.config.role != .host or !self.welcomed) return .unexpected;
         if (yes) {
-            if (self.phase != .lobby) return .stale;
+            // From the lobby, or from an observer that lost the host's ticks and asks again.
+            if (self.phase != .lobby and self.phase != .observing) return .stale;
             self.observe_asked = true;
             self.note(.observe_asked);
         } else {
@@ -813,6 +818,7 @@ pub const Session = struct {
         self.next = 0;
         self.seen_count = 0;
         self.watching = false;
+        self.resync_asked = false;
         self.own = @splat(null);
         self.theirs = @splat(null);
         self.snapshots = .{ null, null };
@@ -820,19 +826,36 @@ pub const Session = struct {
         self.note(.observing);
     }
 
+    /// The host's ticks, in hand as they come. Ticks past the window (an observer that ran none
+    /// for a while: a page hidden, a slow machine) are lost, and every later run then starts past
+    /// those in hand: the observer asks for the host's game again (`resync`), and watches on from
+    /// it.
     fn onTicks(self: *Session, t: protocol.Ticks) Verdict {
         if (self.config.role != .guest or self.phase != .observing) return .unexpected;
         const count: u32 = @intCast(t.pads.len / 2);
         if (t.first + count <= self.seen_count) return .duplicate;
-        if (t.first > self.seen_count) return .out_of_order;
+        if (t.first > self.seen_count) {
+            self.resync();
+            return .out_of_order;
+        }
         var i = self.seen_count - t.first;
         while (i < count) : (i += 1) {
             const tick_ = t.first + i;
-            if (tick_ >= self.next + window) return .ahead;
+            if (tick_ >= self.next + window) {
+                self.resync();
+                return .ahead;
+            }
             self.seen[tick_ % window] = .{ t.pads[2 * i], t.pads[2 * i + 1] };
             self.seen_count = tick_ + 1;
         }
         return .accepted;
+    }
+
+    /// The observer asks for the host's game again, once until it comes.
+    fn resync(self: *Session) void {
+        if (self.resync_asked) return;
+        self.resync_asked = true;
+        self.send(.{ .observe = true });
     }
 
     /// The observer's next tick's pads, the host's: none until it has `observe_cushion` in hand,
@@ -1354,6 +1377,41 @@ test "an observer: it asks, takes the host's game, then runs its ticks behind; h
     try testing.expect(host.phase == .lobby and watcher.phase == .lobby);
     host.observed(.{});
     try testing.expectEqual(@as(usize, 0), host.outbox.items.len);
+}
+
+test "an observer whose ticks outran its window asks for the host's game again, and watches on" {
+    var host = try testSession(.host, 2);
+    defer host.deinit();
+    var watcher = try Session.init(testing.allocator, .{ .role = .guest, .build = protocol.buildId("test"), .data = @splat(1), .name = "ANN".* }, canonical.diffFn(TestState));
+    defer watcher.deinit();
+    try welcomePair(&host, &watcher);
+    watcher.askObserve();
+    _ = pump(&watcher, &host, 0);
+    var buf: [canonical.maxSize(TestState)]u8 = undefined;
+    host.beginObserve(formOf(.{ .x = 7 }, &buf), 5);
+    _ = pump(&host, &watcher, 0);
+    try testing.expect(watcher.phase == .observing);
+    // The host runs 300 ticks while the observer runs none (its page hidden): those past its
+    // window are lost, and it asks for the game again, once.
+    for (0..300) |t| host.observed(.{ .pad1 = @bitCast(@as(u8, @truncate(t))) });
+    host.flushTicks();
+    _ = pump(&host, &watcher, 0);
+    try testing.expect(watcher.resync_asked and watcher.outbox.items.len == 1);
+    try testing.expectEqual(Verdict.accepted, pump(&watcher, &host, 0));
+    try testing.expect(host.phase == .observing and host.observe_asked);
+    // The host's game as it is now: the observer watches on from it, its ticks from 0.
+    host.beginObserve(formOf(.{ .x = 9 }, &buf), 6);
+    _ = pump(&host, &watcher, 0);
+    try testing.expect(watcher.phase == .observing and !watcher.resync_asked and watcher.seen_count == 0);
+    try testing.expectEqualSlices(u8, formOf(.{ .x = 9 }, &buf), watcher.gameForm());
+    for (0..10) |t| host.observed(.{ .pad1 = @bitCast(@as(u8, @intCast(t + 50))) });
+    host.flushTicks();
+    _ = pump(&host, &watcher, 0);
+    for (0..10) |t| {
+        const got = watcher.pads(.{}) orelse return error.Held;
+        try testing.expectEqual(@as(u8, @intCast(t + 50)), @as(u8, @bitCast(got.pad1)));
+        watcher.ran();
+    }
 }
 
 test "an observer whose hash differs from the host's stops, and the host goes on" {

@@ -649,11 +649,11 @@ pub const Netplay = struct {
         self.flush(p, peer);
     }
 
-    /// The host: a client that asks to watch (the game decides: `beginObserve`, or
-    /// `declineObserve`).
+    /// The host: a client that asks to watch, or to watch again (an observer that lost the
+    /// host's ticks); the game decides: `beginObserve`, or `declineObserve`.
     pub fn observeAsked(self: *const Netplay) ?*Peer {
         if (self.role != .host or !self.open) return null;
-        for (self.peers.items) |peer| if (peer.session.phase == .lobby and peer.session.observe_asked) return peer;
+        for (self.peers.items) |peer| if ((peer.session.phase == .lobby or peer.session.phase == .observing) and peer.session.observe_asked) return peer;
         return null;
     }
 
