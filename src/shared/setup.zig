@@ -106,6 +106,9 @@ pub const Setup = struct {
     hidden_lines: bool = false,
     /// Each player's character, once chosen.
     characters: [2]?Character = .{ null, null },
+    /// The players the CPU plays (world/cpu.zig), outside the original: player 2 by the game
+    /// menu's 1 PLAYER - 1 CPU.
+    cpu: [2]bool = .{ false, false },
     /// The high-score table; null until a game changes it: the content's first one stands.
     high_scores: ?[high_scores]Score = null,
     /// The game under way.

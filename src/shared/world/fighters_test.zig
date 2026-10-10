@@ -1554,6 +1554,33 @@ test "out of lives, its score past the table's last: the name entered first, the
     try testing.expect(!lives.inPlay(&r.w, 0));
 }
 
+test "the CPU out of lives: its name CPU entered, then yes to the continue's question" {
+    const level = testing.log_level;
+    testing.log_level = .err;
+    defer testing.log_level = level;
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &lives_round, .lives = 3, .last_score = .{ .score = 10_000, .level = 1, .round = 1 } };
+    script.start(&r.w, &plan);
+    r.w.players[0].lives = 1;
+    r.w.players[0].score = 10_500;
+    r.player().health = 0;
+    _ = try toNameEntry(&r, &plan);
+    // The fixture's 27 letters: A to Z and the end mark.
+    const letters = [_][]const u8{ "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "END" };
+    var entered: ?[behaviours.player_waiting.places]?u8 = null;
+    for (0..600) |_| {
+        r.stepPlan(.{ .pad1 = cpu.pad(&r.w, &r.f.kinds, &letters, .{}, 0) }, &plan);
+        for (r.out.rankings.slice()) |x| if (x.name) |n| {
+            entered = n;
+        };
+        if (std.mem.eql(u8, r.state(), "fall")) break;
+    }
+    try testing.expectEqualSlices(?u8, &.{ 2, 15, 20 }, &entered.?);
+    try testing.expectEqualStrings("fall", r.state());
+    try testing.expectEqual(@as(u8, 2), r.w.players[0].continues);
+}
+
 test "the name entry ends at the end mark taken, or the last place's letter" {
     const level = testing.log_level;
     testing.log_level = .err;

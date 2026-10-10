@@ -160,8 +160,9 @@ pub const State = struct {
 
     /// `step`, with this machine's facts, a round's world giving out its tick into `world_out`
     /// (the picture's).
-    pub fn stepWith(self: *State, pads: input.Pads, machine: Machine, assets: ?*const scene.Assets, world_out: ?*world.Output) scene.Turn {
+    pub fn stepWith(self: *State, given: input.Pads, machine: Machine, assets: ?*const scene.Assets, world_out: ?*world.Output) scene.Turn {
         const config = self.start.variant.config();
+        const pads = self.played(given, assets);
         var turn: scene.Turn = .{
             .pads = pads,
             .pressed = .{ .pad1 = newly(pads.pad1, self.held.pad1), .pad2 = newly(pads.pad2, self.held.pad2) },
@@ -184,6 +185,32 @@ pub const State = struct {
     }
 
     const all_buttons: input.Pad = @bitCast(@as(u8, 0xff));
+
+    /// The pads the game plays: the machines', but a CPU player's while a game is under way
+    /// (world/cpu.zig): in play the CPU's, in the round's clear its name entry, else none.
+    fn played(self: *State, pads: input.Pads, assets: ?*const scene.Assets) input.Pads {
+        var out = pads;
+        if (!self.inGame()) return out;
+        for (self.setup.cpu, 0..) |cpu, k| if (cpu) {
+            const p = if (assets) |a| self.cpuPad(@intCast(k), a) else input.Pad{};
+            if (k == 0) out.pad1 = p else out.pad2 = p;
+        };
+        return out;
+    }
+
+    fn cpuPad(self: *State, k: u1, a: *const scene.Assets) input.Pad {
+        const s = switch (self.scenes.top()) {
+            .scene => |s| s,
+            .overlay => return .{},
+        };
+        const layout = a.round.screen.buttons.of(self.setup.control);
+        const letters = a.round.screen.name_entry.letters;
+        return switch (s.*) {
+            .round => |*r| world.cpu.pad(&r.play.world, a.round.kinds, letters, layout, k),
+            .round_clear => |*c| if (c.names[k]) |*m| (if (c.named[k]) .{} else world.cpu.entry(m, letters, layout, self.tick % 2 == 0)) else .{},
+            else => .{},
+        };
+    }
 
     fn newly(now: input.Pad, before: input.Pad) input.Pad {
         return @bitCast(@as(u8, @bitCast(now)) & ~@as(u8, @bitCast(before)));
