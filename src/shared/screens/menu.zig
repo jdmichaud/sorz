@@ -345,7 +345,7 @@ pub const Menu = struct {
         v.screen.colours = self.colours.shown;
         if (self.shown_arrow) |l| {
             const at = self.arrowAt(a, l);
-            try v.sprites.append(v.gpa, render.Sprite.of(try v.glyphFrame(a.text, "->", null), at.x, at.y));
+            try v.sprites.append(v.gpa, render.Sprite.of(try v.glyphFrame(a.text, "->"), at.x, at.y));
         }
     }
 };

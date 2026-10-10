@@ -34,9 +34,11 @@ pub const View = struct {
     boards: std.EnumArray(Plane, ?*render.Board) = .initFill(null),
     sprites: std.ArrayList(render.Sprite) = .empty,
     /// Frames the game makes (a font's glyph shown as a sprite), kept for as long as the picture.
-    made_frames: std.ArrayList(MadeFrame) = .empty,
+    made_frames: std.ArrayList(*art.Frame) = .empty,
     /// Tiles the game makes (a picture drawn a part at a time), kept for as long as the picture.
     made_tiles: std.ArrayList(*art.Tile) = .empty,
+    /// Texts the game makes into frames (a label), kept for as long as the picture.
+    made_texts: std.ArrayList(MadeText) = .empty,
     /// A block of tiles the game makes, for as long as the picture (`tileBlock`).
     tile_block: ?[]art.Tile = null,
     /// The layers' scroll per line, when a scene gives one (`lineScroll`): plane A's, plane B's.
@@ -61,6 +63,7 @@ pub const View = struct {
         self.sprites.deinit(self.gpa);
         self.made_frames.deinit(self.gpa);
         self.made_tiles.deinit(self.gpa);
+        self.made_texts.deinit(self.gpa);
         self.composer.destroy();
         self.gpa.destroy(self.line_x);
         self.* = undefined;
@@ -69,10 +72,12 @@ pub const View = struct {
     fn forget(self: *View) void {
         // The composer keeps the last picture's sprites, to know the lines they covered.
         self.composer.forgetSprites();
-        for (self.made_frames.items) |m| self.gpa.destroy(m.frame);
+        for (self.made_frames.items) |f| self.gpa.destroy(f);
         self.made_frames.clearRetainingCapacity();
         for (self.made_tiles.items) |t| self.gpa.destroy(t);
         self.made_tiles.clearRetainingCapacity();
+        for (self.made_texts.items) |m| m.free(self.gpa);
+        self.made_texts.clearRetainingCapacity();
         if (self.tile_block) |b| self.gpa.free(b);
         self.tile_block = null;
     }
@@ -148,23 +153,56 @@ pub const View = struct {
     }
 
     /// A frame of one tile of a font, its glyph for `glyph` (an arrow shown as a sprite), with
-    /// its origin at its top-left corner; colour `ground` (the font's around its letters), when
-    /// given, left out, transparent. It lives as long as the picture.
-    pub fn glyphFrame(self: *View, t: Text, glyph: []const u8, ground: ?u4) error{ OutOfMemory, NoGlyph }!*const art.Frame {
+    /// its origin at its top-left corner; it lives as long as the picture.
+    pub fn glyphFrame(self: *View, t: Text, glyph: []const u8) error{ OutOfMemory, NoGlyph }!*const art.Frame {
         const g = t.font.glyphAt(glyph) orelse return error.NoGlyph;
         if (g.len != glyph.len) return error.NoGlyph;
-        const tile = &t.sheet.tiles[g.tile];
-        // One frame a glyph and ground for the picture: the same at each draw.
-        for (self.made_frames.items) |m| if (m.tile == tile and m.ground == ground) return m.frame;
-        const pixels: *const art.Tile = if (ground) |c| left: {
-            const out = try self.makeTile();
-            for (out, tile) |*p, from| p.* = if (from == c) 0 else from;
-            break :left out;
-        } else tile;
-        try self.made_frames.ensureUnusedCapacity(self.gpa, 1);
+        // One frame a glyph for the picture: the same at each draw.
+        for (self.made_frames.items) |f| if (f.pixels.ptr == @as([*]const u8, &t.sheet.tiles[g.tile])) return f;
         const f = try self.gpa.create(art.Frame);
-        f.* = .{ .name = "glyph", .file = "", .width = art.tile_side, .height = art.tile_side, .origin_x = 0, .origin_y = 0, .pixels = pixels };
-        self.made_frames.appendAssumeCapacity(.{ .frame = f, .tile = tile, .ground = ground });
+        errdefer self.gpa.destroy(f);
+        f.* = .{ .name = "glyph", .file = "", .width = art.tile_side, .height = art.tile_side, .origin_x = 0, .origin_y = 0, .pixels = &t.sheet.tiles[g.tile] };
+        try self.made_frames.append(self.gpa, f);
+        return f;
+    }
+
+    /// A frame of `text` in the font of `t` (a label), its glyphs side by side with a pixel more
+    /// on either side, its origin at the first glyph's top-left corner: colour `ground` (the
+    /// font's around its letters) left out but beside, above or below a letter, which it
+    /// outlines, as the cartridge's labels are drawn. It lives as long as the picture.
+    pub fn outlinedText(self: *View, t: Text, text: []const u8, ground: u4) error{ OutOfMemory, NoGlyph }!*const art.Frame {
+        // One frame a text for the picture: the same at each draw.
+        for (self.made_texts.items) |m| if (m.font == t.font and m.ground == ground and std.mem.eql(u8, m.text, text)) return m.frame;
+        var n: usize = 0;
+        var rest = text;
+        while (rest.len > 0) : (n += 1) rest = rest[(t.font.glyphAt(rest) orelse return error.NoGlyph).len..];
+        const side = art.tile_side;
+        const w = n * side + 2;
+        try self.made_texts.ensureUnusedCapacity(self.gpa, 1);
+        const pixels = try self.gpa.alloc(u8, w * side);
+        errdefer self.gpa.free(pixels);
+        const copy = try self.gpa.dupe(u8, text);
+        errdefer self.gpa.free(copy);
+        const f = try self.gpa.create(art.Frame);
+        // The glyphs as the font draws them, the margins ground; then the ground, but where it
+        // outlines a letter.
+        @memset(pixels, ground);
+        rest = text;
+        var k: usize = 0;
+        while (rest.len > 0) : (k += 1) {
+            const g = t.font.glyphAt(rest).?;
+            for (0..side) |y| @memcpy(pixels[y * w + 1 + k * side ..][0..side], t.sheet.tiles[g.tile][y * side ..][0..side]);
+            rest = rest[g.len..];
+        }
+        for (0..side) |y| for (0..w) |x| {
+            const i = y * w + x;
+            if (pixels[i] != ground) continue;
+            const outlines = (x > 0 and letter(pixels[i - 1], ground)) or (x + 1 < w and letter(pixels[i + 1], ground)) or
+                (y > 0 and letter(pixels[i - w], ground)) or (y + 1 < side and letter(pixels[i + w], ground));
+            if (!outlines) pixels[i] = 0;
+        };
+        f.* = .{ .name = "text", .file = "", .width = @intCast(w), .height = side, .origin_x = 1, .origin_y = 0, .pixels = pixels };
+        self.made_texts.appendAssumeCapacity(.{ .frame = f, .pixels = pixels, .text = copy, .font = t.font, .ground = ground });
         return f;
     }
 
@@ -191,8 +229,25 @@ pub const View = struct {
     }
 };
 
-/// A frame the game made: a font's glyph (its tile), and the colour it leaves out.
-const MadeFrame = struct { frame: *art.Frame, tile: *const art.Tile, ground: ?u4 };
+/// A text the game made into a frame (`outlinedText`): the frame, its pixels, and what it shows.
+const MadeText = struct {
+    frame: *art.Frame,
+    pixels: []u8,
+    text: []u8,
+    font: *const art.Font,
+    ground: u4,
+
+    fn free(m: MadeText, gpa: std.mem.Allocator) void {
+        gpa.destroy(m.frame);
+        gpa.free(m.pixels);
+        gpa.free(m.text);
+    }
+};
+
+/// Whether colour `c` of a glyph is its letter's: neither transparent nor the font's ground.
+fn letter(c: u8, ground: u4) bool {
+    return c != 0 and c != ground;
+}
 
 const testing = std.testing;
 
@@ -215,7 +270,7 @@ test "a picture begins with its boards empty and black, and composes its texts" 
     try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 255 }, f.pixels[(8 * f.width + 24) * 4 ..][0..4]);
     // A glyph as a sprite, composed, and a made tile; the next picture forgets them, the
     // composer its sprites (their frames gone), and keeps its board.
-    const arrow = try v.glyphFrame(t, "A", null);
+    const arrow = try v.glyphFrame(t, "A");
     try v.sprites.append(testing.allocator, render.Sprite.of(arrow, 100, 100));
     _ = try v.compose();
     try testing.expectEqual(@as(usize, 1), v.composer.sprite_key.items.len);
@@ -226,27 +281,41 @@ test "a picture begins with its boards empty and black, and composes its texts" 
     try testing.expectEqual(@as(usize, 0), v.sprites.items.len + v.made_frames.items.len + v.made_tiles.items.len);
     try testing.expect(v.composer.sprite_key.items.len == 0 and v.composer.sprite_lines == null);
     try testing.expectEqual(@as(?u32, 2), v.shows);
-    try testing.expectError(error.NoGlyph, v.glyphFrame(t, "B", null));
+    try testing.expectError(error.NoGlyph, v.glyphFrame(t, "B"));
 }
 
-test "a glyph as a sprite leaves its font's ground out, one frame a glyph and ground" {
+test "a text as a frame keeps its font's ground only where it outlines a letter, across glyphs" {
     var v = try View.init(testing.allocator);
     defer v.deinit();
     try v.begin(1, .{});
-    const letter: art.Tile = comptime blk: {
+    // "A": the ground, 2, but for a letter's pixel at its top-left corner and one at its right
+    // edge, on row 3.
+    const a: art.Tile = comptime blk: {
         var l: art.Tile = @splat(2);
-        l[9] = 1;
+        l[0] = 1;
+        l[3 * 8 + 7] = 1;
         break :blk l;
     };
-    const tiles = [_]art.Tile{letter};
+    const tiles = [_]art.Tile{ @splat(0), a };
     const sheet: art.TileSheet = .{ .name = "main", .file = "main.png", .tiles = &tiles };
-    const glyphs = [_]art.Glyph{.{ .text = "C", .tile = 0 }};
+    const glyphs = [_]art.Glyph{ .{ .text = " ", .tile = 0 }, .{ .text = "A", .tile = 1 } };
     const font: art.Font = .{ .name = "main", .sheet = "fonts/main", .glyphs = &glyphs };
     const t: Text = .{ .font = &font, .sheet = &sheet };
-    const clear = try v.glyphFrame(t, "C", 2);
-    try testing.expect(clear.pixels[0] == 0 and clear.pixels[9] == 1 and clear.pixels[63] == 0);
-    try testing.expectEqual(clear, try v.glyphFrame(t, "C", 2));
-    const whole = try v.glyphFrame(t, "C", null);
-    try testing.expect(whole != clear and whole.pixels[0] == 2 and whole.pixels[9] == 1);
-    try testing.expectEqual(@as(usize, 1), v.made_tiles.items.len);
+    const f = try v.outlinedText(t, "AA", 2);
+    try testing.expect(f.width == 18 and f.height == 8 and f.origin_x == 1);
+    const at = struct {
+        fn px(frame: *const art.Frame, x: usize, y: usize) u8 {
+            return frame.pixels[y * frame.width + x];
+        }
+    }.px;
+    // The first A's corner: outlined in the margin, at its right and below, not across.
+    try testing.expect(at(f, 1, 0) == 1 and at(f, 0, 0) == 2 and at(f, 2, 0) == 2 and at(f, 1, 1) == 2);
+    try testing.expect(at(f, 0, 1) == 0 and at(f, 2, 1) == 0 and at(f, 5, 5) == 0);
+    // Across the glyphs: the second A's corner outlined in the first's last column, the first's
+    // edge in the second's first column; the last edge in the margin.
+    try testing.expect(at(f, 8, 0) == 2 and at(f, 9, 3) == 2 and at(f, 17, 3) == 2 and at(f, 17, 0) == 0);
+    try testing.expectEqual(f, try v.outlinedText(t, "AA", 2));
+    try testing.expectError(error.NoGlyph, v.outlinedText(t, "AB", 2));
+    try v.begin(2, .{});
+    try testing.expectEqual(@as(usize, 0), v.made_texts.items.len);
 }
