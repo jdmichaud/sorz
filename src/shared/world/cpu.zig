@@ -43,7 +43,8 @@ const blocked_depth = 12;
 pub fn pad(w: *const World, kinds: *const Kinds, letters: []const []const u8, layout: Layout, k: u1) input.Pad {
     const press = w.tick % 2 == 0;
     const r = &w.room;
-    if (r.choosing[k] and !r.answered[k]) return padOf(if (r.on_no[k]) .{ .attack = press } else .{ .down = press }, layout);
+    // Held in the offer's choice: its answer, no, and nothing once given.
+    if (r.choosing[k]) return if (r.answered[k]) .{} else padOf(if (r.on_no[k]) .{ .attack = press } else .{ .down = press }, layout);
     const e = w.getConst(w.players[k].entity orelse return .{}) orelse return .{};
     return switch (e.mind) {
         .player => if (fight(w, kinds, k, w.tick)) |p| padOf(.{ .up = p.up, .down = p.down, .left = p.left, .right = p.right, .attack = p.b }, layout) else .{},

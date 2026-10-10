@@ -21,6 +21,7 @@ const behaviours = @import("behaviours.zig");
 const script = @import("script.zig");
 const lives = @import("lives.zig");
 const cpu = @import("cpu.zig");
+const room = @import("room.zig");
 const content_round = @import("../content/round.zig");
 
 const Fixed = fixed.Fixed;
@@ -1579,6 +1580,63 @@ test "the CPU out of lives: its name CPU entered, then yes to the continue's que
     try testing.expectEqualSlices(?u8, &.{ 2, 15, 20 }, &entered.?);
     try testing.expectEqualStrings("fall", r.state());
     try testing.expectEqual(@as(u8, 2), r.w.players[0].continues);
+}
+
+test "the CPU at Mr. X's offer: its mark moved to no, then its answer, by the room's choice" {
+    var r = try Round.init();
+    defer r.deinit();
+    // A room whose offer's first step asks for the answers.
+    const room_round: content_round.Round = blk: {
+        var x = lives_round;
+        const cell: content_round.Cell = .{ .x = 0, .y = 0 };
+        x.room = .{
+            .wall = 0,
+            .timer = 0,
+            .starts_after = 0,
+            .scroll = 0,
+            .walk = .{ .door_depth = .{ 0, 0 }, .door_x = 0, .depth = .{ 0, 0 }, .places = .{ 0, 0 }, .near = 0 },
+            .door = .{ .x = 0, .depth = 0, .height = 0 },
+            .music = "",
+            .fade = "",
+            .last_music = "",
+            .last_art_after = 0,
+            .stand_art_after = 0,
+            .offer = .{
+                .texts = &.{},
+                .answers = &.{},
+                .mark = "",
+                .mark_lines = .{ 0, 0 },
+                .window = .{ .text = cell, .answers = .{ cell, cell }, .marks = .{ cell, cell }, .open = 0, .shut = 0 },
+                .steps = &.{.answer},
+                .type_period = 1,
+                .rows = 0,
+                .wait = 0,
+                .letter = "",
+                .move = "move",
+                .answer = "answer",
+                .duel_music = "",
+            },
+        };
+        break :blk x;
+    };
+    const plan: script.Plan = .{ .round = &room_round, .lives = 3 };
+    r.w.room.offer = 0;
+    r.w.room.choosing = .{ true, false };
+    var t = r.tick();
+    t.plan = &plan;
+    var last: input.Pad = .{};
+    var ticks: usize = 0;
+    while (!r.w.room.answered[0] and ticks < 12) : (ticks += 1) {
+        const pad = cpu.pad(&r.w, &r.f.kinds, &.{}, .{}, 0);
+        try testing.expect(!pad.start);
+        r.w.players[0].command = systems.commandOf(last, pad, .{});
+        last = pad;
+        _ = room.choice(&t, 0, r.hero);
+        r.w.tick +%= 1;
+    }
+    try testing.expect(r.w.room.answered[0] and r.w.room.on_no[0]);
+    // Answered: the CPU plays no more there.
+    try testing.expectEqual(input.Pad{}, cpu.pad(&r.w, &r.f.kinds, &.{}, .{}, 0));
 }
 
 test "the name entry ends at the end mark taken, or the last place's letter" {
