@@ -14,6 +14,7 @@
 //!   back attack. It calls the police when a life is at stake: swarmed, hurt among foes, near its
 //!   end, or player 1 near its end without one of its own. It never blocks player 1's way:
 //!   walked at, it steps out of its line, and it never walks into it, which would grab it.
+//!   With two CPUs (0 PLAYERS - 2 CPU), each takes the other for its player 1.
 //! - Mr. X's offer: no.
 //! - Out of lives: its name, CPU, when its score entered the high-score table; yes to the
 //!   continue's question (asked only while it has continues).

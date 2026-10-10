@@ -187,15 +187,31 @@ pub const State = struct {
     const all_buttons: input.Pad = @bitCast(@as(u8, 0xff));
 
     /// The pads the game plays: the machines', but a CPU player's while a game is under way
-    /// (world/cpu.zig): in play the CPU's, in the round's clear its name entry, else none.
+    /// (world/cpu.zig): in play the CPU's, in the round's clear its name entry, else none. At the
+    /// select, pad 1 is the machine's all the same: it chooses for the CPUs (0 PLAYERS - 2 CPU).
+    /// A CPU player 1 fighting takes pad 1's START, so that the game can be paused.
     fn played(self: *State, pads: input.Pads, assets: ?*const scene.Assets) input.Pads {
         var out = pads;
         if (!self.inGame()) return out;
+        const at_select = std.meta.activeTag(self.scenes.base) == .select;
         for (self.setup.cpu, 0..) |cpu, k| if (cpu) {
-            const p = if (assets) |a| self.cpuPad(@intCast(k), a) else input.Pad{};
+            if (k == 0 and at_select) continue;
+            var p = if (assets) |a| self.cpuPad(@intCast(k), a) else input.Pad{};
+            if (k == 0 and pads.pad1.start and self.fighting(0)) p.start = true;
             if (k == 0) out.pad1 = p else out.pad2 = p;
         };
         return out;
+    }
+
+    /// Whether player `k` has a fighter in the round under way.
+    fn fighting(self: *const State, k: u1) bool {
+        const r = switch (self.scenes.base) {
+            .round => |*r| r,
+            else => return false,
+        };
+        const w = &r.play.world;
+        const e = w.getConst(w.players[k].entity orelse return false) orelse return false;
+        return e.mind == .player;
     }
 
     fn cpuPad(self: *State, k: u1, a: *const scene.Assets) input.Pad {

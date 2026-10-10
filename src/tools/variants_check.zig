@@ -15,6 +15,9 @@
 //! - extended, 1 PLAYER - 1 CPU (PLAN item 30): right on 2 PLAYERS turns it; player 1 chooses
 //!   Adam, then, at the select's second time, Axel for the CPU; round 1 with both, the CPU as
 //!   player 2: as player 1 walks on, the CPU fights and scores.
+//! - extended, 0 PLAYERS - 2 CPU (PLAN item 33): right twice on 2 PLAYERS; pad 1 chooses Adam
+//!   for CPU 1, then Axel for CPU 2; round 1 with both CPUs, no key pressed: they walk on, fight
+//!   and score; START (pad 1's) still opens the settings, Escape closes them.
 //! - network, as a browser's page plays it alone (one player): 2 PLAYERS and OPTIONS; ADVANCED
 //!   SETTINGS opens one player's settings; 2 PLAYERS to the select with this machine's player
 //!   alone, then the round, where START opens the settings.
@@ -230,7 +233,7 @@ fn cpuGame(f: *Flow, r: *Run) !void {
     try toMenu(f, r);
     try down(r, 1);
     try r.press(.right);
-    try f.check(r.menu().?.cpu, "1 PLAYER - 1 CPU");
+    try f.check(r.menu().?.cpus == 1, "1 PLAYER - 1 CPU");
     try r.press(.enter);
     try f.until(r, inSelect, 600, "the select");
     try r.press(.z);
@@ -253,6 +256,42 @@ fn cpuGame(f: *Flow, r: *Run) !void {
     }
     try r.key(.right, false);
     try f.check(true, "the CPU scores");
+}
+
+fn cpusGame(f: *Flow, r: *Run) !void {
+    try toMenu(f, r);
+    try down(r, 1);
+    try r.press(.right);
+    try r.press(.right);
+    try f.check(r.menu().?.cpus == 2, "0 PLAYERS - 2 CPU");
+    try r.press(.enter);
+    try f.until(r, inSelect, 600, "the select, for CPU 1");
+    try f.check(r.game.state.scenes.base.select.cpu_label == 1, "its label CPU 1");
+    try r.press(.z);
+    try f.until(r, struct {
+        fn again(x: *const Run) bool {
+            return inSelect(x) and x.game.state.scenes.base.select.cpu_pass;
+        }
+    }.again, 600, "the select again, for CPU 2");
+    try r.press(.right);
+    try r.press(.z);
+    try f.until(r, playing, 2400, "the round's play");
+    const setup = &r.game.state.setup;
+    try f.check(setup.cpu[0] and setup.cpu[1] and setup.characters[0] == .adam and setup.characters[1] == .axel, "CPU 1 Adam, CPU 2 Axel");
+    // No key: the CPUs walk on, the camera follows, the enemies come, they fight them.
+    const w = &roundOf(r).?.play.world;
+    var n: u32 = 0;
+    while (w.players[0].score + w.players[1].score == 0) : (n += 1) {
+        if (n == 9000) return f.check(false, "the CPUs score");
+        try r.update();
+    }
+    try f.check(true, "the CPUs score");
+    try r.press(.enter);
+    for (0..4) |_| try r.update();
+    try f.check(settingsOpen(r), "START opens the settings");
+    try r.press(.escape);
+    for (0..4) |_| try r.update();
+    try f.check(!settingsOpen(r), "Escape closes them");
 }
 
 fn original(f: *Flow, r: *Run) !void {
@@ -429,6 +468,7 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "original", .variant = .original, .run = original },
         .{ .name = "extended", .variant = .extended, .run = extended },
         .{ .name = "extended_cpu", .variant = .extended, .run = cpuGame },
+        .{ .name = "extended_cpus", .variant = .extended, .run = cpusGame },
         .{ .name = "network_page", .variant = .network, .page = true, .run = page },
         .{ .name = "network_guest_options", .variant = .network, .page = true, .guest = true, .run = guestOptions },
     }) |sg| {
