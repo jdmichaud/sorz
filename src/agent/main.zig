@@ -52,7 +52,9 @@ const usage =
     \\                   player (pad 1's keys and every gamepad), the page's own volume
     \\  --netplay, --join  network play over WebSockets, as the host (player 1) or the guest
     \\                   (player 2): each game plays its own front end with its keys (--key by
-    \\                   update), and the guest's JOIN and character join the host's game;
+    \\                   update; a guest's `place+FRAME` counts from the update at which the
+    \\                   host first offers a place in its round), and the guest's JOIN and
+    \\                   character join the host's game;
     \\                   --frames counts the updates, --until-session N ends the run once the
     \\                   session ran N ticks; prints the game's hashes and its network play
     \\  --delay N        the host's input delay, 2 to 6 (default: from the round trip)
@@ -304,6 +306,8 @@ pub fn main(init: std.process.Init) !void {
     var shots_written: usize = 0;
     // With buttons to press or axes to move, one gamepad, connected at the first frame.
     const pad: sorz.platform.ControllerId = @fromBackingInt(1);
+    // A key counted from the host's offer needs network play.
+    for (presses.items) |press| if (press.after_place) return fail(io);
     while (frame < frames) : (frame += 1) {
         for (presses.items) |press| {
             if (press.frame == frame) try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .key_down = .{ .key = press.key } } });
@@ -347,12 +351,13 @@ pub fn main(init: std.process.Init) !void {
 
 /// `FRAME:NAME[:HOLD]`, as `30:enter` or `400:left:5`.
 fn parsePress(text: []const u8) ?Press {
-    var it = std.mem.splitScalar(u8, text, ':');
+    const after_place = std.mem.startsWith(u8, text, "place+");
+    var it = std.mem.splitScalar(u8, if (after_place) text["place+".len..] else text, ':');
     const frame = std.fmt.parseInt(u64, it.next() orelse return null, 10) catch return null;
     const key = std.meta.stringToEnum(sorz.platform.Key, it.next() orelse return null) orelse return null;
     const hold = if (it.next()) |h| std.fmt.parseInt(u64, h, 10) catch return null else 1;
     if (it.next() != null or hold == 0) return null;
-    return .{ .frame = frame, .key = key, .hold = hold };
+    return .{ .frame = frame, .key = key, .hold = hold, .after_place = after_place };
 }
 
 /// A gamepad's button pressed at `frame` for `hold` frames.

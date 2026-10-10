@@ -21,13 +21,12 @@ field() { printf '%s\n' "$1" | sed -n "s/.*\"$2\":\"\{0,1\}\([^\",}]*\).*/\1/p";
 
 ticks=600
 # Both to their game menus; the host's NETWORK PLAY at once (down to it, A, the network options'
-# START), Axel and play; the client's name (START keeps the entry's) and its JOIN much later (its
-# arrow back on JOIN once the host's session is open): the two run as fast as they can, and a
-# client at its select while the host is still at its own would join it there. Its JOIN at
-# update 6,000 finds the host 1,500 ticks into its game unless the client runs 2.5 times as fast.
+# START), Axel and play; the client's name (START keeps the entry's), then its JOIN once the host
+# offers a place in its round (`place+`: counted from the host's status, whatever the two
+# processes' speeds: they run as fast as they can), and its character at its own select.
 front="--key 500:enter:3 --key 560:enter:3"
 host_keys="$front --key 620:down:3 --key 640:z:3 --key 800:enter:3 --key 1160:right:3 --key 1180:z:3 --key 1800:right:60 --key 2000:x:3"
-guest_keys="$front --key 760:enter:3 --key 6000:z:3 --key 6300:z:3"
+guest_keys="$front --key 760:enter:3 --key place+300:z:3 --key place+600:z:3"
 
 # A port of their own (another try on another port if it is taken).
 for try in 1 2 3; do
@@ -57,6 +56,7 @@ for line in "$h" "$g"; do
   [ "$(field "$line" sessions)" = 1 ] || fail "not one session: $line"
   [ "$(field "$line" verdict)" = ok ] || fail "a game's verdict is not ok: $line"
 done
-# The guest joined mid-round: the host had played alone a while.
-[ "$(field "$h" ticks)" -gt $((ticks + 1500)) ] || fail "the guest did not join mid-round: $h"
+# The guest joined mid-round: the host's round had begun (past its menus and select, some 1,400
+# ticks) before the session's first tick.
+[ "$(field "$h" ticks)" -gt $((ticks + 1300)) ] || fail "the guest did not join mid-round: $h"
 echo "check_netplay: two processes, the guest joined the host's round; the same state at the session's tick $ticks: $(field "$h" state_hash); the same sound since the join: $(field "$h" sound_frames) frames, $(field "$h" sound_hash)"

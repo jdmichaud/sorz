@@ -20,7 +20,10 @@ const platform = sorz.platform;
 /// A tick's time, as the agent host's clock counts it (rounded up).
 pub const frame_ns: u64 = sorz.sound_out.tick_ps / 1000 + 1;
 
-pub const Press = struct { frame: u64, key: platform.Key, hold: u64 = 1 };
+/// A key pressed at update `frame` for `hold` updates; a guest's `after_place` press counts its
+/// updates from the first at which the host offers a place in its round (its status), whatever
+/// the two processes' speeds.
+pub const Press = struct { frame: u64, key: platform.Key, hold: u64 = 1, after_place: bool = false };
 
 /// A game's scripted keys, injected by update.
 pub const Script = struct {
@@ -38,9 +41,12 @@ pub const Script = struct {
         gpa.free(s.done);
     }
 
-    /// Injects the key events due before update `t`.
-    pub fn inject(s: *Script, backend: *AgentBackend, t: u64) !void {
-        for (s.presses, s.done) |press, *d| {
+    /// Injects the key events due before update `t`; `place_at`, the update at which the host
+    /// first offered a place in its round, if it has.
+    pub fn inject(s: *Script, backend: *AgentBackend, t: u64, place_at: ?u64) !void {
+        for (s.presses, s.done) |p, *d| {
+            var press = p;
+            if (press.after_place) press.frame +|= place_at orelse continue;
             if (d.* == 0 and t >= press.frame) {
                 try backend.inject(.{ .time_ns = backend.clock_ns, .payload = .{ .key_down = .{ .key = press.key } } });
                 d.* = 1;
@@ -104,9 +110,14 @@ pub fn process(
     var last_tick: u32 = 0;
     var finished = false;
     var updates: u64 = 0;
+    var place_at: ?u64 = null;
     while (updates < frames) : (updates += 1) {
         if (until_session) |n| if (game.netplay) |np| if (np.inSession() and np.tick() >= n) break;
-        try script.inject(&backend, updates);
+        if (place_at == null) if (game.netplay) |np| {
+            const st = np.hostStatus();
+            if (np.role == .guest and st.game == .play and st.place) place_at = updates;
+        };
+        try script.inject(&backend, updates, place_at);
         if (try game.update(&p) == .finished) {
             finished = true;
             break;
