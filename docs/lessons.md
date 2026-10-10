@@ -103,6 +103,12 @@ time once.
   library's installed headers) skip those entries; `std.process.Args.iterate` does not compile for
   Windows (use `iterateAllocator`); `setenv` does not exist there (set SDL's hints with override
   priority instead).
+- **Zig 0.17 puts a 256 KiB signal stack in every thread's thread-local storage**
+  (`std.options.signal_stack_size`, `1 << 18`), and glibc cannot start a thread whose stack is
+  not larger. SDL2 2.30.0 creates its PulseAudio hot-plug thread with a 256 KiB stack and waits
+  for it forever: a game hung at audio start on Ubuntu 24.04 unless `SDL_AUDIODRIVER=pipewire`.
+  The SDL host, which links C libraries, sets `.signal_stack_size = null` in its `std_options`
+  (a stack overflow then loses Zig's trace); `readelf -lW BINARY | grep TLS` shows the size.
 - **The browser build without compiler-rt** imports the helpers the compiler calls (128-bit
   multiply and divide, some math): the page provides them, tested against compiler-rt, and the
   build checks the import list. A Debug build can import more than a release build.

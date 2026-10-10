@@ -10,8 +10,11 @@ const built_in = @import("built_in");
 /// The browser build built into the binary, which `--netplay` and `--server` serve.
 const page: native.net.Page = .{ .index_html = web_page.index_html, .script_js = web_page.script_js, .module_wasm = web_page.module_wasm };
 
-/// Every log line as the binaries' (native/log.zig).
-pub const std_options: std.Options = .{ .logFn = native.log.logFn };
+/// Every log line as the binaries' (native/log.zig). No signal stack in each thread's
+/// thread-local storage: with Zig's 256 KiB one, glibc cannot start a thread with a 256 KiB
+/// stack, and SDL2 2.30.0 waits forever for its PulseAudio thread made with one
+/// (docs/lessons.md). A stack overflow then loses Zig's trace.
+pub const std_options: std.Options = .{ .logFn = native.log.logFn, .signal_stack_size = null };
 
 pub fn main(init: std.process.Init) !void {
     native.log.program = "sorz";
