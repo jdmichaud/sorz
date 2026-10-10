@@ -21,6 +21,9 @@ pub const WebBackend = struct {
     /// The device events that the page reported and the game has not polled yet.
     events: std.ArrayList(platform.Event) = .empty,
     next_event: usize = 0,
+    /// An event could not be kept (out of memory): the game is told its focus was lost once it
+    /// has polled those kept, so that a key or a button released meanwhile is not left held.
+    lost_input: bool = false,
     last_event_ns: u64 = 0,
     /// The messages that the last poll gave the game, which it may read until the next poll
     /// (DESIGN.md 3.7). The backend owns them, and the messages still in `events`.
@@ -164,6 +167,11 @@ pub const WebBackend = struct {
             dst[n] = e;
             n += 1;
         }
+        if (self.lost_input and self.next_event == self.events.items.len and n < dst.len) {
+            dst[n] = .{ .time_ns = self.eventTime(), .payload = .focus_lost };
+            n += 1;
+            self.lost_input = false;
+        }
         if (self.next_event == self.events.items.len and self.next_event != 0) {
             self.events.clearRetainingCapacity();
             self.next_event = 0;
@@ -172,7 +180,9 @@ pub const WebBackend = struct {
     }
 
     fn push(self: *WebBackend, payload: platform.Event.Payload) void {
-        self.events.append(self.allocator, .{ .time_ns = self.eventTime(), .payload = payload }) catch {};
+        self.events.append(self.allocator, .{ .time_ns = self.eventTime(), .payload = payload }) catch {
+            self.lost_input = true;
+        };
     }
 
     fn freeDelivered(self: *WebBackend) void {
@@ -534,6 +544,21 @@ test "events come in order with ordered time stamps, and motion needs the pointe
     try testing.expect(events[4].payload.capture_changed);
     try testing.expectEqual(@as(i32, 5), events[5].payload.mouse_motion.dx);
     try testing.expectEqual(platform.MouseButton.right, events[6].payload.mouse_button_down.button);
+    try testing.expectEqual(@as(usize, 0), p.pollEvents(&events));
+}
+
+test "an event that cannot be kept: the game is told its focus was lost, nothing stays held" {
+    FakePage.reset();
+    var failing: std.testing.FailingAllocator = .init(testing.allocator, .{ .fail_index = 0 });
+    var backend = WebBackend.init(failing.allocator(), &FakePage.host);
+    defer backend.deinit();
+    var p = backend.asPlatform();
+    _ = try p.start();
+    // A key's release lost: the poll gives a lost focus in its place, once.
+    backend.keyEvent(.a, false, false);
+    var events: [4]platform.Event = undefined;
+    try testing.expectEqual(@as(usize, 1), p.pollEvents(&events));
+    try testing.expect(events[0].payload == .focus_lost);
     try testing.expectEqual(@as(usize, 0), p.pollEvents(&events));
 }
 
