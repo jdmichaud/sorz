@@ -15,6 +15,7 @@ const behaviours = @import("behaviours.zig");
 const script = @import("script.zig");
 const shadows_mod = @import("shadows.zig");
 const room_mod = @import("room.zig");
+const cpu = @import("cpu.zig");
 
 const Fixed = fixed.Fixed;
 const Vec3 = fixed.Vec3;
@@ -76,6 +77,8 @@ pub const Player = struct {
     command: Command = .{},
     /// The pad as read at the last display tick, which the next read's presses are new against.
     last: input.Pad = .{},
+    /// What the CPU remembers, when the CPU plays it (cpu.zig).
+    cpu: cpu.Memory = .{},
     /// The depth its entity's band of the draw's order is taken at (draw_list.zig): its own, as
     /// the others' turns begin (the original takes the players' bands before the other objects'
     /// handlers, which may move them: a Signal's hold); null, its entity's at the draw.

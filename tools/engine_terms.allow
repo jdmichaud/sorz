@@ -16,3 +16,5 @@ src/shared/audio/chips/ vblank -- the synthesiser counts chip cycles per display
 src/shared/audio/clock.zig cpu -- the sound's timing model: the drum hits held while a sample plays depend on the two processors' cycles, a named quirk (DESIGN.md 10.6 A4)
 src/shared/audio/output.zig cpu -- the output stage times the samples in the processors' cycles, as the timing model gives them (A4)
 src/shared/audio/output.zig vblank -- the output stage counts chip cycles per display tick (A4)
+src/shared/world/cpu.zig 0x2545F491 -- the CPU player's random generator's state before its seed (xorshift), a number, not a place
+src/shared/world/cpu.zig 0x9E3779B9 -- the CPU player's seed (the golden ratio's fraction), mixed with the world's clock, a number, not a place

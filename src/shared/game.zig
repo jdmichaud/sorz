@@ -206,7 +206,7 @@ pub const State = struct {
         const layout = a.round.screen.buttons.of(self.setup.control);
         const letters = a.round.screen.name_entry.letters;
         return switch (s.*) {
-            .round => |*r| world.cpu.pad(&r.play.world, a.round.kinds, letters, layout, k),
+            .round => |*r| world.cpu.pad(&r.play.world, a.round.kinds, &r.play.world.players[k].cpu, letters, layout, k),
             .round_clear => |*c| if (c.names[k]) |*m| (if (c.named[k]) .{} else world.cpu.entry(m, letters, layout, self.tick % 2 == 0)) else .{},
             else => .{},
         };
