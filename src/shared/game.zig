@@ -698,6 +698,10 @@ pub const Game = struct {
             const session = if (self.netplay) |np| np.inSession() else false;
             if (!session) {
                 self.state.setup.rules = self.settings.rules;
+                // The host's observers run its game: they get it again, its rules with it.
+                if (self.netplay) |np| if (np.watched()) {
+                    self.net.resync_due = true;
+                };
             } else if (!self.isClient()) self.net.pending_rules = self.settings.rules;
         };
         if (how == .save_and_exit) self.writeSettings(&self.settings);

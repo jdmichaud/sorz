@@ -71,6 +71,9 @@
 //! - lobby_silence: the host's lobby over the game its client plays: its sound is silence.
 //! - rules: in round 1 with a client, the host's settings change FRIENDLY HIT: both games take it
 //!   at one tick, and stay the same.
+//! - observer_rules: the host alone in round 1, an observer watching: the host's settings change
+//!   FRIENDLY HIT with no client in its game; the observer gets the game again, its rules too,
+//!   and watches on with no difference found.
 //! - friendly: in round 1 with a client, player 1's punches hurt player 2; the host's settings,
 //!   by their keys, turn FRIENDLY HIT off; the punches no longer hurt, on both machines.
 //! - left: in round 1 with a client, Escape on the host: its lobby over the game, which runs on
@@ -1427,6 +1430,34 @@ fn rulesChange(f: *Flow, r: *Room) !void {
     try sameFor(f, r, host, pair.guest, 120);
 }
 
+/// The host alone in round 1 (its server open, 1 PLAYER), an observer watching: the host's
+/// settings change FRIENDLY HIT with no client in its game; the observer gets the game again.
+fn observerRules(f: *Flow, r: *Room) !void {
+    const host = try r.add(.host);
+    try toMenu(f, r, host);
+    try openOptions(f, r, host);
+    try pressOption(r, host, .server, .z);
+    try pressOption(r, host, .exit, .z);
+    try f.until(r, host, choosing, 600, "the host's menu");
+    while (menuChoice(host) != .one_player) try r.press(host, .up);
+    try r.press(host, .z);
+    try f.until(r, host, inSelect, 600, "the host's select");
+    try r.press(host, .z);
+    try f.until(r, host, playing, 2400, "round 1, player 1 alone");
+    const watcher = try observerWatches(f, r);
+    try r.step(120);
+    const was = host.game.state.setup.rules.?.friendly_hit;
+    try r.press(host, .enter);
+    try f.until(r, host, settingsOpen, 80, "the host's settings open");
+    host.game.overlays.find(.settings).?.settings.row = .friendly_hit;
+    try r.press(host, .z);
+    try r.press(host, .escape);
+    try f.until(r, host, settingsClosed, 80, "the host's settings close, saving");
+    try r.step(240);
+    try f.check(host.game.state.setup.rules.?.friendly_hit != was and watcher.game.state.setup.rules.?.friendly_hit != was, "FRIENDLY HIT changed for the observer too");
+    try f.check(watcher.game.net.client == .observing and watcher.np().phase() != .desynced and watcher.message() != .desynced, "the observer watches on, no difference found");
+}
+
 /// Player `k`'s fighter's health on machine `m`.
 fn healthOf(m: *Machine, k: u1) i32 {
     const w = &roundOf(m).?.play.world;
@@ -1580,6 +1611,7 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "cpu_select", .run = cpuSelect },
         .{ .name = "lobby_silence", .run = lobbySilence },
         .{ .name = "rules", .run = rulesChange },
+        .{ .name = "observer_rules", .run = observerRules },
         .{ .name = "friendly", .run = friendly },
     }) |e| {
         if (only.items.len != 0) {

@@ -94,6 +94,9 @@ pub const NetPlay = struct {
     /// The host's settings changed the rules of the game its client plays: they change at a tick
     /// both machines share, once the session takes the change (`protocol.Event`).
     pending_rules: ?setup_mod.Rules = null,
+    /// The host's game changed otherwise than by its pads with no client in it (its settings'
+    /// rules): its observers get it again at the next update.
+    resync_due: bool = false,
 
     /// Whether the lobby is over a game the host's player left: the game runs on under it (it
     /// does not hold), silent, its pad playing nothing.
@@ -218,6 +221,11 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
             if (lobbyOf(g)) |x| x.in_game = false;
         },
         .lobby => {},
+    }
+    if (g.net.resync_due) {
+        g.net.resync_due = false;
+        var buf: [Game.join_max]u8 = undefined;
+        np.resync(p, g.joinForm(&buf));
     }
     // The rules its settings changed, in the game its client plays.
     if (g.net.pending_rules) |rules| {
