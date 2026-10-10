@@ -226,7 +226,7 @@
     hand declarations and their layout test go. SDL2 stays.
   - Gate: the SDL host builds for Linux and Windows; the unit tests pass; the game played in the
     SDL build (picture, sound, keys, a gamepad, the mouse, full screen) as before.
-- [ ] **29 — The SDL game with the ROM inside** — Depends: 01.
+- [x] **29 — The SDL game with the ROM inside** — Depends: 01.
   - `zig build standalone -Drom=ROM` builds `sorz-sdl-standalone`, the SDL host with the user's
     ROM built in (DESIGN.md 5.4). Without a game path it plays that ROM, its content extracted in
     memory as from a ROM given on the command line. No other build embeds it.
