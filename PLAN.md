@@ -326,7 +326,5 @@
 - [x] **D13 — The logic tick**: the original's 30 Hz in play (2026-10-02, design Q1).
 - [x] **D14 — Scenarios**: converted states for the players and common enemies, scripted
   scenarios for the rest (2026-10-02, design Q2).
-- [x] **D15 — The code review's declined points** (2026-10-10): the input events stay drained
-  whole at each update (the platform's and the transport's queues are bounded, and a cap would
-  only delay input); the house style's names stay, none renamed for its own sake (the review
-  found "load" and "hold" overloaded in a few places).
+- [x] **D15 — The code review's declined point** (2026-10-10): the house style's names stay,
+  none renamed for its own sake (the review found "load" and "hold" overloaded in a few places).

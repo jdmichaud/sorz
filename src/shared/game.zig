@@ -304,6 +304,9 @@ pub const State = struct {
 /// longer stall is dropped, not caught up).
 const queue_ticks = 3;
 const max_ticks_per_update = 4;
+/// The events an update takes at most (a frame's keys, a mouse's motion, network play's
+/// messages come to some tens); the others wait for the next update, their order kept.
+const max_events_per_update = 256;
 
 pub const Game = struct {
     allocator: std.mem.Allocator,
@@ -958,9 +961,13 @@ pub const Game = struct {
         self.update_count += 1;
         self.update_began_ns = p.nowNs();
         var buf: [32]platform.Event = undefined;
-        while (true) {
-            const n = p.pollEvents(&buf);
+        // At most `max_events_per_update` events an update, in their order: the rest stay in the
+        // platform's queue for the next (a flood of them never stalls a frame).
+        var budget: usize = max_events_per_update;
+        while (budget != 0) {
+            const n = p.pollEvents(buf[0..@min(buf.len, budget)]);
             if (n == 0) break;
+            budget -= n;
             for (buf[0..n]) |e| {
                 self.events_consumed += 1;
                 if (self.netplay) |np| if (np.handle(p, e)) continue;

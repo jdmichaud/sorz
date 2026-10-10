@@ -269,6 +269,22 @@ pub const AgentBackend = struct {
     }
 };
 
+test "the game takes at most its events an update, the others at the next, in their order" {
+    var backend = AgentBackend.init(std.testing.allocator, .{});
+    defer backend.deinit();
+    var game = try sorz.Game.init(std.testing.allocator, null, null);
+    defer game.deinit();
+    game.pacing = .per_update;
+    var p = backend.asPlatform();
+    _ = try game.update(&p);
+    const before = game.events_consumed;
+    for (0..300) |i| try backend.inject(.{ .time_ns = 0, .payload = .{ .key_down = .{ .key = if (i % 2 == 0) .a else .b, .repeat = true } } });
+    _ = try game.update(&p);
+    try std.testing.expectEqual(before + 256, game.events_consumed);
+    _ = try game.update(&p);
+    try std.testing.expectEqual(before + 300, game.events_consumed);
+}
+
 test "events are delivered in order once the clock reaches them" {
     var backend = AgentBackend.init(std.testing.allocator, .{});
     defer backend.deinit();
