@@ -7,10 +7,11 @@
 //!   at the screen (so it reacts late) and goes for the best of what it shows, a little at
 //!   random: a foe near (one on a player 1 in trouble first, one player 1 fights or goes for
 //!   after the others, so that with foes on both sides each takes one), what lies about (food
-//!   when hurt, money, gold, a life, a special attack, unless player 1 is nearer), a thing to
-//!   break (a blow knocks the bridge's barriers and the deck's blocks away), or else a place of
-//!   its own on the floor, mostly ahead of player 1 (the way the round goes) and out of its line,
-//!   where it stays a while before choosing another.
+//!   when hurt, before the foes when badly hurt; money, gold, a life, a special attack, unless
+//!   player 1 is nearer), a thing to break (a blow knocks the bridge's barriers and the deck's
+//!   blocks away), or else a place of its own on the floor, mostly ahead of player 1 (the way the
+//!   round goes) and out of its line, where it stays a while before choosing another. Food it
+//!   needs, it goes for past the foes not in its way.
 //! - Held from behind by a foe, it jumps out and, in the moment after, throws the holder over;
 //!   thrown by one, it lands on its feet now and then (up and C): at a person's reaction, and
 //!   now and then missed.
@@ -52,6 +53,7 @@ const entity = @import("entity.zig");
 const kinds_mod = @import("kinds.zig");
 const content_round = @import("../content/round.zig");
 const behaviours = @import("behaviours.zig");
+const systems = @import("systems.zig");
 const player_waiting = @import("behaviours/player_waiting.zig");
 
 const World = world_mod.World;
@@ -235,7 +237,8 @@ const alone_ahead_px = .{ 40, 120 };
 const stuck_px = 3;
 const stuck_ticks = 8;
 const detour_ticks = .{ 20, 40 };
-/// Food is wanted under this share of its health in a hundred, and needed under the second.
+/// Food is wanted under this share of its health in a hundred, and needed under the second: then
+/// it goes for it before the foes, striking only one in its way.
 const peckish = 75;
 const starving = 40;
 /// Player 1's room (a walk's reach grabs what it meets: the reach 16 pixels ahead, a body up to
@@ -343,7 +346,7 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
     const leads = g.leads;
     const partner = partnerOf(w, k);
     const fire = fireOf(w, kinds, partner);
-    const stuck = noteStuck(m, p);
+    const stuck = noteStuck(w, m, p);
     m.wanted = .{};
     if (p.holding) |h| return withFoeHeld(w, kinds, m, k, p, h);
     if (breakOut(w, m, p)) |a| return a;
@@ -379,14 +382,15 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
         };
         m.back_off = 0;
     }
-    // A foe in front of it, in reach: it strikes, whatever it goes for; at once while the foe is
-    // not reeling from its blows (it would strike first).
-    if (foeInFront(w, kinds, p, jab)) |f| {
+    // A foe in front of it, in reach: it strikes, whatever it goes for (but food it needs, past a
+    // foe not in its way); at once while the foe is not reeling from its blows (it would strike
+    // first).
+    if (foeInFront(w, kinds, p, jab)) |f| if (!needsFood(w, kinds, m, p, f)) {
         if (!behaviours.inState(&f.mind, "reel")) m.breath = 0;
         const a: Actions = .{ .attack = strike(m) };
         if (a.attack) noteFutile(w, m, f);
         return a;
-    }
+    };
     // Inside a solid thing (a new life dropped in it): out across, the nearer way (a walk across
     // alone stands it against the thing's side; any other is undone).
     if (ready(p)) if (solidSide(w, kinds, p)) |out| return out;
@@ -411,7 +415,7 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
     const a: Actions = switch (m.goal) {
         .foe => |h| if (foeAt(w, kinds, h)) |f| fightFoe(m, p, f, partner, fire, reachOn(kinds, jab, p, f), kinds.get(f.kind.?).family() == .boss) else .{},
         .smash => |h| if (standing(w, h)) |f| strikeAt(m, p, f, smash_from, smash_reach) else .{},
-        .take => |h| if (w.getConst(h)) |f| take(m, p, f) else .{},
+        .take => |h| if (w.getConst(h)) |f| take(kinds, m, p, f) else .{},
         .roam => |s| roam(m, p, s),
     };
     if (a.attack and m.goal == .foe) if (foeAt(w, kinds, m.goal.foe)) |f| noteFutile(w, m, f);
@@ -466,8 +470,9 @@ fn lookAround(w: *const World, kinds: *const Kinds, floor: ?*const Floor, m: *Me
 /// What it goes for: the best of what the screen shows, a little at random. A foe near comes
 /// first (one on a player 1 in trouble before all, one player 1 fights after the others, one
 /// player 1 nearer to it goes for after the others: the CPU takes the other side); then
-/// what lies about (food when hurt, unless player 1 is more hurt and nearer; money, gold, a life,
-/// a special attack, unless player 1 is nearer); then a thing to break (the same); else a place
+/// what lies about (food when hurt, before the foes when badly hurt, unless player 1 is more hurt
+/// and nearer; money, gold, a life, a special attack, unless player 1 is nearer); then a thing to
+/// break (the same); else a place
 /// of its own, kept until it has stayed there its while (the leader's ahead of itself). A goal
 /// it got stuck on is let go, and a thing it got stuck going for, given up.
 fn goalOf(w: *const World, kinds: *const Kinds, floor: ?*const Floor, m: *Memory, p: *const Entity, partner: ?*const Entity, leads: bool) Goal {
@@ -499,12 +504,13 @@ fn goalOf(w: *const World, kinds: *const Kinds, floor: ?*const Floor, m: *Memory
             if (isFood(kind)) {
                 if (share >= peckish) continue;
                 if (partner) |q| if (q.health < p.health and apart(q, e) < apart(p, e)) continue;
-                score = (if (share < starving) @as(i32, 140) else 80) - @divTrunc(far, 4);
+                // Needed, it comes before the fight, foes about it or not (`needsFood`).
+                score = if (share < starving) 200 - @divTrunc(far, 4) else 80 - @divTrunc(far, 4) - @as(i32, if (foesNear(w, kinds, e, 48) > 0) 40 else 0);
             } else {
                 if (partner) |q| if (apart(q, e) < apart(p, e)) continue;
                 score = 75 - @divTrunc(far, 4);
+                if (foesNear(w, kinds, e, 48) > 0) score -= 40;
             }
-            if (foesNear(w, kinds, e, 48) > 0) score -= 40;
         } else if (breakable(e)) {
             if (partner) |q| if (apart(q, e) < apart(p, e)) continue;
             goal = .{ .smash = h };
@@ -575,11 +581,12 @@ fn ready(p: *const Entity) bool {
     };
 }
 
-/// A walk it wanted that did not take it from where it stood: counted, until it moves on.
-/// Returns whether it is stuck now (it looks again at once).
-fn noteStuck(m: *Memory, p: *const Entity) bool {
+/// A walk it wanted that did not take it from where it stood: counted, until it moves on, but
+/// not while it is beset (it stays then by no fault of the way). Returns whether it is stuck now
+/// (it looks again at once).
+fn noteStuck(w: *const World, m: *Memory, p: *const Entity) bool {
     const here = spotHere(p);
-    if (walks(m.wanted) and @abs(here.x - m.stood.x) <= stuck_px and @abs(here.depth - m.stood.depth) <= stuck_px) {
+    if (walks(m.wanted) and !beset(w, p) and @abs(here.x - m.stood.x) <= stuck_px and @abs(here.depth - m.stood.depth) <= stuck_px) {
         m.stuck +|= 1;
     } else {
         m.stuck = 0;
@@ -588,6 +595,17 @@ fn noteStuck(m: *Memory, p: *const Entity) bool {
     if (m.stuck != stuck_ticks) return false;
     m.look = 0;
     return true;
+}
+
+/// Whether `p` is struck, held by a foe, thrown or down: where it stays is none of its walk's
+/// doing. Held by player 1 (their team move, met by walking into each other), it is not: stuck,
+/// it goes round once let go.
+fn beset(w: *const World, p: *const Entity) bool {
+    return switch (p.mind.player.state) {
+        .held, .held_behind, .escape => if (p.holder) |h| w.playerOf(h) == null else false,
+        .hurt, .knocked_down, .down, .getting_up, .recover, .thrown, .tossed, .shaken, .slam_pause, .lift, .air_slam, .air_fall, .slammed, .thrown_fall, .dying, .lying_dead => true,
+        else => false,
+    };
 }
 
 /// Where its goal is: its place, or its entity's.
@@ -758,6 +776,20 @@ fn breakOut(w: *const World, m: *Memory, p: *const Entity) ?Actions {
         .thrown => .{ .up = true, .jump = press },
         .none => unreachable,
     };
+}
+
+/// Whether it goes for food it needs (under `starving`), foe `f` not in its way there: not
+/// between it and the food across.
+fn needsFood(w: *const World, kinds: *const Kinds, m: *const Memory, p: *const Entity, f: *const Entity) bool {
+    const h = switch (m.goal) {
+        .take => |h| h,
+        else => return false,
+    };
+    const food = w.getConst(h) orelse return false;
+    if (!isFood(kinds.get(food.kind.?)) or healthShare(kinds, p) >= starving) return false;
+    const to_food = food.position.x.whole() - p.position.x.whole();
+    const to_foe = f.position.x.whole() - p.position.x.whole();
+    return (to_food < 0) != (to_foe < 0) or @abs(to_foe) > @abs(to_food);
 }
 
 /// Whether `h` is too heavy to be thrown (round 4's boss, who crushes the thrower): knees only.
@@ -985,11 +1017,19 @@ fn reachOn(kinds: *const Kinds, jab: i32, p: *const Entity, f: *const Entity) i3
 }
 
 /// An item: to it, and picked up.
-fn take(m: *Memory, p: *const Entity, f: *const Entity) Actions {
+fn take(kinds: *const Kinds, m: *Memory, p: *const Entity, f: *const Entity) Actions {
     var a: Actions = .{};
     go(&a, f.position.x.whole() - p.position.x.whole(), f.position.depth.whole() - p.position.depth.whole(), 12, 8);
-    if (@as(u8, @bitCast(a)) != 0) return a;
+    if (@as(u8, @bitCast(a)) != 0 and !bodiesMeet(kinds, p, f)) return a;
     return .{ .attack = strike(m) };
+}
+
+/// Whether the bodies of `p` and `f` meet: a pick-up takes it (an item at the floor's back edge,
+/// short of which it stands, too).
+fn bodiesMeet(kinds: *const Kinds, p: *const Entity, f: *const Entity) bool {
+    const pb = p.boxes.body orelse return false;
+    const fb = f.boxes.body orelse return false;
+    return systems.meet(p, &kinds.get(p.kind.?).definition.boxes[pb], f, &kinds.get(f.kind.?).definition.boxes[fb]);
 }
 
 /// The walk of `a`, its actions left out.
