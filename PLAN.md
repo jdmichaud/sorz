@@ -437,6 +437,17 @@
     lives lost -1.8%, damage from the foes -0.6% (neither significant). Each part found in a
     stalled game and checked there (round 4's, round 6's). zig build test.
 
+- [ ] **41 — A fight with the weapon** — Depends: 39.
+  - Armed, the CPU fought as unarmed, from its jab's reach: at the hardest level its armed blows
+    landed 36% (the knife) to 66% (the pipe) of the time, nearer than the weapon's band mostly,
+    and its damage a minute armed was no more than unarmed. The weapon's band, from the holder's
+    armed blow's frames whose hand strikes and the weapon's pose there: Adam's knife 62 to 86
+    pixels ahead, Axel's pipe 17 to 69, Blaze's knife 43 to 67; the knife lands best there.
+  - Armed, it strikes within its weapon's band, stands near its far end and steps back nearer
+    than its near end; a stab only within the stab's reach and level (past them a press throws
+    the knife); no walk in to grab.
+  - Gate: cpus-check at the hardest level: more damage a minute armed, no more lives lost.
+
 ## Standing rule
 
 - [ ] **S1 — The repository stands alone** — Depends: none.
