@@ -357,8 +357,12 @@
     reach on a body and a margin, in its line, while a foe stands there or it strikes. A walk
     that would take it in goes round in depth; its spot at a foe there is on the other side; one
     already in it stays (stepping out left it open to the foes). Its own blows are not held back.
+  - With foes on both sides of them, each CPU takes one (the user saw both go for one side,
+    their backs to the others): a foe player 1 is nearer to and faces, as a person sees it
+    going for it, comes after the others.
   - `cpus-check --chars` chooses the CPUs' characters; it reports each CPU's blows landed on
-    the foes and on the other, by what struck, and where the one struck stood.
+    the foes and on the other, by what struck, and where the one struck stood; and where the
+    CPUs go with foes on both sides of them.
   - Gate: cpus-check's nine pairings, eight seeds each, against the same before: fewer blows on
     the partner, no more lives lost nor longer rounds; the unit tests; the user's play.
 - [x] **37 — An enemy grabbed while lifted** — Depends: none.
