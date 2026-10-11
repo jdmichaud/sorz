@@ -140,6 +140,16 @@ const Fixture = struct {
         return n;
     }
 
+    /// The live entities of kind `name` that stay in the world far off the screen.
+    fn staying(f: *const Fixture, name: []const u8) usize {
+        const k = f.kinds.find(name).?;
+        var n: usize = 0;
+        for (&f.w.entities) |*e| {
+            if (e.alive() and e.kind == k and e.flags.stays) n += 1;
+        }
+        return n;
+    }
+
     /// Removes every live entity of kind `name` (they go, as a knocked-out enemy does).
     fn knockOut(f: *Fixture, name: []const u8) void {
         const k = f.kinds.find(name).?;
@@ -221,6 +231,23 @@ test "a section: its placed come, it opens, its wave comes at the wall, its rese
     try testing.expectEqual(@as(i32, 800), f.w.camera.x_max.whole());
     try testing.expectEqual(@as(usize, 1), f.count("go_arrow"));
     try testing.expectEqual(@as(u8, 50), f.w.timer.seconds);
+}
+
+test "a section's placed enemies stay in the world far off the screen; its scenery and its wave's do not" {
+    const level = testing.log_level;
+    testing.log_level = .err;
+    defer testing.log_level = level;
+    var f = try Fixture.init();
+    defer f.deinit();
+    try testing.expectEqual(@as(usize, 1), f.staying("punk"));
+    try testing.expectEqual(@as(usize, 0), f.staying("crate"));
+    // The wave's two come at the screen's edges.
+    for (0..5) |_| f.step();
+    f.w.camera.x = .pixels(398);
+    f.w.camera.x_min = .pixels(398);
+    for (0..8) |_| f.step();
+    try testing.expectEqual(@as(usize, 3), f.count("punk"));
+    try testing.expectEqual(@as(usize, 1), f.staying("punk"));
 }
 
 test "the boss's section: the camera stops, the music fades, the boss's music, its wave" {

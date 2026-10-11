@@ -859,7 +859,7 @@ fn beginSection(t: *Tick, p: *const Plan, k: u8) void {
     s.arriving = 0;
     s.two_players = s.two_players or t.playersInPlay() == 2;
     for (sec.placed) |*rec| {
-        if (comes(p, s, rec)) place(t, rec, rec.x);
+        if (comes(p, s, rec)) placeAhead(t, rec);
     }
     s.enemies = countEnemies(t);
 }
@@ -882,7 +882,7 @@ fn beginRoom(t: *Tick, p: *const Plan) void {
     s.arriving = 0;
     s.two_players = s.two_players or t.playersInPlay() == 2;
     for (rm.placed) |*rec| {
-        if (comes(p, s, rec)) place(t, rec, rec.x);
+        if (comes(p, s, rec)) placeAhead(t, rec);
     }
     s.enemies = countEnemies(t);
 }
@@ -1036,15 +1036,24 @@ fn reserveOf(r: *const Round, part: u8) []const Spawn {
 fn bring(t: *Tick, p: *const Plan, rec: *const Spawn) void {
     const edges = p.round.camera.edges;
     const at = t.world.camera.x.whole() + if (rec.side == .left) edges[0] else edges[1];
-    place(t, rec, at);
+    _ = place(t, rec, at);
+}
+
+/// A section's (or the room's) placed record's entity, at its place: one of the common enemies
+/// stays in the world far off the screen, as the original keeps its groups' (a wave's or a
+/// reserve's goes).
+fn placeAhead(t: *Tick, rec: *const Spawn) void {
+    const h = place(t, rec, rec.x) orelse return;
+    const e = t.world.get(h).?;
+    if (t.kindOf(e).family() == .enemy) e.flags.stays = true;
 }
 
 /// The entity of a record at `x` and its depth, on the ground; placed as its record says
 /// (`placing`). A kind the content does not define yet is skipped, with a warning.
-fn place(t: *Tick, rec: *const Spawn, x: i32) void {
+fn place(t: *Tick, rec: *const Spawn, x: i32) ?entity.Handle {
     const kind = t.kinds.find(rec.kind) orelse {
         std.log.warn("the round's script brings a {s}, which the content does not define yet: skipped", .{rec.kind});
-        return;
+        return null;
     };
     const position: fixed.Vec3 = .{ .x = .pixels(x), .depth = .pixels(rec.depth), .height = t.world.ground };
     // In the enemies' places, as the original's script takes its objects'.
@@ -1056,7 +1065,7 @@ fn place(t: *Tick, rec: *const Spawn, x: i32) void {
     };
     const h = made catch {
         std.log.warn("the world is full: the round's script's {s} is skipped", .{rec.kind});
-        return;
+        return null;
     };
     t.world.get(h).?.spawn = how;
     // The round may draw what its script brings in front of its layers' cells.
@@ -1075,6 +1084,7 @@ fn place(t: *Tick, rec: *const Spawn, x: i32) void {
         },
         else => {},
     }
+    return h;
 }
 
 /// How a record places its entity, in the world's terms: an enemy's way in, its traits (a piece
