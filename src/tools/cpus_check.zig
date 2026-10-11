@@ -5,22 +5,25 @@
 //! the CPUs' own random draws apart (their memories' seeds, set as each round begins, before their
 //! first look; 0 leaves them); the game's draws are the original's.
 //!
-//!   sorz-cpus-check ROM [--lives N] [--level L] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]
+//!   sorz-cpus-check ROM [--lives N] [--level L] [--from R] [--to R] [--chars C1,C2]
+//!                       [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]
 //!
 //! - `--lives`: the lives a game and a continue give (the settings' rules); 3 by default.
 //! - `--level`: the options' LEVEL, 0 easy to 3 hardest; 1 (normal) by default.
+//! - `--from`, `--to`: the rounds played, 1 to 8 by default: the game starts at `--from` (the
+//!   options' first round) and is left as the round after `--to` begins (`to`).
 //! - `--chars`: the CPUs' characters (adam, axel, blaze); adam,axel by default.
 //! - `--shots`: a picture at each round's clear, each life lost and the end, into DIR.
 //! - `--scenes on`: each scene's start told on stderr; the game followed past the ending.
 //!
-//! Prints a JSON line per seed: the characters, how it ended (`ending`, `game_over`, `limit`), the
-//! round reached, the display ticks, each CPU's blows landed on the other by what struck
-//! (`Causes`) and where the one struck stood (`HitSpot`), the ticks with foes on both sides of
-//! the CPUs by where the CPUs went (`Sides`), and what each CPU did of a player's skills (holds
-//! broken, weapons, food: `Skills`); per round its display ticks, the lives lost, the time
-//! overs, the damage the CPUs took by the kind of what dealt it, and each CPU's blows landed
-//! (what it threw too) on the enemies and on the other CPU. Build it fast (-Doptimize=ReleaseFast): a game
-//! takes about a minute then.
+//! Prints a JSON line per seed: the characters, how it ended (`ending`, `game_over`, `limit`,
+//! `to`), the round reached, the display ticks, each CPU's blows landed on the other by what
+//! struck (`Causes`) and where the one struck stood (`HitSpot`), the ticks with foes on both sides
+//! of the CPUs by where the CPUs went (`Sides`), and what each CPU did of a player's skills (holds
+//! broken, weapons, food: `Skills`); per round its display ticks, the lives lost, the time overs,
+//! the damage the CPUs took by the kind of what dealt it, and each CPU's blows landed (what it
+//! threw too) on the enemies and on the other CPU. Build it fast and alone: `zig build
+//! cpus-check-exe -Doptimize=ReleaseFast --prefix DIR`; a whole game takes about a minute then.
 const std = @import("std");
 const sorz = @import("sorz");
 const agent = @import("agent");
@@ -152,29 +155,39 @@ const Causes = struct {
 
 const Character = sorz.setup.Character;
 
-/// What each CPU did of a player's skills: held from behind by an enemy (its holds), its jumps out
-/// and its throws of the holder; held from the front by one; thrown by one; the weapons it
+/// What each CPU did of a player's skills: held from behind by an enemy (its holds, those it may
+/// jump out of: not round 5's twins'), its jumps out and its throws of the holder; held from the
+/// front by one; thrown by one, and landed on its feet; the weapons it
 /// picked up, its logic ticks armed and its blows landed armed on the foes; the food it ate; its
 /// logic ticks badly hurt (under 40% of its health), and of those, with food lying on the
-/// screen.
+/// screen; its logic ticks in play, the damage it dealt the foes, and of it, armed.
 const Skills = struct {
     held_behind: u32 = 0,
+    escapable: u32 = 0,
     escapes: u32 = 0,
     counters: u32 = 0,
     held_front: u32 = 0,
     thrown: u32 = 0,
+    on_feet: u32 = 0,
     weapons: u32 = 0,
     armed_ticks: u32 = 0,
     armed_blows: u32 = 0,
     food: u32 = 0,
     hurt_ticks: u32 = 0,
     hurt_food_ticks: u32 = 0,
+    play_ticks: u32 = 0,
+    dealt: u32 = 0,
+    armed_dealt: u32 = 0,
 };
 
 const Options = struct {
     lives: u8 = 3,
     /// The options' LEVEL: 0 easy to 3 hardest.
     level: u8 = 1,
+    /// The rounds played: from the first (the options' hidden line), to the last (the game left
+    /// as the next begins).
+    from: u8 = 1,
+    to: u8 = 8,
     characters: [2]Character = .{ .adam, .axel },
     limit: u32 = 900_000,
     shots: ?[]const u8 = null,
@@ -195,6 +208,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     while (r.updates < 560) try r.update();
     try r.press(.enter);
     try r.until(choosing, 400);
+    r.game.state.setup.first_round = o.from - 1;
     try r.press(.down);
     try r.press(.right);
     try r.press(.right);
@@ -246,6 +260,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
         const w = &r.game.state.scenes.base.round.play.world;
         if (n == 0 or rounds[n - 1].number != round.number) {
             if (n == rounds.len) break "limit";
+            if (round.number > o.to) break "to";
             if (n != 0 and o.shots != null) try shot(gpa, io, r, o.shots.?, &shots, "clear");
             rounds[n] = .{ .number = round.number };
             n += 1;
@@ -283,9 +298,11 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
                     }
                 } else if (w.getConst(hit.target)) |e| if (e.team == .enemy) {
                     stats.blows[p].enemies += 1;
+                    skills[p].dealt += @intCast(@max(hit.damage, 0));
                     // An armed player's blow is its weapon's, a thing that strikes in its hand.
                     if (w.getConst(hit.attacker.?)) |x| if (r.game.scene_assets.?.round.kinds.get(x.kind.?).family() == .weapon) if (playerState(w, p)) |st| if (armed(st)) {
                         skills[p].armed_blows += 1;
+                        skills[p].armed_dealt += @intCast(@max(hit.damage, 0));
                     };
                 };
             };
@@ -310,6 +327,9 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
             if (was_in[p]) |was| if (m.state != was) switch (m.state) {
                 .held_behind => if (was != .escape and by_enemy) {
                     sk.held_behind += 1;
+                    if (w.getConst(e.holder.?)) |x| if (x.mind != .boss_r5) {
+                        sk.escapable += 1;
+                    };
                 },
                 .escape => sk.escapes += 1,
                 .grab_blow => if (was == .held_behind) {
@@ -321,9 +341,13 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
                 .thrown => if (if (m.thrower) |h| w.playerOf(h) == null else true) {
                     sk.thrown += 1;
                 },
+                .land => if (was == .knocked_down) {
+                    sk.on_feet += 1;
+                },
                 else => {},
             };
             if (armed(m.state)) sk.armed_ticks += 1;
+            sk.play_ticks += 1;
             const full: i32 = kinds.get(e.kind.?).definition.health;
             if (full != 0 and @as(i32, e.health) * 100 < full * 40) {
                 sk.hurt_ticks += 1;
@@ -545,7 +569,7 @@ fn shot(gpa: std.mem.Allocator, io: std.Io, r: *const Run, dir: []const u8, coun
 }
 
 fn usage(io: std.Io) noreturn {
-    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--level L] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]\n") catch {};
+    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--level L] [--from R] [--to R] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]\n") catch {};
     std.process.exit(2);
 }
 
@@ -565,6 +589,10 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, arg, "--level")) {
             o.level = std.fmt.parseInt(u8, value, 10) catch usage(io);
             if (o.level > 3) usage(io);
+        } else if (std.mem.eql(u8, arg, "--from") or std.mem.eql(u8, arg, "--to")) {
+            const r = std.fmt.parseInt(u8, value, 10) catch usage(io);
+            if (r < 1 or r > 8) usage(io);
+            if (arg[2] == 'f') o.from = r else o.to = r;
         } else if (std.mem.eql(u8, arg, "--chars")) {
             var it = std.mem.tokenizeScalar(u8, value, ',');
             for (&o.characters) |*c| c.* = std.meta.stringToEnum(Character, it.next() orelse usage(io)) orelse usage(io);
