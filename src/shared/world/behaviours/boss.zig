@@ -369,7 +369,8 @@ pub fn Of(comptime M: type) type {
         }
 
         /// Down: alive, a moment; beaten, much longer, blinking at first, and his points go to the
-        /// player who struck him last; the round is won (with no twin) when it is over.
+        /// player who struck him last; the round is won (with no twin) when it is over. Of twins,
+        /// the first to go leaves the other alone, whose end then wins the round.
         pub fn lie(a: A) void {
             const n = a.numbers();
             const m = a.mind;
@@ -388,7 +389,6 @@ pub fn Of(comptime M: type) type {
             if (other.entity.health > 0 or m.twin_beaten) return;
             other.mind.twin_beaten = true;
             a.tick.bossBeaten();
-            a.tick.roundWon();
         }
 
         pub fn down(a: A) void {

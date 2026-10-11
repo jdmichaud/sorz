@@ -380,7 +380,7 @@
   - [x] Checked 2026-10-11: the unit test, failing without the fix (its frame 3, not 2);
     cpus-check's seed 2 with Adam and Axel, which warned, no longer does; zig build test.
 
-- [ ] **38 — Twin bosses' end** — Depends: none.
+- [x] **38 — Twin bosses' end** — Depends: none.
   - The user saw, with two players, the bonus tally come at once after a round's boss fell. In
     two-player games several rounds' bosses come as twins, and the last twin's knockout won the
     round at once; the original's (sor-remaster's 0x1647A, 0x164FC) only ends the fight then:
@@ -388,6 +388,9 @@
     single boss's does.
   - Gate: cpus-check's scenes: each boss's round won as long after its fight's end as a single
     boss's (dead ticks).
+  - [x] Checked 2026-10-11: cpus-check `--scenes on`, seed 1: rounds 1, 4 and 6 won 220 display
+    ticks after their fights' end (0 before), as rounds 2 and 5 (round 3's boss 264, his own);
+    round 7 has no boss (its players walk out); zig build test.
 
 ## Standing rule
 
