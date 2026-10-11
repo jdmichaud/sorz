@@ -12,8 +12,9 @@
 //! - `--shots`: a picture at each round's clear, each life lost and the end, into DIR.
 //!
 //! Prints a JSON line per seed: the characters, how it ended (`ending`, `game_over`, `limit`), the
-//! round reached, the display ticks and each CPU's blows landed on the other by what struck
-//! (`Causes`); per round its display ticks, the lives lost, the time overs, the
+//! round reached, the display ticks, each CPU's blows landed on the other by what struck
+//! (`Causes`) and where the one struck stood (`HitSpot`), and the ticks with foes on both sides of
+//! the CPUs by where the CPUs went (`Sides`); per round its display ticks, the lives lost, the time overs, the
 //! damage the CPUs took by the kind of what dealt it, and each CPU's blows landed (what it threw
 //! too) on the enemies and on the other CPU. Build it fast (-Doptimize=ReleaseFast): a game
 //! takes about a minute then.
@@ -192,6 +193,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     var was_in: [2]?PlayerState = .{ null, null };
     var struck_in: [2]?PlayerState = .{ null, null };
     var was_at: [2]?@FieldType(sorz.world.entity.Entity, "position") = .{ null, null };
+    var sides: Sides = .{};
     var spots: std.ArrayList(HitSpot) = .empty;
     defer spots.deinit(gpa);
     const how: []const u8 = while (r.updates < o.limit) {
@@ -231,6 +233,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
             was.* = pl.lives;
         }
         if (!round.logic_ran) continue;
+        sides.see(w, r.game.scene_assets.?.round.kinds);
         const v = if (r.game.view) |*v| v else continue;
         for (v.world_out.hits.slice()) |hit| {
             const to_player = w.playerOf(hit.target) != null;
@@ -270,7 +273,8 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
         for (c.list[0..c.len], 0..) |x, j| try out.print("{s}\"{s}{s}{s}\":{d}", .{ if (j == 0) "" else ",", x.how, if (x.what.len == 0) "" else " ", x.what, x.count });
         try out.writeAll("}");
     }
-    try out.writeAll("],\"partner_hits\":[");
+    try out.print("],\"sides\":{{\"ticks\":{d},\"same\":{d},\"split\":{d},\"other\":{d}}}", .{ sides.ticks, sides.same, sides.split, sides.other });
+    try out.writeAll(",\"partner_hits\":[");
     for (spots.items, 0..) |x, i| try out.print("{s}[{d},{d},{d},\"{t}\",\"{s}\",{d},\"{s}\",{},{d},{d},\"{t}\"]", .{ if (i == 0) "" else ",", x.striker, x.ahead, x.depth, x.state, x.foe, x.foe_ahead, x.goal, x.same_foe, x.moved_ahead, x.moved_depth, x.striker_state });
     try out.writeAll("],\"rounds\":[");
     for (rounds[0..n], 0..) |*s, i| {
@@ -315,6 +319,60 @@ fn cause(r: *const Run, w: *const sorz.world.World, attacker: sorz.world.Handle,
         else => .{ "other", @tagName(s) },
     };
 }
+
+/// The logic ticks foes stood on both sides of the two CPUs (on the screen, left of both and right
+/// of both), by where the CPUs' goals lay then: both foes on one side (`same`), one on each
+/// (`split`), or else (a goal between them, or not a foe).
+const Sides = struct {
+    ticks: u32 = 0,
+    same: u32 = 0,
+    split: u32 = 0,
+    other: u32 = 0,
+
+    fn see(s: *Sides, w: *const sorz.world.World, kinds: anytype) void {
+        var at: [2]i32 = undefined;
+        for (0..2) |i| {
+            const p: u1 = @intCast(i);
+            if (playerMind(w, p) == null) return;
+            at[p] = w.getConst(w.players[p].entity.?).?.position.x.whole();
+        }
+        const lo = @min(at[0], at[1]);
+        const hi = @max(at[0], at[1]);
+        const left = w.camera.x.whole();
+        var foes_left = false;
+        var foes_right = false;
+        for (&w.entities) |*e| {
+            if (!foe(e, kinds)) continue;
+            const x = e.position.x.whole();
+            if (x < left or x >= left + 320) continue;
+            if (x < lo) foes_left = true;
+            if (x > hi) foes_right = true;
+        }
+        if (!foes_left or !foes_right) return;
+        s.ticks += 1;
+        var side: [2]i32 = .{ 0, 0 };
+        for (w.players, &side) |pl, *d| switch (pl.cpu.goal) {
+            .foe => |h| if (w.getConst(h)) |e| {
+                const x = e.position.x.whole();
+                d.* = if (x < lo) -1 else if (x > hi) 1 else 0;
+            },
+            else => {},
+        };
+        if (side[0] == 0 or side[1] == 0) {
+            s.other += 1;
+        } else if (side[0] == side[1]) s.same += 1 else s.split += 1;
+    }
+
+    fn foe(e: *const sorz.world.entity.Entity, kinds: anytype) bool {
+        if (!e.alive() or e.flags.hidden or e.team != .enemy or e.health < 0) return false;
+        switch (kinds.get(e.kind.?).family()) {
+            .enemy, .boss => {},
+            else => return false,
+        }
+        const B = sorz.world.behaviours;
+        return !B.inState(&e.mind, "appear") and !B.inState(&e.mind, "enter") and !B.inState(&e.mind, "knocked_out");
+    }
+};
 
 /// Where a CPU stood as its partner's blow landed on it, at the end of that tick: across ahead of
 /// the striker (by its facing) and in depth from it; its state, its goal and whether that is the
