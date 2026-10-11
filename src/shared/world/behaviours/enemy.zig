@@ -1432,9 +1432,12 @@ pub fn Of(comptime M: type) type {
             if (a.mind.state != .knocked_down) return a.stop();
             // Each landing on a conveyor (round 6's) carries it.
             conveyed(a);
+            // A slide landing (on a wall's top, round 7's railing) flies on in the air with the
+            // speed it kept, to land again or fall out.
             if (b.down == .sliding) {
                 a.sound(.thud);
                 slid(a);
+                a.entity.flags.airborne = true;
                 return;
             }
             b.bounces += 1;

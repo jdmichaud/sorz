@@ -177,7 +177,7 @@ const enemy_numbers =
     \\ "knocked_off_up": 65536, "knocked_off_x": 655360, "knocked_off_ticks": 10, "knocked_off_slowing": 131072,
     \\ "flipped_x": 196608, "gets_up_frame": 4, "grab_height": 8, "knocked_out_x": 655360,
     \\ "knocked_slowing": 21504, "knocked_up": -589824, "knocked_x": 458752, "lying": 16,
-    \\ "knocked_back_x": 262144, "knocked_back_up": -458752,
+    \\ "knocked_back_x": 262144, "knocked_back_up": -458752, "fall_out": 252,
     \\ "lying_least": 3, "middle_from": 0, "middle_to": 320, "points": 500, "reel": 24,
     \\ "reel_nudge": 2, "slam_hurt": 5, "slam_ticks": 8, "slammed_up": -393216, "slammed_x": 294912,
     \\ "special_down_frame": 3, "special_shake_pace": 3, "special_shake_turn": 8,
@@ -1443,6 +1443,38 @@ test "the special attack: the camera runs back, the car comes, the punk stands w
     try testing.expectEqual(@as(u32, 500), r.w.players[0].score);
 }
 
+test "a thrown punk's slide that lands on a wall's top flies on: over the hole beyond, it falls and is knocked out" {
+    var r = try Round.init();
+    defer r.deinit();
+    r.w.script.stage = .stand_in;
+    const plan: script.Plan = .{ .round = &railing_round };
+    // Thrown right off a hold at 900, as a hold's throw lets it go: it slides, rising.
+    const p = try r.w.spawnEnemy(&r.f.kinds, r.f.kinds.find("punk").?, .pixels(900, 64, 160), .{});
+    const e = r.w.get(p).?;
+    e.health = 12;
+    r.f.kinds.startAnimation(e, r.f.kinds.get(e.kind.?).definition.animation("thrown").?);
+    e.velocity = .{ .x = .of(360448), .depth = .zero, .height = .of(-393216) };
+    e.flags.airborne = true;
+    e.mind.galsia.state = .knocked_down;
+    e.mind.galsia.body = .{ .target = r.hero, .down = .sliding, .timer = 7, .fresh = false };
+    // Rising, it comes on the wall's top (140) from below at its third tick, and lands there.
+    for (0..3) |_| r.stepPlan(.{}, &plan);
+    try testing.expect(e.mind.galsia.body.down == .flying);
+    try testing.expectEqual(@as(i32, 140), e.position.height.whole());
+    try testing.expect(e.flags.airborne);
+    // It flies on in the air past the wall, over the hole, and falls out of the fight.
+    var out = false;
+    for (0..40) |_| {
+        r.stepPlan(.{}, &plan);
+        if (e.mind.galsia.state == .knocked_out) {
+            out = true;
+            break;
+        }
+    }
+    try testing.expect(out);
+    try testing.expect(e.position.x.whole() >= 928 and e.position.height.whole() >= 252);
+}
+
 /// A round with a single section and no enemies, for the lives' tests.
 const lives_round: content_round.Round = blk: {
     var r = content_round.example;
@@ -1456,6 +1488,22 @@ const special_round: content_round.Round = blk: {
     var r = lives_round;
     const share: [58]content_round.Streamed = @splat(.{ .tiles = 5 });
     r.special = .{ .streamed = .{ &share, &share } };
+    break :blk r;
+};
+
+/// `lives_round` with a wall 20 pixels high from 912 to 927 across, a hole from 928 on (round
+/// 7's railing and its shaft).
+const railing_round: content_round.Round = blk: {
+    var r = lives_round;
+    r.floor = .{
+        .cell = .{ 16, 8 },
+        .kinds = &.{
+            .{ .height = 160, .floor = true },
+            .{ .height = 140, .floor = true },
+            .{ .height = 4096, .floor = false },
+        },
+        .rows = &.{"0000000000000000000000000000000000000000000000000000000001222222222222222222"},
+    };
     break :blk r;
 };
 
