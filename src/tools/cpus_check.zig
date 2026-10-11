@@ -5,19 +5,21 @@
 //! the CPUs' own random draws apart (their memories' seeds, set as each round begins, before their
 //! first look; 0 leaves them); the game's draws are the original's.
 //!
-//!   sorz-cpus-check ROM [--lives N] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]
+//!   sorz-cpus-check ROM [--lives N] [--level L] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]
 //!
 //! - `--lives`: the lives a game and a continue give (the settings' rules); 3 by default.
+//! - `--level`: the options' LEVEL, 0 easy to 3 hardest; 1 (normal) by default.
 //! - `--chars`: the CPUs' characters (adam, axel, blaze); adam,axel by default.
 //! - `--shots`: a picture at each round's clear, each life lost and the end, into DIR.
 //! - `--scenes on`: each scene's start told on stderr; the game followed past the ending.
 //!
 //! Prints a JSON line per seed: the characters, how it ended (`ending`, `game_over`, `limit`), the
 //! round reached, the display ticks, each CPU's blows landed on the other by what struck
-//! (`Causes`) and where the one struck stood (`HitSpot`), and the ticks with foes on both sides of
-//! the CPUs by where the CPUs went (`Sides`); per round its display ticks, the lives lost, the time overs, the
-//! damage the CPUs took by the kind of what dealt it, and each CPU's blows landed (what it threw
-//! too) on the enemies and on the other CPU. Build it fast (-Doptimize=ReleaseFast): a game
+//! (`Causes`) and where the one struck stood (`HitSpot`), the ticks with foes on both sides of
+//! the CPUs by where the CPUs went (`Sides`), and what each CPU did of a player's skills (holds
+//! broken, weapons, food: `Skills`); per round its display ticks, the lives lost, the time
+//! overs, the damage the CPUs took by the kind of what dealt it, and each CPU's blows landed
+//! (what it threw too) on the enemies and on the other CPU. Build it fast (-Doptimize=ReleaseFast): a game
 //! takes about a minute then.
 const std = @import("std");
 const sorz = @import("sorz");
@@ -150,8 +152,29 @@ const Causes = struct {
 
 const Character = sorz.setup.Character;
 
+/// What each CPU did of a player's skills: held from behind by an enemy (its holds), its jumps out
+/// and its throws of the holder; held from the front by one; thrown by one; the weapons it
+/// picked up, its logic ticks armed and its blows landed armed on the foes; the food it ate; its
+/// logic ticks badly hurt (under 40% of its health), and of those, with food lying on the
+/// screen.
+const Skills = struct {
+    held_behind: u32 = 0,
+    escapes: u32 = 0,
+    counters: u32 = 0,
+    held_front: u32 = 0,
+    thrown: u32 = 0,
+    weapons: u32 = 0,
+    armed_ticks: u32 = 0,
+    armed_blows: u32 = 0,
+    food: u32 = 0,
+    hurt_ticks: u32 = 0,
+    hurt_food_ticks: u32 = 0,
+};
+
 const Options = struct {
     lives: u8 = 3,
+    /// The options' LEVEL: 0 easy to 3 hardest.
+    level: u8 = 1,
     characters: [2]Character = .{ .adam, .axel },
     limit: u32 = 900_000,
     shots: ?[]const u8 = null,
@@ -164,6 +187,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     const r = try Run.create(gpa, assets);
     defer r.destroy(gpa);
     r.game.settings.rules.lives = o.lives;
+    r.game.state.setup.level = o.level;
     // START on the intro, then on the title; right twice on 2 PLAYERS; each CPU's character, its
     // cursor from Adam.
     while (r.updates < 500) try r.update();
@@ -197,6 +221,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     var struck_in: [2]?PlayerState = .{ null, null };
     var was_at: [2]?@FieldType(sorz.world.entity.Entity, "position") = .{ null, null };
     var sides: Sides = .{};
+    var skills: [2]Skills = .{ .{}, .{} };
     var spots: std.ArrayList(HitSpot) = .empty;
     defer spots.deinit(gpa);
     var was_scene = r.scene();
@@ -258,11 +283,52 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
                     }
                 } else if (w.getConst(hit.target)) |e| if (e.team == .enemy) {
                     stats.blows[p].enemies += 1;
+                    // An armed player's blow is its weapon's, a thing that strikes in its hand.
+                    if (w.getConst(hit.attacker.?)) |x| if (r.game.scene_assets.?.round.kinds.get(x.kind.?).family() == .weapon) if (playerState(w, p)) |st| if (armed(st)) {
+                        skills[p].armed_blows += 1;
+                    };
                 };
             };
             if (!to_player or hit.damage <= 0) continue;
             const by = if (hit.attacker) |h| w.getConst(h) else null;
             stats.hurt(if (by) |e| r.game.scene_assets.?.round.kinds.get(e.kind.?).name() else "gone", hit.damage);
+        }
+        const kinds = r.game.scene_assets.?.round.kinds;
+        for (v.world_out.pickups.slice()) |pick| {
+            const p = w.playerOf(pick.by) orelse continue;
+            const k = kinds.get(pick.kind);
+            if (k.family() == .weapon) skills[p].weapons += 1;
+            if (isFood(k)) skills[p].food += 1;
+        }
+        const food_lying = foodLying(w, kinds);
+        for (0..2) |i| {
+            const p: u1 = @intCast(i);
+            const m = playerMind(w, p) orelse continue;
+            const e = w.getConst(w.players[p].entity.?).?;
+            const by_enemy = if (e.holder) |h| w.playerOf(h) == null else false;
+            const sk = &skills[p];
+            if (was_in[p]) |was| if (m.state != was) switch (m.state) {
+                .held_behind => if (was != .escape and by_enemy) {
+                    sk.held_behind += 1;
+                },
+                .escape => sk.escapes += 1,
+                .grab_blow => if (was == .held_behind) {
+                    sk.counters += 1;
+                },
+                .held => if (by_enemy) {
+                    sk.held_front += 1;
+                },
+                .thrown => if (if (m.thrower) |h| w.playerOf(h) == null else true) {
+                    sk.thrown += 1;
+                },
+                else => {},
+            };
+            if (armed(m.state)) sk.armed_ticks += 1;
+            const full: i32 = kinds.get(e.kind.?).definition.health;
+            if (full != 0 and @as(i32, e.health) * 100 < full * 40) {
+                sk.hurt_ticks += 1;
+                if (food_lying) sk.hurt_food_ticks += 1;
+            }
         }
         for (0..2) |i| {
             const p: u1 = @intCast(i);
@@ -286,7 +352,13 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
         try out.writeAll("}");
     }
     try out.print("],\"sides\":{{\"ticks\":{d},\"same\":{d},\"split\":{d},\"other\":{d}}}", .{ sides.ticks, sides.same, sides.split, sides.other });
-    try out.writeAll(",\"partner_hits\":[");
+    try out.writeAll(",\"skills\":[");
+    for (skills, 0..) |sk, i| {
+        try out.writeAll(if (i == 0) "{" else ",{");
+        inline for (@typeInfo(Skills).@"struct".field_names, 0..) |name, j| try out.print("{s}\"{s}\":{d}", .{ if (j == 0) "" else ",", name, @field(sk, name) });
+        try out.writeAll("}");
+    }
+    try out.writeAll("],\"partner_hits\":[");
     for (spots.items, 0..) |x, i| try out.print("{s}[{d},{d},{d},\"{t}\",\"{s}\",{d},\"{s}\",{},{d},{d},\"{t}\"]", .{ if (i == 0) "" else ",", x.striker, x.ahead, x.depth, x.state, x.foe, x.foe_ahead, x.goal, x.same_foe, x.moved_ahead, x.moved_depth, x.striker_state });
     try out.writeAll("],\"rounds\":[");
     for (rounds[0..n], 0..) |*s, i| {
@@ -302,6 +374,26 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
 }
 
 const PlayerState = sorz.world.behaviours.player.State;
+
+fn armed(s: PlayerState) bool {
+    return std.mem.startsWith(u8, @tagName(s), "armed_");
+}
+
+fn isFood(k: *const sorz.world.kinds.Kind) bool {
+    return k.behaviour == .item and sorz.world.kinds.numbersOf(sorz.world.behaviours.module(.item), k).health > 0;
+}
+
+/// Whether food lies on the screen.
+fn foodLying(w: *const sorz.world.World, kinds: anytype) bool {
+    const left = w.camera.x.whole();
+    for (&w.entities) |*e| {
+        if (!e.alive() or e.flags.hidden or e.mind != .item or e.mind.item.state != .lying or e.holder != null) continue;
+        const x = e.position.x.whole();
+        if (x < left or x >= left + 320) continue;
+        if (isFood(kinds.get(e.kind.?))) return true;
+    }
+    return false;
+}
 
 fn playerMind(w: *const sorz.world.World, p: u1) ?*const sorz.world.behaviours.player.Mind {
     const e = w.getConst(w.players[p].entity orelse return null) orelse return null;
@@ -453,7 +545,7 @@ fn shot(gpa: std.mem.Allocator, io: std.Io, r: *const Run, dir: []const u8, coun
 }
 
 fn usage(io: std.Io) noreturn {
-    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]\n") catch {};
+    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--level L] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]\n") catch {};
     std.process.exit(2);
 }
 
@@ -470,6 +562,9 @@ pub fn main(init: std.process.Init) !void {
         const value = args.next() orelse usage(io);
         if (std.mem.eql(u8, arg, "--lives")) {
             o.lives = std.fmt.parseInt(u8, value, 10) catch usage(io);
+        } else if (std.mem.eql(u8, arg, "--level")) {
+            o.level = std.fmt.parseInt(u8, value, 10) catch usage(io);
+            if (o.level > 3) usage(io);
         } else if (std.mem.eql(u8, arg, "--chars")) {
             var it = std.mem.tokenizeScalar(u8, value, ',');
             for (&o.characters) |*c| c.* = std.meta.stringToEnum(Character, it.next() orelse usage(io)) orelse usage(io);
