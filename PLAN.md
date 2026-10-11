@@ -417,6 +417,22 @@
     food's last fixes: lives lost -6.5%, damage -3.5%.) Two games stalled in time overs (rounds
     4 and 8), as before. zig build test. The user's play is pending.
 
+- [ ] **40 — Rounds the CPUs never finish** — Depends: 34.
+  - Some 5 to 10% of cpus-check's games stall: a round's section waits for the camera to reach
+    its wall, the CPUs never walk it there, and time overs come until the game is over (round 4's
+    bridge, 61 minutes once; round 6; round 8). Seen there:
+  - A place of its own off the depths the players are kept on (above the bridge's top), walked
+    at for ever; a step out of player 1's line against the edge of those depths, no step at all;
+    the way round a hole sought on depths off them.
+  - The two CPUs over each other at the edge of the view, the leader stepping away into the edge;
+    a crate at that edge, too close to strike and no step back.
+  - The bridge's barriers given up for good once a walk to them stuck, with the way on shut by
+    them.
+  - The CPU's places and its steps in depth keep to those depths (out of player 1's line, the
+    other way at their edge); its steps away across, the other way at the view's edge; a thing it
+    gave up is tried again after 15 s.
+  - Gate: cpus-check's games that stalled reach the ending; no more lives lost.
+
 ## Standing rule
 
 - [ ] **S1 — The repository stands alone** — Depends: none.
