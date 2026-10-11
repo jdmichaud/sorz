@@ -1,19 +1,22 @@
 //! sorz-cpus-check: the two CPUs play the whole game (PLAN item 34), from power-on on the content
 //! extracted from the user's ROM, as the hosts run it (the game in the agent backend, its keys
-//! injected): the game menu's 0 PLAYERS - 2 CPU, Adam for CPU 1 and Axel for CPU 2, then no key
-//! until the ending or the game's end, `--limit` display ticks at most. A seed draws the CPUs'
-//! own random draws apart (their memories' seeds, set as each round begins, before their first
-//! look; 0 leaves them); the game's draws are the original's.
+//! injected): the game menu's 0 PLAYERS - 2 CPU, Adam for CPU 1 and Axel for CPU 2 (`--chars`),
+//! then no key until the ending or the game's end, `--limit` display ticks at most. A seed draws
+//! the CPUs' own random draws apart (their memories' seeds, set as each round begins, before their
+//! first look; 0 leaves them); the game's draws are the original's.
 //!
-//!   sorz-cpus-check ROM [--lives N] [--seeds S,S,...] [--limit TICKS] [--shots DIR]
+//!   sorz-cpus-check ROM [--lives N] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR]
 //!
 //! - `--lives`: the lives a game and a continue give (the settings' rules); 3 by default.
+//! - `--chars`: the CPUs' characters (adam, axel, blaze); adam,axel by default.
 //! - `--shots`: a picture at each round's clear, each life lost and the end, into DIR.
 //!
-//! Prints a JSON line per seed: how it ended (`ending`, `game_over`, `limit`), the round reached
-//! and the display ticks; per round its display ticks, the lives lost, the time overs and the
-//! damage the CPUs took by the kind of what dealt it. Build it fast (-Doptimize=ReleaseFast): a
-//! game takes about a minute then.
+//! Prints a JSON line per seed: the characters, how it ended (`ending`, `game_over`, `limit`), the
+//! round reached, the display ticks and each CPU's blows landed on the other by what struck
+//! (`Causes`); per round its display ticks, the lives lost, the time overs, the
+//! damage the CPUs took by the kind of what dealt it, and each CPU's blows landed (what it threw
+//! too) on the enemies and on the other CPU. Build it fast (-Doptimize=ReleaseFast): a game
+//! takes about a minute then.
 const std = @import("std");
 const sorz = @import("sorz");
 const agent = @import("agent");
@@ -95,6 +98,10 @@ fn againForCpu2(r: *const Run) bool {
     return inSelect(r) and r.game.state.scenes.base.select.cpu_pass;
 }
 
+fn inRound(r: *const Run) bool {
+    return r.scene() == .round;
+}
+
 /// A round's measures.
 const RoundStats = struct {
     number: u8,
@@ -103,6 +110,8 @@ const RoundStats = struct {
     time_overs: u32 = 0,
     damage: [max_kinds]struct { kind: []const u8, damage: i32 } = undefined,
     kinds: usize = 0,
+    /// Each CPU's blows landed (with what it threw), on the enemies and on the other CPU.
+    blows: [2]struct { enemies: u32 = 0, partner: u32 = 0 } = .{ .{}, .{} },
 
     const max_kinds = 32;
 
@@ -117,8 +126,31 @@ const RoundStats = struct {
     }
 };
 
+/// A CPU's blows landed on the other CPU, by what struck: `how` the way (`blow` with the
+/// state the striker struck in, `hold`, `throw`, `thrown` and the kind of the thing thrown,
+/// `other` and the state the one struck was in), `what` its name.
+const Causes = struct {
+    list: [most]struct { how: []const u8, what: []const u8, count: u32 } = undefined,
+    len: usize = 0,
+
+    const most = 48;
+
+    fn add(c: *Causes, how: []const u8, what: []const u8) void {
+        for (c.list[0..c.len]) |*x| if (std.mem.eql(u8, x.how, how) and std.mem.eql(u8, x.what, what)) {
+            x.count += 1;
+            return;
+        };
+        if (c.len == most) return;
+        c.list[c.len] = .{ .how = how, .what = what, .count = 1 };
+        c.len += 1;
+    }
+};
+
+const Character = sorz.setup.Character;
+
 const Options = struct {
     lives: u8 = 3,
+    characters: [2]Character = .{ .adam, .axel },
     limit: u32 = 900_000,
     shots: ?[]const u8 = null,
 };
@@ -128,7 +160,8 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     const r = try Run.create(gpa, assets);
     defer r.destroy(gpa);
     r.game.settings.rules.lives = o.lives;
-    // START on the intro, then on the title; right twice on 2 PLAYERS; Adam, then Axel.
+    // START on the intro, then on the title; right twice on 2 PLAYERS; each CPU's character, its
+    // cursor from Adam.
     while (r.updates < 500) try r.update();
     try r.press(.enter);
     while (r.updates < 560) try r.update();
@@ -139,16 +172,28 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     try r.press(.right);
     try r.press(.enter);
     try r.until(inSelect, 600);
+    for (0..@backingInt(o.characters[0])) |_| try r.press(.right);
     try r.press(.z);
     try r.until(againForCpu2, 600);
-    try r.press(.right);
+    for (0..@backingInt(o.characters[1])) |_| try r.press(.right);
     try r.press(.z);
+    try r.until(inRound, 600);
+    for (r.game.state.setup.characters, o.characters) |got, want| if (got != want) return error.WrongCharacter;
 
     var rounds: [16]RoundStats = undefined;
     var n: usize = 0;
     var lives: [2]u8 = .{ 0, 0 };
     var timed_out = false;
+    var stage: @TypeOf(r.game.state.scenes.base.round.play.world.script.stage) = .opening;
     var shots: u32 = 0;
+    var causes: [2]Causes = .{ .{}, .{} };
+    // Each CPU's state at the last logic tick, and the state its partner struck it in then (a
+    // blow is felt, its damage taken, at the tick after it lands).
+    var was_in: [2]?PlayerState = .{ null, null };
+    var struck_in: [2]?PlayerState = .{ null, null };
+    var was_at: [2]?@FieldType(sorz.world.entity.Entity, "position") = .{ null, null };
+    var spots: std.ArrayList(HitSpot) = .empty;
+    defer spots.deinit(gpa);
     const how: []const u8 = while (r.updates < o.limit) {
         try r.update();
         switch (r.scene()) {
@@ -174,7 +219,10 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
         const stats = &rounds[n - 1];
         stats.ticks += 1;
         if (round.phase == .time_over and !timed_out) stats.time_overs += 1;
+        // The time over's end, and the boss's fall, credit their harm to the last striker.
+        const harm_told = (timed_out and round.phase != .time_over) or (w.script.stage != stage and (w.script.stage == .fight_over or w.script.stage == .won));
         timed_out = round.phase == .time_over;
+        stage = w.script.stage;
         for (w.players, &lives) |pl, *was| {
             if (pl.lives < was.*) {
                 stats.lives_lost += was.* - pl.lives;
@@ -185,25 +233,142 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
         if (!round.logic_ran) continue;
         const v = if (r.game.view) |*v| v else continue;
         for (v.world_out.hits.slice()) |hit| {
-            const to_player = for (w.players) |pl| {
-                if (pl.entity) |h| if (h.eql(hit.target)) break true;
-            } else false;
+            const to_player = w.playerOf(hit.target) != null;
+            if (!harm_told) if (striker(w, hit.attacker)) |p| {
+                if (w.playerOf(hit.target)) |q| {
+                    if (q != p) {
+                        stats.blows[p].partner += 1;
+                        const c = cause(r, w, hit.attacker.?, struck_in[q], was_in[q]);
+                        causes[p].add(c[0], c[1]);
+                    }
+                } else if (w.getConst(hit.target)) |e| if (e.team == .enemy) {
+                    stats.blows[p].enemies += 1;
+                };
+            };
             if (!to_player or hit.damage <= 0) continue;
             const by = if (hit.attacker) |h| w.getConst(h) else null;
             stats.hurt(if (by) |e| r.game.scene_assets.?.round.kinds.get(e.kind.?).name() else "gone", hit.damage);
         }
+        for (0..2) |i| {
+            const p: u1 = @intCast(i);
+            was_in[p] = playerState(w, p);
+            struck_in[p] = null;
+            const m = playerMind(w, p) orelse continue;
+            const t = m.taken orelse continue;
+            if (w.playerOf(t.by) == 1 - p) {
+                struck_in[p] = playerState(w, 1 - p);
+                if (spotOf(w, 1 - p, was_at[p])) |x| try spots.append(gpa, x);
+            }
+        }
+        for (0..2) |i| was_at[i] = if (w.players[i].entity) |h| if (w.getConst(h)) |e| e.position else null else null;
     } else "limit";
     if (o.shots) |dir| try shot(gpa, io, r, dir, &shots, "end");
 
-    try out.print("{{\"seed\":{d},\"outcome\":\"{s}\",\"round\":{d},\"ticks\":{d},\"rounds\":[", .{ seed, how, if (n == 0) 0 else rounds[n - 1].number, r.updates });
+    try out.print("{{\"seed\":{d},\"characters\":[\"{t}\",\"{t}\"],\"outcome\":\"{s}\",\"round\":{d},\"ticks\":{d},\"partner_causes\":[", .{ seed, o.characters[0], o.characters[1], how, if (n == 0) 0 else rounds[n - 1].number, r.updates });
+    for (causes, 0..) |c, i| {
+        try out.writeAll(if (i == 0) "{" else ",{");
+        for (c.list[0..c.len], 0..) |x, j| try out.print("{s}\"{s}{s}{s}\":{d}", .{ if (j == 0) "" else ",", x.how, if (x.what.len == 0) "" else " ", x.what, x.count });
+        try out.writeAll("}");
+    }
+    try out.writeAll("],\"partner_hits\":[");
+    for (spots.items, 0..) |x, i| try out.print("{s}[{d},{d},{d},\"{t}\",\"{s}\",{d},\"{s}\",{},{d},{d},\"{t}\"]", .{ if (i == 0) "" else ",", x.striker, x.ahead, x.depth, x.state, x.foe, x.foe_ahead, x.goal, x.same_foe, x.moved_ahead, x.moved_depth, x.striker_state });
+    try out.writeAll("],\"rounds\":[");
     for (rounds[0..n], 0..) |*s, i| {
         if (i != 0) try out.writeAll(",");
         try out.print("{{\"round\":{d},\"ticks\":{d},\"lives_lost\":{d},\"time_overs\":{d},\"damage\":{{", .{ s.number, s.ticks, s.lives_lost, s.time_overs });
         for (s.damage[0..s.kinds], 0..) |d, j| try out.print("{s}\"{s}\":{d}", .{ if (j == 0) "" else ",", d.kind, d.damage });
-        try out.writeAll("}}");
+        try out.writeAll("},\"blows\":[");
+        for (s.blows, 0..) |b, j| try out.print("{s}{{\"enemies\":{d},\"partner\":{d}}}", .{ if (j == 0) "" else ",", b.enemies, b.partner });
+        try out.writeAll("]}");
     }
     try out.writeAll("]}\n");
     try out.flush();
+}
+
+const PlayerState = sorz.world.behaviours.player.State;
+
+fn playerMind(w: *const sorz.world.World, p: u1) ?*const sorz.world.behaviours.player.Mind {
+    const e = w.getConst(w.players[p].entity orelse return null) orelse return null;
+    return switch (e.mind) {
+        .player => |*m| m,
+        else => null,
+    };
+}
+
+fn playerState(w: *const sorz.world.World, p: u1) ?PlayerState {
+    return (playerMind(w, p) orelse return null).state;
+}
+
+/// What struck a CPU from its partner, `attacker`: a thing it threw; the blow it felt, landed at
+/// the last tick (`struck`: the striker's state then); a knee in a hold, or a throw's fall (by
+/// the state it was in at the last tick, `was`).
+fn cause(r: *const Run, w: *const sorz.world.World, attacker: sorz.world.Handle, struck: ?PlayerState, was: ?PlayerState) struct { []const u8, []const u8 } {
+    if (w.playerOf(attacker) == null) {
+        const e = w.getConst(attacker) orelse return .{ "thrown", "gone" };
+        return .{ "thrown", r.game.scene_assets.?.round.kinds.get(e.kind.?).name() };
+    }
+    if (struck) |s| return .{ "blow", @tagName(s) };
+    const s = was orelse return .{ "other", "none" };
+    return switch (s) {
+        .held, .held_behind => .{ "hold", "" },
+        .thrown, .tossed, .thrown_fall, .slammed, .air_fall, .air_slam, .lift, .shaken, .slam_pause => .{ "throw", @tagName(s) },
+        else => .{ "other", @tagName(s) },
+    };
+}
+
+/// Where a CPU stood as its partner's blow landed on it, at the end of that tick: across ahead of
+/// the striker (by its facing) and in depth from it; its state, its goal and whether that is the
+/// striker's foe; how far it moved at the tick (ahead by the striker's facing, and in depth); the
+/// nearest enemy in the striker's line ahead (`foe`: `beyond` it stood past one, `before` it stood
+/// between the striker and one, `none`) and how far ahead.
+const HitSpot = struct {
+    striker: u1,
+    striker_state: PlayerState,
+    ahead: i32,
+    depth: i32,
+    state: PlayerState,
+    foe: []const u8,
+    foe_ahead: i32,
+    goal: []const u8,
+    same_foe: bool,
+    moved_ahead: i32,
+    moved_depth: i32,
+};
+
+fn spotOf(w: *const sorz.world.World, k: u1, was: ?@FieldType(sorz.world.entity.Entity, "position")) ?HitSpot {
+    const p = w.getConst(w.players[k].entity orelse return null) orelse return null;
+    const q = w.getConst(w.players[1 - k].entity orelse return null) orelse return null;
+    const s: i32 = if (p.facing == .left) -1 else 1;
+    const ahead = (q.position.x.whole() - p.position.x.whole()) * s;
+    var foe_ahead: i32 = std.math.maxInt(i32);
+    for (&w.entities) |*e| {
+        if (!e.alive() or e.flags.hidden or e.team != .enemy or e.boxes.body == null) continue;
+        if (@abs(e.position.depth.whole() - p.position.depth.whole()) > 16) continue;
+        const x = (e.position.x.whole() - p.position.x.whole()) * s;
+        if (x > -8 and x < foe_ahead) foe_ahead = x;
+    }
+    const goals = .{ w.players[k].cpu.goal, w.players[1 - k].cpu.goal };
+    return .{
+        .striker = k,
+        .striker_state = p.mind.player.state,
+        .ahead = ahead,
+        .depth = q.position.depth.whole() - p.position.depth.whole(),
+        .state = q.mind.player.state,
+        .foe = if (foe_ahead == std.math.maxInt(i32)) "none" else if (foe_ahead < ahead) "beyond" else "before",
+        .foe_ahead = if (foe_ahead == std.math.maxInt(i32)) -1 else foe_ahead,
+        .goal = @tagName(goals[1]),
+        .same_foe = goals[0] == .foe and goals[1] == .foe and goals[0].foe.eql(goals[1].foe),
+        .moved_ahead = if (was) |x| (q.position.x.whole() - x.x.whole()) * s else 0,
+        .moved_depth = if (was) |x| q.position.depth.whole() - x.depth.whole() else 0,
+    };
+}
+
+/// The CPU whose blow `attacker` is: the player itself, or the thing it threw.
+fn striker(w: *const sorz.world.World, attacker: ?sorz.world.Handle) ?u1 {
+    const h = attacker orelse return null;
+    if (w.playerOf(h)) |p| return p;
+    const m = (w.getConst(h) orelse return null).missile orelse return null;
+    return w.playerOf(m.by);
 }
 
 /// The picture just presented, as DIR/NNNN-TICKS-WHAT.png.
@@ -218,7 +383,7 @@ fn shot(gpa: std.mem.Allocator, io: std.Io, r: *const Run, dir: []const u8, coun
 }
 
 fn usage(io: std.Io) noreturn {
-    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--seeds S,S,...] [--limit TICKS] [--shots DIR]\n") catch {};
+    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR]\n") catch {};
     std.process.exit(2);
 }
 
@@ -235,6 +400,9 @@ pub fn main(init: std.process.Init) !void {
         const value = args.next() orelse usage(io);
         if (std.mem.eql(u8, arg, "--lives")) {
             o.lives = std.fmt.parseInt(u8, value, 10) catch usage(io);
+        } else if (std.mem.eql(u8, arg, "--chars")) {
+            var it = std.mem.tokenizeScalar(u8, value, ',');
+            for (&o.characters) |*c| c.* = std.meta.stringToEnum(Character, it.next() orelse usage(io)) orelse usage(io);
         } else if (std.mem.eql(u8, arg, "--seeds")) {
             seeds_text = value;
         } else if (std.mem.eql(u8, arg, "--limit")) {
