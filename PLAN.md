@@ -437,7 +437,7 @@
     lives lost -1.8%, damage from the foes -0.6% (neither significant). Each part found in a
     stalled game and checked there (round 4's, round 6's). zig build test.
 
-- [ ] **41 — A fight with the weapon** — Depends: 39.
+- [x] **41 — A fight with the weapon** — Depends: 39.
   - Armed, the CPU fought as unarmed, from its jab's reach: at the hardest level its armed blows
     landed 36% (the knife) to 66% (the pipe) of the time, nearer than the weapon's band mostly,
     and its damage a minute armed was no more than unarmed. The weapon's band, from the holder's
@@ -447,6 +447,10 @@
     than its near end; a stab only within the stab's reach and level (past them a press throws
     the knife); no walk in to grab.
   - Gate: cpus-check at the hardest level: more damage a minute armed, no more lives lost.
+  - [x] Checked 2026-10-11: cpus-check at the hardest level, 7 lives, the nine pairings, seeds 1
+    and 2, against before: damage a minute armed 33.0 -> 42.6 (unarmed 34.1), armed 98 -> 108
+    minutes; lives lost +3.6%, damage taken +1.3% (neither significant: t 0.9, 0.5); all 18
+    reach the ending. zig build test. The user's play is pending.
 
 ## Standing rule
 

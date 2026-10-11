@@ -12,6 +12,10 @@
 //!   blocks away), or else a place of its own on the floor, mostly ahead of player 1 (the way the
 //!   round goes) and out of its line, where it stays a while before choosing another. Food it
 //!   needs, it goes for past the foes not in its way.
+//! - Armed, it strikes from its weapon's reach (`armedBand`: where the weapon's pose strikes in
+//!   its armed blow's frames), standing near its far end, stepping back nearer than its near
+//!   end; with a knife only within the stab's reach and level (a press past them throws it); it
+//!   does not walk in to grab (a hold drops the weapon).
 //! - Held from behind by a foe, it jumps out and, in the moment after, throws the holder over;
 //!   thrown by one, it lands on its feet now and then (up and C): at a person's reaction, and
 //!   now and then missed.
@@ -185,6 +189,8 @@ const short_px = .{ 2, 6 };
 const slack_px = .{ 2, 6 };
 const too_close = 14;
 const jab_level = 10;
+/// Armed, the near end of its weapon's band less this (a body's half): nearer, it steps back.
+const armed_room = 8;
 const jab_ahead = 48;
 const smash_from = 24;
 const smash_reach = 30;
@@ -371,6 +377,7 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
     if (ready(p)) if (pressOver(w, kinds, spotHere(p), press_out)) |out| return safe(w, g, out, p);
     // Something coming at it in its line: once it sees it, it steps out of the way.
     const jab = jabAhead(kinds, p);
+    const blow = reachOf(w, kinds, p);
     if (threat(w, kinds, p, jab)) |t| {
         if (!m.dodge) m.dodge = m.chance(dodge_chance);
         if (m.dodge and ready(p)) {
@@ -392,7 +399,7 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
     // A foe in front of it, in reach: it strikes, whatever it goes for (but food it needs, past a
     // foe not in its way); at once while the foe is not reeling from its blows (it would strike
     // first).
-    if (foeInFront(w, kinds, p, jab)) |f| if (!needsFood(w, kinds, m, p, f)) {
+    if (foeInFront(w, kinds, p, blow)) |f| if (!needsFood(w, kinds, m, p, f)) {
         if (!behaviours.inState(&f.mind, "reel")) m.breath = 0;
         const a: Actions = .{ .attack = strike(m) };
         if (a.attack) noteFutile(w, m, f);
@@ -420,8 +427,8 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
         if (m.chance(back_chance)) return .{ .attack = true, .jump = true };
     };
     const a: Actions = switch (m.goal) {
-        .foe => |h| if (foeAt(w, kinds, h)) |f| fightFoe(w, m, p, f, partner, fire, reachOn(kinds, jab, p, f), kinds.get(f.kind.?).family() == .boss) else .{},
-        .smash => |h| if (standing(w, h)) |f| strikeAt(w, m, p, f, smash_from, smash_reach) else .{},
+        .foe => |h| if (foeAt(w, kinds, h)) |f| fightFoe(w, m, p, f, partner, fire, blow, blow.on(kinds, p, f), kinds.get(f.kind.?).family() == .boss) else .{},
+        .smash => |h| if (standing(w, h)) |f| strikeAt(w, m, p, f, smash_from, smash_reach, .{ .near = too_close, .far = smash_reach, .level = jab_level }) else .{},
         .take => |h| if (w.getConst(h)) |f| take(kinds, m, p, f) else .{},
         .roam => |s| roam(m, p, s),
     };
@@ -592,6 +599,36 @@ fn roam(m: *Memory, p: *const Entity, s: Spot) Actions {
     go(&a, s.x - p.position.x.whole(), s.depth - p.position.depth.whole(), there_px[0], there_px[1]);
     if (@as(u8, @bitCast(a)) == 0 and m.linger > 0) m.linger -= 1;
     return a;
+}
+
+/// The band across ahead of `p` where its weapon's blow reaches, from its armed blow's frames
+/// (`armed_swing` for a swung weapon, else `armed_stab`): where those whose hand strikes put the
+/// weapon, and the attack boxes of the weapon's pose there. Null unarmed, or without such frames.
+pub fn armedBand(w: *const World, kinds: *const Kinds, p: *const Entity) ?[2]i32 {
+    const wh = p.mind.player.weapon orelse return null;
+    const we = w.getConst(wh) orelse return null;
+    const wd = kinds.get(we.kind.?).definition;
+    const pd = kinds.get(p.kind.?).definition;
+    const swung = (wd.number("swung") orelse 0) != 0;
+    const ai = pd.animation(if (swung) "armed_swing" else "armed_stab") orelse return null;
+    var near: i32 = std.math.maxInt(i32);
+    var far: i32 = std.math.minInt(i32);
+    for (pd.animations[ai].frames) |f| {
+        const h = f.hand orelse continue;
+        if (!h.strikes) continue;
+        const pose = wd.animation(h.pose) orelse continue;
+        for (wd.animations[pose].frames) |pf| {
+            const span = wd.boxes[pf.attack orelse continue].across(h.turned);
+            near = @min(near, h.x + span.from);
+            far = @max(far, h.x + span.to);
+        }
+    }
+    return if (near > far) null else .{ near, far };
+}
+
+/// Whether `p` holds a weapon (its states the armed ones).
+fn armed(p: *const Entity) bool {
+    return std.mem.startsWith(u8, @tagName(p.mind.player.state), "armed_");
 }
 
 /// Whether `p` stands free to act: ready, idle or walking, armed or not.
@@ -912,7 +949,7 @@ fn foeBehind(w: *const World, kinds: *const Kinds, p: *const Entity) bool {
 /// it comes at out of its line, where the boss charges, slashes and throws; facing it while
 /// player 1 is near it, it keeps out of its line, facing it, and lets player 1 draw it; its back
 /// turned, it comes round to it. `range`: its jab's reach on it.
-fn fightFoe(w: *const World, m: *Memory, p: *const Entity, f: *const Entity, partner: ?*const Entity, fire: ?Fire, range: i32, boss: bool) Actions {
+fn fightFoe(w: *const World, m: *Memory, p: *const Entity, f: *const Entity, partner: ?*const Entity, fire: ?Fire, blow: Reach, range: i32, boss: bool) Actions {
     const px = p.position.x.whole();
     const fx = f.position.x.whole();
     const dx = fx - px;
@@ -959,7 +996,8 @@ fn fightFoe(w: *const World, m: *Memory, p: *const Entity, f: *const Entity, par
             return a;
         }
     }
-    return strikeAt(w, m, p, f, if (m.grab) 0 else @intCast(@max(range - m.short, too_close)), range - 1);
+    // Armed, it does not walk in to grab (the hold would drop the weapon).
+    return strikeAt(w, m, p, f, if (m.grab and !armed(p)) 0 else @intCast(@max(range - m.short, blow.near)), range - 1, blow);
 }
 
 /// Whether its place on `side` of foe `f`, `range` across from it, is player 1's: player 1 stands
@@ -976,7 +1014,7 @@ fn sideTaken(f: *const Entity, partner: ?*const Entity, fire: ?Fire, side: i32, 
 /// `f` struck: within `within` across and level with it, faced and struck at its pace; else to
 /// `from` pixels across from it on the CPU's side (into it, at 0), level with it. Too close, it
 /// steps back, the other way at the edge of the view the players are kept in.
-fn strikeAt(w: *const World, m: *Memory, p: *const Entity, f: *const Entity, from: u8, within: i32) Actions {
+fn strikeAt(w: *const World, m: *Memory, p: *const Entity, f: *const Entity, from: u8, within: i32, r: Reach) Actions {
     const px = p.position.x.whole();
     const dx = f.position.x.whole() - px;
     const dd = f.position.depth.whole() - p.position.depth.whole();
@@ -986,7 +1024,7 @@ fn strikeAt(w: *const World, m: *Memory, p: *const Entity, f: *const Entity, fro
         go(&a, dx, dd, 0, m.slack);
         return a;
     }
-    if (@abs(dx) < too_close) {
+    if (@abs(dx) < r.near) {
         a.left = dx >= 0;
         a.right = dx < 0;
         if (atEdge(w, p, a.left)) {
@@ -995,7 +1033,7 @@ fn strikeAt(w: *const World, m: *Memory, p: *const Entity, f: *const Entity, fro
         }
         return a;
     }
-    if (@abs(dx) <= within and @abs(dd) <= jab_level) {
+    if (@abs(dx) <= within and @abs(dd) <= r.level) {
         if ((dx < 0) != (p.facing == .left)) return .{ .left = dx < 0, .right = dx >= 0 };
         return .{ .attack = strike(m) };
     }
@@ -1021,14 +1059,14 @@ fn threat(w: *const World, kinds: *const Kinds, p: *const Entity, jab: i32) ?*co
     return null;
 }
 
-/// A foe standing in front of `p` within its jab's reach (`jab` ahead of it), level with it, and
-/// not down.
-fn foeInFront(w: *const World, kinds: *const Kinds, p: *const Entity, jab: i32) ?*const Entity {
+/// A foe standing in front of `p` within its blow's reach (`Reach`: its jab's, or armed its
+/// weapon's), level with it, and not down.
+fn foeInFront(w: *const World, kinds: *const Kinds, p: *const Entity, r: Reach) ?*const Entity {
     for (&w.entities) |*f| {
         if (!isFoe(kinds, f) or behaviours.inState(&f.mind, "knocked_down")) continue;
         const dx = f.position.x.whole() - p.position.x.whole();
         const ahead = if (p.facing == .left) -dx else dx;
-        if (ahead >= too_close and ahead < reachOn(kinds, jab, p, f) and @abs(f.position.depth.whole() - p.position.depth.whole()) <= jab_level) return f;
+        if (ahead >= r.near and ahead < r.on(kinds, p, f) and @abs(f.position.depth.whole() - p.position.depth.whole()) <= r.level) return f;
     }
     return null;
 }
@@ -1043,6 +1081,34 @@ fn jabAhead(kinds: *const Kinds, p: *const Entity) i32 {
 fn reachOn(kinds: *const Kinds, jab: i32, p: *const Entity, f: *const Entity) i32 {
     const body = kinds.get(f.kind.?).definition.boxes[f.boxes.body orelse return jab].across(f.boxes.mirrored);
     return jab + if (f.position.x.whole() > p.position.x.whole()) -body.from else body.to;
+}
+
+/// Where its blow strikes: from `near` across ahead of it to `far` (its blow's box's far end, on
+/// which `reachOn` puts the foe's body), at most `most` across (a stab's: past it, the knife is
+/// thrown), within `level` in depth.
+const Reach = struct {
+    near: i32,
+    far: i32,
+    most: i32 = std.math.maxInt(i32),
+    level: i32,
+
+    /// How far across from `f` its blow meets its body.
+    fn on(r: Reach, kinds: *const Kinds, p: *const Entity, f: *const Entity) i32 {
+        return @min(reachOn(kinds, r.far, p, f), r.most);
+    }
+};
+
+/// Its blow's reach (`Reach`): unarmed, its jab's; armed, its weapon's band (`armedBand`, its
+/// near end a body short), and a stabbing weapon's within the stab's reach and level.
+fn reachOf(w: *const World, kinds: *const Kinds, p: *const Entity) Reach {
+    const jab: Reach = .{ .near = too_close, .far = jabAhead(kinds, p), .level = jab_level };
+    if (!armed(p)) return jab;
+    const band = armedBand(w, kinds, p) orelse return jab;
+    const weapon = w.getConst(p.mind.player.weapon.?).?;
+    const near = @max(band[0] - armed_room, too_close);
+    if ((kinds.get(weapon.kind.?).definition.number("swung") orelse 0) != 0) return .{ .near = near, .far = band[1], .level = jab_level };
+    const n = kinds_mod.numbersOf(behaviours.module(.player), kinds.get(p.kind.?));
+    return .{ .near = near, .far = band[1], .most = n.stab_reach - 1, .level = n.stab_level - 1 };
 }
 
 /// An item: to it, and picked up.
