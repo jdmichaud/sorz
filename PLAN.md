@@ -392,6 +392,25 @@
     ticks after their fights' end (0 before), as rounds 2 and 5 (round 3's boss 264, his own);
     round 7 has no boss (its players walk out); zig build test.
 
+- [ ] **39 — The CPU's skills, at the hardest level** — Depends: 34.
+  - The user saw the CPU never break a hold from behind, nor gain from weapons, and leave food
+    it needed for the foes. cpus-check at the hardest level (72 games, 7 lives): held from
+    behind 595 times, 6 jumps out (by chance), no throw of the holder; no throw landed on its
+    feet; under 40% of its health with food on the screen 6% of that time, the food mostly
+    given up (its walk counted stuck while it was struck or down, or at the floor's back edge,
+    short of which it stood).
+  - Held from behind by a foe, it jumps out (C) and in the moment after throws the holder (B);
+    thrown by one, up and C land it on its feet: at a person's reaction, now and then missed.
+  - Food it needs (under 40%) comes before the foes, and it walks past those not in its way; it
+    takes an item as soon as their bodies meet; a walk is counted stuck only while it is free to
+    walk.
+  - Armed, it stands free to act as unarmed (the holes, the presses and player 1's way kept to,
+    the jump kick steered). Weapons: armed it deals more damage a minute than unarmed (38 to
+    31), but going for them made it fight worse (25 a minute): its fight is the unarmed one;
+    a fight with the weapon's reach and swing is left for later.
+  - Gate: cpus-check at the hardest level against before: holds escaped, throws landed, less
+    time hurt with food on the screen, no more lives lost.
+
 ## Standing rule
 
 - [ ] **S1 — The repository stands alone** — Depends: none.
