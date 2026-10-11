@@ -381,20 +381,22 @@ pub fn build(b: *std.Build) void {
     const cpus_seeds = b.option([]const u8, "cpus-seeds", "cpus-check's seeds of the CPUs' draws, one game each (default 1)");
     const cpus_shots = b.option([]const u8, "cpus-shots", "cpus-check writes its pictures (rounds cleared, lives lost, the end) into this directory");
     const cpus_check_step = b.step("cpus-check", "Play the whole game with the two CPUs on the content of -Drom=ROM, its rounds measured");
+    const cpus_exe = b.addExecutable(.{
+        .name = "sorz-cpus-check",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tools/cpus_check.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "sorz", .module = shared },
+                .{ .name = "agent", .module = agent },
+                .{ .name = "extract", .module = extract },
+            },
+        }),
+    });
+    // The tool alone, into the prefix's bin, to run it by hand (its options, many games at once).
+    b.step("cpus-check-exe", "Build sorz-cpus-check without running it, into the prefix's bin").dependOn(&b.addInstallArtifact(cpus_exe, .{}).step);
     if (rom_path) |rom| {
-        const cpus_exe = b.addExecutable(.{
-            .name = "sorz-cpus-check",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/tools/cpus_check.zig"),
-                .target = target,
-                .optimize = optimize,
-                .imports = &.{
-                    .{ .name = "sorz", .module = shared },
-                    .{ .name = "agent", .module = agent },
-                    .{ .name = "extract", .module = extract },
-                },
-            }),
-        });
         const check = b.addRunArtifact(cpus_exe);
         check.addArg(rom);
         if (cpus_lives) |n| check.addArgs(&.{ "--lives", b.fmt("{d}", .{n}) });
