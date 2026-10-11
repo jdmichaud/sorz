@@ -348,7 +348,7 @@
     seed 7 with 7 lives reaches the ending, no time over in round 7 (23 before), and so do seeds
     1 to 8 (seven before); with 3 lives all eight reach round 8 as before; the attract demo equal
     to sor-remaster at every display tick in trace, sound and pictures; zig build test.
-- [ ] **36 — CPUs out of each other's blows** — Depends: 34.
+- [x] **36 — CPUs out of each other's blows** — Depends: 34.
   - cpus-check's nine pairings of characters, eight seeds each: 3.6% of the blows the two CPUs
     land hit the other one, one every 37 s; 90% are the combo's punches. The one struck was
     mostly walking or standing (73%), mostly going for the same foe (74%): between the striker
@@ -365,6 +365,11 @@
     CPUs go with foes on both sides of them.
   - Gate: cpus-check's nine pairings, eight seeds each, against the same before: fewer blows on
     the partner, no more lives lost nor longer rounds; the unit tests; the user's play.
+  - [x] Checked 2026-10-11: cpus-check, the nine pairings, seeds 1 to 16 (144 games each way),
+    against before: blows on the partner 3.62% -> 1.52%; with foes on both sides, both CPUs on
+    one side 48% -> 23% of the time, one on each 47% -> 71%; lives lost -3.1%, damage from the
+    foes -1.6%, rounds as long; stalled rounds 16 -> 10 (item 36 does not touch the stalls).
+    zig build test. The user's play is pending.
 - [x] **37 — An enemy grabbed while lifted** — Depends: none.
   - cpus-check's games warn now and then that an acrobat asked for frame 3 of its three-frame
     thrown pose, reeling. A grab of an enemy in the air from a lift shook its reel first, which

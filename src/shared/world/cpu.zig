@@ -5,11 +5,12 @@
 //!
 //! - In the fight it plays as a person, with a mind of its own. A few times a second it looks
 //!   at the screen (so it reacts late) and goes for the best of what it shows, a little at
-//!   random: a foe near (one on a player 1 in trouble first, one player 1 fights after the
-//!   others), what lies about (food when hurt, money, gold, a life, a special attack, unless
-//!   player 1 is nearer), a thing to break (a blow knocks the bridge's barriers and the deck's
-//!   blocks away), or else a place of its own on the floor, mostly ahead of player 1 (the way the
-//!   round goes) and out of its line, where it stays a while before choosing another.
+//!   random: a foe near (one on a player 1 in trouble first, one player 1 fights or goes for
+//!   after the others, so that with foes on both sides each takes one), what lies about (food
+//!   when hurt, money, gold, a life, a special attack, unless player 1 is nearer), a thing to
+//!   break (a blow knocks the bridge's barriers and the deck's blocks away), or else a place of
+//!   its own on the floor, mostly ahead of player 1 (the way the round goes) and out of its line,
+//!   where it stays a while before choosing another.
 //! - It strikes a foe in front of it within its jab's reach (its first blow's box on the foe's
 //!   body) at once, whatever it goes for, at a person's pace: a burst of blows (the combo's four)
 //!   and a breath, unless the foe is not reeling. It goes to strike from near its jab's end, out
@@ -441,7 +442,8 @@ fn lookAround(w: *const World, kinds: *const Kinds, floor: ?*const Floor, m: *Me
 }
 
 /// What it goes for: the best of what the screen shows, a little at random. A foe near comes
-/// first (one on a player 1 in trouble before all, one player 1 fights after the others); then
+/// first (one on a player 1 in trouble before all, one player 1 fights after the others, one
+/// player 1 nearer to it goes for after the others: the CPU takes the other side); then
 /// what lies about (food when hurt, unless player 1 is more hurt and nearer; money, gold, a life,
 /// a special attack, unless player 1 is nearer); then a thing to break (the same); else a place
 /// of its own, kept until it has stayed there its while (the leader's ahead of itself). A goal
@@ -465,9 +467,11 @@ fn goalOf(w: *const World, kinds: *const Kinds, floor: ?*const Floor, m: *Memory
         if (isFoe(kinds, e)) {
             goal = .{ .foe = h };
             score = 120 - @divTrunc(far, 3);
-            if (partner) |q| if (apart(q, e) < 56) {
-                score += if (inTrouble(q)) 40 else -40;
-            };
+            if (partner) |q| {
+                if (apart(q, e) < 56) {
+                    score += if (inTrouble(q)) 40 else -40;
+                } else if (headsFor(q, e) and apart(q, e) < far) score -= 40;
+            }
         } else if (kind.family() == .item and e.mind == .item and e.mind.item.state == .lying and e.holder == null) {
             goal = .{ .take = h };
             if (isFood(kind)) {
@@ -725,6 +729,13 @@ fn healthShare(kinds: *const Kinds, e: *const Entity) i32 {
 }
 
 /// Player 1 held, hurt or down: a foe on it is helped against first.
+/// Whether player 1 `q` goes for `e`, as a person sees it: it faces it, not in trouble.
+fn headsFor(q: *const Entity, e: *const Entity) bool {
+    if (inTrouble(q)) return false;
+    const dx = e.position.x.whole() - q.position.x.whole();
+    return dx != 0 and (dx < 0) == (q.facing == .left);
+}
+
 fn inTrouble(q: *const Entity) bool {
     return switch (q.mind.player.state) {
         .held, .held_behind, .hurt, .knocked_down, .down, .thrown => true,
