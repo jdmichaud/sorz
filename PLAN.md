@@ -331,6 +331,19 @@
   - [x] Checked 2026-10-10: the overlays' frames as before at 1.20 ms a frame in Debug with a
     notice up (2.60 before); a version 1 tree refused; a misspelt state name stops the build;
     the CPU eats the fixture's apple; zig build test, variants-check, netplay-check (25 flows).
+- [ ] **35 — Enemies lost off the screen** — Depends: none.
+  - Found by item 34's cpus-check: in round 7 an enemy went far off the screen without being
+    knocked out, never counted off, and the reserve's last enemies never came (time overs to the
+    game's end). Two ways led there, both unlike the original's:
+  - A thrown enemy whose slide lands (rising onto round 7's railing) flies on in the air with the
+    speed it kept, to land again or, over the shaft, fall out of the fight; it went on at the
+    railing's height, over the shaft and off the screen.
+  - An enemy in the air as the special attack is called drops by its common fall: on the floor
+    under it, or, over a hole, knocked out fallen far enough; it fell without end.
+  - The common enemies a section or round 8's room places stay in the world far off the screen,
+    as the original marks its groups' (a wave's and a reserve's still go).
+  - Gate: the unit tests of the three; cpus-check's game that stopped (seed 7, 7 lives) reaches
+    the ending; the attract demo still equal to sor-remaster at every display tick.
 
 ## Standing rule
 
