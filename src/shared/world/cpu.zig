@@ -27,6 +27,8 @@
 //!   it, which would grab it. With two CPUs (0 PLAYERS - 2 CPU), each takes the other for its
 //!   player 1, and CPU 1 leads: it goes on through the round as a CPU alone does, and keeps off
 //!   CPU 2 only as far as not walking into it, while CPU 2 gives way to it as to a person.
+//! - Nor does it walk into player 1's blows' way while player 1 fights (both CPUs): it goes
+//!   round it, and fights a foe there from the other side; there already, it stays.
 //! - It walks round the holes and the walls of the round's floor (round 4's bridge, round 6's
 //!   machines), never into one. A walk that does not take it on (a solid thing, player 1 in the
 //!   way, a jitter) makes it look again, give up a thing it went for, and take a detour along the
@@ -234,6 +236,10 @@ const body_room = 14;
 const reach_room = 32;
 const pass_room = 48;
 const coming_room = 72;
+/// Player 1's blows' way (`Fire`): beyond its jab's reach on a body, this much more across; in
+/// depth, as far as its blows reach (16) and a little more.
+const fire_room = 16;
+const fire_line = 20;
 
 /// What the CPU plays with besides the world: the kinds, the round's floor by cells (its holes),
 /// the name entry's letters (content), the buttons of the options' CONTROL, and whether it leads
@@ -314,6 +320,7 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
     const kinds = g.kinds;
     const leads = g.leads;
     const partner = partnerOf(w, k);
+    const fire = fireOf(w, kinds, partner);
     const stuck = noteStuck(m, p);
     m.wanted = .{};
     if (p.holding) |h| return withFoeHeld(w, kinds, m, k, p, h);
@@ -364,7 +371,7 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
         m.detour -= 1;
         if (goalPlace(w, m.goal)) |to| {
             const a = wayRound(w, g, p, to);
-            if (walks(a)) return safe(w, g, keepOff(m, a, p, partner, leads), p);
+            if (walks(a)) return safe(w, g, clearOf(m, keepOff(m, a, p, partner, leads), p, fire), p);
         }
         m.detour = 0;
     }
@@ -372,21 +379,21 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
     if (m.wait > 0) {
         m.wait -= 1;
         m.wanted = walkOf(m.chose);
-        return safe(w, g, keepOff(m, walkOf(m.chose), p, partner, leads), p);
+        return safe(w, g, clearOf(m, keepOff(m, walkOf(m.chose), p, partner, leads), p, fire), p);
     }
     // A foe right behind it, while it fights another: now and then, the back attack.
     if (m.goal == .foe and ready(p)) if (foeBehind(w, kinds, p)) {
         if (m.chance(back_chance)) return .{ .attack = true, .jump = true };
     };
     const a: Actions = switch (m.goal) {
-        .foe => |h| if (foeAt(w, kinds, h)) |f| fightFoe(m, p, f, partner, reachOn(kinds, jab, p, f), kinds.get(f.kind.?).family() == .boss) else .{},
+        .foe => |h| if (foeAt(w, kinds, h)) |f| fightFoe(m, p, f, partner, fire, reachOn(kinds, jab, p, f), kinds.get(f.kind.?).family() == .boss) else .{},
         .smash => |h| if (standing(w, h)) |f| strikeAt(m, p, f, smash_from, smash_reach) else .{},
         .take => |h| if (w.getConst(h)) |f| take(m, p, f) else .{},
         .roam => |s| roam(m, p, s),
     };
     if (a.attack and m.goal == .foe) if (foeAt(w, kinds, m.goal.foe)) |f| noteFutile(w, m, f);
     m.wanted = walkOf(a);
-    return if (ready(p)) safe(w, g, keepOff(m, a, p, partner, leads), p) else a;
+    return if (ready(p)) safe(w, g, clearOf(m, keepOff(m, a, p, partner, leads), p, fire), p) else a;
 }
 
 /// A press at foe `f`: counted while its health stays as it was; after `futile_presses`, it backs
@@ -775,12 +782,13 @@ fn foeBehind(w: *const World, kinds: *const Kinds, p: *const Entity) bool {
 }
 
 /// Its foe: at the reach it drew (or into it, to grab it), on its own side of it (the other when
-/// player 1 is there), level with it; faced, and struck at its pace, but not while it is down;
+/// player 1 is there, or its blows' way holds the place, unless the other is taken too), level
+/// with it; faced, and struck at its pace, but not while it is down;
 /// from farther, in its line, now and then a jump kick in. A boss, from farther than its reach,
 /// it comes at out of its line, where the boss charges, slashes and throws; facing it while
 /// player 1 is near it, it keeps out of its line, facing it, and lets player 1 draw it; its back
 /// turned, it comes round to it. `range`: its jab's reach on it.
-fn fightFoe(m: *Memory, p: *const Entity, f: *const Entity, partner: ?*const Entity, range: i32, boss: bool) Actions {
+fn fightFoe(m: *Memory, p: *const Entity, f: *const Entity, partner: ?*const Entity, fire: ?Fire, range: i32, boss: bool) Actions {
     const px = p.position.x.whole();
     const fx = f.position.x.whole();
     const dx = fx - px;
@@ -795,10 +803,7 @@ fn fightFoe(m: *Memory, p: *const Entity, f: *const Entity, partner: ?*const Ent
         return .{ .left = dx < 0, .right = dx > 0, .jump = true };
     }
     var side: i32 = if (dx > 0) -1 else 1;
-    if (partner) |q| {
-        const qx = q.position.x.whole();
-        if ((qx - fx) * side > 0 and @abs(qx - fx) <= range + reach_room and @abs(q.position.depth.whole() - f.position.depth.whole()) <= line) side = -side;
-    }
+    if (sideTaken(f, partner, fire, side, range) and !sideTaken(f, partner, fire, -side, range)) side = -side;
     if (behaviours.inState(&f.mind, "knocked_down")) {
         // Down: it waits at its range, out of the way of its getting up.
         var a: Actions = .{};
@@ -828,6 +833,17 @@ fn fightFoe(m: *Memory, p: *const Entity, f: *const Entity, partner: ?*const Ent
         }
     }
     return strikeAt(m, p, f, if (m.grab) 0 else @intCast(@max(range - m.short, too_close)), range - 1);
+}
+
+/// Whether its place on `side` of foe `f`, `range` across from it, is player 1's: player 1 stands
+/// there by the foe, in its line, or its blows' way holds the place.
+fn sideTaken(f: *const Entity, partner: ?*const Entity, fire: ?Fire, side: i32, range: i32) bool {
+    const fx = f.position.x.whole();
+    const fd = f.position.depth.whole();
+    if (fire) |z| if (z.holds(.{ .x = fx + side * range, .depth = fd })) return true;
+    const q = partner orelse return false;
+    const qx = q.position.x.whole();
+    return (qx - fx) * side > 0 and @abs(qx - fx) <= range + reach_room and @abs(q.position.depth.whole() - fd) <= line;
 }
 
 /// `f` struck: within `within` across and level with it, faced and struck at its pace; else to
@@ -953,6 +969,69 @@ fn keepOff(m: *const Memory, a: Actions, p: *const Entity, q: ?*const Entity, le
     if (!at_it) {
         out.left = a.left;
         out.right = a.right;
+    }
+    return out;
+}
+
+/// Player 1's blows' way, while it fights: ahead of it (by its facing) to its jab's reach on a
+/// body and `fire_room` more, within `fire_line` of its line in depth.
+const Fire = struct {
+    x: i32,
+    depth: i32,
+    way: i32,
+    reach: i32,
+
+    fn holds(z: Fire, s: Spot) bool {
+        const ahead = (s.x - z.x) * z.way;
+        return ahead > 0 and ahead <= z.reach and @abs(s.depth - z.depth) <= fire_line;
+    }
+};
+
+/// Player 1's blows' way (`Fire`) while it strikes, or a foe stands in it or a walk's room
+/// beyond (it is about to strike); none else.
+fn fireOf(w: *const World, kinds: *const Kinds, partner: ?*const Entity) ?Fire {
+    const q = partner orelse return null;
+    const z: Fire = .{
+        .x = q.position.x.whole(),
+        .depth = q.position.depth.whole(),
+        .way = if (q.facing == .left) -1 else 1,
+        .reach = jabAhead(kinds, q) + body_room + fire_room,
+    };
+    switch (q.mind.player.state) {
+        .attack1, .attack2, .attack3, .attack4, .armed_attack, .armed_stab, .armed_swing => return z,
+        else => {},
+    }
+    for (&w.entities) |*f| {
+        if (!isFoe(kinds, f) or behaviours.inState(&f.mind, "knocked_down")) continue;
+        const ahead = (f.position.x.whole() - z.x) * z.way;
+        if (ahead > 0 and ahead <= z.reach + pass_room and @abs(f.position.depth.whole() - z.depth) <= line) return z;
+    }
+    return null;
+}
+
+/// The walk of `a` kept out of player 1's blows' way (`fire`): a step that would take it in is
+/// left out, and for one across it goes round in depth, the nearer way. Already in it (player 1
+/// came behind it), it stays: leaving the foe it fights would leave it open.
+fn clearOf(m: *const Memory, a: Actions, p: *const Entity, fire: ?Fire) Actions {
+    const z = fire orelse return a;
+    const here = spotHere(p);
+    if (z.holds(here)) return a;
+    const dd = here.depth - z.depth;
+    const up = if (dd != 0) dd < 0 else m.above;
+    var out = a;
+    const sx: i32 = if (a.right) hole_ahead[0] else if (a.left) -hole_ahead[0] else 0;
+    const sd: i32 = if (a.down) hole_ahead[1] else if (a.up) -hole_ahead[1] else 0;
+    if (sd != 0 and z.holds(.{ .x = here.x, .depth = here.depth + sd })) {
+        out.up = false;
+        out.down = false;
+    }
+    if (sx != 0 and z.holds(.{ .x = here.x + sx, .depth = here.depth })) {
+        out.left = false;
+        out.right = false;
+        if (!out.up and !out.down) {
+            out.up = up;
+            out.down = !up;
+        }
     }
     return out;
 }

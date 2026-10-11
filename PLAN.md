@@ -354,9 +354,9 @@
     mostly walking or standing (73%), mostly going for the same foe (74%): between the striker
     and that foe (56%), or close past it (27%).
   - A CPU keeps out of player 1's blows' way, as a person does: ahead of it, within its jab's
-    reach on a body and a margin, in its line, while a foe stands there or it strikes. In that
-    way, it steps out of the line; a walk that would take it in goes round in depth; its spot at
-    a foe there is on the other side. Its own blows are not held back.
+    reach on a body and a margin, in its line, while a foe stands there or it strikes. A walk
+    that would take it in goes round in depth; its spot at a foe there is on the other side; one
+    already in it stays (stepping out left it open to the foes). Its own blows are not held back.
   - `cpus-check --chars` chooses the CPUs' characters; it reports each CPU's blows landed on
     the foes and on the other, by what struck, and where the one struck stood.
   - Gate: cpus-check's nine pairings, eight seeds each, against the same before: fewer blows on
