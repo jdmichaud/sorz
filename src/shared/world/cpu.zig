@@ -11,6 +11,9 @@
 //!   break (a blow knocks the bridge's barriers and the deck's blocks away), or else a place of
 //!   its own on the floor, mostly ahead of player 1 (the way the round goes) and out of its line,
 //!   where it stays a while before choosing another.
+//! - Held from behind by a foe, it jumps out and, in the moment after, throws the holder over;
+//!   thrown by one, it lands on its feet now and then (up and C): at a person's reaction, and
+//!   now and then missed.
 //! - It strikes a foe in front of it within its jab's reach (its first blow's box on the foe's
 //!   body) at once, whatever it goes for, at a person's pace: a burst of blows (the combo's four)
 //!   and a breath, unless the foe is not reeling. It goes to strike from near its jab's end, out
@@ -103,6 +106,11 @@ pub const Memory = struct {
     /// The foe it holds, and the knees it gives it before it throws it.
     foe_held: ?Handle = null,
     knees: u8 = 0,
+    /// A foe's hold from behind or throw it is in (`breakOut`), the ticks before it reacts, and
+    /// whether it tries this time.
+    caught: Caught = .none,
+    react: u8 = 0,
+    tries: bool = false,
     /// Its side of player 1's line: above it (farther away) or below.
     above: bool = false,
     /// A walk that does not take it from where it stood (or one it kept off player 1): the
@@ -133,6 +141,10 @@ pub const Memory = struct {
     }
 };
 
+/// A foe's hold or throw the CPU is in: held from behind (and jumping out), the moment after a
+/// jump out (`counter_window`), thrown (knocked down, landing on its feet still open), or none.
+pub const Caught = enum { none, held_behind, counter, thrown };
+
 /// A place in the world: across, and in depth.
 pub const Spot = struct { x: i32 = 0, depth: i32 = 0 };
 
@@ -149,6 +161,15 @@ const burst = .{ 4, 6 };
 const beat_ticks = .{ 2, 4 };
 const breath_ticks = .{ 4, 10 };
 const knees = .{ 0, 2 };
+/// A foe's hold from behind or throw (`breakOut`): the ticks before the CPU reacts (in the moment
+/// after a jump out, which lasts some 8 ticks, the second numbers), and the chances in a hundred
+/// that it jumps out of the hold, throws the holder in the moment after, and lands a throw on
+/// its feet (up and C at once, harder).
+const react_ticks = .{ 3, 8 };
+const counter_react_ticks = .{ 1, 3 };
+const escape_chance = 90;
+const counter_chance = 80;
+const recover_chance = 60;
 /// Its foe: how far short of its jab's reach on it it stands (`reachOn`: the jab meets a punk's
 /// body from 63 to 77 pixels across, by the character, out of the punk's punch, 56), how near in
 /// depth (blows reach 16), the least it keeps across; the depth within which it strikes a foe in
@@ -325,6 +346,7 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
     const stuck = noteStuck(m, p);
     m.wanted = .{};
     if (p.holding) |h| return withFoeHeld(w, kinds, m, k, p, h);
+    if (breakOut(w, m, p)) |a| return a;
     m.foe_held = null;
     if (m.look == 0) {
         lookAround(w, kinds, g.floor, m, k, p, partner, leads);
@@ -698,6 +720,44 @@ fn withFoeHeld(w: *const World, kinds: *const Kinds, m: *Memory, k: u1, p: *cons
     var throw = away;
     throw.attack = true;
     return throw;
+}
+
+/// Held from behind by a foe: after its reaction, C jumps out, and in the moment after it, B
+/// throws the holder over. Thrown by a foe: up and C, after its reaction, land it on its feet.
+/// Each now and then missed (a person's); each a press, released at the tick after. Null when
+/// neither.
+fn breakOut(w: *const World, m: *Memory, p: *const Entity) ?Actions {
+    const s = &p.mind.player;
+    const by_foe = if (p.holder) |h| w.playerOf(h) == null else false;
+    const now: Caught = switch (s.state) {
+        .escape => if (by_foe) .held_behind else .none,
+        .held_behind => if (!by_foe) .none else if (s.counter_window != 0) .counter else .held_behind,
+        .knocked_down => if (s.may_recover) .thrown else .none,
+        else => .none,
+    };
+    if (now != m.caught) {
+        m.caught = now;
+        m.react = @intCast(if (now == .counter) between(m, counter_react_ticks) else between(m, react_ticks));
+        m.tries = m.chance(switch (now) {
+            .held_behind => escape_chance,
+            .counter => counter_chance,
+            .thrown => recover_chance,
+            .none => 0,
+        });
+    }
+    if (now == .none) return null;
+    if (m.react > 0) {
+        m.react -= 1;
+        return .{};
+    }
+    if (!m.tries or s.state == .escape) return .{};
+    const press = w.tick % 2 == 0;
+    return switch (now) {
+        .held_behind => .{ .jump = press },
+        .counter => .{ .attack = press },
+        .thrown => .{ .up = true, .jump = press },
+        .none => unreachable,
+    };
 }
 
 /// Whether `h` is too heavy to be thrown (round 4's boss, who crushes the thrower): knees only.
