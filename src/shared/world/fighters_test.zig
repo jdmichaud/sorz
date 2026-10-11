@@ -1382,6 +1382,30 @@ test "a punk reeling still after a lift, in the pose of one thrown, grabbed: its
     }
 }
 
+test "a punk lifted, grabbed in the air near the ground: it does not shake, its frame stays" {
+    var r = try Round.init();
+    defer r.deinit();
+    const p = try r.punk(822);
+    const e = r.w.get(p).?;
+    const k = r.f.kinds.get(e.kind.?);
+    // As a lift leaves it at its start: reeling, lifted, a little off the ground, in its pose.
+    e.mind.galsia.state = .reel;
+    e.mind.galsia.body.fresh = false;
+    e.mind.galsia.body.reel_taken = true;
+    e.mind.galsia.body.lifted = true;
+    e.mind.galsia.body.timer = 30;
+    e.position.height = r.w.ground.sub(.pixels(2));
+    r.f.kinds.startAnimation(e, k.definition.animation("down").?);
+    e.animation.frame = 2;
+    e.animation.paused = true;
+    for (0..8) |_| {
+        r.step(.{ .pad1 = .{ .right = true } });
+        if (r.player().holding != null) break;
+    }
+    try testing.expect(r.player().holding != null);
+    try testing.expectEqual(@as(u8, 2), r.w.get(p).?.animation.frame);
+}
+
 test "the special attack: the camera runs back, the car comes, the punk stands without health, the blast's line, the end" {
     var r = try Round.init();
     defer r.deinit();

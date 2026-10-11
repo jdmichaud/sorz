@@ -361,13 +361,15 @@
     the foes and on the other, by what struck, and where the one struck stood.
   - Gate: cpus-check's nine pairings, eight seeds each, against the same before: fewer blows on
     the partner, no more lives lost nor longer rounds; the unit tests; the user's play.
-- [ ] **37 — An enemy grabbed while lifted** — Depends: none.
+- [x] **37 — An enemy grabbed while lifted** — Depends: none.
   - cpus-check's games warn now and then that an acrobat asked for frame 3 of its three-frame
     thrown pose, reeling. A grab of an enemy in the air from a lift shook its reel first, which
     the original's lift does not (its reel shakes only on the ground): the acrobat, lifted in
     the pose of one thrown, went past its last frame; the others showed their knock-down's next
     frame a moment.
   - Gate: a unit test failing without the fix; the game that warned no longer does.
+  - [x] Checked 2026-10-11: the unit test, failing without the fix (its frame 3, not 2);
+    cpus-check's seed 2 with Adam and Axel, which warned, no longer does; zig build test.
 
 ## Standing rule
 
