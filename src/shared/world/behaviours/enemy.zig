@@ -1738,8 +1738,9 @@ pub fn Of(comptime M: type) type {
         /// It stands, facing its target, a while (with no player in play, until one comes): the
         /// pepper's sneeze, its `stand` animation. During the special attack it is held still in
         /// a pose by its place across: turning about now and then, lying, or shaking on its feet;
-        /// in the air (an acrobat's leap), it first falls to the ground, in height alone, and
-        /// takes its pose as it lands.
+        /// in the air (an acrobat's leap, or over a hole), it first drops by its fall (`falls`),
+        /// in height alone, and takes its pose as it lands: over a hole, fallen far enough, it is
+        /// out of the fight.
         pub fn standSetUp(a: A) void {
             const n = a.numbers();
             const b = body(a);
@@ -1801,11 +1802,7 @@ pub fn Of(comptime M: type) type {
                 return;
             }
             if (b.special_fall) {
-                gravity(a);
-                a.entity.position.height = a.entity.position.height.add(a.entity.velocity.height);
-                if (!a.atGround()) return;
-                // On the ground: its whole pixels the ground's, its fraction kept.
-                a.entity.position.height = .parts(@intCast(a.tick.world.ground.whole()), a.entity.position.height.frac());
+                if (!falls(a)) return;
                 b.special_fall = false;
                 return specialPose(a);
             }

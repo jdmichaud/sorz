@@ -1443,6 +1443,42 @@ test "the special attack: the camera runs back, the car comes, the punk stands w
     try testing.expectEqual(@as(u32, 500), r.w.players[0].score);
 }
 
+test "the special attack called over a hole: the punk in the air drops, and fallen far enough is knocked out" {
+    var r = try Round.init();
+    defer r.deinit();
+    // Over the hole from 880 across, 60 pixels above the floor's top.
+    const p = try r.w.spawnEnemy(&r.f.kinds, r.f.kinds.find("punk").?, .pixels(900, 64, 100), .{});
+    r.w.get(p).?.mind.galsia.state = .close_in;
+    r.w.get(p).?.mind.galsia.body.target = r.hero;
+    r.w.get(p).?.health = 12;
+    r.w.script.stage = .stand_in;
+    var plan: script.Plan = .{ .round = &hole_round };
+    var queue: script.ArtQueue = .{};
+    r.stepArt(.{}, &plan, &queue);
+    r.stepArt(.{ .pad1 = .{ .a = true } }, &plan, &queue);
+    try testing.expect(r.w.special);
+    try testing.expect(r.w.get(p).?.mind.galsia.state == .stand);
+    // It drops by its gravity until it has fallen as far as its `fall_out`, and is knocked out.
+    var out_at: ?usize = null;
+    for (1..60) |i| {
+        r.stepArt(.{}, &plan, &queue);
+        const e = r.w.get(p).?;
+        if (e.mind.galsia.state == .knocked_out) {
+            out_at = i;
+            try testing.expect(e.position.height.whole() >= 252);
+            break;
+        }
+        try testing.expect(e.mind.galsia.state == .stand and e.position.height.whole() < 252);
+    }
+    try testing.expect(out_at != null);
+    // Knocked out, it blinks and goes before the special attack's end.
+    for (0..330) |_| {
+        if (!r.w.special) break;
+        r.stepArt(.{}, &plan, &queue);
+    }
+    try testing.expect(r.w.get(p) == null);
+}
+
 test "a thrown punk's slide that lands on a wall's top flies on: over the hole beyond, it falls and is knocked out" {
     var r = try Round.init();
     defer r.deinit();
@@ -1488,6 +1524,20 @@ const special_round: content_round.Round = blk: {
     var r = lives_round;
     const share: [58]content_round.Streamed = @splat(.{ .tiles = 5 });
     r.special = .{ .streamed = .{ &share, &share } };
+    break :blk r;
+};
+
+/// `special_round` with a hole from 880 across: no floor there, its floor deep below.
+const hole_round: content_round.Round = blk: {
+    var r = special_round;
+    r.floor = .{
+        .cell = .{ 16, 8 },
+        .kinds = &.{
+            .{ .height = 160, .floor = true },
+            .{ .height = 400, .floor = false },
+        },
+        .rows = &.{"0000000000000000000000000000000000000000000000000000000111111111111111111111"},
+    };
     break :blk r;
 };
 
