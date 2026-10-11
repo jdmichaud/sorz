@@ -417,7 +417,7 @@
     food's last fixes: lives lost -6.5%, damage -3.5%.) Two games stalled in time overs (rounds
     4 and 8), as before. zig build test. The user's play is pending.
 
-- [ ] **40 — Rounds the CPUs never finish** — Depends: 34.
+- [x] **40 — Rounds the CPUs never finish** — Depends: 34.
   - Some 5 to 10% of cpus-check's games stall: a round's section waits for the camera to reach
     its wall, the CPUs never walk it there, and time overs come until the game is over (round 4's
     bridge, 61 minutes once; round 6; round 8). Seen there:
@@ -432,6 +432,10 @@
     other way at their edge); its steps away across, the other way at the view's edge; a thing it
     gave up is tried again after 15 s.
   - Gate: cpus-check's games that stalled reach the ending; no more lives lost.
+  - [x] Checked 2026-10-11: cpus-check at the hardest level, 7 lives, the nine pairings, seeds 1
+    and 2: all 18 reach the ending (16 before: rounds 4 and 8 stalled), time overs 103 -> 17;
+    lives lost -1.8%, damage from the foes -0.6% (neither significant). Each part found in a
+    stalled game and checked there (round 4's, round 6's). zig build test.
 
 ## Standing rule
 

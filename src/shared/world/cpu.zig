@@ -125,6 +125,7 @@ pub const Memory = struct {
     /// The things it gave up (an item or a thing to break it got stuck going for), the last few,
     /// and the slot of the next.
     given_up: [4]?Handle = @splat(null),
+    given_at: [4]u32 = @splat(0),
     give_up_at: u2 = 0,
 
     /// A draw of its own, from 0 to `n` - 1.
@@ -237,6 +238,12 @@ const alone_ahead_px = .{ 40, 120 };
 const stuck_px = 3;
 const stuck_ticks = 8;
 const detour_ticks = .{ 20, 40 };
+/// A thing it gave up going for is tried again after this many ticks (a person tries again: a
+/// barrier it could not come at from one place, from another).
+const give_up_ticks = 450;
+/// The depths the players are kept on (the camera's rules), which its places keep to: a step out
+/// of a line in depth is turned the other way within this of their edge.
+const edge_room = 8;
 /// Food is wanted under this share of its health in a hundred, and needed under the second: then
 /// it goes for it before the foes, striking only one in its way.
 const peckish = 75;
@@ -398,7 +405,7 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
         m.detour -= 1;
         if (goalPlace(w, m.goal)) |to| {
             const a = wayRound(w, g, p, to);
-            if (walks(a)) return safe(w, g, clearOf(m, keepOff(m, a, p, partner, leads), p, fire), p);
+            if (walks(a)) return safe(w, g, clearOf(m, keepOff(w, m, a, p, partner, leads), p, fire), p);
         }
         m.detour = 0;
     }
@@ -406,21 +413,21 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
     if (m.wait > 0) {
         m.wait -= 1;
         m.wanted = walkOf(m.chose);
-        return safe(w, g, clearOf(m, keepOff(m, walkOf(m.chose), p, partner, leads), p, fire), p);
+        return safe(w, g, clearOf(m, keepOff(w, m, walkOf(m.chose), p, partner, leads), p, fire), p);
     }
     // A foe right behind it, while it fights another: now and then, the back attack.
     if (m.goal == .foe and ready(p)) if (foeBehind(w, kinds, p)) {
         if (m.chance(back_chance)) return .{ .attack = true, .jump = true };
     };
     const a: Actions = switch (m.goal) {
-        .foe => |h| if (foeAt(w, kinds, h)) |f| fightFoe(m, p, f, partner, fire, reachOn(kinds, jab, p, f), kinds.get(f.kind.?).family() == .boss) else .{},
-        .smash => |h| if (standing(w, h)) |f| strikeAt(m, p, f, smash_from, smash_reach) else .{},
+        .foe => |h| if (foeAt(w, kinds, h)) |f| fightFoe(w, m, p, f, partner, fire, reachOn(kinds, jab, p, f), kinds.get(f.kind.?).family() == .boss) else .{},
+        .smash => |h| if (standing(w, h)) |f| strikeAt(w, m, p, f, smash_from, smash_reach) else .{},
         .take => |h| if (w.getConst(h)) |f| take(kinds, m, p, f) else .{},
         .roam => |s| roam(m, p, s),
     };
     if (a.attack and m.goal == .foe) if (foeAt(w, kinds, m.goal.foe)) |f| noteFutile(w, m, f);
     m.wanted = walkOf(a);
-    return if (ready(p)) safe(w, g, clearOf(m, keepOff(m, a, p, partner, leads), p, fire), p) else a;
+    return if (ready(p)) safe(w, g, clearOf(m, keepOff(w, m, a, p, partner, leads), p, fire), p) else a;
 }
 
 /// A press at foe `f`: counted while its health stays as it was; after `futile_presses`, it backs
@@ -446,6 +453,7 @@ fn lookAround(w: *const World, kinds: *const Kinds, floor: ?*const Floor, m: *Me
     if (m.stuck >= stuck_ticks) switch (m.goal) {
         .take, .smash => |h| {
             m.given_up[m.give_up_at] = h;
+            m.given_at[m.give_up_at] = w.tick;
             m.give_up_at +%= 1;
         },
         else => {},
@@ -486,7 +494,7 @@ fn goalOf(w: *const World, kinds: *const Kinds, floor: ?*const Floor, m: *Memory
         const edge: i32 = if (isFoe(kinds, e)) off_screen else 0;
         if (x < left - edge or x >= left + screen_width + edge) continue;
         const h = w.handleAt(i) orelse continue;
-        if (givenUp(m, h)) continue;
+        if (givenUp(m, h, w.tick)) continue;
         const far: i32 = @intCast(apart(p, e));
         const kind = kinds.get(e.kind.?);
         var goal: Goal = undefined;
@@ -526,9 +534,21 @@ fn goalOf(w: *const World, kinds: *const Kinds, floor: ?*const Floor, m: *Memory
     return best;
 }
 
-fn givenUp(m: *const Memory, h: Handle) bool {
-    for (m.given_up) |g| if (g) |x| if (x.eql(h)) return true;
+/// Whether it gave `h` up, not long ago (`give_up_ticks`).
+fn givenUp(m: *const Memory, h: Handle, now: u32) bool {
+    for (m.given_up, m.given_at) |g, at| if (g) |x| if (x.eql(h) and now -% at < give_up_ticks) return true;
     return false;
+}
+
+/// The way out of player 1's line in depth, `up` or down, for `p`: the other when the edge of the
+/// depths the players are kept on is within `edge_room` that way (where it would stay, its way
+/// on shut; out of a thing's line coming at it, or player 1's blows', it keeps to its own way).
+fn upOrDown(w: *const World, p: *const Entity, up: bool) bool {
+    const rules = w.camera.follows orelse return up;
+    const d = p.position.depth.whole();
+    if (up and d - edge_room <= rules.kept_depth[0]) return false;
+    if (!up and d + edge_room >= rules.kept_depth[1]) return true;
+    return up;
 }
 
 /// Its place, roaming: the one it goes to while it has not stayed there its while, nor got stuck,
@@ -554,6 +574,7 @@ fn roamSpot(w: *const World, floor: ?*const Floor, m: *Memory, p: *const Entity,
         s = .{ .x = q.position.x.whole() + way * between(m, ahead_px), .depth = q.position.depth.whole() + if (m.above) -aside else aside };
     } else s = .{ .x = p.position.x.whole() + way * between(m, alone_ahead_px), .depth = p.position.depth.whole() + between(m, .{ -20, 20 }) };
     s.x = std.math.clamp(s.x, left + margin_left, left + screen_width - margin_right);
+    if (w.camera.follows) |rules| s.depth = std.math.clamp(s.depth, rules.kept_depth[0], rules.kept_depth[1]);
     return onFloor(floor, s);
 }
 
@@ -891,7 +912,7 @@ fn foeBehind(w: *const World, kinds: *const Kinds, p: *const Entity) bool {
 /// it comes at out of its line, where the boss charges, slashes and throws; facing it while
 /// player 1 is near it, it keeps out of its line, facing it, and lets player 1 draw it; its back
 /// turned, it comes round to it. `range`: its jab's reach on it.
-fn fightFoe(m: *Memory, p: *const Entity, f: *const Entity, partner: ?*const Entity, fire: ?Fire, range: i32, boss: bool) Actions {
+fn fightFoe(w: *const World, m: *Memory, p: *const Entity, f: *const Entity, partner: ?*const Entity, fire: ?Fire, range: i32, boss: bool) Actions {
     const px = p.position.x.whole();
     const fx = f.position.x.whole();
     const dx = fx - px;
@@ -938,7 +959,7 @@ fn fightFoe(m: *Memory, p: *const Entity, f: *const Entity, partner: ?*const Ent
             return a;
         }
     }
-    return strikeAt(m, p, f, if (m.grab) 0 else @intCast(@max(range - m.short, too_close)), range - 1);
+    return strikeAt(w, m, p, f, if (m.grab) 0 else @intCast(@max(range - m.short, too_close)), range - 1);
 }
 
 /// Whether its place on `side` of foe `f`, `range` across from it, is player 1's: player 1 stands
@@ -953,8 +974,9 @@ fn sideTaken(f: *const Entity, partner: ?*const Entity, fire: ?Fire, side: i32, 
 }
 
 /// `f` struck: within `within` across and level with it, faced and struck at its pace; else to
-/// `from` pixels across from it on the CPU's side (into it, at 0), level with it.
-fn strikeAt(m: *Memory, p: *const Entity, f: *const Entity, from: u8, within: i32) Actions {
+/// `from` pixels across from it on the CPU's side (into it, at 0), level with it. Too close, it
+/// steps back, the other way at the edge of the view the players are kept in.
+fn strikeAt(w: *const World, m: *Memory, p: *const Entity, f: *const Entity, from: u8, within: i32) Actions {
     const px = p.position.x.whole();
     const dx = f.position.x.whole() - px;
     const dd = f.position.depth.whole() - p.position.depth.whole();
@@ -967,6 +989,10 @@ fn strikeAt(m: *Memory, p: *const Entity, f: *const Entity, from: u8, within: i3
     if (@abs(dx) < too_close) {
         a.left = dx >= 0;
         a.right = dx < 0;
+        if (atEdge(w, p, a.left)) {
+            a.left = !a.left;
+            a.right = !a.right;
+        }
         return a;
     }
     if (@abs(dx) <= within and @abs(dd) <= jab_level) {
@@ -1050,7 +1076,7 @@ fn walks(a: Actions) bool {
 /// it, it turns away; else it steps out of the line rather than walk at it, as it does when
 /// player 1 walks at it (not the leader). Beside it, out of its line, it keeps out. Its blows
 /// stay.
-fn keepOff(m: *const Memory, a: Actions, p: *const Entity, q: ?*const Entity, leads: bool) Actions {
+fn keepOff(w: *const World, m: *const Memory, a: Actions, p: *const Entity, q: ?*const Entity, leads: bool) Actions {
     const other = q orelse return a;
     const dx = other.position.x.whole() - p.position.x.whole();
     const dd = other.position.depth.whole() - p.position.depth.whole();
@@ -1075,9 +1101,12 @@ fn keepOff(m: *const Memory, a: Actions, p: *const Entity, q: ?*const Entity, le
     if (ax <= body_room or (ax <= reach_room and (p.facing == .left) == (dx < 0))) {
         out.left = if (dx == 0) p.facing == .left else dx > 0;
         out.right = !out.left;
-        return out;
+        // At the edge of the view the players are kept in, that way is shut: out in depth.
+        if (!atEdge(w, p, out.left)) return out;
+        out.left = false;
+        out.right = false;
     }
-    const up = if (dd != 0) dd > 0 else m.above;
+    const up = upOrDown(w, p, if (dd != 0) dd > 0 else m.above);
     out.up = up;
     out.down = !up;
     if (!at_it) {
@@ -1153,7 +1182,7 @@ fn clearOf(m: *const Memory, a: Actions, p: *const Entity, fire: ?Fire) Actions 
 /// The walk of `a` kept off the holes of the round's floor and from under the presses about to
 /// come down.
 fn safe(w: *const World, g: Given, a: Actions, p: *const Entity) Actions {
-    return offPresses(w, g.kinds, offHoles(g.floor, a, p), p);
+    return offPresses(w, g.kinds, offHoles(w, g.floor, a, p), p);
 }
 
 /// The walk of `a` kept from under the presses about to come down (`pressOver`): a step across or
@@ -1207,8 +1236,8 @@ fn pressOver(w: *const World, kinds: *const Kinds, s: Spot, margin: i32) ?Action
 /// The walk of `a` kept off the holes and the walls of the round's floor `floor` (`shut`): a step
 /// in depth that would end over one, or before a wall where a walk looks for one (a cell ahead
 /// across, `wall_ahead`), is left out, and so is a step across, for which it goes round in depth
-/// the nearer way the floor goes on ahead.
-fn offHoles(floor: ?*const Floor, a: Actions, p: *const Entity) Actions {
+/// the nearer way the floor goes on ahead, on the depths the players are kept on.
+fn offHoles(w: *const World, floor: ?*const Floor, a: Actions, p: *const Entity) Actions {
     const f = floor orelse return a;
     const x = p.position.x.whole();
     const d = p.position.depth.whole();
@@ -1227,13 +1256,27 @@ fn offHoles(floor: ?*const Floor, a: Actions, p: *const Entity) Actions {
     if (sd != 0) return out;
     var off: i32 = cell_px;
     while (off <= round_px) : (off += cell_px) {
-        for ([_]i32{ -off, off }) |o| if (!shut(f, x + sx, d + o) and !shut(f, x, d + o) and !shut(f, x + look, d + o)) {
+        for ([_]i32{ -off, off }) |o| if (kept(w, d + o) and !shut(f, x + sx, d + o) and !shut(f, x, d + o) and !shut(f, x + look, d + o)) {
             out.up = o < 0;
             out.down = o > 0;
             return out;
         };
     }
     return out;
+}
+
+/// Whether `p` stands within `edge_room` of the edge of the view the players are kept in (the
+/// camera's rules), on its left or on its right.
+fn atEdge(w: *const World, p: *const Entity, left: bool) bool {
+    const rules = w.camera.follows orelse return false;
+    const x = p.position.x.whole() - w.camera.x.whole();
+    return if (left) x - edge_room <= rules.kept_x[0] else x + edge_room >= rules.kept_x[1];
+}
+
+/// Whether the depth `d` is on the depths the players are kept on (the camera's rules).
+fn kept(w: *const World, d: i32) bool {
+    const rules = w.camera.follows orelse return true;
+    return d >= rules.kept_depth[0] and d <= rules.kept_depth[1];
 }
 
 /// Whether the floor's cell at `x`, `d` is shut to a walk: a hole, or a wall (no height).
