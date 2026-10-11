@@ -728,7 +728,6 @@ fn healthShare(kinds: *const Kinds, e: *const Entity) i32 {
     return if (full == 0) 100 else @divTrunc(@as(i32, e.health) * 100, full);
 }
 
-/// Player 1 held, hurt or down: a foe on it is helped against first.
 /// Whether player 1 `q` goes for `e`, as a person sees it: it faces it, not in trouble.
 fn headsFor(q: *const Entity, e: *const Entity) bool {
     if (inTrouble(q)) return false;
@@ -736,6 +735,7 @@ fn headsFor(q: *const Entity, e: *const Entity) bool {
     return dx != 0 and (dx < 0) == (q.facing == .left);
 }
 
+/// Player 1 held, hurt or down: a foe on it is helped against first.
 fn inTrouble(q: *const Entity) bool {
     return switch (q.mind.player.state) {
         .held, .held_behind, .hurt, .knocked_down, .down, .thrown => true,
