@@ -5,11 +5,12 @@
 //! the CPUs' own random draws apart (their memories' seeds, set as each round begins, before their
 //! first look; 0 leaves them); the game's draws are the original's.
 //!
-//!   sorz-cpus-check ROM [--lives N] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR]
+//!   sorz-cpus-check ROM [--lives N] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]
 //!
 //! - `--lives`: the lives a game and a continue give (the settings' rules); 3 by default.
 //! - `--chars`: the CPUs' characters (adam, axel, blaze); adam,axel by default.
 //! - `--shots`: a picture at each round's clear, each life lost and the end, into DIR.
+//! - `--scenes on`: each scene's start told on stderr; the game followed past the ending.
 //!
 //! Prints a JSON line per seed: the characters, how it ended (`ending`, `game_over`, `limit`), the
 //! round reached, the display ticks, each CPU's blows landed on the other by what struck
@@ -154,6 +155,8 @@ const Options = struct {
     characters: [2]Character = .{ .adam, .axel },
     limit: u32 = 900_000,
     shots: ?[]const u8 = null,
+    /// Each scene's start told on stderr, and the game followed past the ending to the title.
+    scenes: bool = false,
 };
 
 /// One game the two CPUs play with seed `seed`, reported as a JSON line on `out`.
@@ -196,11 +199,19 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     var sides: Sides = .{};
     var spots: std.ArrayList(HitSpot) = .empty;
     defer spots.deinit(gpa);
+    var was_scene = r.scene();
+    var ended = false;
     const how: []const u8 = while (r.updates < o.limit) {
         try r.update();
+        if (o.scenes and r.scene() != was_scene) {
+            was_scene = r.scene();
+            std.debug.print("seed {d}: {t} at display tick {d}\n", .{ seed, was_scene, r.updates });
+        }
         switch (r.scene()) {
-            .ending, .boss_ending => break "ending",
-            .high_scores, .title, .intro, .menu => if (n != 0) break "game_over",
+            .ending, .boss_ending => if (o.scenes) {
+                ended = true;
+            } else break "ending",
+            .high_scores, .title, .intro, .menu, .sega_logo => if (ended) break "ending" else if (n != 0) break "game_over",
             else => {},
         }
         const round = switch (r.game.state.scenes.base) {
@@ -224,6 +235,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
         // The time over's end, and the boss's fall, credit their harm to the last striker.
         const harm_told = (timed_out and round.phase != .time_over) or (w.script.stage != stage and (w.script.stage == .fight_over or w.script.stage == .won));
         timed_out = round.phase == .time_over;
+        if (o.scenes and w.script.stage != stage) std.debug.print("seed {d}: round {d} {t} at display tick {d}\n", .{ seed, round.number, w.script.stage, r.updates });
         stage = w.script.stage;
         for (w.players, &lives) |pl, *was| {
             if (pl.lives < was.*) {
@@ -441,7 +453,7 @@ fn shot(gpa: std.mem.Allocator, io: std.Io, r: *const Run, dir: []const u8, coun
 }
 
 fn usage(io: std.Io) noreturn {
-    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR]\n") catch {};
+    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]\n") catch {};
     std.process.exit(2);
 }
 
@@ -467,6 +479,8 @@ pub fn main(init: std.process.Init) !void {
             o.limit = std.fmt.parseInt(u32, value, 10) catch usage(io);
         } else if (std.mem.eql(u8, arg, "--shots")) {
             o.shots = value;
+        } else if (std.mem.eql(u8, arg, "--scenes")) {
+            o.scenes = std.mem.eql(u8, value, "on");
         } else usage(io);
     }
     const rom = try std.Io.Dir.cwd().readFileAlloc(io, rom_path, gpa, .limited(extract.rom.size + 1));
