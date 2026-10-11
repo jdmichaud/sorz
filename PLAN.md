@@ -392,7 +392,7 @@
     ticks after their fights' end (0 before), as rounds 2 and 5 (round 3's boss 264, his own);
     round 7 has no boss (its players walk out); zig build test.
 
-- [ ] **39 — The CPU's skills, at the hardest level** — Depends: 34.
+- [x] **39 — The CPU's skills, at the hardest level** — Depends: 34.
   - The user saw the CPU never break a hold from behind, nor gain from weapons, and leave food
     it needed for the foes. cpus-check at the hardest level (72 games, 7 lives): held from
     behind 595 times, 6 jumps out (by chance), no throw of the holder; no throw landed on its
@@ -410,6 +410,12 @@
     a fight with the weapon's reach and swing is left for later.
   - Gate: cpus-check at the hardest level against before: holds escaped, throws landed, less
     time hurt with food on the screen, no more lives lost.
+  - [x] Checked 2026-10-11: cpus-check at the hardest level, 7 lives, the nine pairings, seeds 1
+    and 2, against before: 38 of 44 holds jumped out of (2), 32 holders thrown (0), 334 throws
+    landed on the feet (0); under 40% of its health with food on the screen 6.9% -> 2.1% of that
+    time; lives lost -11%, damage from the foes -6.3%, rounds 3.7% shorter. (72 games before the
+    food's last fixes: lives lost -6.5%, damage -3.5%.) Two games stalled in time overs (rounds
+    4 and 8), as before. zig build test. The user's play is pending.
 
 ## Standing rule
 

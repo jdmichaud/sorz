@@ -573,10 +573,10 @@ fn roam(m: *Memory, p: *const Entity, s: Spot) Actions {
     return a;
 }
 
-/// Whether `p` stands free to act: ready, idle or walking.
+/// Whether `p` stands free to act: ready, idle or walking, armed or not.
 fn ready(p: *const Entity) bool {
     return switch (p.mind.player.state) {
-        .ready, .idle, .walk => true,
+        .ready, .idle, .walk, .armed_stand, .armed_walk => true,
         else => false,
     };
 }
@@ -898,7 +898,10 @@ fn fightFoe(m: *Memory, p: *const Entity, f: *const Entity, partner: ?*const Ent
     const dd = f.position.depth.whole() - p.position.depth.whole();
     // Its jump: on at it through the crouch and in the air, and the kick once near.
     switch (p.mind.player.state) {
-        .jump_crouch, .jump => return .{ .left = dx < 0, .right = dx > 0, .attack = p.mind.player.state == .jump and @abs(dx) < kick_reach },
+        .jump_crouch, .jump, .armed_jump_crouch, .armed_jump => {
+            const air = p.mind.player.state == .jump or p.mind.player.state == .armed_jump;
+            return .{ .left = dx < 0, .right = dx > 0, .attack = air and @abs(dx) < kick_reach };
+        },
         else => {},
     }
     if (m.kick and ready(p) and @abs(dd) <= m.slack and @abs(dx) >= kick_from[0] and @abs(dx) <= kick_from[1] and (dx < 0) == (p.facing == .left)) {
