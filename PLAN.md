@@ -348,6 +348,19 @@
     seed 7 with 7 lives reaches the ending, no time over in round 7 (23 before), and so do seeds
     1 to 8 (seven before); with 3 lives all eight reach round 8 as before; the attract demo equal
     to sor-remaster at every display tick in trace, sound and pictures; zig build test.
+- [ ] **36 — CPUs out of each other's blows** — Depends: 34.
+  - cpus-check's nine pairings of characters, eight seeds each: 3.6% of the blows the two CPUs
+    land hit the other one, one every 37 s; 90% are the combo's punches. The one struck was
+    mostly walking or standing (73%), mostly going for the same foe (74%): between the striker
+    and that foe (56%), or close past it (27%).
+  - A CPU keeps out of player 1's blows' way, as a person does: ahead of it, within its jab's
+    reach on a body and a margin, in its line, while a foe stands there or it strikes. In that
+    way, it steps out of the line; a walk that would take it in goes round in depth; its spot at
+    a foe there is on the other side. Its own blows are not held back.
+  - `cpus-check --chars` chooses the CPUs' characters; it reports each CPU's blows landed on
+    the foes and on the other, by what struck, and where the one struck stood.
+  - Gate: cpus-check's nine pairings, eight seeds each, against the same before: fewer blows on
+    the partner, no more lives lost nor longer rounds; the unit tests; the user's play.
 
 ## Standing rule
 
