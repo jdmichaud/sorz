@@ -331,7 +331,7 @@
   - [x] Checked 2026-10-10: the overlays' frames as before at 1.20 ms a frame in Debug with a
     notice up (2.60 before); a version 1 tree refused; a misspelt state name stops the build;
     the CPU eats the fixture's apple; zig build test, variants-check, netplay-check (25 flows).
-- [ ] **35 — Enemies lost off the screen** — Depends: none.
+- [x] **35 — Enemies lost off the screen** — Depends: none.
   - Found by item 34's cpus-check: in round 7 an enemy went far off the screen without being
     knocked out, never counted off, and the reserve's last enemies never came (time overs to the
     game's end). Two ways led there, both unlike the original's:
@@ -344,6 +344,10 @@
     as the original marks its groups' (a wave's and a reserve's still go).
   - Gate: the unit tests of the three; cpus-check's game that stopped (seed 7, 7 lives) reaches
     the ending; the attract demo still equal to sor-remaster at every display tick.
+  - [x] Checked 2026-10-11: the three unit tests, each failing without its fix; cpus-check's
+    seed 7 with 7 lives reaches the ending, no time over in round 7 (23 before), and so do seeds
+    1 to 8 (seven before); with 3 lives all eight reach round 8 as before; the attract demo equal
+    to sor-remaster at every display tick in trace, sound and pictures; zig build test.
 
 ## Standing rule
 
