@@ -3,6 +3,8 @@
 sorz is Sega's Streets of Rage (Mega Drive, 1991) rewritten in Zig, for Linux, Windows and the
 browser, played from your own copy of the ROM.
 
+sorz add network play and AI co-op game.
+
 ## Starting the game
 
 You need the ROM of the 1991 cartridge (512 KiB, SHA-256 `dd44f120…95c0`). Other versions are
