@@ -4,8 +4,9 @@
 //! play (the extended and network variants, variant.zig), and in the original with the settings
 //! key (F1 by default), in any scene.
 //!
-//! Two pages, in the cartridge's options' style (the chosen row bright, the others dim, the menu's
-//! arrow at the choice). The first: INPUT CONFIGURATION..., the sound and its volume, the window's
+//! Its pages are in the cartridge's options' style (the chosen row bright, the others dim, the
+//! menu's arrow at the choice). The first: INPUT CONFIGURATION..., HELP..., the sound and its
+//! volume, the window's
 //! scale and full screen, network play's stats (NETWORK STATS, on a machine with network play:
 //! DESIGN.md 9); the game's rules where the settings give them (the lives, the
 //! continues, the friendly hits: setup.zig `Rules`); the defaults; and the two ways out, SAVE AND
@@ -14,7 +15,9 @@
 //! a gamepad one player takes goes from the other, who goes back to the keyboard), its keys, or
 //! its gamepad's A, B, C and START (its model's: the directions are the gamepad's d-pad and stick),
 //! and its autofire; the settings key where the variant has it; GAMEPAD LIST...; and EXIT, back to
-//! the first page. GAMEPAD LIST shows every gamepad the machine knows (input.zig), by its label,
+//! the first page. HELP tells the keys outside the pads: Escape (where the host gives it to the
+//! game), START's pause or settings, the settings key where the variant has it, and F3's frame
+//! stats (game.zig); EXIT goes back. GAMEPAD LIST shows every gamepad the machine knows (input.zig), by its label,
 //! with its name, the connected ones bright, the others dim, scrolling past the screen's rows; an
 //! unconnected one is forgotten with DEL, or with A, B or C and a yes (A, B or C again; START:
 //! no).
@@ -42,11 +45,12 @@ const panel_mod = @import("../panel.zig");
 const Settings = record.Settings;
 const Panel = panel_mod.Panel;
 
-pub const Page = enum(u8) { main, input, gamepads };
+pub const Page = enum(u8) { main, input, gamepads, help };
 
 /// The first page's rows.
 pub const Row = enum(u8) {
     input_configuration,
+    help,
     sound,
     volume,
     scale,
@@ -112,6 +116,8 @@ pub const Facts = struct {
     rules: bool = false,
     /// This machine has network play (a host's or a client's game): its stats' row.
     network: bool = false,
+    /// Escape is the game's (else the host's: a browser's page keeps it): HELP tells it.
+    escape: bool = true,
     /// The labels of the gamepads connected, the lowest first (input.zig `Controls.connected`):
     /// the input methods a player may take.
     gamepads: [input.Controls.max_controllers]?u16 = @splat(null),
@@ -229,6 +235,7 @@ pub const Screen = struct {
             .main => self.navigateMain(settings, nav),
             .input => self.navigateInput(settings, nav),
             .gamepads => self.navigateList(settings, nav),
+            .help => self.navigateHelp(nav),
         };
     }
 
@@ -242,6 +249,7 @@ pub const Screen = struct {
                     self.input_row = .method;
                     self.column = 0;
                 },
+                .help => self.pending = .help,
                 .volume => {},
                 .scale => settings.window.scale = if (settings.window.scale >= record.max_scale) 1 else settings.window.scale + 1,
                 .lives => settings.rules.lives = if (settings.rules.lives >= record.max_lives) 1 else settings.rules.lives + 1,
@@ -313,6 +321,12 @@ pub const Screen = struct {
             .leave => unreachable,
         }
         self.scroll(labels.len);
+        return .stay;
+    }
+
+    /// HELP: its one choice, EXIT, goes back, as START does.
+    fn navigateHelp(self: *Screen, nav: Nav) Result {
+        if (nav == .choose or nav == .back) self.pending = .main;
         return .stay;
     }
 
@@ -442,12 +456,12 @@ pub const Screen = struct {
     const configuration_row = 8;
     const prompt_row = panel_mod.rows - 3;
 
-    /// The first page's screen row of `row`: a blank row after INPUT CONFIGURATION..., before the
-    /// rules and before DEFAULTS.
+    /// The first page's screen row of `row`: a blank row after HELP..., before the rules and before
+    /// DEFAULTS.
     fn screenRow(self: *const Screen, row: Row) u16 {
         var n: u16 = 0;
         for (std.enums.values(Row)[0..@backingInt(row)]) |r| n += @intFromBool(self.shows(r));
-        if (row != .input_configuration) n += 1;
+        if (@backingInt(row) > @backingInt(Row.help)) n += 1;
         if (@backingInt(row) >= @backingInt(Row.lives)) n += 1;
         if (@backingInt(row) >= @backingInt(Row.defaults) and self.facts.rules) n += 1;
         return first_row + n;
@@ -474,7 +488,42 @@ pub const Screen = struct {
             .main => try self.drawMain(settings, p, arrow),
             .input => try self.drawInput(settings, p, arrow),
             .gamepads => try self.drawList(settings, p, arrow),
+            .help => try self.drawHelp(settings, p, arrow),
         }
+    }
+
+    /// The column of HELP's texts, past the keys' names (at most 9 characters: `keyName`).
+    const help_col = 14;
+
+    /// HELP: each key outside the pads and what it does, what the frame's stats show, where the
+    /// pads' keys are; EXIT, chosen.
+    fn drawHelp(self: *const Screen, settings: *const Settings, p: *Panel, arrow: bool) Panel.Error!void {
+        try p.text(label_col, title_row, "HELP", .bright);
+        var y: u16 = first_row;
+        if (self.facts.escape) {
+            try p.text(label_col, y, "ESCAPE", .bright);
+            try p.text(help_col, y, "LEAVE THE GAME, OR QUIT", .dim);
+            y += 1;
+        }
+        try p.text(label_col, y, "START", .bright);
+        // The original pauses on START; the others open these settings in place of the pause.
+        try p.text(help_col, y, if (self.facts.settings_key) "PAUSE" else "PAUSE: THESE SETTINGS", .dim);
+        y += 1;
+        if (self.facts.settings_key) {
+            try p.text(label_col, y, keyName(settings.settings_key), .bright);
+            try p.text(help_col, y, "THESE SETTINGS", .dim);
+            y += 1;
+        }
+        try p.text(label_col, y, keyName(record.stats_key), .bright);
+        try p.text(help_col, y, "FRAME STATS ON OR OFF", .dim);
+        y += 2;
+        try p.text(label_col, y, "FPS: FRAMES SHOWN A SECOND.", .dim);
+        try p.text(label_col, y + 1, "TPF: MS OF WORK A FRAME.", .dim);
+        try p.text(label_col, y + 3, "THE PADS' KEYS ARE IN", .dim);
+        try p.text(label_col, y + 4, "INPUT CONFIGURATION.", .dim);
+        const exit_row = first_row + list_rows + 1;
+        try p.text(label_col, exit_row, "EXIT", .bright);
+        if (arrow) p.arrowAt(label_col - 1, exit_row);
     }
 
     /// GAMEPAD LIST: each gamepad's label and name on a row (cut to the box), bright when it is
@@ -582,6 +631,7 @@ pub const Screen = struct {
     fn label(row: Row) []const u8 {
         return switch (row) {
             .input_configuration => "INPUT CONFIGURATION...",
+            .help => "HELP...",
             .sound => "SOUND",
             .volume => "VOLUME",
             .scale => "WINDOW SCALE",
@@ -907,10 +957,10 @@ test "EXIT WITHOUT SAVING gives back the settings, with A or START there; START 
 test "NETWORK STATS where the machine has network play: after FULL SCREEN, on and off" {
     var s: Settings = .{};
     var screen: Screen = .open(&s, .{ .rules = true });
-    for (0..5) |_| _ = press(&screen, &s, .down);
+    for (0..6) |_| _ = press(&screen, &s, .down);
     try testing.expectEqual(Row.lives, screen.row);
     screen = .open(&s, .{ .rules = true, .network = true });
-    for (0..5) |_| _ = press(&screen, &s, .down);
+    for (0..6) |_| _ = press(&screen, &s, .down);
     try testing.expectEqual(Row.network_stats, screen.row);
     try testing.expectEqual(screen.screenRow(.fullscreen) + 1, screen.screenRow(.network_stats));
     _ = press(&screen, &s, .right);
@@ -922,10 +972,10 @@ test "NETWORK STATS where the machine has network play: after FULL SCREEN, on an
 test "the rules' rows where the settings give the rules: lives 1 to 9, continues 0 to 9, friendly hits" {
     var s: Settings = .{};
     var screen: Screen = .open(&s, .{ .settings_key = false });
-    for (0..5) |_| _ = press(&screen, &s, .down);
+    for (0..6) |_| _ = press(&screen, &s, .down);
     try testing.expectEqual(Row.defaults, screen.row);
     screen = .open(&s, .{ .rules = true });
-    for (0..5) |_| _ = press(&screen, &s, .down);
+    for (0..6) |_| _ = press(&screen, &s, .down);
     try testing.expectEqual(Row.lives, screen.row);
     for (0..9) |_| _ = press(&screen, &s, .right);
     try testing.expectEqual(@as(u8, 9), s.rules.lives);
@@ -939,8 +989,26 @@ test "the rules' rows where the settings give the rules: lives 1 to 9, continues
     _ = press(&screen, &s, .down);
     _ = press(&screen, &s, .z);
     try testing.expect(!s.rules.friendly_hit);
-    // A blank row after INPUT CONFIGURATION... and before the rules: FRIENDLY HIT on the tenth.
-    try testing.expectEqual(@as(u16, Screen.first_row + 9), screen.screenRow(.friendly_hit));
+    // A blank row after HELP... and before the rules: FRIENDLY HIT on the eleventh.
+    try testing.expectEqual(@as(u16, Screen.first_row + 10), screen.screenRow(.friendly_hit));
+}
+
+test "HELP...: under INPUT CONFIGURATION..., its page and back with A or START" {
+    var s: Settings = .{};
+    for ([_]platform.Key{ .z, .enter, .escape }) |k| {
+        var screen: Screen = .open(&s, .{});
+        _ = press(&screen, &s, .down);
+        try testing.expectEqual(Row.help, screen.row);
+        try testing.expectEqual(screen.screenRow(.input_configuration) + 1, screen.screenRow(.help));
+        try testing.expectEqual(screen.screenRow(.help) + 2, screen.screenRow(.sound));
+        try testing.expectEqual(Result.stay, pressTurning(&screen, &s, .z));
+        try testing.expectEqual(Page.help, screen.page);
+        try testing.expectEqual(Result.stay, pressTurning(&screen, &s, .down));
+        try testing.expectEqual(Page.help, screen.page);
+        try testing.expectEqual(Result.stay, pressTurning(&screen, &s, k));
+        try testing.expectEqual(Page.main, screen.page);
+        try testing.expectEqual(Row.help, screen.row);
+    }
 }
 
 test "the screen draws on a panel: the title, the rows, the arrow" {

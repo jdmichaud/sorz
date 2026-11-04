@@ -369,6 +369,9 @@ pub const Game = struct {
     /// The host applies the settings' volume itself (the browser's page, with its gain): the game
     /// then queues its sound at full volume.
     host_volume: bool = false,
+    /// Escape is the host's (the browser's page keeps it): the game sees it only on its screens,
+    /// and the settings' HELP leaves it out.
+    host_escape: bool = false,
     /// Room for a tick's frames at the settings' volume.
     volume_buffer: []i16 = &.{},
     /// The scenes' picture, with the content.
@@ -738,6 +741,7 @@ pub const Game = struct {
             .settings_key = self.policies().settings_key,
             .rules = self.policies().settings_rules and !self.isClient(),
             .network = self.netplay != null,
+            .escape = !self.host_escape,
             .gamepads = self.controls.connected(),
         }) });
         self.overlay_dirty = true;
