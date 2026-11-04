@@ -452,14 +452,18 @@
     minutes; lives lost +3.6%, damage taken +1.3% (neither significant: t 0.9, 0.5); all 18
     reach the ending. zig build test. The user's play is pending.
 
-- [ ] **42 — The keys' help, and the frame's stats** — Depends: none.
+- [x] **42 — The keys' help, and the frame's stats** — Depends: none.
   - The keys outside the pads (Escape, the settings key, START's pause or settings) are told
     nowhere in the game. The settings' first page gets HELP..., a page of them.
   - F3 shows and hides the frame's stats over the picture: FPS, the frames presented a second,
     and TPF, the milliseconds an update works on its frame before presenting it (the presenting's
     wait for the display not counted), each over the last second, in tenths, three places before
-    the point. No setting takes F3; it is not kept in the settings record.
+    the point, the letters over the picture without a ground (the user, 2026-11-04). No setting
+    takes F3; it is not kept in the settings record.
   - Gate: zig build test; the stats seen in play.
+  - [x] Checked 2026-11-04: zig build test. The SDL host (Debug, software renderer, a virtual
+    display) over the intro: FPS 59.9, TPF 0.5 ms. HELP seen in the original's settings through
+    the agent host. The user's play is pending.
 
 ## Standing rule
 

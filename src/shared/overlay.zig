@@ -189,7 +189,7 @@ pub const Overlay = union(Kind) {
             .net_stats => |s| try drawStats(&s.stats, p, s.raised),
             .frame_stats => |s| {
                 var buf: [32]u8 = undefined;
-                try p.textClear(1, frame_stats_row, s.line(&buf), .bright);
+                try p.text(1, frame_stats_row, s.line(&buf), .bright);
             },
             .notice => |n| {
                 try p.box(1, panel_mod.rows - 5, panel_mod.columns - 2, 3);
