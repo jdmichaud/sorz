@@ -163,9 +163,13 @@ pub const Settings = struct {
     }
 };
 
-/// Escape quits the game (native hosts) or belongs to the browser, so no setting takes it.
+/// The key that shows and hides the frame's stats (game.zig); no setting takes it.
+pub const stats_key: platform.Key = .f3;
+
+/// Escape quits the game (native hosts) or belongs to the browser, and the stats key is the
+/// game's, so no setting takes them.
 pub fn bindable(k: platform.Key) bool {
-    return k != .unknown and k != .escape and std.enums.tagName(platform.Key, k) != null;
+    return k != .unknown and k != .escape and k != stats_key and std.enums.tagName(platform.Key, k) != null;
 }
 
 /// The d-pad is the pads' directions, and the guide button belongs to the system.
@@ -383,7 +387,7 @@ const Reader = struct {
             if (std.mem.eql(u8, v.string, "none")) return input.no_key;
             if (std.meta.stringToEnum(platform.Key, v.string)) |k| if (bindable(k)) return k;
         }
-        r.report.add(path, "not the name of a key, or none (escape is the game's)");
+        r.report.add(path, "not the name of a key, or none (escape and f3 are the game's)");
         return null;
     }
 
@@ -681,7 +685,7 @@ test "a damaged field gives its default and the rest is kept" {
     var w: std.Io.Writer = .fixed(&buf);
     try report.format(&w);
     try testing.expectEqualStrings("(the record): a field the game does not know; gamepads: a gamepad does not read; " ++
-        "players.player1.input: a gamepad not among the gamepads; players.player1.keys.start: not the name of a key, or none (escape is the game's); " ++
+        "players.player1.input: a gamepad not among the gamepads; players.player1.keys.start: not the name of a key, or none (escape and f3 are the game's); " ++
         "sound.volume: not a whole number from 0 to 100; window: a field the game does not know; window.fullscreen: not true or false; " ++
         "rules.lives: not a whole number from 1 to 9", w.buffered());
     try testing.expectEqualSlices(u8, "BOB", &s.name);

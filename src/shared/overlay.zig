@@ -1,11 +1,11 @@
 //! The machine's own scenes over the game (DESIGN.md 10.4, S3): the settings screen, network play's
 //! screens (the host's network options, a client's name entry) and the host's list of who is
 //! connected, the notice that the other player of network play is in their settings, network
-//! play's messages and stats, a notice about the settings record, a gamepad's coming or going. Each is pushed over the game's scenes and holds them or
-//! not by its own rule (`holds`): the settings hold the game, and so does the other player's (both
-//! games of network play wait while either player is in the settings); network play's waits hold
-//! it; a notice does not, nor does a gamepad's message, which fades out as it goes, nor do the
-//! stats.
+//! play's messages and stats, the frame's stats, a notice about the settings record, a gamepad's
+//! coming or going. Each is pushed over the game's scenes and holds them or not by its own rule
+//! (`holds`): the settings hold the game, and so does the other player's (both games of network
+//! play wait while either player is in the settings); network play's waits hold it; a notice does
+//! not, nor does a gamepad's message, which fades out as it goes, nor do the stats.
 //!
 //! They are this machine's, not the game's: the game's canonical state (game.zig), which both
 //! machines of network play keep the same, has the scenes of the flow and their loads
@@ -105,7 +105,24 @@ pub const Message = enum {
     }
 };
 
-pub const Kind = enum { settings, net_options, name_entry, peer_settings, network, net_notice, notice, gamepad, roster, net_stats };
+pub const Kind = enum { settings, net_options, name_entry, peer_settings, network, net_notice, notice, gamepad, roster, net_stats, frame_stats };
+
+/// The frame's stats over the last second (game.zig), in tenths: the frames presented a second,
+/// and the milliseconds an update worked on its frame before presenting it.
+pub const FrameStats = struct {
+    fps_tenths: u32,
+    tpf_tenths: u32,
+
+    /// Their line: each with three places before the point, "FPS  59.9  TPF   1.2 MS".
+    pub fn line(s: FrameStats, buf: *[32]u8) []const u8 {
+        const fps = @min(s.fps_tenths, 9999);
+        const tpf = @min(s.tpf_tenths, 9999);
+        return std.fmt.bufPrint(buf, "FPS {d:>3}.{d}  TPF {d:>3}.{d} MS", .{ fps / 10, fps % 10, tpf / 10, tpf % 10 }) catch unreachable;
+    }
+};
+
+/// The frame's stats' row: the bottom line in the box's place; network play's stats go above them.
+const frame_stats_row = panel_mod.rows - 2;
 
 /// The host's list of who is connected: its own player, then its clients.
 pub const Roster = struct {
@@ -137,13 +154,15 @@ pub const Overlay = union(Kind) {
     gamepad: struct { label: u16, connected: bool = true, until_ns: ?u64 = null },
     /// The host's list of who is connected.
     roster: Roster,
-    /// Network play's stats of the session (DESIGN.md 9).
-    net_stats: netplay.Stats,
+    /// Network play's stats of the session (DESIGN.md 9); `raised` a line, over the frame's.
+    net_stats: struct { stats: netplay.Stats, raised: bool = false },
+    /// The frame's stats (F3).
+    frame_stats: FrameStats,
 
     /// Whether it holds the game under it: no tick runs, the picture stays, the sound fades out.
     pub fn holds(o: *const Overlay) bool {
         return switch (o.*) {
-            .notice, .gamepad, .roster, .net_notice, .net_stats => false,
+            .notice, .gamepad, .roster, .net_notice, .net_stats, .frame_stats => false,
             .network => |n| n.what.holds(),
             else => true,
         };
@@ -167,7 +186,11 @@ pub const Overlay = union(Kind) {
             },
             .net_notice => |n| _ = try p.message(n.what.text(), 5, true),
             .roster => |r| try drawRoster(&r, p),
-            .net_stats => |s| try drawStats(&s, p),
+            .net_stats => |s| try drawStats(&s.stats, p, s.raised),
+            .frame_stats => |s| {
+                var buf: [32]u8 = undefined;
+                try p.textClear(1, frame_stats_row, s.line(&buf), .bright);
+            },
             .notice => |n| {
                 try p.box(1, panel_mod.rows - 5, panel_mod.columns - 2, 3);
                 try p.text(3, panel_mod.rows - 4, n.what.text(), .bright);
@@ -195,9 +218,10 @@ fn drawRoster(r: *const Roster, p: *Panel) Panel.Error!void {
 /// Network play's stats at the bottom left, in white over the picture, the same on both machines:
 /// the host's line (HOST), then the client's (its name; GUEST without one), each with the ticks
 /// its game ran over its last second, the percent of it that it was busy and that it waited for
-/// the other's pads, the round trip it measured in milliseconds, and the input delay in ticks.
-fn drawStats(s: *const netplay.Stats, p: *Panel) Panel.Error!void {
-    const top = panel_mod.rows - 4;
+/// the other's pads, the round trip it measured in milliseconds, and the input delay in ticks;
+/// `raised`, a line higher, over the frame's stats.
+fn drawStats(s: *const netplay.Stats, p: *Panel, raised: bool) Panel.Error!void {
+    const top = panel_mod.rows - 4 - @as(usize, @intFromBool(raised));
     try p.textClear(1, top, "      TICKS BUSY WAIT PING DELAY", .bright);
     var buf: [40]u8 = undefined;
     const host = if (s.host) s.local else s.peer;
@@ -278,6 +302,13 @@ test "the stats' lines: under the header's columns, the other's blank before its
     try std.testing.expectEqualStrings("HOST     60  35%   0%   41     3", statsLine(&buf, "HOST", .{ .ticks = 60, .busy = 35, .wait = 0, .ping = 41 }, 3));
     try std.testing.expectEqualStrings("BOB      58 100%  12% 1250     6", statsLine(&buf, "BOB", .{ .ticks = 58, .busy = 100, .wait = 12, .ping = 1250 }, 6));
     try std.testing.expectEqualStrings("GUEST                          3", statsLine(&buf, "GUEST", null, 3));
+}
+
+test "the frame's stats' line: tenths, three places before the point" {
+    var buf: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("FPS  59.9  TPF   1.2 MS", (FrameStats{ .fps_tenths = 599, .tpf_tenths = 12 }).line(&buf));
+    try std.testing.expectEqualStrings("FPS 144.0  TPF  16.7 MS", (FrameStats{ .fps_tenths = 1440, .tpf_tenths = 167 }).line(&buf));
+    try std.testing.expectEqualStrings("FPS   0.0  TPF 999.9 MS", (FrameStats{ .fps_tenths = 0, .tpf_tenths = 123456 }).line(&buf));
 }
 
 test "the overlays: one of each kind, the settings hold and dim, a notice does neither" {

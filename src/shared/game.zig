@@ -31,6 +31,10 @@
 //! opened from the options, it fades in and out as the menus' screens do, without the jingle.
 //! In network play the other machine holds too, says why and plays the jingle. A damaged record is repaired and kept aside (settings/record.zig),
 //! and a notice tells the player for a few seconds.
+//!
+//! F3 (`stats_key`, settings/record.zig) shows and hides the frame's stats (overlay.zig
+//! `FrameStats`): the frames presented a second and the time an update works on its frame before
+//! presenting it, over the last second; they are this machine's, never the game's state.
 const std = @import("std");
 const platform = @import("platform.zig");
 const input = @import("input.zig");
@@ -408,8 +412,15 @@ pub const Game = struct {
     fade_buffer: []i16 = &.{},
 
     update_count: u64 = 0,
-    /// When the update under way began (network play's stats: its work).
+    /// When the update under way began (network play's stats and the frame's: its work).
     update_began_ns: u64 = 0,
+    /// The frame's stats (F3, overlay.zig `FrameStats`): shown or not, and those of the last whole
+    /// second; the second under way: when it began, its frames and their work.
+    frame_stats: bool = false,
+    frame_stats_last: ?overlay.FrameStats = null,
+    meter_since_ns: ?u64 = null,
+    meter_frames: u32 = 0,
+    meter_work_ns: u64 = 0,
     frames_presented: u64 = 0,
     events_consumed: u64 = 0,
     saves_written: u64 = 0,
@@ -690,13 +701,13 @@ pub const Game = struct {
         return np.peerInSettings();
     }
 
-    /// Whether the game takes `key` now: a pad's key or the settings key (where the variant has
-    /// it), or any key while the settings are open (the browser's page keeps the other keys for
-    /// itself).
+    /// Whether the game takes `key` now: a pad's key, the settings key (where the variant has
+    /// it) or the stats key, or any key while the settings are open (the browser's page keeps
+    /// the other keys for itself).
     pub fn usesKey(self: *const Game, key: platform.Key) bool {
         if (key == .unknown) return false;
         if (self.settingsOpen() or self.modalOpen()) return true;
-        return (self.policies().settings_key and key == self.settings.settings_key) or self.controls.uses(key);
+        return key == settings_mod.record.stats_key or (self.policies().settings_key and key == self.settings.settings_key) or self.controls.uses(key);
     }
 
     /// Whether the settings screen is open (the hosts follow its window's settings).
@@ -1010,6 +1021,8 @@ pub const Game = struct {
                         if (!network_play.escape(self, p)) self.finished = true;
                     } else if (self.policies().settings_key and k.key == self.settings.settings_key and !k.repeat) {
                         self.showSettings(null);
+                    } else if (k.key == settings_mod.record.stats_key) {
+                        if (!k.repeat) self.frame_stats = !self.frame_stats;
                     } else {
                         _ = self.controls.handle(e);
                     },
@@ -1051,6 +1064,7 @@ pub const Game = struct {
             }
         };
         network_play.lists(self, p);
+        self.frameStats();
         network_play.stats(self);
         if (self.holding()) {
             self.hold(p);
@@ -1353,10 +1367,50 @@ pub const Game = struct {
             self.overlay_shown = false;
             break :blk self.scenesFrame();
         };
-        // The update's work, for network play's stats: the presenting may wait for the display.
-        if (self.netplay) |np| np.worked(p.nowNs() -| self.update_began_ns);
+        // The update's work, for the stats: the presenting may wait for the display.
+        const now_ns = p.nowNs();
+        const work_ns = now_ns -| self.update_began_ns;
+        if (self.netplay) |np| np.worked(work_ns);
+        self.meter(now_ns, work_ns);
         try p.present(f);
         self.frames_presented += 1;
+    }
+
+    /// Counts a frame presented at `now_ns` and the work of its update; each whole second gives
+    /// the frame's stats (`frame_stats_last`): its frames a second and their mean work.
+    fn meter(self: *Game, now_ns: u64, work_ns: u64) void {
+        const since = self.meter_since_ns orelse {
+            self.meter_since_ns = now_ns;
+            return;
+        };
+        self.meter_frames += 1;
+        self.meter_work_ns += work_ns;
+        const elapsed = now_ns -| since;
+        if (elapsed < std.time.ns_per_s) return;
+        const frames: u64 = self.meter_frames;
+        self.frame_stats_last = .{
+            .fps_tenths = @intCast(@min(frames * 10 * std.time.ns_per_s / elapsed, 99999)),
+            .tpf_tenths = @intCast(@min((self.meter_work_ns / frames + 50 * std.time.ns_per_us) / (100 * std.time.ns_per_us), 99999)),
+        };
+        self.meter_since_ns = now_ns;
+        self.meter_frames = 0;
+        self.meter_work_ns = 0;
+    }
+
+    /// The frame's stats over the picture (F3) while no screen of this machine's is open, from the
+    /// first whole second measured; drawn again when they change.
+    fn frameStats(self: *Game) void {
+        const shown = self.frame_stats and !self.settingsOpen() and !self.modalOpen();
+        const now = (if (shown) self.frame_stats_last else null) orelse {
+            if (self.overlays.find(.frame_stats) != null) {
+                self.overlays.remove(.frame_stats);
+                self.overlay_dirty = true;
+            }
+            return;
+        };
+        if (self.overlays.find(.frame_stats)) |o| if (std.meta.eql(o.frame_stats, now)) return;
+        self.overlays.push(.{ .frame_stats = now });
+        self.overlay_dirty = true;
     }
 
     /// The settings' arrow blinks while they wait for a key: on and off every 16 ticks' time.

@@ -433,8 +433,9 @@ pub fn stats(g: *Game) void {
         }
         return;
     };
-    if (g.overlays.find(.net_stats)) |o| if (std.meta.eql(o.net_stats, now)) return;
-    g.overlays.push(.{ .net_stats = now });
+    const shown_now: @FieldType(overlay.Overlay, "net_stats") = .{ .stats = now, .raised = g.overlays.find(.frame_stats) != null };
+    if (g.overlays.find(.net_stats)) |o| if (std.meta.eql(o.net_stats, shown_now)) return;
+    g.overlays.push(.{ .net_stats = shown_now });
     g.overlay_dirty = true;
 }
 
