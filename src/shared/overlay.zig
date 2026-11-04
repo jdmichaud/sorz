@@ -107,7 +107,7 @@ pub const Message = enum {
 
 pub const Kind = enum { settings, net_options, name_entry, peer_settings, network, net_notice, notice, gamepad, roster, net_stats, frame_stats };
 
-/// The frame's stats over the last second (game.zig), in tenths: the frames presented a second,
+/// The frame's stats over the last second (game.zig), with the settings' STATS, in tenths: the frames presented a second,
 /// and the milliseconds an update worked on its frame before presenting it.
 pub const FrameStats = struct {
     fps_tenths: u32,
@@ -154,9 +154,10 @@ pub const Overlay = union(Kind) {
     gamepad: struct { label: u16, connected: bool = true, until_ns: ?u64 = null },
     /// The host's list of who is connected.
     roster: Roster,
-    /// Network play's stats of the session (DESIGN.md 9); `raised` a line, over the frame's.
+    /// Network play's stats of the session (DESIGN.md 9), with the settings' STATS; `raised` a
+    /// line, over the frame's.
     net_stats: struct { stats: netplay.Stats, raised: bool = false },
-    /// The frame's stats (F3).
+    /// The frame's stats, with the settings' STATS (F3 too turns them on and off).
     frame_stats: FrameStats,
 
     /// Whether it holds the game under it: no tick runs, the picture stays, the sound fades out.
@@ -215,20 +216,21 @@ fn drawRoster(r: *const Roster, p: *Panel) Panel.Error!void {
     }
 }
 
-/// Network play's stats at the bottom left, in white over the picture, the same on both machines:
+/// Network play's stats at the bottom left, in white over the picture (no ground behind the
+/// letters, as the frame's), the same on both machines:
 /// the host's line (HOST), then the client's (its name; GUEST without one), each with the ticks
 /// its game ran over its last second, the percent of it that it was busy and that it waited for
 /// the other's pads, the round trip it measured in milliseconds, and the input delay in ticks;
 /// `raised`, a line higher, over the frame's stats.
 fn drawStats(s: *const netplay.Stats, p: *Panel, raised: bool) Panel.Error!void {
     const top = panel_mod.rows - 4 - @as(usize, @intFromBool(raised));
-    try p.textClear(1, top, "      TICKS BUSY WAIT PING DELAY", .bright);
+    try p.text(1, top, "      TICKS BUSY WAIT PING DELAY", .bright);
     var buf: [40]u8 = undefined;
     const host = if (s.host) s.local else s.peer;
     const client = if (s.host) s.peer else s.local;
-    try p.textClear(1, top + 1, statsLine(&buf, "HOST", host, s.delay), .bright);
+    try p.text(1, top + 1, statsLine(&buf, "HOST", host, s.delay), .bright);
     const name: []const u8 = if (s.client[0] == ' ') "GUEST" else &s.client;
-    try p.textClear(1, top + 2, statsLine(&buf, name, client, s.delay), .bright);
+    try p.text(1, top + 2, statsLine(&buf, name, client, s.delay), .bright);
 }
 
 /// A machine's line of the stats, under the header's columns: its name and its load (blank before

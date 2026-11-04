@@ -6,9 +6,8 @@
 //!
 //! Its pages are in the cartridge's options' style (the chosen row bright, the others dim, the
 //! menu's arrow at the choice). The first: INPUT CONFIGURATION..., HELP..., the sound and its
-//! volume, the window's
-//! scale and full screen, network play's stats (NETWORK STATS, on a machine with network play:
-//! DESIGN.md 9); the game's rules where the settings give them (the lives, the
+//! volume, the window's scale and full screen, the stats (STATS: the frame's, and network play's:
+//! overlay.zig, DESIGN.md 9; F3 too turns them on and off); the game's rules where the settings give them (the lives, the
 //! continues, the friendly hits: setup.zig `Rules`); the defaults; and the two ways out, SAVE AND
 //! EXIT and EXIT WITHOUT SAVING. INPUT CONFIGURATION has a column for each player of this machine
 //! (one with network play or a browser): its input method (the keyboard, or a gamepad connected:
@@ -16,8 +15,8 @@
 //! its gamepad's A, B, C and START (its model's: the directions are the gamepad's d-pad and stick),
 //! and its autofire; the settings key where the variant has it; GAMEPAD LIST...; and EXIT, back to
 //! the first page. HELP tells the keys outside the pads: Escape (where the host gives it to the
-//! game), START's pause or settings, the settings key where the variant has it, and F3's frame
-//! stats (game.zig); EXIT goes back. GAMEPAD LIST shows every gamepad the machine knows (input.zig), by its label,
+//! game), START's pause or settings, the settings key where the variant has it, and F3's stats
+//! (game.zig), and what the frame's stats are; EXIT goes back. GAMEPAD LIST shows every gamepad the machine knows (input.zig), by its label,
 //! with its name, the connected ones bright, the others dim, scrolling past the screen's rows; an
 //! unconnected one is forgotten with DEL, or with A, B or C and a yes (A, B or C again; START:
 //! no).
@@ -55,7 +54,7 @@ pub const Row = enum(u8) {
     volume,
     scale,
     fullscreen,
-    network_stats,
+    stats,
     lives,
     continues,
     friendly_hit,
@@ -114,8 +113,6 @@ pub const Facts = struct {
     settings_key: bool = true,
     /// The game's rules are the settings' here (variant.zig): their rows.
     rules: bool = false,
-    /// This machine has network play (a host's or a client's game): its stats' row.
-    network: bool = false,
     /// Escape is the game's (else the host's: a browser's page keeps it): HELP tells it.
     escape: bool = true,
     /// The labels of the gamepads connected, the lowest first (input.zig `Controls.connected`):
@@ -156,7 +153,6 @@ pub const Screen = struct {
 
     /// Whether the first page has the row here.
     fn shows(self: *const Screen, row: Row) bool {
-        if (row == .network_stats) return self.facts.network;
         return !row.rule() or self.facts.rules;
     }
 
@@ -398,7 +394,7 @@ pub const Screen = struct {
             .sound => settings.sound.mute = !settings.sound.mute,
             .scale => settings.window.scale = if (up) @min(settings.window.scale + 1, record.max_scale) else @max(settings.window.scale - 1, 1),
             .fullscreen => settings.window.fullscreen = !settings.window.fullscreen,
-            .network_stats => settings.network_stats = !settings.network_stats,
+            .stats => settings.stats = !settings.stats,
             .lives => settings.rules.lives = if (up) @min(settings.rules.lives + 1, record.max_lives) else @max(settings.rules.lives - 1, 1),
             .continues => settings.rules.continues = if (up) @min(settings.rules.continues + 1, record.max_continues) else settings.rules.continues -| 1,
             .friendly_hit => settings.rules.friendly_hit = !settings.rules.friendly_hit,
@@ -515,7 +511,7 @@ pub const Screen = struct {
             y += 1;
         }
         try p.text(label_col, y, keyName(record.stats_key), .bright);
-        try p.text(help_col, y, "FRAME STATS ON OR OFF", .dim);
+        try p.text(help_col, y, "STATS ON OR OFF", .dim);
         y += 2;
         try p.text(label_col, y, "FPS: FRAMES SHOWN A SECOND.", .dim);
         try p.text(label_col, y + 1, "TPF: MS OF WORK A FRAME.", .dim);
@@ -636,7 +632,7 @@ pub const Screen = struct {
             .volume => "VOLUME",
             .scale => "WINDOW SCALE",
             .fullscreen => "FULL SCREEN",
-            .network_stats => "NETWORK STATS",
+            .stats => "STATS",
             .lives => "LIVES",
             .continues => "CONTINUES",
             .friendly_hit => "FRIENDLY HIT",
@@ -670,7 +666,7 @@ pub const Screen = struct {
             .volume => std.fmt.bufPrint(buf, "{d}", .{settings.sound.volume}) catch unreachable,
             .scale => std.fmt.bufPrint(buf, "{d}", .{settings.window.scale}) catch unreachable,
             .fullscreen => if (settings.window.fullscreen) "ON" else "OFF",
-            .network_stats => if (settings.network_stats) "ON" else "OFF",
+            .stats => if (settings.stats) "ON" else "OFF",
             .lives => std.fmt.bufPrint(buf, "{d}", .{settings.rules.lives}) catch unreachable,
             .continues => std.fmt.bufPrint(buf, "{d}", .{settings.rules.continues}) catch unreachable,
             .friendly_hit => if (settings.rules.friendly_hit) "ON" else "OFF",
@@ -905,7 +901,7 @@ test "EXIT WITHOUT SAVING, the settings key and a gamepad's BACK give back what 
     // Up from the first row: the last, EXIT WITHOUT SAVING; up to the volume, changed.
     _ = press(&screen, &s, .up);
     try testing.expectEqual(Row.exit_without_saving, screen.row);
-    for (0..5) |_| _ = press(&screen, &s, .up);
+    for (0..6) |_| _ = press(&screen, &s, .up);
     try testing.expectEqual(Row.volume, screen.row);
     _ = press(&screen, &s, .right);
     try testing.expectEqual(@as(u8, 80), s.sound.volume);
@@ -954,28 +950,25 @@ test "EXIT WITHOUT SAVING gives back the settings, with A or START there; START 
     try testing.expect(!s.rules.friendly_hit);
 }
 
-test "NETWORK STATS where the machine has network play: after FULL SCREEN, on and off" {
+test "STATS on every machine: after FULL SCREEN, on and off" {
     var s: Settings = .{};
-    var screen: Screen = .open(&s, .{ .rules = true });
+    var screen: Screen = .open(&s, .{});
     for (0..6) |_| _ = press(&screen, &s, .down);
-    try testing.expectEqual(Row.lives, screen.row);
-    screen = .open(&s, .{ .rules = true, .network = true });
-    for (0..6) |_| _ = press(&screen, &s, .down);
-    try testing.expectEqual(Row.network_stats, screen.row);
-    try testing.expectEqual(screen.screenRow(.fullscreen) + 1, screen.screenRow(.network_stats));
+    try testing.expectEqual(Row.stats, screen.row);
+    try testing.expectEqual(screen.screenRow(.fullscreen) + 1, screen.screenRow(.stats));
     _ = press(&screen, &s, .right);
-    try testing.expect(s.network_stats);
+    try testing.expect(s.stats);
     _ = press(&screen, &s, .z);
-    try testing.expect(!s.network_stats);
+    try testing.expect(!s.stats);
 }
 
 test "the rules' rows where the settings give the rules: lives 1 to 9, continues 0 to 9, friendly hits" {
     var s: Settings = .{};
     var screen: Screen = .open(&s, .{ .settings_key = false });
-    for (0..6) |_| _ = press(&screen, &s, .down);
+    for (0..7) |_| _ = press(&screen, &s, .down);
     try testing.expectEqual(Row.defaults, screen.row);
     screen = .open(&s, .{ .rules = true });
-    for (0..6) |_| _ = press(&screen, &s, .down);
+    for (0..7) |_| _ = press(&screen, &s, .down);
     try testing.expectEqual(Row.lives, screen.row);
     for (0..9) |_| _ = press(&screen, &s, .right);
     try testing.expectEqual(@as(u8, 9), s.rules.lives);
@@ -989,8 +982,8 @@ test "the rules' rows where the settings give the rules: lives 1 to 9, continues
     _ = press(&screen, &s, .down);
     _ = press(&screen, &s, .z);
     try testing.expect(!s.rules.friendly_hit);
-    // A blank row after HELP... and before the rules: FRIENDLY HIT on the eleventh.
-    try testing.expectEqual(@as(u16, Screen.first_row + 10), screen.screenRow(.friendly_hit));
+    // A blank row after HELP... and before the rules: FRIENDLY HIT on the twelfth.
+    try testing.expectEqual(@as(u16, Screen.first_row + 11), screen.screenRow(.friendly_hit));
 }
 
 test "HELP...: under INPUT CONFIGURATION..., its page and back with A or START" {

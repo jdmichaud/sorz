@@ -34,8 +34,9 @@
 //! Keys are named as `platform.Key` names them (the agent host's `--key` names), "none" for no key,
 //! gamepad buttons as `platform.ControllerButton` does; a gamepad's model and name are printable
 //! ASCII (input.zig `Text`). `name` is this machine's player's in network play (DESIGN.md 9):
-//! three letters or digits, or empty before one is given; `network_stats`, whether its stats show
-//! in a session's rounds (DESIGN.md 9).
+//! three letters or digits, or empty before one is given; `network_stats`, whether the stats show
+//! (the frame's, and network play's in a session's rounds: overlay.zig), named from when they were
+//! network play's alone, so that the records written read.
 //!
 //! A record of another version (an older game's) is not read: `load` writes the defaults over it,
 //! and nothing is told (the user, 2026-10-08).
@@ -78,8 +79,9 @@ pub const Settings = struct {
     rules: Rules = .{},
     /// This machine's player's name in network play (spaces: none yet).
     name: [3]u8 = .{ ' ', ' ', ' ' },
-    /// Network play's stats show over the picture in a session's rounds (DESIGN.md 9).
-    network_stats: bool = false,
+    /// The stats show over the picture: the frame's, and network play's in a session's rounds
+    /// (DESIGN.md 9); the STATS row and F3 (`stats_key`) turn them on and off.
+    stats: bool = false,
 
     /// Whether the player gave a name.
     pub fn named(self: *const Settings) bool {
@@ -163,7 +165,7 @@ pub const Settings = struct {
     }
 };
 
-/// The key that shows and hides the frame's stats (game.zig); no setting takes it.
+/// The key that shows and hides the stats (`Settings.stats`, game.zig); no setting takes it.
 pub const stats_key: platform.Key = .f3;
 
 /// Escape quits the game (native hosts) or belongs to the browser, and the stats key is the
@@ -327,7 +329,7 @@ pub fn parse(gpa: std.mem.Allocator, bytes: []const u8, report: *Report) Setting
     if (r.get(root, "name", "name")) |got| {
         if (nameOf(got)) |n| s.name = n else report.add("name", "not three letters or digits, or empty");
     }
-    if (r.boolean(root, "network_stats", "network_stats")) |b| s.network_stats = b;
+    if (r.boolean(root, "network_stats", "network_stats")) |b| s.stats = b;
     return s;
 }
 
@@ -516,7 +518,7 @@ pub fn write(s: *const Settings, w: *std.Io.Writer) std.Io.Writer.Error!void {
     try w.print("  \"window\": {{ \"scale\": {d}, \"fullscreen\": {} }},\n", .{ s.window.scale, s.window.fullscreen });
     try w.print("  \"rules\": {{ \"lives\": {d}, \"continues\": {d}, \"friendly_hit\": {} }},\n", .{ s.rules.lives, s.rules.continues, s.rules.friendly_hit });
     try w.print("  \"name\": \"{s}\",\n", .{if (s.named()) &s.name else ""});
-    try w.print("  \"network_stats\": {}\n}}\n", .{s.network_stats});
+    try w.print("  \"network_stats\": {}\n}}\n", .{s.stats});
 }
 
 fn keyName(k: platform.Key) []const u8 {
@@ -620,7 +622,7 @@ test "the record round-trips, and the defaults are the input's" {
     s.window = .{ .scale = 5, .fullscreen = true };
     s.rules = .{ .lives = 9, .continues = 0, .friendly_hit = false };
     s.name = "ZO9".*;
-    s.network_stats = true;
+    s.stats = true;
     const text = encode(&s, &buf);
     const back = reread(text, &report);
     try testing.expect(report.ok());
@@ -689,7 +691,7 @@ test "a damaged field gives its default and the rest is kept" {
         "sound.volume: not a whole number from 0 to 100; window: a field the game does not know; window.fullscreen: not true or false; " ++
         "rules.lives: not a whole number from 1 to 9", w.buffered());
     try testing.expectEqualSlices(u8, "BOB", &s.name);
-    try testing.expect(s.network_stats);
+    try testing.expect(s.stats);
 }
 
 test "damaged records give the defaults" {

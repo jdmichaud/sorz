@@ -32,9 +32,10 @@
 //! In network play the other machine holds too, says why and plays the jingle. A damaged record is repaired and kept aside (settings/record.zig),
 //! and a notice tells the player for a few seconds.
 //!
-//! F3 (`stats_key`, settings/record.zig) shows and hides the frame's stats (overlay.zig
-//! `FrameStats`): the frames presented a second and the time an update works on its frame before
-//! presenting it, over the last second; they are this machine's, never the game's state.
+//! The settings' STATS, which F3 (`stats_key`, settings/record.zig) turns on and off too, show the
+//! frame's stats (overlay.zig `FrameStats`): the frames presented a second and the time an update
+//! works on its frame before presenting it, over the last second; and network play's in a
+//! session's rounds. They are this machine's, never the game's state.
 const std = @import("std");
 const platform = @import("platform.zig");
 const input = @import("input.zig");
@@ -417,9 +418,8 @@ pub const Game = struct {
     update_count: u64 = 0,
     /// When the update under way began (network play's stats and the frame's: its work).
     update_began_ns: u64 = 0,
-    /// The frame's stats (F3, overlay.zig `FrameStats`): shown or not, and those of the last whole
-    /// second; the second under way: when it began, its frames and their work.
-    frame_stats: bool = false,
+    /// The frame's stats (overlay.zig `FrameStats`) of the last whole second; the second under way:
+    /// when it began, its frames and their work.
     frame_stats_last: ?overlay.FrameStats = null,
     meter_since_ns: ?u64 = null,
     meter_frames: u32 = 0,
@@ -740,7 +740,6 @@ pub const Game = struct {
             .players = @intCast(self.controls.players()),
             .settings_key = self.policies().settings_key,
             .rules = self.policies().settings_rules and !self.isClient(),
-            .network = self.netplay != null,
             .escape = !self.host_escape,
             .gamepads = self.controls.connected(),
         }) });
@@ -1026,7 +1025,11 @@ pub const Game = struct {
                     } else if (self.policies().settings_key and k.key == self.settings.settings_key and !k.repeat) {
                         self.showSettings(null);
                     } else if (k.key == settings_mod.record.stats_key) {
-                        if (!k.repeat) self.frame_stats = !self.frame_stats;
+                        // The settings' STATS, kept as the screen keeps them.
+                        if (!k.repeat) {
+                            self.settings.stats = !self.settings.stats;
+                            self.writeSettings(&self.settings);
+                        }
                     } else {
                         _ = self.controls.handle(e);
                     },
@@ -1401,10 +1404,10 @@ pub const Game = struct {
         self.meter_work_ns = 0;
     }
 
-    /// The frame's stats over the picture (F3) while no screen of this machine's is open, from the
-    /// first whole second measured; drawn again when they change.
+    /// The frame's stats over the picture, with the settings' STATS on (F3), while no screen of
+    /// this machine's is open, from the first whole second measured; drawn again when they change.
     fn frameStats(self: *Game) void {
-        const shown = self.frame_stats and !self.settingsOpen() and !self.modalOpen();
+        const shown = self.settings.stats and !self.settingsOpen() and !self.modalOpen();
         const now = (if (shown) self.frame_stats_last else null) orelse {
             if (self.overlays.find(.frame_stats) != null) {
                 self.overlays.remove(.frame_stats);
