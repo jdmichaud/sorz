@@ -458,8 +458,9 @@
   - The settings' stats (NETWORK STATS, network play's alone, DESIGN.md 9) get the frame's: FPS,
     the frames presented a second, and TPF, the milliseconds an update works on its frame before
     presenting it (the presenting's wait for the display not counted), each over the last second,
-    in tenths, three places before the point. They show in any scene, network play's lines over
-    them in a session's rounds, all the letters over the picture without a ground. The row is
+    FPS whole and TPF in tenths, three places before the point. They show in any scene, network
+    play's lines over them in a session's rounds, all the letters over the picture without a
+    ground, outlined in black. The row is
     STATS, on every machine; F3 turns it on and off as the row does, and the record keeps it (its
     field still `network_stats`, so that the records written read). No setting takes F3.
   - Gate: zig build test; the stats seen in play.
