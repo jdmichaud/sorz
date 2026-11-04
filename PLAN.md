@@ -452,7 +452,7 @@
     minutes; lives lost +3.6%, damage taken +1.3% (neither significant: t 0.9, 0.5); all 18
     reach the ending. zig build test. The user's play is pending.
 
-- [ ] **42 — The keys' help, and the frame's stats** — Depends: none.
+- [x] **42 — The keys' help, and the frame's stats** — Depends: none.
   - The keys outside the pads (Escape, the settings key, START's pause or settings) are told
     nowhere in the game. The settings' first page gets HELP..., a page of them.
   - The settings' stats (NETWORK STATS, network play's alone, DESIGN.md 9) get the frame's: FPS,
@@ -463,8 +463,12 @@
     STATS, on every machine; F3 turns it on and off as the row does, and the record keeps it (its
     field still `network_stats`, so that the records written read). No setting takes F3.
   - Gate: zig build test; the stats seen in play.
-  - [x] Done first, then changed (the user, 2026-11-04): F3 showed the frame's stats alone, apart
-    from the settings' stats, and was not kept.
+  - Done first otherwise, then changed (the user, 2026-11-04): F3 showed the frame's stats alone,
+    apart from the settings' stats, and was not kept.
+  - [x] Checked 2026-11-04: zig build test. The SDL host (Debug, software renderer, a virtual
+    display) over the intro: FPS 59.9, TPF 0.5 ms. Through the agent host: F3 on and off, the
+    record keeping it; STATS and HELP on the first page. Network play's lines not seen in a
+    session. The user's play is pending.
 
 ## Standing rule
 
