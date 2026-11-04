@@ -1396,7 +1396,7 @@ pub const Game = struct {
         if (elapsed < std.time.ns_per_s) return;
         const frames: u64 = self.meter_frames;
         self.frame_stats_last = .{
-            .fps_tenths = @intCast(@min(frames * 10 * std.time.ns_per_s / elapsed, 99999)),
+            .fps = @intCast(@min((frames * std.time.ns_per_s + elapsed / 2) / elapsed, 9999)),
             .tpf_tenths = @intCast(@min((self.meter_work_ns / frames + 50 * std.time.ns_per_us) / (100 * std.time.ns_per_us), 99999)),
         };
         self.meter_since_ns = now_ns;

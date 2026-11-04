@@ -82,6 +82,8 @@ pub const Panel = struct {
     colours: render.palettes.Colours = render.palettes.black,
     /// The last picture, RGBA.
     rgba: []u8,
+    /// The rows of `textOutlined`'s texts since `begin`.
+    outlined: [rows]bool = @splat(false),
 
     pub const Error = error{OutOfMemory};
 
@@ -138,6 +140,7 @@ pub const Panel = struct {
     /// A new picture: no text, no arrow.
     pub fn begin(self: *Panel) void {
         self.board.clear();
+        self.outlined = @splat(false);
         self.screen.sprites = &.{};
     }
 
@@ -151,6 +154,13 @@ pub const Panel = struct {
     /// `s` as `text` draws it, without the font's ground: over a picture, the picture shows
     /// around the letters.
     pub fn textClear(self: *Panel, col: usize, row: usize, s: []const u8, tone: Tone) Error!void {
+        return self.write(col, row, s, tone, true);
+    }
+
+    /// `s` as `textClear` draws it, a black line a pixel wide round its letters (`outline`), so
+    /// that they read over any picture.
+    pub fn textOutlined(self: *Panel, col: usize, row: usize, s: []const u8, tone: Tone) Error!void {
+        if (row < rows) self.outlined[row] = true;
         return self.write(col, row, s, tone, true);
     }
 
@@ -224,6 +234,43 @@ pub const Panel = struct {
     /// Composes the panel's picture (after its drawing: `begin`, the texts and boxes).
     pub fn compose(self: *Panel) Error!void {
         _ = try self.composer.compose(&self.screen);
+        self.outline();
+    }
+
+    /// The outline's colour index: a palette no tone has, so that it is never a letter's.
+    const outline_index: u8 = 3 * 16 + 2;
+    const outline_rgba: u32 = @bitCast([4]u8{ 0, 0, 0, 255 });
+
+    /// Round the letters of `textOutlined`'s rows, each empty pixel next to one of their pixels
+    /// (across, down or slanted) black. The lines the composer did not draw again keep theirs,
+    /// which are not letters: drawn again over them, the outline stays as it was.
+    fn outline(self: *Panel) void {
+        const c = self.composer;
+        for (self.outlined, 0..) |on, row| {
+            if (!on) continue;
+            const top = (row * 8) -| 1;
+            const bottom = @min(height, row * 8 + 9);
+            for (top..bottom) |y| for (0..width) |x| {
+                const i = y * width + x;
+                if (c.indices[i] != 0 or !self.nextToLetter(x, y)) continue;
+                c.indices[i] = outline_index;
+                c.rgba[i] = outline_rgba;
+            };
+        }
+    }
+
+    /// A pixel of a letter of `textOutlined`'s rows is next to (`x`, `y`).
+    fn nextToLetter(self: *const Panel, x: usize, y: usize) bool {
+        const c = self.composer;
+        for ([_]i32{ -1, 0, 1 }) |dy| for ([_]i32{ -1, 0, 1 }) |dx| {
+            const nx = @as(i32, @intCast(x)) + dx;
+            const ny = @as(i32, @intCast(y)) + dy;
+            if (nx < 0 or ny < 0 or nx >= width or ny >= height) continue;
+            if (!self.outlined[@as(usize, @intCast(ny)) / 8]) continue;
+            const index = c.indices[@as(usize, @intCast(ny)) * width + @as(usize, @intCast(nx))];
+            if (index != 0 and index != outline_index) return true;
+        };
+        return false;
     }
 
     /// The panel's picture as composed last over `under`: where the panel is empty (its
