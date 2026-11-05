@@ -471,6 +471,26 @@
     record keeping it; STATS and HELP on the first page. Network play's lines not seen in a
     session. The user's play is pending.
 
+- [ ] **43 — MOVES: each character's blows and their damage, shown** — Depends: 42.
+  - The players cannot see what a blow is worth, nor why Axel's combo knocks a round 1 Galsia out
+    and Adam's does not (his uppercut lifts it, and his last blow, landing on it lifted, takes no
+    health). The settings' first page gets MOVES..., a screen that shows them (the user,
+    2026-11-05).
+  - A black screen. Each character in turn walks in, plays its moves, and walks out: Adam from the
+    bottom left, Axel from the top left, Blaze from the right. A light on the floor follows it: an
+    oval in a few dark shades, as a spotlight on a stage.
+  - Its moves: the combo, the jump kick, the back attack, the hold's knees and last knee, the
+    throw over the shoulder, the slam from behind. No enemy shows. Each blow that lands shows its
+    damage, a digit in the game's font where the enemy would be, rising and fading; no caption.
+  - The game's own rules play them: each character the real player, its pad a fixed script, in an
+    empty room, before a stand-in enemy that is not drawn, never moves nor strikes, and stays on
+    the ground (Adam's last blow lands as on the ground: 2). The digits are its hits' damage; the
+    throw's and the slam's are a round 1 Galsia's.
+  - Sound: the moves' own (their swing) and the voices, not a blow's landing, nor music.
+  - Any key or button ends it at once; after Blaze it ends by itself. Either way the settings come
+    back as they were.
+  - Gate: zig build test; the screen seen through, each digit the move's damage; a key ends it.
+
 ## Standing rule
 
 - [ ] **S1 — The repository stands alone** — Depends: none.
