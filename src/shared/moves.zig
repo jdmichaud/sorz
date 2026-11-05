@@ -2,17 +2,18 @@
 //! shown on a screen of this machine's that the settings open (settings/screen.zig, game.zig).
 //!
 //! A black screen. Adam walks in from the bottom left, Axel from the top left, Blaze from the
-//! right; each plays its moves in the middle, then walks out across, a spotlight on the floor
-//! under it. The moves: the combo, the jump kick, the back attack, the hold's knees and last
-//! knee, the throw over the shoulder, the slam from behind. There is no enemy and no world: the
-//! character alone plays its definition's animations frame by frame at play's pace (a logic tick
-//! every other display tick), each move ending at the frame the player's own ends it (its
-//! numbers: `blow_ends`, `throw_ends`...), its walks, its jump and its leaps moved by its own
-//! speeds and gravity, as the player behaviour moves them (world/behaviours/player.zig). Where
-//! a move's blow strikes (the first frame of its blow, or a hold's the frame that lets the one
-//! held go), the move's damage shows: a digit in the game's font where the enemy would be, which
-//! rises and fades. The frames' and the moves' own sounds play (the swings, the shouts); a blow's
-//! landing, no.
+//! right; each plays its moves in the middle, then walks out across until its light is off the
+//! screen, a spotlight under it on a floor of planks that stays where it is: only where the light
+//! falls does it show. A moment of black follows the last. The moves: the combo, the jump kick, the
+//! back attack, the hold's knees and last knee, the throw over the shoulder, the slam from behind.
+//! There is no enemy and no world: the character alone plays its definition's animations frame by
+//! frame at play's pace (a logic tick every other display tick), each move ending at the frame the
+//! player's own ends it (its numbers: `blow_ends`, `throw_ends`...), its walks, its jump and its
+//! leaps moved by its own speeds and gravity, as the player behaviour moves them
+//! (world/behaviours/player.zig). Where a move's blow strikes (the first frame of its blow, or a
+//! hold's the frame that lets the one held go), the move's damage shows: a digit in the game's font
+//! where the enemy would be, which rises and fades. The frames' and the moves' own sounds play (the
+//! swings, the shouts); a blow's landing, no.
 //!
 //! It is this machine's, never the game's state: the game holds under it, as under the settings.
 const std = @import("std");
@@ -56,10 +57,17 @@ const stage: Spot = .{ .x = 160, .depth = 60 };
 /// plays.
 const Entrance = struct { name: []const u8, from: Spot, to: Spot, facing: Facing };
 const cast = [_]Entrance{
-    .{ .name = "adam", .from = .{ .x = -40, .depth = 110 }, .to = .{ .x = 360, .depth = 16 }, .facing = .right },
-    .{ .name = "axel", .from = .{ .x = -40, .depth = 16 }, .to = .{ .x = 360, .depth = 110 }, .facing = .right },
-    .{ .name = "blaze", .from = .{ .x = 360, .depth = 60 }, .to = .{ .x = -40, .depth = 60 }, .facing = .left },
+    .{ .name = "adam", .from = .{ .x = -40, .depth = 110 }, .to = .{ .x = off_right, .depth = 16 }, .facing = .right },
+    .{ .name = "axel", .from = .{ .x = -40, .depth = 16 }, .to = .{ .x = off_right, .depth = 110 }, .facing = .right },
+    .{ .name = "blaze", .from = .{ .x = 360, .depth = 60 }, .to = .{ .x = off_left, .depth = 60 }, .facing = .left },
 };
+
+/// Places across where the light is off the screen, a little more.
+const off_left = -spot_width / 2 - 16;
+const off_right = view_mod.width + spot_width / 2 + 16;
+
+/// The logic ticks of black after the last walks out.
+const tail_ticks = 24;
 
 /// What it plays, in its order.
 const Phase = enum { walk_in, combo, jump_kick, back_attack, knees, throw, slam, walk_out };
@@ -85,10 +93,21 @@ const digit_palette = 2;
 const font_letter = 1;
 const font_ground = 2;
 
-/// The spotlight: an oval this wide and deep, in three shades.
+/// The spotlight: an oval this wide and deep, in three levels of light.
 const spot_width = 88;
 const spot_height = 26;
-const spot_shades = [_]art.Colour{ .{ .r = 1, .g = 1, .b = 1 }, .{ .r = 2, .g = 2, .b = 2 }, .{ .r = 3, .g = 3, .b = 3 } };
+const light_levels = 3;
+
+/// The floor: rows of planks this deep and long, each row's joints shifted by its own amount; a
+/// plank's tones (its seams, its wood, its grain), by the light's level, darkest first: browns.
+const plank_depth = 6;
+const plank_length = 88;
+const Tone = enum(u8) { seam, wood, grain };
+const floor_colours = [light_levels][3]art.Colour{
+    .{ .{ .r = 1, .g = 0, .b = 0 }, .{ .r = 2, .g = 1, .b = 0 }, .{ .r = 2, .g = 1, .b = 1 } },
+    .{ .{ .r = 2, .g = 1, .b = 0 }, .{ .r = 3, .g = 2, .b = 1 }, .{ .r = 4, .g = 2, .b = 1 } },
+    .{ .{ .r = 3, .g = 1, .b = 0 }, .{ .r = 5, .g = 3, .b = 2 }, .{ .r = 5, .g = 4, .b = 2 } },
+};
 
 /// A move's damage shown: its digit, where it shows (screen pixels: the middle of its bottom),
 /// and its display ticks so far.
@@ -122,7 +141,12 @@ pub const Moves = struct {
     kinds: *const world.Kinds,
     view: view_mod.View,
     sound: ?audio.Sound = null,
+    /// The light on the floor: its frame (the floor's planks where it falls), its pixels, made
+    /// again where it moves (`spot_at`, the screen's place of its middle), and its levels.
     spot: *art.Frame,
+    spot_pixels: []u8,
+    spot_at: ?[2]i32 = null,
+    light: [spot_width * spot_height]u8 = undefined,
     /// Each digit's frames, by its fade's step.
     digit_frames: [10][fade_steps]*art.Frame,
     colours: render.palettes.Colours = render.palettes.black,
@@ -155,10 +179,14 @@ pub const Moves = struct {
         for (cast) |who| if (c.kinds.find(who.name) == null) return error.BadContent;
         const self = try gpa.create(Moves);
         errdefer gpa.destroy(self);
-        self.* = .{ .gpa = gpa, .assets = assets, .kinds = &c.kinds, .view = try .init(gpa), .spot = undefined, .digit_frames = undefined };
+        self.* = .{ .gpa = gpa, .assets = assets, .kinds = &c.kinds, .view = try .init(gpa), .spot = undefined, .spot_pixels = undefined, .digit_frames = undefined };
         errdefer self.view.deinit();
-        self.spot = try spotFrame(gpa);
-        errdefer freeFrame(gpa, self.spot);
+        lightLevels(&self.light);
+        self.spot_pixels = try gpa.alloc(u8, spot_width * spot_height);
+        errdefer gpa.free(self.spot_pixels);
+        self.spot = try gpa.create(art.Frame);
+        self.spot.* = .{ .name = "spotlight", .file = "", .width = spot_width, .height = spot_height, .origin_x = spot_width / 2, .origin_y = spot_height / 2, .pixels = self.spot_pixels };
+        errdefer gpa.destroy(self.spot);
         var made: usize = 0;
         errdefer for (0..made) |i| for (self.digit_frames[i]) |f| freeFrame(gpa, f);
         for (&self.digit_frames, 0..) |*steps, d| {
@@ -176,7 +204,8 @@ pub const Moves = struct {
         const gpa = self.gpa;
         if (self.sound) |*s| s.deinit(gpa);
         for (self.digit_frames) |steps| for (steps) |f| freeFrame(gpa, f);
-        freeFrame(gpa, self.spot);
+        gpa.free(self.spot_pixels);
+        gpa.destroy(self.spot);
         self.view.deinit();
         gpa.destroy(self);
     }
@@ -205,6 +234,7 @@ pub const Moves = struct {
         if (self.puppet) |*p| {
             const x = p.x.whole();
             const floor = (p.depth.whole() >> 1) + floor_line;
+            self.lightAt(x, floor);
             try v.sprites.append(v.gpa, .{ .frame = self.spot, .x = x, .y = floor, .palette = spot_palette });
             if (self.kinds.shadow) |shadow| try v.sprites.append(v.gpa, .{ .frame = shadow, .x = x, .y = floor, .palette = shadow.palette });
             const shown = p.kind.definition.animations[p.animation].frames[p.frame];
@@ -216,6 +246,14 @@ pub const Moves = struct {
             try v.sprites.append(v.gpa, .{ .frame = f, .x = d.x, .y = d.y - @as(i32, d.age), .palette = digit_palette });
         };
         return v.compose();
+    }
+
+    /// The light's middle at (`x`, `y`) on the screen: where it moved, its pixels are the floor's
+    /// planks there, in its levels.
+    fn lightAt(self: *Moves, x: i32, y: i32) void {
+        if (self.spot_at) |at| if (at[0] == x and at[1] == y) return;
+        self.spot_at = .{ x, y };
+        litFloor(&self.light, x - spot_width / 2, y - spot_height / 2, self.spot_pixels);
     }
 
     // The script ----------------------------------------------------------------------------
@@ -279,6 +317,12 @@ pub const Moves = struct {
     }
 
     fn logicTick(self: *Moves) void {
+        // After the last, the black's moment.
+        if (self.puppet == null) {
+            self.timer += 1;
+            if (self.timer >= tail_ticks) self.over = true;
+            return;
+        }
         const p = &self.puppet.?;
         if (self.sub == 0xFF and self.phase != .walk_out) return self.next();
         switch (self.phase) {
@@ -292,8 +336,8 @@ pub const Moves = struct {
             .walk_out => if (self.walkTo(cast[self.who].to)) {
                 self.who += 1;
                 if (self.who == cast.len) {
-                    self.over = true;
                     self.puppet = null;
+                    self.timer = 0;
                     return;
                 }
                 return self.start();
@@ -696,28 +740,20 @@ fn fadeStep(age: u16) usize {
 fn coloursOf(players: *const art.Palette) render.palettes.Colours {
     var c = render.palettes.black;
     players.apply(&c);
-    for (spot_shades, 1..) |s, i| c[spot_palette][i] = s;
+    for (floor_colours, 0..) |tones, level| for (tones, 0..) |t, tone| {
+        c[spot_palette][floorColour(@intCast(level + 1), @fromBackingInt(@intCast(tone)))] = t;
+    };
     c[digit_palette] = c[0];
     c[digit_palette][font_ground] = .black;
     return c;
 }
 
-/// The spotlight's frame: an oval of three shades, the brightest in its middle, their edges
-/// dithered; its origin at its middle.
-fn spotFrame(gpa: std.mem.Allocator) error{OutOfMemory}!*art.Frame {
-    const pixels = try gpa.alloc(u8, spot_width * spot_height);
-    errdefer gpa.free(pixels);
-    spotPixels(pixels);
-    const f = try gpa.create(art.Frame);
-    f.* = .{ .name = "spotlight", .file = "", .width = spot_width, .height = spot_height, .origin_x = spot_width / 2, .origin_y = spot_height / 2, .pixels = pixels };
-    return f;
-}
-
-/// The oval's shades: by the distance from its middle (1 at its rim), a shade more every third
-/// of it inward; an ordered dither's threshold mixes two shades over a band at each edge. In
-/// whole numbers (the browser's module has no float helpers): shade `k` holds where the distance
-/// `r` is at most `1 - (k - t) / 3`, `t` the threshold, compared squared.
-fn spotPixels(out: []u8) void {
+/// The light's levels over its oval (0: none, past its rim): by the distance from its middle (1
+/// at its rim), a level more every third of it inward; an ordered dither's threshold mixes two
+/// levels over a band at each edge. In whole numbers (the browser's module has no float
+/// helpers): level `k` holds where the distance `r` is at most `1 - (k - t) / 3`, `t` the
+/// threshold, compared squared.
+fn lightLevels(out: []u8) void {
     const bayer = [4][4]u64{ .{ 0, 8, 2, 10 }, .{ 12, 4, 14, 6 }, .{ 3, 11, 1, 9 }, .{ 15, 7, 13, 5 } };
     const w: u64 = spot_width;
     const h: u64 = spot_height;
@@ -734,12 +770,51 @@ fn spotPixels(out: []u8) void {
         // The threshold in 32nds; the distance's bound for shade k in 96ths of the rim.
         const t = 2 * bayer[y % 4][x % 4] + 1;
         var shade: u8 = 1;
-        for (2..spot_shades.len + 1) |k| {
+        for (2..light_levels + 1) |k| {
             const bound = 96 + t -| 32 * k;
             if (r2 * 96 * 96 <= bound * bound * rim) shade = @intCast(k);
         }
         out[y * spot_width + x] = shade;
     };
+}
+
+/// The floor's colour of `tone` in the light's `level` (1 to 3), on the light's palette.
+fn floorColour(level: u8, tone: Tone) u8 {
+    return 1 + (level - 1) * 3 + @backingInt(tone);
+}
+
+/// The light's pixels with its top-left corner at (`left`, `top`) on the screen: the floor's
+/// planks there, in its levels; none past its rim.
+fn litFloor(light: []const u8, left: i32, top: i32, out: []u8) void {
+    for (0..spot_height) |y| for (0..spot_width) |x| {
+        const i = y * spot_width + x;
+        const level = light[i];
+        out[i] = if (level == 0) 0 else floorColour(level, plank(left + @as(i32, @intCast(x)), top + @as(i32, @intCast(y))));
+    };
+}
+
+/// The floor's tone at (`x`, `y`) on the screen, which stays: rows of planks, a seam between two
+/// rows and at a plank's ends (each row's shifted by its own amount); along a plank, its grain's
+/// streaks, by its own pattern.
+fn plank(x: i32, y: i32) Tone {
+    const row = @divFloor(y, plank_depth);
+    const in_row = @mod(y, plank_depth);
+    if (in_row == 0) return .seam;
+    const along = x + @as(i32, @intCast(mix(@bitCast(row)) % plank_length));
+    if (@mod(along, plank_length) == 0) return .seam;
+    const id = @divFloor(along, plank_length);
+    const own = mix(@bitCast(row *% 977 +% id *% 131));
+    const streak = mix(@bitCast(row *% 7919 +% in_row *% 31 +% @divFloor(along + @as(i32, @intCast(own & 7)), 5)));
+    return if (streak & 3 == 0) .grain else .wood;
+}
+
+/// A whole number's bits mixed (a hash): the floor's pattern.
+fn mix(v: u32) u32 {
+    var h = v *% 0x9E3779B1;
+    h ^= h >> 15;
+    h *%= 0x85EBCA77;
+    h ^= h >> 13;
+    return h;
 }
 
 /// Digit `d`'s frames, by the fade's step: the font's glyph, outlined in its ground colour (as
@@ -791,13 +866,13 @@ fn freeFrame(gpa: std.mem.Allocator, f: *art.Frame) void {
 
 const testing = std.testing;
 
-test "the spotlight: an oval, brightest in its middle, nothing past its rim" {
+test "the light: an oval, brightest in its middle, nothing past its rim" {
     var px: [spot_width * spot_height]u8 = undefined;
-    spotPixels(&px);
+    lightLevels(&px);
     try testing.expectEqual(@as(u8, 0), px[0]);
     try testing.expectEqual(@as(u8, 0), px[spot_width - 1]);
-    try testing.expectEqual(@as(u8, 3), px[(spot_height / 2) * spot_width + spot_width / 2]);
-    for (px) |p| try testing.expect(p <= spot_shades.len);
+    try testing.expectEqual(@as(u8, light_levels), px[(spot_height / 2) * spot_width + spot_width / 2]);
+    for (px) |p| try testing.expect(p <= light_levels);
     // Left and right alike, but the dither.
     var lit: [2]usize = .{ 0, 0 };
     for (0..spot_height) |y| for (0..spot_width) |x| {
@@ -817,4 +892,27 @@ test "a digit fades over its last ticks, in steps, whole until then" {
         try testing.expect(s >= last);
         last = s;
     }
+}
+
+test "the floor stays: the light moved shows the same planks at the same places of the screen" {
+    var light: [spot_width * spot_height]u8 = undefined;
+    lightLevels(&light);
+    var a: [spot_width * spot_height]u8 = undefined;
+    var b: [spot_width * spot_height]u8 = undefined;
+    litFloor(&light, 100, 150, &a);
+    litFloor(&light, 107, 153, &b);
+    // A screen pixel both light up at the same level shows the same tone.
+    var same: usize = 0;
+    for (0..spot_height - 3) |y| for (0..spot_width - 7) |x| {
+        const in_a = (y + 3) * spot_width + x + 7;
+        const in_b = y * spot_width + x;
+        if (light[in_a] != light[in_b] or light[in_a] == 0) continue;
+        try testing.expectEqual(a[in_a], b[in_b]);
+        same += 1;
+    };
+    try testing.expect(same > 100);
+    // Its seams: between the rows, and at a plank's ends.
+    try testing.expectEqual(Tone.seam, plank(5, 0));
+    try testing.expectEqual(Tone.seam, plank(plank_length, 1));
+    try testing.expect(plank(5, 1) != .seam);
 }

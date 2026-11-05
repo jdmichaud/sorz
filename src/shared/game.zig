@@ -453,7 +453,7 @@ pub const Game = struct {
     }
 
     pub fn deinit(self: *Game) void {
-        self.closeMoves();
+        self.closeMoves(null);
         if (self.netplay) |np| {
             np.deinit();
             self.allocator.destroy(np);
@@ -1053,7 +1053,7 @@ pub const Game = struct {
             }
         }
         if (self.finished) {
-            self.closeMoves();
+            self.closeMoves(null);
             // Quitting with the settings open writes nothing, as leaving them without saving.
             if (self.overlays.find(.settings)) |o| {
                 if (!self.settingsClosing()) self.settings = o.settings.before;
@@ -1116,13 +1116,15 @@ pub const Game = struct {
         self.jingle_at = null;
     }
 
-    /// MOVES ends: the settings show again, as they were.
-    fn closeMoves(self: *Game) void {
+    /// MOVES ends: the settings show again, as they were, fading in from black from `now_ns` as
+    /// their pages do (null: the game ends, no fade).
+    fn closeMoves(self: *Game, now_ns: ?u64) void {
         const m = self.moves orelse return;
         m.destroy();
         self.moves = null;
         self.overlay_dirty = true;
         self.under_changed = true;
+        if (now_ns) |t| self.panel_fade = .{ .to = .target, .since_ns = t };
     }
 
     /// An event while MOVES runs: a key or a button pressed ends it; the controls still see the
@@ -1130,8 +1132,8 @@ pub const Game = struct {
     fn movesEvent(self: *Game, e: platform.Event, p: *platform.Platform) void {
         switch (e.payload) {
             .quit => self.finished = true,
-            .key_down => |k| if (!k.repeat) self.closeMoves(),
-            .controller_button_down => self.closeMoves(),
+            .key_down => |k| if (!k.repeat) self.closeMoves(p.nowNs()),
+            .controller_button_down => self.closeMoves(p.nowNs()),
             .key_up, .controller_axis => {},
             else => self.controlEvent(e, p),
         }
@@ -1162,7 +1164,7 @@ pub const Game = struct {
             // Too far behind (a stall): the lost time is dropped.
             if (self.moves_ticks < due) self.moves_ticks = due;
         }
-        if (m.over) self.closeMoves();
+        if (m.over) self.closeMoves(p.nowNs());
     }
 
     /// The other player's being in the settings, as the session says it: both games hold, and both
