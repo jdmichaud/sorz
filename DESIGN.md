@@ -358,7 +358,8 @@ the game then disables what needs it.
   changes the settings on a screen of the game (the user, 2026-10-05): ADVANCED SETTINGS, the line
   before EXIT in OPTIONS, and START during the game, which opens them in place of the pause (the
   extended and network variants); in the original, whose OPTIONS and pause are the cartridge's,
-  the settings key (F1). The volume is one of them. The screen shows only the settings of the
+  the settings key (F1). The volume is one of them. Their first page also has HELP..., the keys
+  outside the pads, and MOVES... (section 10.4, S4). The screen shows only the settings of the
   machine's own players (one in network play), and it holds the game while it is open (in
   network play, both games, and the other player is told why). A
   damaged record never stops the game: a field that does not read gives its default and the rest
@@ -515,9 +516,12 @@ sound. It is the upgrade if the delay is felt.
 - **Stats** (the user, 2026-10-09). Each machine of a session measures, every second, the ticks it
   ran, its busy share of the time (its updates' work, without the presenting, which may wait for
   the display) and its wait for the other's pads, and sends them to the other with the round trip
-  it measured. With the settings' NETWORK STATS on (off by default), a machine shows during the
-  session's rounds, at the bottom left over the picture, the same lines as the other: the host's
-  (HOST), then the client's (its name), each with those numbers, its ping and the input delay. A
+  it measured. With the settings' STATS on (off by default; F3 turns it on and off too), a
+  machine shows at the bottom left over the picture, outlined in black, the frame's stats in any
+  scene: FPS, the frames presented a second, and TPF, the milliseconds an update works on its
+  frame. During a session's rounds, network play's lines show above them, the same lines as the
+  other: the host's (HOST), then the client's (its name), each with those numbers, its ping and
+  the input delay. A
   machine busy near 100 % is the slow one; waits while neither is busy are the link's, its ping
   near or past what the delay covers.
 - **Game data.** A page loads the game's files of the native game that serves it (section 5.3):
@@ -680,6 +684,16 @@ that it never holds another back; a page silent for 15 seconds is dropped.
   messages are each machine's own and stay out of the game's shared state. Outside the original,
   START during the game opens the settings in place of the pause, and they hold the game as the
   pause does.
+- **S4 MOVES** (the user, 2026-11-05). The settings' MOVES... shows each character's blows and
+  their damage. It is a scene of this machine's, over the settings, and holds the game as they
+  do. It plays its own small world, never the game's: each character is the real player, in an
+  empty dark room, its pad a fixed script, before a stand-in enemy that is not drawn, never moves
+  nor strikes, and stays on the ground. Adam walks in from the bottom left, Axel from the top
+  left, Blaze from the right. Each plays the combo, the jump kick, the back attack, the hold's
+  knees, the throw and the slam from behind, then walks out, a spotlight on the floor following
+  it. Each blow that lands shows its damage as a rising digit. The throw's and the slam's are a
+  round 1 Galsia's. The moves' own sounds and the voices play, not a blow's landing, nor music.
+  Any press ends it, and it ends by itself after Blaze; the settings come back as they were.
 
 ### 10.5 Rendering
 
