@@ -498,6 +498,11 @@
     virtual display) runs it in real time. Blaze's last knee ended a frame before its blow, at its
     own end, which her leap's has none of: fixed before the commit (the user saw it). The user's
     look is pending.
+  - The user's look (2026-11-05): after Blaze, part of the light still shows as the settings come
+    back; the floor seems to move with the character; the settings reappear at once. Each walks
+    out until the light is off the screen, and a moment of black follows Blaze; the floor is a
+    floor of planks that stays where it is, the light alone moving over it, shown only where it
+    falls; the settings fade in from black, as their pages do.
 
 ## Standing rule
 
