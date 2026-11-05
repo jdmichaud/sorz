@@ -686,13 +686,13 @@ that it never holds another back; a page silent for 15 seconds is dropped.
   pause does.
 - **S4 MOVES** (the user, 2026-11-05). The settings' MOVES... shows each character's blows and
   their damage. It is a scene of this machine's, over the settings, and holds the game as they
-  do. It plays its own small world, never the game's: each character is the real player, in an
-  empty dark room, its pad a fixed script, before a stand-in enemy that is not drawn, never moves
-  nor strikes, and stays on the ground. Adam walks in from the bottom left, Axel from the top
-  left, Blaze from the right. Each plays the combo, the jump kick, the back attack, the hold's
-  knees, the throw and the slam from behind, then walks out, a spotlight on the floor following
-  it. Each blow that lands shows its damage as a rising digit. The throw's and the slam's are a
-  round 1 Galsia's. The moves' own sounds and the voices play, not a blow's landing, nor music.
+  do. It plays the characters alone, no enemy and no world: each its definition's animations
+  frame by frame at play's pace, the walks and the jump moved by its own speeds. Adam walks in
+  from the bottom left, Axel from the top left, Blaze from the right. Each plays the combo, the
+  jump kick, the back attack, the hold's knees, the throw and the slam from behind, then walks
+  out, a spotlight on the floor following it. Each move shows its damage as a rising digit at the
+  frame its blow strikes. The moves' own sounds and the voices play, not a blow's landing, nor
+  music.
   Any press ends it, and it ends by itself after Blaze; the settings come back as they were.
 
 ### 10.5 Rendering
