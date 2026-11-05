@@ -503,6 +503,10 @@
     out until the light is off the screen, and a moment of black follows Blaze; the floor is a
     floor of planks that stays where it is, the light alone moving over it, shown only where it
     falls; the settings fade in from black, as their pages do.
+  - [x] Checked 2026-11-05: zig build test, zig build web; through the agent host, Blaze walks
+    out until her light is gone, about a second of black, then the settings fade in; the floor's
+    planks stay at their places of the screen as the light moves over them (a test checks it).
+    The user's look is pending.
 
 ## Standing rule
 
