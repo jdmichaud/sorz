@@ -5,21 +5,22 @@
 //! key (F1 by default), in any scene.
 //!
 //! Its pages are in the cartridge's options' style (the chosen row bright, the others dim, the
-//! menu's arrow at the choice). The first: INPUT CONFIGURATION..., HELP..., the sound and its
-//! volume, the window's scale and full screen, the stats (STATS: the frame's, and network play's:
-//! overlay.zig, DESIGN.md 9; F3 too turns them on and off); the game's rules where the settings give them (the lives, the
-//! continues, the friendly hits: setup.zig `Rules`); the defaults; and the two ways out, SAVE AND
-//! EXIT and EXIT WITHOUT SAVING. INPUT CONFIGURATION has a column for each player of this machine
-//! (one with network play or a browser): its input method (the keyboard, or a gamepad connected:
-//! a gamepad one player takes goes from the other, who goes back to the keyboard), its keys, or
-//! its gamepad's A, B, C and START (its model's: the directions are the gamepad's d-pad and stick),
-//! and its autofire; the settings key where the variant has it; GAMEPAD LIST...; and EXIT, back to
-//! the first page. HELP tells the keys outside the pads: Escape (where the host gives it to the
-//! game), START's pause or settings, the settings key where the variant has it, and F3's stats
-//! (game.zig), and what the frame's stats are; EXIT goes back. GAMEPAD LIST shows every gamepad the machine knows (input.zig), by its label,
-//! with its name, the connected ones bright, the others dim, scrolling past the screen's rows; an
-//! unconnected one is forgotten with DEL, or with A, B or C and a yes (A, B or C again; START:
-//! no).
+//! menu's arrow at the choice). The first: INPUT CONFIGURATION..., HELP..., MOVES... (each
+//! character's moves and their damage, shown: moves.zig; the screen stays open under it), the sound
+//! and its volume, the window's scale and full screen, the stats (STATS: the frame's, and network
+//! play's: overlay.zig, DESIGN.md 9; F3 too turns them on and off); the game's rules where the
+//! settings give them (the lives, the continues, the friendly hits: setup.zig `Rules`); the
+//! defaults; and the two ways out, SAVE AND EXIT and EXIT WITHOUT SAVING. INPUT CONFIGURATION has a
+//! column for each player of this machine (one with network play or a browser): its input method
+//! (the keyboard, or a gamepad connected: a gamepad one player takes goes from the other, who goes
+//! back to the keyboard), its keys, or its gamepad's A, B, C and START (its model's: the directions
+//! are the gamepad's d-pad and stick), and its autofire; the settings key where the variant has it;
+//! GAMEPAD LIST...; and EXIT, back to the first page. HELP tells the keys outside the pads: Escape
+//! (where the host gives it to the game), START's pause or settings, the settings key where the
+//! variant has it, and F3's stats (game.zig), and what the frame's stats are; EXIT goes back.
+//! GAMEPAD LIST shows every gamepad the machine knows (input.zig), by its label, with its name, the
+//! connected ones bright, the others dim, scrolling past the screen's rows; an unconnected one is
+//! forgotten with DEL, or with A, B or C and a yes (A, B or C again; START: no).
 //!
 //! The pads' keys work it as they work the options: the directions move (left and right between
 //! the players' columns, or change a value), A, B or C acts (a key or a button: the next one
@@ -50,6 +51,7 @@ pub const Page = enum(u8) { main, input, gamepads, help };
 pub const Row = enum(u8) {
     input_configuration,
     help,
+    moves,
     sound,
     volume,
     scale,
@@ -125,8 +127,8 @@ pub const Facts = struct {
 };
 
 /// What an event did: the screen stays open, or it closed, its settings to be written, or given
-/// back as they were when it opened.
-pub const Result = enum { stay, save_and_exit, exit_without_saving };
+/// back as they were when it opened; or MOVES is asked for, over the screen, which stays open.
+pub const Result = enum { stay, save_and_exit, exit_without_saving, moves };
 
 pub const Screen = struct {
     facts: Facts = .{},
@@ -246,6 +248,7 @@ pub const Screen = struct {
                     self.column = 0;
                 },
                 .help => self.pending = .help,
+                .moves => return .moves,
                 .volume => {},
                 .scale => settings.window.scale = if (settings.window.scale >= record.max_scale) 1 else settings.window.scale + 1,
                 .lives => settings.rules.lives = if (settings.rules.lives >= record.max_lives) 1 else settings.rules.lives + 1,
@@ -452,12 +455,12 @@ pub const Screen = struct {
     const configuration_row = 8;
     const prompt_row = panel_mod.rows - 3;
 
-    /// The first page's screen row of `row`: a blank row after HELP..., before the rules and before
-    /// DEFAULTS.
+    /// The first page's screen row of `row`: a blank row after MOVES..., before the rules and
+    /// before DEFAULTS.
     fn screenRow(self: *const Screen, row: Row) u16 {
         var n: u16 = 0;
         for (std.enums.values(Row)[0..@backingInt(row)]) |r| n += @intFromBool(self.shows(r));
-        if (@backingInt(row) > @backingInt(Row.help)) n += 1;
+        if (@backingInt(row) > @backingInt(Row.moves)) n += 1;
         if (@backingInt(row) >= @backingInt(Row.lives)) n += 1;
         if (@backingInt(row) >= @backingInt(Row.defaults) and self.facts.rules) n += 1;
         return first_row + n;
@@ -628,6 +631,7 @@ pub const Screen = struct {
         return switch (row) {
             .input_configuration => "INPUT CONFIGURATION...",
             .help => "HELP...",
+            .moves => "MOVES...",
             .sound => "SOUND",
             .volume => "VOLUME",
             .scale => "WINDOW SCALE",
@@ -953,7 +957,7 @@ test "EXIT WITHOUT SAVING gives back the settings, with A or START there; START 
 test "STATS on every machine: after FULL SCREEN, on and off" {
     var s: Settings = .{};
     var screen: Screen = .open(&s, .{});
-    for (0..6) |_| _ = press(&screen, &s, .down);
+    for (0..7) |_| _ = press(&screen, &s, .down);
     try testing.expectEqual(Row.stats, screen.row);
     try testing.expectEqual(screen.screenRow(.fullscreen) + 1, screen.screenRow(.stats));
     _ = press(&screen, &s, .right);
@@ -965,10 +969,10 @@ test "STATS on every machine: after FULL SCREEN, on and off" {
 test "the rules' rows where the settings give the rules: lives 1 to 9, continues 0 to 9, friendly hits" {
     var s: Settings = .{};
     var screen: Screen = .open(&s, .{ .settings_key = false });
-    for (0..7) |_| _ = press(&screen, &s, .down);
+    for (0..8) |_| _ = press(&screen, &s, .down);
     try testing.expectEqual(Row.defaults, screen.row);
     screen = .open(&s, .{ .rules = true });
-    for (0..7) |_| _ = press(&screen, &s, .down);
+    for (0..8) |_| _ = press(&screen, &s, .down);
     try testing.expectEqual(Row.lives, screen.row);
     for (0..9) |_| _ = press(&screen, &s, .right);
     try testing.expectEqual(@as(u8, 9), s.rules.lives);
@@ -982,8 +986,8 @@ test "the rules' rows where the settings give the rules: lives 1 to 9, continues
     _ = press(&screen, &s, .down);
     _ = press(&screen, &s, .z);
     try testing.expect(!s.rules.friendly_hit);
-    // A blank row after HELP... and before the rules: FRIENDLY HIT on the twelfth.
-    try testing.expectEqual(@as(u16, Screen.first_row + 11), screen.screenRow(.friendly_hit));
+    // A blank row after MOVES... and before the rules: FRIENDLY HIT on the thirteenth.
+    try testing.expectEqual(@as(u16, Screen.first_row + 12), screen.screenRow(.friendly_hit));
 }
 
 test "HELP...: under INPUT CONFIGURATION..., its page and back with A or START" {
@@ -993,7 +997,8 @@ test "HELP...: under INPUT CONFIGURATION..., its page and back with A or START" 
         _ = press(&screen, &s, .down);
         try testing.expectEqual(Row.help, screen.row);
         try testing.expectEqual(screen.screenRow(.input_configuration) + 1, screen.screenRow(.help));
-        try testing.expectEqual(screen.screenRow(.help) + 2, screen.screenRow(.sound));
+        try testing.expectEqual(screen.screenRow(.help) + 1, screen.screenRow(.moves));
+        try testing.expectEqual(screen.screenRow(.moves) + 2, screen.screenRow(.sound));
         try testing.expectEqual(Result.stay, pressTurning(&screen, &s, .z));
         try testing.expectEqual(Page.help, screen.page);
         try testing.expectEqual(Result.stay, pressTurning(&screen, &s, .down));
@@ -1002,6 +1007,20 @@ test "HELP...: under INPUT CONFIGURATION..., its page and back with A or START" 
         try testing.expectEqual(Page.main, screen.page);
         try testing.expectEqual(Row.help, screen.row);
     }
+}
+
+test "MOVES...: under HELP..., A asks for MOVES, the screen staying open as it was" {
+    var s: Settings = .{};
+    var screen: Screen = .open(&s, .{});
+    for (0..2) |_| _ = press(&screen, &s, .down);
+    try testing.expectEqual(Row.moves, screen.row);
+    for ([_]platform.Key{ .z, .x, .c }) |k| {
+        try testing.expectEqual(Result.moves, press(&screen, &s, k));
+        try testing.expectEqual(Page.main, screen.page);
+        try testing.expectEqual(Row.moves, screen.row);
+    }
+    // START there saves and leaves, as elsewhere.
+    try testing.expectEqual(Result.save_and_exit, press(&screen, &s, .enter));
 }
 
 test "the screen draws on a panel: the title, the rows, the arrow" {

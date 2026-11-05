@@ -32,6 +32,10 @@
 //! In network play the other machine holds too, says why and plays the jingle. A damaged record is repaired and kept aside (settings/record.zig),
 //! and a notice tells the player for a few seconds.
 //!
+//! MOVES (moves.zig), which the settings open, shows each character's moves over them: while it
+//! runs it takes every press (any one ends it), its ticks and its own sound run, the game held
+//! under the settings, and its picture is the one presented.
+//!
 //! The settings' STATS, which F3 (`stats_key`, settings/record.zig) turns on and off too, show the
 //! frame's stats (overlay.zig `FrameStats`): the frames presented a second and the time an update
 //! works on its frame before presenting it, over the last second; and network play's in a
@@ -60,6 +64,7 @@ const panel_mod = @import("panel.zig");
 const render = @import("render/root.zig");
 const network_play = @import("network_play.zig");
 const sound_form = @import("sound_form.zig");
+const moves_mod = @import("moves.zig");
 
 pub const page_width = picture.width;
 pub const page_height = picture.height;
@@ -421,6 +426,10 @@ pub const Game = struct {
     /// The frame's stats (overlay.zig `FrameStats`) of the last whole second; the second under way:
     /// when it began, its frames and their work.
     frame_stats_last: ?overlay.FrameStats = null,
+    /// MOVES, while it runs over the settings, and its clock: from when, the display ticks run.
+    moves: ?*moves_mod.Moves = null,
+    moves_since_ns: u64 = 0,
+    moves_ticks: u64 = 0,
     meter_since_ns: ?u64 = null,
     meter_frames: u32 = 0,
     meter_work_ns: u64 = 0,
@@ -444,6 +453,7 @@ pub const Game = struct {
     }
 
     pub fn deinit(self: *Game) void {
+        self.closeMoves();
         if (self.netplay) |np| {
             np.deinit();
             self.allocator.destroy(np);
@@ -803,6 +813,7 @@ pub const Game = struct {
                 const screen = &self.overlays.find(.settings).?.settings;
                 const result = screen.handle(&self.settings, press);
                 self.overlay_dirty = true;
+                if (result == .moves) return self.openMoves(p);
                 if (result != .stay) return self.closeSettings(result, now_ns);
                 // Its next page: the panel fades out, then in on it.
                 if (screen.pending != null) self.panel_fade = .{ .to = .black, .since_ns = now_ns, .then = .turn_page };
@@ -1009,6 +1020,10 @@ pub const Game = struct {
             for (buf[0..n]) |e| {
                 self.events_consumed += 1;
                 if (self.netplay) |np| if (np.handle(p, e)) continue;
+                if (self.moves != null) {
+                    self.movesEvent(e, p);
+                    continue;
+                }
                 if (self.settingsOpen()) {
                     self.settingsEvent(e, p);
                     continue;
@@ -1038,6 +1053,7 @@ pub const Game = struct {
             }
         }
         if (self.finished) {
+            self.closeMoves();
             // Quitting with the settings open writes nothing, as leaving them without saving.
             if (self.overlays.find(.settings)) |o| {
                 if (!self.settingsClosing()) self.settings = o.settings.before;
@@ -1080,8 +1096,73 @@ pub const Game = struct {
             .clock => self.runDue(p),
         }
         self.playJingle(p);
+        self.runMoves(p);
         try self.present(p);
         return .running;
+    }
+
+    /// Opens MOVES over the settings (their MOVES...): its clock starts now, and the settings'
+    /// jingle stops. Without the content, or what MOVES needs of it, nothing opens.
+    fn openMoves(self: *Game, p: *platform.Platform) void {
+        if (self.moves != null) return;
+        const c = self.content orelse return;
+        const rate: ?u32 = if (self.sound) |s| s.rate else null;
+        self.moves = moves_mod.Moves.create(self.allocator, c, rate) catch |err| {
+            std.log.warn("MOVES cannot open: {s}", .{@errorName(err)});
+            return;
+        };
+        self.moves_since_ns = p.nowNs();
+        self.moves_ticks = 0;
+        self.jingle_at = null;
+    }
+
+    /// MOVES ends: the settings show again, as they were.
+    fn closeMoves(self: *Game) void {
+        const m = self.moves orelse return;
+        m.destroy();
+        self.moves = null;
+        self.overlay_dirty = true;
+        self.under_changed = true;
+    }
+
+    /// An event while MOVES runs: a key or a button pressed ends it; the controls still see the
+    /// controllers come and go, and the focus.
+    fn movesEvent(self: *Game, e: platform.Event, p: *platform.Platform) void {
+        switch (e.payload) {
+            .quit => self.finished = true,
+            .key_down => |k| if (!k.repeat) self.closeMoves(),
+            .controller_button_down => self.closeMoves(),
+            .key_up, .controller_axis => {},
+            else => self.controlEvent(e, p),
+        }
+    }
+
+    /// MOVES' display ticks due, as the game's are (`runDue`): while the platform plays sound,
+    /// those that keep its queue full enough, their sound queued at the settings' volume; else
+    /// by the clock since it opened; one an update on the agent host. Played through, it ends.
+    fn runMoves(self: *Game, p: *platform.Platform) void {
+        const m = self.moves orelse return;
+        var n: u32 = 0;
+        const st = p.audioStatus();
+        const playing = self.sound != null and m.sound != null and st.running and !st.suspended;
+        if (self.pacing == .per_update) {
+            const frames = m.tick();
+            if (playing) _ = p.audioQueue(self.atVolume(frames)) catch {};
+        } else if (playing) {
+            const target = queue_ticks * self.sound.?.maxFrames();
+            while (n < max_ticks_per_update and p.audioStatus().queued_frames < target) : (n += 1) {
+                _ = p.audioQueue(self.atVolume(m.tick())) catch {};
+            }
+        } else {
+            const due: u64 = (p.nowNs() -| self.moves_since_ns) * 1000 / sound_out.tick_ps;
+            while (n < max_ticks_per_update and self.moves_ticks < due) : (n += 1) {
+                _ = m.tick();
+                self.moves_ticks += 1;
+            }
+            // Too far behind (a stall): the lost time is dropped.
+            if (self.moves_ticks < due) self.moves_ticks = due;
+        }
+        if (m.over) self.closeMoves();
     }
 
     /// The other player's being in the settings, as the session says it: both games hold, and both
@@ -1358,6 +1439,15 @@ pub const Game = struct {
     /// the ticks run (a display above 60 Hz) presents the same frame in between. The overlays go
     /// over the scenes' picture, drawn again when they or the picture changed.
     fn present(self: *Game, p: *platform.Platform) !void {
+        // MOVES over the settings: its own picture.
+        if (self.moves) |m| {
+            const f = try m.draw();
+            const now_ns = p.nowNs();
+            self.meter(now_ns, now_ns -| self.update_began_ns);
+            try p.present(f);
+            self.frames_presented += 1;
+            return;
+        }
         if (self.redraw) {
             self.redraw = false;
             if (self.state.scenes.topKind() == .test_pattern) {
@@ -1496,8 +1586,9 @@ pub const Game = struct {
         return self.pic.frame();
     }
 
-    /// The last frame presented: the overlays', or the scenes'.
+    /// The last frame presented: MOVES', the overlays', or the scenes'.
     pub fn frame(self: *const Game) platform.RgbaFrame {
+        if (self.moves) |m| return m.view.frame();
         if (self.overlay_shown) return .{ .width = panel_mod.width, .height = panel_mod.height, .stride = panel_mod.width * 4, .pixels = self.panel.?.rgba };
         return self.scenesFrame();
     }
