@@ -480,13 +480,13 @@
     bottom left, Axel from the top left, Blaze from the right. A light on the floor follows it: an
     oval in a few dark shades, as a spotlight on a stage.
   - Its moves: the combo, the jump kick, the back attack, the hold's knees and last knee, the
-    throw over the shoulder, the slam from behind. No enemy shows. Each blow that lands shows its
-    damage, a digit in the game's font where the enemy would be, rising and fading; no caption.
-  - The game's own rules play them: each character the real player, its pad a fixed script, in an
-    empty room, before a stand-in enemy that is not drawn, never moves nor strikes, and stays on
-    the ground (Adam's last blow lands as on the ground: 2). The digits are its hits' damage; the
-    throw's and the slam's are a round 1 Galsia's.
-  - Sound: the moves' own (their swing) and the voices, not a blow's landing, nor music.
+    throw over the shoulder, the slam from behind. No enemy, no world (the user, 2026-11-05): the
+    character alone plays its definition's animations frame by frame at play's pace, the walks
+    and the jump moved by its own speeds and gravity. At the frame each move's blow strikes, its
+    damage shows, a digit in the game's font where the enemy would be, rising and fading; no
+    caption. Adam's last blow shows its own damage, 2, as on the ground.
+  - Sound: the frames' and the moves' own (the swings, the shouts), not a blow's landing, nor
+    music.
   - Any key or button ends it at once; after Blaze it ends by itself. Either way the settings come
     back as they were.
   - Gate: zig build test; the screen seen through, each digit the move's damage; a key ends it.
