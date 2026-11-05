@@ -471,7 +471,7 @@
     record keeping it; STATS and HELP on the first page. Network play's lines not seen in a
     session. The user's play is pending.
 
-- [ ] **43 — MOVES: each character's blows and their damage, shown** — Depends: 42.
+- [x] **43 — MOVES: each character's blows and their damage, shown** — Depends: 42.
   - The players cannot see what a blow is worth, nor why Axel's combo knocks a round 1 Galsia out
     and Adam's does not (his uppercut lifts it, and his last blow, landing on it lifted, takes no
     health). The settings' first page gets MOVES..., a screen that shows them (the user,
@@ -490,6 +490,14 @@
   - Any key or button ends it at once; after Blaze it ends by itself. Either way the settings come
     back as they were.
   - Gate: zig build test; the screen seen through, each digit the move's damage; a key ends it.
+  - [x] Checked 2026-11-05: zig build test, zig build web. Through the agent host (the original's
+    settings by F1), shots every 8 to 40 frames: the three walk in and out by their ways and play
+    each move, the digits Adam's and Axel's 1, 1, 1, 2, 3, 3, 2, 2, 3, 4, 5 and Blaze's 1, 1, 1, 2,
+    2, 2, 2, 2, 3, 4, 5; the settings come back after Blaze, and at a key. Its sound recorded
+    (--wav): the shouts and the finisher's at their ticks. The SDL host (software renderer, a
+    virtual display) runs it in real time. Blaze's last knee ended a frame before its blow, at its
+    own end, which her leap's has none of: fixed before the commit (the user saw it). The user's
+    look is pending.
 
 ## Standing rule
 
