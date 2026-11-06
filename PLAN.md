@@ -515,6 +515,9 @@
   - The user (2026-11-06): the idle before the turn to leave (as the slam left it); after the
     throw, no turn back for the slam (the throw turns Adam and Axel): each slams facing as its
     throw left it, and so leaves by where it came in, off the screen with its light.
+  - [x] Checked 2026-11-06: zig build test; through the agent host, Adam throws, slams facing left,
+    idles, leaves by the bottom left; Blaze slams to her left, idles, leaves by the right. The
+    user's look is pending.
 
 - [x] **44 — STOP SERVER closes the port** — Depends: none.
   - Stopped, the host kept listening to turn the clients that come away (DESIGN.md 9): its port
