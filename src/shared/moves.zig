@@ -2,20 +2,20 @@
 //! shown on a screen of this machine's that the settings open (settings/screen.zig, game.zig).
 //!
 //! A black screen. Adam walks in from the bottom left, Axel from the top left, Blaze from the
-//! right; each plays its moves in the middle, then walks out across until its light is off the
-//! screen, a spotlight under it on a floor of planks that stays where it is: only where the light
-//! falls does it show. A moment of black follows the last. The moves: the combo, the jump kick, the
-//! back attack, the hold's knees and last knee, the throw over the shoulder, the slam from behind;
-//! then its idle (the move it makes after a while standing ready), once, facing as the slam left
-//! it, before it turns to walk out.
-//! There is no enemy and no world: the character alone plays its definition's animations frame by
-//! frame at play's pace (a logic tick every other display tick), each move ending at the frame the
-//! player's own ends it (its numbers: `blow_ends`, `throw_ends`...), its walks, its jump and its
-//! leaps moved by its own speeds and gravity, as the player behaviour moves them
-//! (world/behaviours/player.zig). Where a move's blow strikes (the first frame of its blow, or a
-//! hold's the frame that lets the one held go), the move's damage shows: a digit in the game's font
-//! where the enemy would be, which rises and fades. The frames' and the moves' own sounds play (the
-//! swings, the shouts); a blow's landing, no.
+//! right; each plays its moves in the middle, then walks out the way it came in until its light is
+//! off the screen, a spotlight under it on a floor of planks that stays where it is: only where the
+//! light falls does it show. A moment of black follows the last. The moves: the combo, the jump
+//! kick, the back attack, the hold's knees and last knee, the throw over the shoulder, the slam
+//! from behind (facing as the throw left it: Adam's and Axel's turn them); then its idle (the move
+//! it makes after a while standing ready), once, facing as the slam left it, before it walks out
+//! (turning first where it faces away from its way out). There is no enemy and no world: the
+//! character alone plays its definition's animations frame by frame at play's pace (a logic tick
+//! every other display tick), each move ending at the frame the player's own ends it (its numbers:
+//! `blow_ends`, `throw_ends`...), its walks, its jump and its leaps moved by its own speeds and
+//! gravity, as the player behaviour moves them (world/behaviours/player.zig). Where a move's blow
+//! strikes (the first frame of its blow, or a hold's the frame that lets the one held go), the
+//! move's damage shows: a digit in the game's font where the enemy would be, which rises and fades.
+//! The frames' and the moves' own sounds play (the swings, the shouts); a blow's landing, no.
 //!
 //! It is this machine's, never the game's state: the game holds under it, as under the settings.
 const std = @import("std");
@@ -55,13 +55,13 @@ const floor_line = 140;
 /// Where each plays its moves.
 const stage: Spot = .{ .x = 160, .depth = 60 };
 
-/// Who comes, in their order: from where, to where it leaves, and the side it faces while it
-/// plays.
-const Entrance = struct { name: []const u8, from: Spot, to: Spot, facing: Facing };
+/// Who comes, in their order: from where, off the screen with its light (it leaves there too),
+/// and the side it faces while it plays its first moves.
+const Entrance = struct { name: []const u8, from: Spot, facing: Facing };
 const cast = [_]Entrance{
-    .{ .name = "adam", .from = .{ .x = -40, .depth = 110 }, .to = .{ .x = off_right, .depth = 16 }, .facing = .right },
-    .{ .name = "axel", .from = .{ .x = -40, .depth = 16 }, .to = .{ .x = off_right, .depth = 110 }, .facing = .right },
-    .{ .name = "blaze", .from = .{ .x = 360, .depth = 60 }, .to = .{ .x = off_left, .depth = 60 }, .facing = .left },
+    .{ .name = "adam", .from = .{ .x = off_left, .depth = 110 }, .facing = .right },
+    .{ .name = "axel", .from = .{ .x = off_left, .depth = 16 }, .facing = .right },
+    .{ .name = "blaze", .from = .{ .x = off_right, .depth = 60 }, .facing = .left },
 };
 
 /// Places across where the light is off the screen, a little more.
@@ -301,11 +301,11 @@ pub const Moves = struct {
         self.timer = 0;
     }
 
-    /// A move's first tick, facing the side it plays to; its idle facing as the slam left it (the
-    /// turn comes as it walks out).
+    /// A move's first tick, facing the side it plays to; but its slam facing as its throw left it
+    /// (Adam's and Axel's turn them), and its idle as the slam left it: it turns as it walks out.
     fn begin(self: *Moves) void {
         const p = &self.puppet.?;
-        if (self.phase != .idle) p.facing = cast[self.who].facing;
+        if (self.phase != .slam and self.phase != .idle) p.facing = cast[self.who].facing;
         switch (self.phase) {
             .walk_in, .walk_out => self.animate(.walk),
             .combo => self.startMove(.attack1),
@@ -338,7 +338,7 @@ pub const Moves = struct {
             .throw => self.throwOver(),
             .slam => self.slam(),
             .idle => self.idle(),
-            .walk_out => if (self.walkTo(cast[self.who].to)) {
+            .walk_out => if (self.walkTo(cast[self.who].from)) {
                 self.who += 1;
                 if (self.who == cast.len) {
                     self.puppet = null;
