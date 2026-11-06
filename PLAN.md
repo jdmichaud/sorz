@@ -508,6 +508,17 @@
     planks stay at their places of the screen as the light moves over them (a test checks it).
     The user's look is pending.
 
+- [ ] **44 — STOP SERVER closes the port** — Depends: none.
+  - Stopped, the host kept listening to turn the clients that come away (DESIGN.md 9): its port
+    stayed open, the page served there. The user expects a stopped server to close its port
+    (2026-11-06).
+  - STOP SERVER, its clients told and let go as before, stops listening (`netUnlisten`, the
+    platform's: the native transport closes its listener; the page's host has none); START SERVER
+    listens again at the same port. A client that comes meanwhile finds no host and tries again
+    every second.
+  - Gate: zig build test (a transport test: the port refuses once unlistened, and listens again);
+    netplay-check.
+
 ## Standing rule
 
 - [ ] **S1 — The repository stands alone** — Depends: none.
