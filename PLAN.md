@@ -512,6 +512,9 @@
     after the stand that follows the slam (not the player's 100 ticks first).
   - [x] Checked 2026-11-06: zig build test; through the agent host, Adam's idle (his guard's
     shuffle) after the slam's stand, then his walk out. The user's look is pending.
+  - The user (2026-11-06): the idle before the turn to leave (as the slam left it); after the
+    throw, no turn back for the slam (the throw turns Adam and Axel): each slams facing as its
+    throw left it, and so leaves by where it came in, off the screen with its light.
 
 - [x] **44 — STOP SERVER closes the port** — Depends: none.
   - Stopped, the host kept listening to turn the clients that come away (DESIGN.md 9): its port
