@@ -53,7 +53,8 @@ const usage =
     \\  --netplay, --join  network play over WebSockets, as the host (player 1) or the guest
     \\                   (player 2): each game plays its own front end with its keys (--key by
     \\                   update; a guest's `place+FRAME` counts from the update at which the
-    \\                   host first offers a place in its round), and the guest's JOIN and
+    \\                   host first offers a place in its round, once the guest's other
+    \\                   presses are done), and the guest's JOIN and
     \\                   character join the host's game;
     \\                   --frames counts the updates, --until-session N ends the run once the
     \\                   session ran N ticks; prints the game's hashes and its network play

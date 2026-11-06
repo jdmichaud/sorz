@@ -21,8 +21,9 @@ const platform = sorz.platform;
 pub const frame_ns: u64 = sorz.sound_out.tick_ps / 1000 + 1;
 
 /// A key pressed at update `frame` for `hold` updates; a guest's `after_place` press counts its
-/// updates from the first at which the host offers a place in its round (its status), whatever
-/// the two processes' speeds.
+/// updates from the first at which the host offers a place in its round (its status), once its
+/// own plain presses are done (its front end's, its name's), whatever the two processes' speeds:
+/// a host ahead offers its place before the guest has a menu to join from.
 pub const Press = struct { frame: u64, key: platform.Key, hold: u64 = 1, after_place: bool = false };
 
 /// A game's scripted keys, injected by update.
@@ -39,6 +40,16 @@ pub const Script = struct {
 
     pub fn deinit(s: *Script, gpa: std.mem.Allocator) void {
         gpa.free(s.done);
+    }
+
+    /// The update after the last of the plain presses (not counted from the host's place) is
+    /// released.
+    pub fn plainEnd(s: *const Script) u64 {
+        var end: u64 = 0;
+        for (s.presses) |p| if (!p.after_place) {
+            end = @max(end, p.frame +| p.hold);
+        };
+        return end;
     }
 
     /// Injects the key events due before update `t`; `place_at`, the update at which the host
@@ -113,7 +124,7 @@ pub fn process(
     var place_at: ?u64 = null;
     while (updates < frames) : (updates += 1) {
         if (until_session) |n| if (game.netplay) |np| if (np.inSession() and np.tick() >= n) break;
-        if (place_at == null) if (game.netplay) |np| {
+        if (place_at == null and updates >= script.plainEnd()) if (game.netplay) |np| {
             const st = np.hostStatus();
             if (np.role == .guest and st.game == .play and st.place) place_at = updates;
         };

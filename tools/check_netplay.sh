@@ -22,8 +22,10 @@ field() { printf '%s\n' "$1" | sed -n "s/.*\"$2\":\"\{0,1\}\([^\",}]*\).*/\1/p";
 ticks=600
 # Both to their game menus; the host's NETWORK PLAY at once (down to it, A, the network options'
 # START), Axel and play; the client's name (START keeps the entry's), then its JOIN once the host
-# offers a place in its round (`place+`: counted from the host's status, whatever the two
-# processes' speeds: they run as fast as they can), and its character at its own select.
+# offers a place in its round (`place+`: counted from the host's status once the client's own
+# presses are done, whatever the two processes' speeds: they run as fast as they can, and the
+# host, started first, offers its place before the client has a menu), and its character at its
+# own select.
 front="--key 500:enter:3 --key 560:enter:3"
 host_keys="$front --key 620:down:3 --key 640:z:3 --key 800:enter:3 --key 1160:right:3 --key 1180:z:3 --key 1800:right:60 --key 2000:x:3"
 guest_keys="$front --key 760:enter:3 --key place+300:z:3 --key place+600:z:3"
