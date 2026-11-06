@@ -5,7 +5,8 @@
 //! right; each plays its moves in the middle, then walks out across until its light is off the
 //! screen, a spotlight under it on a floor of planks that stays where it is: only where the light
 //! falls does it show. A moment of black follows the last. The moves: the combo, the jump kick, the
-//! back attack, the hold's knees and last knee, the throw over the shoulder, the slam from behind.
+//! back attack, the hold's knees and last knee, the throw over the shoulder, the slam from behind;
+//! then its idle (the move it makes after a while standing ready), once, before it walks out.
 //! There is no enemy and no world: the character alone plays its definition's animations frame by
 //! frame at play's pace (a logic tick every other display tick), each move ending at the frame the
 //! player's own ends it (its numbers: `blow_ends`, `throw_ends`...), its walks, its jump and its
@@ -70,7 +71,7 @@ const off_right = view_mod.width + spot_width / 2 + 16;
 const tail_ticks = 24;
 
 /// What it plays, in its order.
-const Phase = enum { walk_in, combo, jump_kick, back_attack, knees, throw, slam, walk_out };
+const Phase = enum { walk_in, combo, jump_kick, back_attack, knees, throw, slam, idle, walk_out };
 
 /// The logic ticks it stands ready between two moves, and holds a hold before its blows.
 const ready_ticks = 18;
@@ -312,6 +313,7 @@ pub const Moves = struct {
             },
             .back_attack => self.animate(.jump_crouch),
             .knees, .throw, .slam => self.animate(.grab),
+            .idle => self.animate(.idle),
         }
         if (self.phase == .back_attack and p.n.back_attack_up == null) self.startMove(.back_attack);
     }
@@ -333,6 +335,7 @@ pub const Moves = struct {
             .knees => self.knees(),
             .throw => self.throwOver(),
             .slam => self.slam(),
+            .idle => self.idle(),
             .walk_out => if (self.walkTo(cast[self.who].to)) {
                 self.who += 1;
                 if (self.who == cast.len) {
@@ -545,6 +548,14 @@ pub const Moves = struct {
             },
             else => if (self.step() and p.frame == 0) self.next(),
         }
+    }
+
+    /// Its idle, once: its animation to its `idle_ends`, where the player's goes back to standing
+    /// ready.
+    fn idle(self: *Moves) void {
+        const p = &self.puppet.?;
+        _ = self.step();
+        if (p.frame == p.n.idle_ends) self.next();
     }
 
     /// In the vault, the character goes where its frame puts it around the one held (as the
