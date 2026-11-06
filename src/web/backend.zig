@@ -86,6 +86,7 @@ pub const WebBackend = struct {
         .set_relative_mouse = setRelativeMouse,
         .controller_info = controllerInfo,
         .net_listen = netListen,
+        .net_unlisten = netUnlisten,
         .net_connect = netConnect,
         .net_send = netSend,
         .net_close = netClose,
@@ -363,6 +364,9 @@ pub const WebBackend = struct {
     fn netListen(_: *anyopaque, _: []const u8) platform.NetError!void {
         return error.Unsupported;
     }
+
+    /// The page listens at no port.
+    fn netUnlisten(_: *anyopaque) void {}
 
     fn netConnect(ctx: *anyopaque, url: []const u8) platform.NetError!platform.ConnectionId {
         const self = cast(ctx);

@@ -86,6 +86,8 @@ pub const WebSocketTransport = struct {
     options: Options,
     /// Every task of the transport, so that `deinit` cancels and waits for them all.
     group: Io.Group = .init,
+    /// The listener's task alone (`acceptLoop`), so that `unlisten` cancels it and no other.
+    listener: Io.Group = .init,
     mutex: Io.Mutex = .init,
     /// Signalled when the game polls: a reader waiting for room in `events` tries again.
     room: Io.Condition = .init,
@@ -184,6 +186,7 @@ pub const WebSocketTransport = struct {
             if (left == 0) break;
             self.io.sleep(.fromMilliseconds(5), .awake) catch break;
         }
+        self.listener.cancel(self.io);
         self.group.cancel(self.io);
         for (self.events.items) |e| e.free(self.gpa);
         self.events.deinit(self.gpa);
@@ -200,6 +203,7 @@ pub const WebSocketTransport = struct {
 
     const vtable = platform.Transport.VTable{
         .listen = listen,
+        .unlisten = unlisten,
         .connect = connect,
         .send = send,
         .close = close,
@@ -332,11 +336,25 @@ pub const WebSocketTransport = struct {
             else => error.DeviceFailure,
         };
         self.port = server.socket.address.getPort();
-        self.group.concurrent(self.io, acceptLoop, .{ self, server }) catch {
+        self.listener.concurrent(self.io, acceptLoop, .{ self, server }) catch {
             server.deinit(self.io);
             return error.DeviceFailure;
         };
         self.listening = true;
+    }
+
+    /// The listener's task is cancelled, which closes its socket: the port is free again once
+    /// this returns, and `listen` may listen anew. The requests and connections it accepted go
+    /// on. Not under the mutex: the task may wait for it as it ends.
+    fn unlisten(ctx: *anyopaque) void {
+        const self = cast(ctx);
+        self.lock();
+        const was = self.listening;
+        self.listening = false;
+        self.unlock();
+        if (!was) return;
+        self.listener.cancel(self.io);
+        self.listener = .init;
     }
 
     fn connect(ctx: *anyopaque, url: []const u8) platform.NetError!platform.ConnectionId {
@@ -1246,6 +1264,38 @@ pub const Raw = struct {
         return std.mem.readInt(u16, f.payload[0..2], .big);
     }
 };
+
+test "unlisten closes the port, the connections open staying; the same port listens again" {
+    var server = WebSocketTransport.init(testing.allocator, testing.io, .{});
+    defer server.deinit();
+    var client = WebSocketTransport.init(testing.allocator, testing.io, .{});
+    defer client.deinit();
+    const st = server.transport();
+    const ct = client.transport();
+    try st.listen("127.0.0.1:0");
+    const port = server.port;
+    var url_buf: [64]u8 = undefined;
+    const url = loopbackUrl(&url_buf, port);
+    const first = try ct.connect(url);
+    const sid = (try nextEvent(st)).payload.net_connected.connection;
+    try testing.expectEqual(first, (try nextEvent(ct)).payload.net_connected.connection);
+    // Unlistened: a new connection is refused; the one open still carries messages.
+    st.unlisten();
+    st.unlisten();
+    const second = try ct.connect(url);
+    const refused = try nextEvent(ct);
+    try testing.expectEqual(second, refused.payload.net_disconnected.connection);
+    try testing.expectEqual(platform.DisconnectReason.refused, refused.payload.net_disconnected.reason);
+    try st.send(sid, "still");
+    try testing.expectEqualStrings("still", (try nextEvent(ct)).payload.net_received.bytes);
+    // Listening again at the same port: a connection comes in.
+    var again_buf: [32]u8 = undefined;
+    try st.listen(std.fmt.bufPrint(&again_buf, "127.0.0.1:{d}", .{port}) catch unreachable);
+    try testing.expectEqual(port, server.port);
+    const third = try ct.connect(url);
+    try testing.expect((try nextEvent(st)).payload.net_connected.incoming);
+    try testing.expectEqual(third, (try nextEvent(ct)).payload.net_connected.connection);
+}
 
 test "oversized, unmasked and text frames end the connection with their close codes" {
     var server = WebSocketTransport.init(testing.allocator, testing.io, .{});

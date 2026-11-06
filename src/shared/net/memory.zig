@@ -133,6 +133,7 @@ pub const Endpoint = struct {
 
     const vtable = platform.Transport.VTable{
         .listen = listen,
+        .unlisten = unlisten,
         .connect = connect,
         .send = send,
         .close = close,
@@ -188,6 +189,11 @@ pub const Endpoint = struct {
         if (self.port != null) return error.Busy;
         for (self.network.endpoints.items) |e| if (e.port == a.port) return error.AddressInUse;
         self.port = a.port;
+    }
+
+    /// The endpoint listens no more: a connection asked for at its port is refused.
+    fn unlisten(ctx: *anyopaque) void {
+        cast(ctx).port = null;
     }
 
     fn connect(ctx: *anyopaque, url: []const u8) NetError!ConnectionId {

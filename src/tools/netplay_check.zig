@@ -30,14 +30,14 @@
 //! - difference: a bit of the client's state flipped in a session: both games stop at the next
 //!   check and name the first field that differs.
 //! - server: the host's START SERVER: its screen stays, its lobby, which lists the client; the
-//!   client's JOIN lit, OBSERVE dimmed (no game to watch); the client's JOIN and character wait
-//!   for the host's game, its own select naming it player 2; START GAME: once the host's select
-//!   shows, the client joins it, its cursor and choice kept, not faded; Escape on the host: its
-//!   lobby again, the client keeping the select, its own again; STOP SERVER: the client back at
-//!   its menu, told, and turned away; START GAME: the server again, the client back in joins the
-//!   host's select; Escape: the client keeps the select; EXIT: the menu, the server running;
-//!   Escape in 1 PLAYER's game, the server running: the lobby; with it stopped, a local game:
-//!   the menu.
+//!   client's JOIN lit, OBSERVE dimmed (no game to watch); the client's JOIN and character wait for
+//!   the host's game, its own select naming it player 2; START GAME: once the host's select shows,
+//!   the client joins it, its cursor and choice kept, not faded; Escape on the host: its lobby
+//!   again, the client keeping the select, its own again; STOP SERVER: the client back at its menu,
+//!   told, the host's port closed, the client finding no host; START GAME: the server again, the
+//!   client back in joins the host's select; Escape: the client keeps the select; EXIT: the menu,
+//!   the server running; Escape in 1 PLAYER's game, the server running: the lobby; with it stopped,
+//!   a local game: the menu.
 //! - rejoin: the server started, the client waiting at its select; START GAME, the join; the
 //!   host back to its lobby, the client keeping its select; START GAME again: each join lands on
 //!   a select that shows (no fade on the client).
@@ -565,8 +565,9 @@ fn server(f: *Flow, r: *Room) !void {
     }.kept, 600, "the client keeps the select, its choice made: it waits for player 1");
     try f.check(selectOf(client).?.cursors[0].place == waited and selectOf(client).?.cursors[0].chosen and client.np().welcomed(), "its cursor and choice as they were, still connected");
     try f.check(client.notice() == .player_1_left, "PLAYER 1 LEFT shown with the wait");
-    // STOP SERVER, in the lobby: the client back at its menu, told; turned away while the server
-    // is stopped; the lobby stays, empty.
+    // STOP SERVER, in the lobby: the client back at its menu, told; the host listens no more
+    // (its port closed), and the client finds no host while the server is stopped; the lobby
+    // stays, empty.
     try pressOption(r, host, .server, .z);
     try f.until(r, client, struct {
         fn back(m: *Machine) bool {
@@ -574,8 +575,9 @@ fn server(f: *Flow, r: *Room) !void {
         }
     }.back, 600, "the client back at its menu, told the host stopped");
     try f.check(host.np().peers.items.len == 0 and !host.np().open and lobby(host) != null and !lobby(host).?.serving and lobby(host).?.client_count == 0, "the host let its client go, its screen still there");
+    try f.check(!host.np().listening, "the host's port closed");
     try r.step(150);
-    try f.check(!client.np().welcomed() and client.game.state.scenes.base.menu.dimmed & 0b0110 == 0b0110, "the client turned away: JOIN and OBSERVE dimmed");
+    try f.check(!client.np().welcomed() and client.game.state.scenes.base.menu.dimmed & 0b0110 == 0b0110, "the client finds no host: JOIN and OBSERVE dimmed");
     // START GAME: the server again, the host at its select; the client back in joins it there.
     try pressOption(r, host, .game, .z);
     try f.until(r, host, inSelect, 600, "the host's select");

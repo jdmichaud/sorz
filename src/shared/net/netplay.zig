@@ -289,7 +289,9 @@ pub const Netplay = struct {
     }
 
     /// The host stops its server (STOP SERVER, its game at its menu): each client is told and let
-    /// go, and those that come are turned away (`stopped`) until the session opens again.
+    /// go, and the host stops listening (DESIGN.md 9: its port closes), so that those that come
+    /// find no host until the session opens again (`openSession` listens anew). A platform that
+    /// brings the connections itself (no address) keeps turning them away (`stopped`).
     pub fn stopSession(self: *Netplay, p: *platform.Platform) void {
         if (self.role != .host) return;
         self.open = false;
@@ -301,7 +303,11 @@ pub const Netplay = struct {
             if (peer.connection) |id| p.netClose(id);
             self.removePeer(peer);
         }
-        if (self.log_enabled) log.info("the server stopped: its clients let go", .{});
+        if (self.listening) {
+            p.netUnlisten();
+            self.listening = false;
+        }
+        if (self.log_enabled) log.info("the server stopped: its clients let go, its port closed", .{});
     }
 
     fn connect(self: *Netplay, p: *platform.Platform) void {

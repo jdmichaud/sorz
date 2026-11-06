@@ -313,6 +313,7 @@ pub const Platform = struct {
         set_relative_mouse: *const fn (*anyopaque, bool) PlatformError!void,
         controller_info: *const fn (*anyopaque, ControllerId) ?ControllerInfo,
         net_listen: *const fn (*anyopaque, []const u8) NetError!void,
+        net_unlisten: *const fn (*anyopaque) void,
         net_connect: *const fn (*anyopaque, []const u8) NetError!ConnectionId,
         net_send: *const fn (*anyopaque, ConnectionId, []const u8) NetError!void,
         net_close: *const fn (*anyopaque, ConnectionId) void,
@@ -365,6 +366,11 @@ pub const Platform = struct {
     pub fn netListen(p: *Platform, address: []const u8) NetError!void {
         return p.vtable.net_listen(p.context, address);
     }
+    /// Stops accepting connections: the port closes (the connections open stay), and `netListen`
+    /// may listen again. Nothing without a listener.
+    pub fn netUnlisten(p: *Platform) void {
+        p.vtable.net_unlisten(p.context);
+    }
     /// Opens a connection to `url` (`ws://ADDRESS:PORT[/PATH]`) without waiting: a
     /// `net_connected` event follows once it is open, or a `net_disconnected` one (`refused`).
     pub fn netConnect(p: *Platform, url: []const u8) NetError!ConnectionId {
@@ -392,6 +398,7 @@ pub const Transport = struct {
 
     pub const VTable = struct {
         listen: *const fn (*anyopaque, []const u8) NetError!void,
+        unlisten: *const fn (*anyopaque) void,
         connect: *const fn (*anyopaque, []const u8) NetError!ConnectionId,
         send: *const fn (*anyopaque, ConnectionId, []const u8) NetError!void,
         close: *const fn (*anyopaque, ConnectionId) void,
@@ -402,6 +409,9 @@ pub const Transport = struct {
 
     pub fn listen(t: Transport, address: []const u8) NetError!void {
         return t.vtable.listen(t.context, address);
+    }
+    pub fn unlisten(t: Transport) void {
+        t.vtable.unlisten(t.context);
     }
     pub fn connect(t: Transport, url: []const u8) NetError!ConnectionId {
         return t.vtable.connect(t.context, url);
@@ -427,6 +437,10 @@ pub const Transport = struct {
             pub fn listen(ctx: *anyopaque, address: []const u8) NetError!void {
                 const t = cast(ctx).transport orelse return error.Unsupported;
                 return t.listen(address);
+            }
+            pub fn unlisten(ctx: *anyopaque) void {
+                const t = cast(ctx).transport orelse return;
+                t.unlisten();
             }
             pub fn connect(ctx: *anyopaque, url: []const u8) NetError!ConnectionId {
                 const t = cast(ctx).transport orelse return error.Unsupported;

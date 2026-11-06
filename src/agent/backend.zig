@@ -126,6 +126,7 @@ pub const AgentBackend = struct {
         .set_relative_mouse = setRelativeMouse,
         .controller_info = controllerInfo,
         .net_listen = Net.listen,
+        .net_unlisten = Net.unlisten,
         .net_connect = Net.connect,
         .net_send = Net.send,
         .net_close = Net.close,
