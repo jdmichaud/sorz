@@ -510,6 +510,8 @@
   - The user (2026-11-06): before walking out, each plays its idle (the move it makes after a
     while standing ready), once, as the player does: its `idle` animation to its `idle_ends`,
     after the stand that follows the slam (not the player's 100 ticks first).
+  - [x] Checked 2026-11-06: zig build test; through the agent host, Adam's idle (his guard's
+    shuffle) after the slam's stand, then his walk out. The user's look is pending.
 
 - [x] **44 — STOP SERVER closes the port** — Depends: none.
   - Stopped, the host kept listening to turn the clients that come away (DESIGN.md 9): its port
