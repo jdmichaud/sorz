@@ -6,7 +6,8 @@
 //! screen, a spotlight under it on a floor of planks that stays where it is: only where the light
 //! falls does it show. A moment of black follows the last. The moves: the combo, the jump kick, the
 //! back attack, the hold's knees and last knee, the throw over the shoulder, the slam from behind;
-//! then its idle (the move it makes after a while standing ready), once, before it walks out.
+//! then its idle (the move it makes after a while standing ready), once, facing as the slam left
+//! it, before it turns to walk out.
 //! There is no enemy and no world: the character alone plays its definition's animations frame by
 //! frame at play's pace (a logic tick every other display tick), each move ending at the frame the
 //! player's own ends it (its numbers: `blow_ends`, `throw_ends`...), its walks, its jump and its
@@ -300,10 +301,11 @@ pub const Moves = struct {
         self.timer = 0;
     }
 
-    /// A move's first tick.
+    /// A move's first tick, facing the side it plays to; its idle facing as the slam left it (the
+    /// turn comes as it walks out).
     fn begin(self: *Moves) void {
         const p = &self.puppet.?;
-        p.facing = cast[self.who].facing;
+        if (self.phase != .idle) p.facing = cast[self.who].facing;
         switch (self.phase) {
             .walk_in, .walk_out => self.animate(.walk),
             .combo => self.startMove(.attack1),
