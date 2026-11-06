@@ -508,7 +508,7 @@
     planks stay at their places of the screen as the light moves over them (a test checks it).
     The user's look is pending.
 
-- [ ] **44 — STOP SERVER closes the port** — Depends: none.
+- [x] **44 — STOP SERVER closes the port** — Depends: none.
   - Stopped, the host kept listening to turn the clients that come away (DESIGN.md 9): its port
     stayed open, the page served there. The user expects a stopped server to close its port
     (2026-11-06).
@@ -518,6 +518,12 @@
     every second.
   - Gate: zig build test (a transport test: the port refuses once unlistened, and listens again);
     netplay-check.
+  - [x] Checked 2026-11-06: zig build test (the transport's test on real sockets), zig build web;
+    netplay-check's 25 flows in one process pass (server: the host's port closed after STOP
+    SERVER). Its last step, tools/check_netplay.sh (two agent hosts over WebSockets, no STOP
+    SERVER), fails on this machine as it did before the change, and at 9fbb231, the script's
+    last change: the client never joins ("incomplete"); not looked into yet. The user's try
+    is pending.
 
 ## Standing rule
 
