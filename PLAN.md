@@ -533,16 +533,17 @@
     netplay-check's 25 flows in one process pass (server: the host's port closed after STOP
     SERVER). Its last step, tools/check_netplay.sh (two agent hosts over WebSockets, no STOP
     SERVER), fails on this machine as it did before the change, and at 9fbb231, the script's
-    last change: the client never joins ("incomplete"); not looked into yet. The user's try
-    is pending.
+    last change: the client never joins ("incomplete"): item 45. The user's try is pending.
 
-- [ ] **45 — netplay-check's two processes** — Depends: none.
+- [x] **45 — netplay-check's two processes** — Depends: none.
   - tools/check_netplay.sh failed on this machine (the client never joined: "incomplete"),
     before item 44 too. The host, started a second first and run as fast as it goes, offers its
     round's place before the client has passed its front end: the client's `place+` presses,
     counted from that offer, fell in its intro and its name entry, and its JOIN was lost.
   - A guest's `place+` presses count from the host's offer once its own plain presses are done.
   - Gate: netplay-check passes, the script alone several times in a row.
+  - [x] Checked 2026-11-06: netplay-check twice (its 25 flows and the two processes),
+    tools/check_netplay.sh alone three times in a row; zig build test.
 
 ## Standing rule
 
