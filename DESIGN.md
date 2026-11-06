@@ -443,8 +443,9 @@ are its own, driven by its player alone. The host and its clients:
   connected while clients come. START GAME opens the session if it is not open, and the host's
   player goes to the character select as player 1, and plays alone until a player joins. The
   session stays open from game to game; while it is, STOP SERVER (in the lobby) closes it: its
-  clients go back to their menus, told THE HOST STOPPED, and the clients that come are turned away
-  (they try again every second) until the session opens again. The lobby (in a grey between the
+  clients go back to their menus, told THE HOST STOPPED, and the host stops listening; the clients
+  that come find no host (they try again every second) until the session opens again, the page
+  with it (the user, 2026-11-06). The lobby (in a grey between the
   menu's bright and dim tones: legible, not a line to choose), and the host's front end screens at
   the bottom left in white over the picture, list who is connected: LOCAL - PLAYER 1, and each
   client by its name and what it does (MENU, SELECT: at its own character select to join, PLAYER
