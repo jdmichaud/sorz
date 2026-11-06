@@ -685,16 +685,18 @@ that it never holds another back; a page silent for 15 seconds is dropped.
   messages are each machine's own and stay out of the game's shared state. Outside the original,
   START during the game opens the settings in place of the pause, and they hold the game as the
   pause does.
-- **S4 MOVES** (the user, 2026-11-05). The settings' MOVES... shows each character's blows and
-  their damage. It is a scene of this machine's, over the settings, and holds the game as they
-  do. It plays the characters alone, no enemy and no world: each its definition's animations
-  frame by frame at play's pace, the walks and the jump moved by its own speeds. Adam walks in
-  from the bottom left, Axel from the top left, Blaze from the right. Each plays the combo, the
-  jump kick, the back attack, the hold's knees, the throw and the slam from behind, then walks
-  out, a spotlight on the floor following it. Each move shows its damage as a rising digit at the
-  frame its blow strikes. The moves' own sounds and the voices play, not a blow's landing, nor
-  music.
-  Any press ends it, and it ends by itself after Blaze; the settings come back as they were.
+- **S4 MOVES** (the user, 2026-11-05 and 2026-11-06). The settings' MOVES... shows each
+  character's blows and their damage. It is a scene of this machine's, over the settings, and
+  holds the game as they do. It plays the characters alone, no enemy and no world: each its
+  definition's animations frame by frame at play's pace, the walks and the jump moved by its own
+  speeds. Adam walks in from the bottom left, Axel from the top left, Blaze from the right. Each
+  plays the combo, the jump kick, the back attack, the hold's knees, the throw and the slam from
+  behind (facing as the throw left it), then its idle once (the move it makes after a while
+  standing ready), still facing as the slam left it, and walks out by where it came in. A
+  spotlight follows it over a floor of planks that stays where it is, shown only where the light
+  falls. Each move shows its damage as a rising digit at the frame its blow strikes. The moves'
+  own sounds and the voices play, not a blow's landing, nor music. Any press ends it, and it ends
+  by itself after Blaze, a moment of black after her; the settings fade in as they were.
 
 ### 10.5 Rendering
 
