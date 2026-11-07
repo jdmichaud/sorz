@@ -433,8 +433,8 @@ are its own, driven by its player alone. The host and its clients:
 
 - **The host** is the native game whose player chooses NETWORK PLAY in its menu (1 PLAYER, 2
   PLAYERS, NETWORK PLAY, OPTIONS), or the first page connected to a server (its menu: 1 PLAYER,
-  NETWORK PLAY, OPTIONS). NETWORK PLAY opens the network options: PLAYERS (2, the only number
-  today), PORT (the native host's), OBSERVERS (yes or no), SAME CHARACTER (whether two players may
+  NETWORK PLAY, OPTIONS). NETWORK PLAY opens the network options: PLAYERS (2 to 4: section
+  10.7, E4), PORT (the native host's), OBSERVERS (yes or no), SAME CHARACTER (whether two players may
   choose one character), JOIN IN PROGRESS (whether a player may join a game under way, past its
   select: so that no one leaves and comes back for new lives), then START SERVER, START GAME and
   EXIT. START SERVER opens the session:
@@ -760,6 +760,28 @@ that it never holds another back; a page silent for 15 seconds is dropped.
 - **E3 Example: the same character twice.** The select scene asks the policy whether a choice is
   taken. The world loads each player's palette from the character's definition and the
   "duplicate" palette rule. No other code knows about it.
+- **E4 Three and four players** (the user, 2026-11-07), outside the original. Games of 1 or 2
+  players stay the cartridge's; from 3 players:
+  - **The menu:** right on 2 PLAYERS goes to 3 and 4 PLAYERS, then to the CPU's readings; a local
+    game needs as many input methods (the keyboard's two pads, the gamepads), else the line
+    skips them. In network play the host's PLAYERS (2 to 4) sets the places, one player a
+    machine; several local players a machine come later, as do CPUs in the free places.
+  - **The select:** a cursor each, 1P to 4P; 4 PLAYERS turns SAME CHARACTER on. A character's
+    third and fourth players take colour sets of the port's own, beside the cartridge's duplicate.
+  - **The status bar:** four compact slots in a row, the round's timer between the second and the
+    third. Each slot: the player's name (its network name, else 1P to 4P, or CPU), the police
+    special's icon on one line and its count; under them, the health bar and the lives. The score
+    is not shown (it still counts for the high scores); the bosses' bar stays below.
+  - **The rounds:** the cartridge's two-player spawns (records that come only with two players:
+    enemies, a second boss, breakables) come again: half of them with 3 players, all of them with
+    4. The enemies' health is x1.25 with 3 players and x1.5 with 4. The bosses are as many as
+    with two players, their health x1.5 and x2. The numbers are a start, tuned by measurement
+    (CPUs playing every place).
+  - **Mr. X's last room:** players 1 and 2 alone get his offer, and it plays as two players until
+    he rises from his chair; the others then come in.
+  - **The rest is every player's:** lives, specials, continues, the high scores, holds and
+    friendly hits between any two players, the camera keeping all of them in view. A player whose
+    machine drops out leaves after the network's wait, as player 2 does today.
 
 ## 11. Verification
 
