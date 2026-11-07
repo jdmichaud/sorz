@@ -161,7 +161,7 @@ pub const State = struct {
     /// What this machine tells a tick: whether a second pad is there, the players its input
     /// methods can play, whether its game takes the game's rules from another machine's
     /// (scene.Turn).
-    pub const Machine = struct { second_pad: bool = true, players_here: u8 = 2, guest: bool = false, taken: ?setup_mod.Character = null, rules: setup_mod.Rules = .{}, net: scene.Net = .{} };
+    pub const Machine = struct { second_pad: bool = true, players_here: u8 = 2, guest: bool = false, taken: u8 = 0, rules: setup_mod.Rules = .{}, net: scene.Net = .{} };
 
     /// One display tick, with the pads of that tick and whether a second pad is there. Returns
     /// what the tick asks of the sound. Every scene but the test pattern needs `assets`.

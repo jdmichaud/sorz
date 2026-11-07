@@ -380,11 +380,15 @@ pub const Select = struct {
                 // Players 3 and 4's portrait lit too.
                 if (self.count() > 2) self.colours.aim(a.lit(self.cursors[2].place));
                 // Alone, the cursor starts on the first character no other machine's player has.
-                if (turn.taken) |t| if (self.players == .one and self.cursors[0].place == t) {
-                    self.cursors[0].place = next(t, true);
+                if (self.players == .one and turn.takenHere(self.cursors[0].place)) {
+                    const t = self.cursors[0].place;
+                    var to = next(t, true);
+                    var tries: usize = 1;
+                    while (tries < places.len and turn.takenHere(to)) : (tries += 1) to = next(to, true);
+                    self.cursors[0].place = to;
                     self.colours.aim(a.dim(t));
-                    self.colours.aim(a.lit(self.cursors[0].place));
-                };
+                    self.colours.aim(a.lit(to));
+                }
                 if (!self.cpu_pass) turn.play(a.music);
                 self.phase = .placing;
                 // The next display tick is the tick's second half.
@@ -477,7 +481,7 @@ pub const Select = struct {
         const c = &self.cursors[i];
         if (c.chosen or @as(u8, @bitCast(pressed)) == 0) return;
         if (pressed.a or pressed.b or pressed.c or pressed.start) {
-            if (turn.taken == c.place) return;
+            if (turn.takenHere(c.place)) return;
             c.chosen = true;
             turn.setup.characters[if (self.cpu_pass) 1 else i] = c.place;
             turn.play(a.choose);
@@ -489,8 +493,7 @@ pub const Select = struct {
         // A character the variant's rule says is taken (another player's, in the cartridge), or
         // another machine's player's.
         var tries: usize = 0;
-        while (tries < places.len and self.takenFrom(turn, i, to)) : (tries += 1) to = next(to, pressed.right);
-        if (turn.taken == to) to = next(to, pressed.right);
+        while (tries < places.len and (self.takenFrom(turn, i, to) or turn.takenHere(to))) : (tries += 1) to = next(to, pressed.right);
         c.place = to;
         // A portrait another player's cursor stays on stays lit (when the variant lets two be on
         // one).

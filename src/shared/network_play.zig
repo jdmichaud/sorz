@@ -572,7 +572,7 @@ fn ask(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
         .select => np.askJoin(p, if (chosen) |c| @backingInt(c) else protocol.no_character),
         .play => {
             const c = chosen orelse return;
-            if (!st.join_in_progress or (!st.same_character and @backingInt(c) == st.character)) return;
+            if (!st.join_in_progress or taken(g) & @as(u8, 1) << @intCast(@backingInt(c)) != 0) return;
             np.askJoin(p, @backingInt(c));
         },
         .none => return,
@@ -609,14 +609,15 @@ fn choice(s: *const State) ?Character {
     };
 }
 
-/// The character the client's player cannot choose to join: the host's player 1's in play,
-/// unless the host allows the same character.
-pub fn taken(g: *const Game) ?Character {
-    const np = g.netplay orelse return null;
-    if (np.role != .guest or np.inSession()) return null;
+/// The characters the client's player cannot choose to join (a bit each): those the host's
+/// game's players play in its round, player 1's among them, unless the host allows the same
+/// character.
+pub fn taken(g: *const Game) u8 {
+    const np = g.netplay orelse return 0;
+    if (np.role != .guest or np.inSession()) return 0;
     const st = np.hostStatus();
-    if (st.game != .play or st.character >= protocol.characters or st.same_character) return null;
-    return @fromBackingInt(st.character);
+    if (st.game != .play or st.character >= protocol.characters or st.same_character) return 0;
+    return st.taken | @as(u8, 1) << @intCast(st.character);
 }
 
 /// The client has the host's game, to play it or to watch it: it loads it (its own set-up kept),

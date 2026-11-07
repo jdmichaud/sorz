@@ -144,10 +144,10 @@ pub const Turn = struct {
     /// This machine's game takes the game's rules from another machine's (network play's guest):
     /// OPTIONS shows only what is this machine's own.
     guest: bool = false,
-    /// A character another machine's player plays (network play: the host's player 1, while this
-    /// machine's player chooses theirs to join its game): the character select's cursor passes
-    /// it and cannot choose it.
-    taken: ?@import("setup.zig").Character = null,
+    /// The characters other machines' players play (network play: the host's game's players in
+    /// its round, while this machine's player chooses theirs to join it), a bit each: the
+    /// character select's cursor passes them and cannot choose them.
+    taken: u8 = 0,
     /// This machine's settings' rules, which the game menu gives the game it starts where the
     /// variant takes them (`Policies.settings_rules`).
     rules: @import("setup.zig").Rules = .{},
@@ -205,6 +205,11 @@ pub const Turn = struct {
     pub fn releasePads(self: *Turn) void {
         self.release_pads = true;
         self.pressed = .{};
+    }
+
+    /// Whether `c` is one of the characters other machines' players play (`taken`).
+    pub fn takenHere(t: *const Turn, c: @import("setup.zig").Character) bool {
+        return t.taken & @as(u8, 1) << @intCast(@backingInt(c)) != 0;
     }
 
     pub fn play(self: *Turn, s: library.Sound) void {
