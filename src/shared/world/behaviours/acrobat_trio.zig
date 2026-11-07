@@ -17,6 +17,7 @@
 //!
 //! The other program's traces name its first state `start` (`trace_states`).
 const std = @import("std");
+const script = @import("../script.zig");
 const tick = @import("../tick.zig");
 const fixed = @import("../fixed.zig");
 const entity = @import("../entity.zig");
@@ -383,7 +384,8 @@ fn breakUp(a: Actor) void {
     b.fresh = true;
     e.mind = .{ .acrobat = .{ .state = acrobat.fights, .body = b } };
     e.generation +%= 1;
-    e.health = health;
+    // More with three and four players (the port's).
+    e.health = script.healthOf(a.tick.world, health, false);
     e.power = power;
     e.flags.harmless = false;
 }

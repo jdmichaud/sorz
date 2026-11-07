@@ -496,6 +496,8 @@ pub fn Of(comptime M: type) type {
             // the options' level may add to its health and to them.
             if (st != 0) a.entity.power = t.strength_power[st];
             a.entity.health += a.tick.enemyHealthMore();
+            // More with three and four players (the port's).
+            a.entity.health = script.healthOf(a.tick.world, a.entity.health, false);
             a.entity.power_more = a.tick.enemyPowerMore();
             // Its walk's first frame, held: the original's object appears not animated, and the
             // states of its fight start its frames (with no player in play it stands, its frame's

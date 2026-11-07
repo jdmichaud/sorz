@@ -3066,3 +3066,60 @@ test "four CPUs together: none walks into another and holds it; they go on throu
     }
     for (hs) |h| try testing.expect(r.w.get(h).?.position.x.whole() > 940);
 }
+/// A round whose first section places a punk and one of the two players' at 1000 and 940, and
+/// Antonio of the two players' off the screen's right.
+const crowd_round: content_round.Round = blk: {
+    var r = lives_round;
+    r.sections = &.{.{ .wall = 1216, .timer = 40, .opens_after = 61, .placed = &.{
+        .{ .kind = "punk", .x = 1000, .depth = 64 },
+        .{ .kind = "punk", .x = 940, .depth = 64, .two_players = true },
+        .{ .kind = "antonio", .x = 1200, .depth = 16, .two_players = true },
+    } }};
+    break :blk r;
+};
+
+test "worlds of three and four players: the two players' punk comes again, not Antonio; more health for the punks and for him" {
+    // Four players, then three (player 4 out of the round).
+    for ([_]u8{ 4, 3 }) |n| {
+        var r = try Round.init();
+        defer r.deinit();
+        const hs = try morePlayers(&r, .{ .{ 800, 20 }, .{ 800, 100 }, .{ 800, 110 } }, .{ .right, .right, .right });
+        if (n == 3) {
+            r.w.remove(hs[3]);
+            r.w.players[3] = .{};
+        }
+        const plan: script.Plan = .{ .round = &crowd_round };
+        var t: tick_mod.Tick = .{ .world = &r.w, .kinds = &r.f.kinds, .random = &r.rng, .out = &r.out, .plan = &plan };
+        script.placeFirst(&t, &plan);
+        try testing.expectEqual(n, r.w.script.players);
+        for (0..2) |_| r.stepPlan(.{}, &plan);
+        // The punks out, the two players' again 40 pixels back: their 4 health x1.5 with four,
+        // x1.25 with three (5, rounded).
+        const punk_kind = r.f.kinds.find("punk").?;
+        const antonio_kind = r.f.kinds.find("antonio").?;
+        var punks: usize = 0;
+        var antonios: usize = 0;
+        var again = false;
+        for (&r.w.entities) |*e| {
+            if (!e.alive()) continue;
+            if (e.kind == punk_kind) {
+                punks += 1;
+                try testing.expect(!e.flags.hidden);
+                try testing.expectEqual(@as(i16, if (n == 4) 6 else 5), e.health);
+                if (e.position.x.whole() <= 905) again = true;
+            }
+            if (e.kind == antonio_kind) antonios += 1;
+        }
+        try testing.expectEqual(@as(usize, 3), punks);
+        try testing.expect(again);
+        // Antonio alone: his 24 health x1.5 with three and four.
+        try testing.expectEqual(@as(usize, 1), antonios);
+        var shown = false;
+        for (0..60) |_| r.stepPlan(.{}, &plan);
+        for (&r.w.entities) |*e| if (e.alive() and e.kind == antonio_kind and !e.flags.hidden) {
+            shown = true;
+            try testing.expectEqual(@as(i16, 36), e.health);
+        };
+        try testing.expect(shown);
+    }
+}

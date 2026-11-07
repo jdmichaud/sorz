@@ -80,7 +80,8 @@ pub fn Of(comptime M: type) type {
 
         /// His power and health by the level: the easiest halves his power, the harder ones double it,
         /// the hardest adds to his health; out of his boss's section, his power is more, and in
-        /// the round `outside_health_round` (round 8's boss rush) his health too.
+        /// the round `outside_health_round` (round 8's boss rush) his health too; his health more
+        /// with three and four players (the port's, `script.healthOf`).
         pub fn strength(a: A) struct { power: u8, health: i16 } {
             const n = a.numbers();
             var power: u8 = n.power;
@@ -101,7 +102,7 @@ pub fn Of(comptime M: type) type {
                     health += n.outside_health;
                 };
             }
-            return .{ .power = power, .health = health };
+            return .{ .power = power, .health = script.healthOf(a.tick.world, health, true) };
         }
 
         /// The second of twins finds the first among the enemies: each knows the other.

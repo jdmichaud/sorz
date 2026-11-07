@@ -664,7 +664,10 @@ fn appear(a: Actor) void {
         m.power += n.variant_power;
         // Round 8's (his strength 2) has more health too.
         if (e.spawn.strength == 2) e.health += n.variant_health;
-    } else {
+    }
+    // More with three and four players (the port's).
+    e.health = script.healthOf(w, e.health, true);
+    if (!e.spawn.traits.twin) {
         // The status bar: his entry by his bar of his own.
         w.boss_bar = if (bar == 0) bar_entry else bar_entry + 1;
         w.bosses[if (bar == 0) 0 else 1] = a.handle;

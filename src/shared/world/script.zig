@@ -42,7 +42,9 @@
 //! it comes out no later than its first: on the screen, or once the camera has come by); a
 //! wave's, once the wave is in, in a second pass of its own, each at least `Crowd.wave_apart`
 //! ticks after the one before it; a reserve's, called as the others are, after those of the first
-//! pass it may have. Games of one and two players are the cartridge's.
+//! pass it may have. The enemies' health is more, the bosses' too (`healthOf`), and their bars
+//! show it in the measure of two players' (`barHealth`). Games of one and two players are the
+//! cartridge's.
 //!
 //! The original's routines for the enemies' art slots and colour lines, which the script models,
 //! are named in sor-re's gameplay port map (3.8), not here (DESIGN.md P1).
@@ -64,13 +66,40 @@ const Spawn = content_round.Spawn;
 const StreamOf = content_round.StreamOf;
 const Streamed = content_round.Streamed;
 
-/// The port's rules for three and four players (DESIGN.md 10.7, E4): how far a placed record that
-/// comes again is from its first, in pixels; how long a wave's record that comes again waits at
-/// least after the one before it, in logic ticks.
+/// The port's rules for three and four players (DESIGN.md 10.7, E4): the health the enemies and
+/// the bosses appear with, in quarters, by the players (3, 4), as measured with CPUs in every
+/// place (PLAN item 52: the bosses' x1.5 with four, not E4's x2, whose rounds outlasted their
+/// timers); how far a placed record that comes again is from its first, in pixels; how long a
+/// wave's record that comes again waits at least after the one before it, in logic ticks.
 pub const Crowd = struct {
+    pub const enemy_quarters: [2]i32 = .{ 5, 6 };
+    pub const boss_quarters: [2]i32 = .{ 6, 6 };
     pub const placed_apart = 40;
     pub const wave_apart = 32;
 };
+
+/// The health an enemy (or a boss) appears with, `health` as two players have it: more with three
+/// and four players (`Crowd`), rounded.
+pub fn healthOf(w: anytype, health: i16, boss: bool) i16 {
+    const q = quartersOf(w, boss) orelse return health;
+    if (health <= 0) return health;
+    return @intCast(@divFloor(@as(i32, health) * q + 2, 4));
+}
+
+/// A boss's health in the measure of two players' (its bar's), rounded up: its bar empties as
+/// two players' boss's does.
+pub fn barHealth(w: anytype, health: i16) i16 {
+    const q = quartersOf(w, true) orelse return health;
+    if (health <= 0) return health;
+    return @intCast(@divFloor(@as(i32, health) * 4 + q - 1, q));
+}
+
+fn quartersOf(w: anytype, boss: bool) ?i32 {
+    const n = w.script.players;
+    if (n < 3) return null;
+    const k = @min(n, 4) - 3;
+    return if (boss) Crowd.boss_quarters[k] else Crowd.enemy_quarters[k];
+}
 
 /// What the script follows besides the world: the round's script and the options of the game.
 pub const Plan = struct {
@@ -265,7 +294,7 @@ pub const State = struct {
     /// keep coming).
     two_players: bool = false,
     /// The most players in play as a section started: with three or four, the two players'
-    /// records come again (`again`).
+    /// records come again (`again`), the enemies' health is more (`healthOf`).
     players: u8 = 0,
     /// The wave's second pass under way: its records that come again.
     again: bool = false,
@@ -1257,4 +1286,30 @@ test "the enemies' colours: an enemy shows on those that hold its own; one arriv
     try std.testing.expectEqual(@as(?u2, Held.second), h.take(5, false));
     try std.testing.expectEqual(@as(?u2, Held.other), h.take(9, true));
     try std.testing.expectEqual(@as(?u2, null), h.take(10, true));
+}
+
+test "three and four players: the enemies' health x1.25 and x1.5, the bosses' x1.5, rounded; a boss's bar in two players' measure" {
+    var w: struct { script: State = .{} } = .{};
+    for ([_]u8{ 0, 1, 2 }) |n| {
+        w.script.players = n;
+        try std.testing.expectEqual(@as(i16, 7), healthOf(&w, 7, false));
+        try std.testing.expectEqual(@as(i16, 7), healthOf(&w, 7, true));
+        try std.testing.expectEqual(@as(i16, 7), barHealth(&w, 7));
+    }
+    w.script.players = 3;
+    try std.testing.expectEqual(@as(i16, 9), healthOf(&w, 7, false));
+    try std.testing.expectEqual(@as(i16, 125), healthOf(&w, 100, false));
+    try std.testing.expectEqual(@as(i16, 11), healthOf(&w, 7, true));
+    try std.testing.expectEqual(@as(i16, 150), healthOf(&w, 100, true));
+    try std.testing.expectEqual(@as(i16, 100), barHealth(&w, 150));
+    try std.testing.expectEqual(@as(i16, 1), barHealth(&w, 1));
+    w.script.players = 4;
+    try std.testing.expectEqual(@as(i16, 11), healthOf(&w, 7, false));
+    try std.testing.expectEqual(@as(i16, 11), healthOf(&w, 7, true));
+    try std.testing.expectEqual(@as(i16, 150), healthOf(&w, 100, true));
+    try std.testing.expectEqual(@as(i16, 100), barHealth(&w, 150));
+    try std.testing.expectEqual(@as(i16, 66), barHealth(&w, 99));
+    // None left stays none.
+    try std.testing.expectEqual(@as(i16, 0), healthOf(&w, 0, false));
+    try std.testing.expectEqual(@as(i16, -1), barHealth(&w, -1));
 }

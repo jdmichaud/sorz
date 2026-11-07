@@ -1458,7 +1458,8 @@ pub const Round = struct {
     }
 
     /// The bosses' bars as the world is: their entry, set at a boss's first tick in its section,
-    /// each its boss's health (none once the boss is gone).
+    /// each its boss's health (none once the boss is gone), in the measure of two players' (the
+    /// more health of three and four players' bosses, `script.barHealth`).
     fn bossesBar(self: *const Round, a: *const Assets) ?BossesBar {
         const w = &self.play.world;
         const entry = w.boss_bar orelse return null;
@@ -1466,7 +1467,8 @@ pub const Round = struct {
         var b: BossesBar = .{ .second = entry < bs.second.len and bs.second[entry], .pixels = .{ 0, 0 } };
         for (w.bosses, &b.pixels) |h, *px| {
             const e = w.getConst(h orelse continue) orelse continue;
-            px.* = @intCast(@min(@as(u32, @intCast(@max(e.health, 0))) * bs.points, std.math.maxInt(u16)));
+            const health = world.script.barHealth(w, e.health);
+            px.* = @intCast(@min(@as(u32, @intCast(@max(health, 0))) * bs.points, std.math.maxInt(u16)));
         }
         return b;
     }

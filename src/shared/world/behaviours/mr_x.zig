@@ -26,6 +26,7 @@
 //! begins, and the rest after the blows of the tick. His numbers, animations and sounds are his
 //! definition's (`entities/mr_x.json`).
 const std = @import("std");
+const script = @import("../script.zig");
 const tick = @import("../tick.zig");
 const fixed = @import("../fixed.zig");
 const entity = @import("../entity.zig");
@@ -621,7 +622,8 @@ fn firstTick(a: Actor) void {
     w.boss_bar = bar_entry;
     w.bosses[0] = a.handle;
     const level: usize = if (a.tick.plan) |p| p.level else 1;
-    e.health = t.strength[2 * level];
+    // His health more with three and four players (the port's).
+    e.health = script.healthOf(w, t.strength[2 * level], true);
     m.power = t.strength[2 * level + 1];
     e.power = m.power;
 }
