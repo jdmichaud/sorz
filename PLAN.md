@@ -613,6 +613,11 @@ machine in network play; CPUs in the free places and several local players a mac
 - [ ] **49 — The select for 4** — Depends: 47.
   - A cursor each, 1P to 4P; with 4 players SAME CHARACTER on. A character's third and fourth
     players take colour sets of the port's own (shown to the user first).
+  - The colour sets, approved by the user (2026-11-07), maps of the players' palette (line 0)
+    as the cartridge's `duplicate` is, its colours the same 16: Adam's shirt (14, 15) red for
+    the third (6, 7), white and light grey for the fourth (1, 8); Axel's jeans (9, 10, 11) grey
+    for the third (8, 12, 13), yellow and orange for the fourth (14, 15, 5); Blaze's outfit
+    (6, 7) white and light grey for the third (8, 12), yellow and orange for the fourth (14, 15).
   - Gate: zig build test; pictures of the select with 3 and 4 cursors and of each character's
     four colour sets in a round.
 - [ ] **50 — 3 and 4 PLAYERS in the menu** — Depends: 48, 49.
