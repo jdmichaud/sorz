@@ -2685,3 +2685,205 @@ test "an armed player struck lets its weapon fall; a knife held is thrown by the
     try testing.expectEqualStrings("flying", behaviours.stateName(&r.w.get(k).?.mind).?);
     try testing.expect(r.player().mind.player.weapon == null);
 }
+
+// Four players (DESIGN.md 10.7, E4) ---------------------------------------------------------------
+
+/// Players 2 to 4, of the hero's kind, beside player 1 (`Round.init`'s, at 800 across on depth
+/// 64), each in its own place (`World.player_places`): at `at[k - 1]` (across, depth), facing
+/// `facing[k - 1]`. The four players' fighters, by player.
+fn morePlayers(r: *Round, at: [3][2]i32, facing: [3]entity.Facing) ![world_mod.max_players]Handle {
+    var hs: [world_mod.max_players]Handle = undefined;
+    hs[0] = r.hero;
+    const kind = r.f.kinds.find("hero").?;
+    for (1..world_mod.max_players) |k| {
+        const h = try r.w.spawnIn(&r.f.kinds, kind, World.player_places[k], .pixels(at[k - 1][0], at[k - 1][1], 160), facing[k - 1]);
+        r.w.players[k] = .{ .entity = h, .character = kind, .lives = 3, .specials = 1, .continues = 3 };
+        const e = r.w.get(h).?;
+        e.mind.player.state = .ready;
+        e.mind.player.started = true;
+        r.f.kinds.startAnimation(e, r.f.kinds.get(kind).definition.animation("ready").?);
+        hs[k] = h;
+    }
+    return hs;
+}
+
+/// The pads with player `k`'s alone holding `pad`.
+fn padOf(k: usize, pad: input.Pad) input.Pads {
+    var p: input.Pads = .{};
+    p.at(k).* = pad;
+    return p;
+}
+
+test "four players: each in its own place, taking its turn in its order, moves by its own pad" {
+    var r = try Round.init();
+    defer r.deinit();
+    const hs = try morePlayers(&r, .{ .{ 850, 40 }, .{ 900, 88 }, .{ 950, 16 } }, .{ .right, .right, .right });
+    try testing.expectEqual(@as(u8, 1), hs[1].index);
+    try testing.expectEqual(World.player_places[2], hs[2].index);
+    try testing.expectEqual(World.player_places[3], hs[3].index);
+    // The players' turns first, in their numbers' order; then the others, by place.
+    const foe = try r.punk(1100);
+    var buf: [world_mod.capacity]u8 = undefined;
+    try testing.expectEqualSlices(u8, &.{ 0, 1, hs[2].index, hs[3].index, foe.index }, r.w.updateOrder(&buf));
+    try testing.expect(r.w.turnsBefore(hs[1], hs[2]) and r.w.turnsBefore(hs[3], foe) and !r.w.turnsBefore(foe, hs[2]));
+    r.w.remove(foe);
+    for (0..world_mod.max_players) |k| {
+        var was: [world_mod.max_players]fixed.Vec3 = undefined;
+        for (&was, hs) |*p, h| p.* = r.w.get(h).?.position;
+        for (0..6) |_| r.step(padOf(k, .{ .down = true }));
+        for (hs, was, 0..) |h, p, j| {
+            const now = r.w.get(h).?.position;
+            if (j == k) {
+                try testing.expect(p.depth.lessThan(now.depth));
+            } else try testing.expect(now.depth.eql(p.depth) and now.x.eql(p.x));
+        }
+        for (0..10) |_| r.step(.{});
+    }
+}
+
+test "four players fight, friendly hits on: player 3's punches hurt player 4, and no one else" {
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &lives_round };
+    const hs = try morePlayers(&r, .{ .{ 1000, 30 }, .{ 800, 100 }, .{ 840, 100 } }, .{ .left, .right, .left });
+    for (0..12) |i| r.stepPlan(if (i % 4 == 0) padOf(2, .{ .b = true }) else .{}, &plan);
+    try testing.expect(r.w.get(hs[3]).?.health < 80);
+    try testing.expect(r.w.get(hs[3]).?.struck_by.?.eql(hs[2]));
+    for (hs[0..3]) |h| try testing.expectEqual(@as(i16, 80), r.w.get(h).?.health);
+}
+
+test "four players: any one walks into another and holds it; the throw lifts it over, falling" {
+    // Players 3 and 4, 2 and 3, 1 and 4: the holder at 800, the other 30 pixels ahead of it on
+    // its depth facing it; the rest away.
+    const Pair = struct { holder: usize, held: usize, at: [3][2]i32 };
+    const pairs = [_]Pair{
+        .{ .holder = 2, .held = 3, .at = .{ .{ 1000, 20 }, .{ 800, 100 }, .{ 830, 100 } } },
+        .{ .holder = 1, .held = 2, .at = .{ .{ 800, 100 }, .{ 830, 100 }, .{ 1000, 20 } } },
+        .{ .holder = 0, .held = 3, .at = .{ .{ 1000, 20 }, .{ 1000, 100 }, .{ 830, 64 } } },
+    };
+    for (pairs) |pair| {
+        var r = try Round.init();
+        defer r.deinit();
+        var facing: [3]entity.Facing = .{ .right, .right, .right };
+        facing[pair.held - 1] = .left;
+        const hs = try morePlayers(&r, pair.at, facing);
+        const holder = hs[pair.holder];
+        const held = hs[pair.held];
+        var holds = false;
+        for (0..20) |_| {
+            r.step(padOf(pair.holder, .{ .right = true }));
+            if (std.mem.eql(u8, stateOf(&r, holder), "grab")) {
+                holds = true;
+                break;
+            }
+        }
+        try testing.expect(holds);
+        try testing.expectEqualStrings("held", stateOf(&r, held));
+        try testing.expect(r.w.get(holder).?.holding.?.eql(held) and r.w.get(held).?.holder.?.eql(holder));
+        try testing.expectEqual(r.w.get(held).?.position.x.whole() - 50, r.w.get(holder).?.position.x.whole());
+        r.step(padOf(pair.holder, .{ .b = true, .left = true }));
+        try testing.expectEqualStrings("grab_blow", stateOf(&r, holder));
+        try testing.expectEqualStrings("lift", stateOf(&r, held));
+        for (0..13) |_| r.step(.{});
+        try testing.expectEqualStrings("air_slam", stateOf(&r, held));
+        var landed = false;
+        for (0..60) |_| {
+            r.step(.{});
+            if (std.mem.eql(u8, stateOf(&r, held), "land")) landed = true;
+        }
+        try testing.expect(landed);
+        // The others stood by.
+        for (hs, 0..) |h, k| if (k != pair.holder and k != pair.held) {
+            try testing.expectEqual(@as(i16, 80), r.w.get(h).?.health);
+        };
+    }
+}
+
+test "four players: each loses its own lives; a new life drops in at its own depth; one out of the game goes" {
+    const level = testing.log_level;
+    testing.log_level = .err;
+    defer testing.log_level = level;
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &lives_round, .lives = 3 };
+    script.start(&r.w, &plan);
+    const hs = try morePlayers(&r, .{ .{ 1000, 20 }, .{ 880, 100 }, .{ 960, 40 } }, .{ .left, .right, .left });
+    r.w.get(hs[2]).?.health = 0;
+    r.stepPlan(.{}, &plan);
+    try testing.expectEqualStrings("dying", stateOf(&r, hs[2]));
+    for (r.w.players, 0..) |p, k| try testing.expectEqual(@as(u8, if (k == 2) 2 else 3), p.lives);
+    for (0..200) |_| {
+        r.stepPlan(.{}, &plan);
+        if (std.mem.eql(u8, stateOf(&r, hs[2]), "fall")) break;
+    }
+    try testing.expectEqualStrings("fall", stateOf(&r, hs[2]));
+    try testing.expectEqual(lives_round.players.depthOf(2), r.w.get(hs[2]).?.position.depth.whole());
+    try testing.expectEqual(@as(i16, 80), r.w.get(hs[2]).?.health);
+    // Player 4 on its last life with no continue: out of the game, it goes; the others play on.
+    r.w.players[3].lives = 1;
+    r.w.players[3].continues = 0;
+    r.w.get(hs[3]).?.health = 0;
+    for (0..120) |_| r.stepPlan(.{}, &plan);
+    try testing.expect(r.w.players[3].out and r.w.players[3].entity == null and r.w.get(hs[3]) == null);
+    for (r.w.players[0..3], 0..) |p, k| {
+        try testing.expect(!p.out);
+        try testing.expectEqual(@as(u8, if (k == 2) 2 else 3), p.lives);
+        try testing.expect(r.w.get(p.entity.?).?.mind == .player);
+    }
+}
+
+test "four players: the camera follows them and keeps the four in its view" {
+    var r = try Round.init();
+    defer r.deinit();
+    const hs = try morePlayers(&r, .{ .{ 830, 40 }, .{ 860, 88 }, .{ 890, 16 } }, .{ .right, .right, .right });
+    const rules = r.w.camera.follows.?;
+    const all: input.Pads = .{ .pad1 = .{ .right = true }, .pad2 = .{ .right = true }, .pad3 = .{ .right = true }, .pad4 = .{ .right = true } };
+    // All four go right: the camera follows. Then player 1 stands and the others go on: the
+    // camera waits for it (the hindmost), and keeps the others within its view.
+    for (0..160) |i| {
+        r.step(if (i < 80) all else .{ .pad2 = .{ .right = true }, .pad3 = .{ .right = true }, .pad4 = .{ .right = true } });
+        const left = r.w.camera.x.whole();
+        for (hs) |h| {
+            const x = r.w.get(h).?.position.x.whole();
+            try testing.expect(x >= left + rules.kept_x[0] and x <= left + rules.kept_x[1]);
+        }
+        if (i == 79) try testing.expect(r.w.camera.x.whole() > 768);
+    }
+    // The others went on as far as the view lets them.
+    for (hs[1..]) |h| try testing.expectEqual(r.w.camera.x.whole() + rules.kept_x[1], r.w.get(h).?.position.x.whole());
+}
+
+test "four players: an enemy goes for the nearest across, whichever player it is (the later at a tie)" {
+    var r = try Round.init();
+    defer r.deinit();
+    const hs = try morePlayers(&r, .{ .{ 850, 40 }, .{ 900, 88 }, .{ 980, 16 } }, .{ .right, .right, .right });
+    // Nearest to player 4; to player 1; between players 2 and 3, a tie: player 3.
+    const Case = struct { x: i32, target: usize };
+    for ([_]Case{ .{ .x = 1020, .target = 3 }, .{ .x = 700, .target = 0 }, .{ .x = 875, .target = 2 } }) |c| {
+        const p = try r.punk(c.x);
+        const m = &r.w.get(p).?.mind.galsia;
+        m.state = .choose;
+        m.body.fresh = true;
+        m.body.target = null;
+        r.step(.{});
+        try testing.expect(r.w.get(p).?.mind.galsia.body.target.?.eql(hs[c.target]));
+        r.w.remove(p);
+    }
+}
+
+test "four players: player 4 calls the special attack: its own, player 2's kind of shot; the others keep theirs" {
+    var r = try Round.init();
+    defer r.deinit();
+    const hs = try morePlayers(&r, .{ .{ 850, 40 }, .{ 900, 88 }, .{ 950, 16 } }, .{ .right, .right, .right });
+    r.w.script.stage = .stand_in;
+    var plan: script.Plan = .{ .round = &special_round };
+    var queue: script.ArtQueue = .{};
+    r.stepArt(.{}, &plan, &queue);
+    r.stepArt(padOf(3, .{ .a = true }), &plan, &queue);
+    try testing.expect(r.w.special and r.w.special_by.?.eql(hs[3]));
+    for (r.w.players, 0..) |p, k| try testing.expectEqual(@as(u8, if (k == 3) 0 else 1), p.specials);
+    const own = for (r.w.entities) |e| {
+        if (e.alive() and e.mind == .special_knockdown) break e.mind.special_knockdown;
+    } else return error.NoSpecial;
+    try testing.expect(own.second and own.by.?.eql(hs[3]));
+}

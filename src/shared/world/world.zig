@@ -523,3 +523,36 @@ pub const World = struct {
         return canonical.hash(World, self);
     }
 };
+
+test "the pairs of players: each two of them once, players 1 and 2's first" {
+    var seen: [player_pairs]bool = @splat(false);
+    for (1..max_players) |b| for (0..b) |a| {
+        const i = pairOf(a, b);
+        try std.testing.expect(!seen[i]);
+        seen[i] = true;
+        try std.testing.expectEqual(i, pairOf(b, a));
+    };
+    try std.testing.expectEqual(@as(usize, 0), pairOf(0, 1));
+    try std.testing.expect(std.mem.allEqual(bool, &seen, true));
+}
+
+test "the players in the canonical form: a fresh record a free place; players 3 and 4 in the traces' records once in the game" {
+    const gpa = std.testing.allocator;
+    const buf = try gpa.alloc(u8, canonical.maxSize(World));
+    defer gpa.free(buf);
+    var w: World = .{};
+    w.players[0] = .{ .lives = 3 };
+    w.players[1] = .{ .lives = 3 };
+    const two = canonical.write(World, &w, buf).len;
+    try std.testing.expectEqual(@as(usize, 2), w.playerRecords());
+    // A fourth player in the game: its record in the form, and in the traces'.
+    w.players[3] = .{ .lives = 3, .score = 100 };
+    const form = try gpa.dupe(u8, canonical.write(World, &w, buf));
+    defer gpa.free(form);
+    try std.testing.expect(form.len > two);
+    try std.testing.expectEqual(@as(usize, 4), w.playerRecords());
+    const back = try gpa.create(World);
+    defer gpa.destroy(back);
+    try canonical.read(World, form, back);
+    try std.testing.expect(std.meta.eql(w.players, back.players));
+}
