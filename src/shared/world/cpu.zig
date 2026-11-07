@@ -487,7 +487,7 @@ fn play(w: *const World, g: Given, m: *Memory, k: PlayerNumber, p: *const Entity
         m.detour -= 1;
         if (goalPlace(w, m.goal)) |to| {
             const a = wayRound(w, g, p, to);
-            if (walks(a)) return safe(w, g, clearOf(m, keepOff(w, m, a, p, partner, leads), p, fire), p);
+            if (walks(a)) return safe(w, g, clearOf(m, keepOffAll(w, m, a, k, p, partner, leads), p, fire), p);
         }
         m.detour = 0;
     }
@@ -495,7 +495,7 @@ fn play(w: *const World, g: Given, m: *Memory, k: PlayerNumber, p: *const Entity
     if (m.wait > 0) {
         m.wait -= 1;
         m.wanted = walkOf(m.chose);
-        return safe(w, g, clearOf(m, keepOff(w, m, walkOf(m.chose), p, partner, leads), p, fire), p);
+        return safe(w, g, clearOf(m, keepOffAll(w, m, walkOf(m.chose), k, p, partner, leads), p, fire), p);
     }
     // A foe right behind it, while it fights another: now and then, the back attack.
     if (m.goal == .foe and ready(p)) if (foeBehind(w, kinds, p)) {
@@ -509,7 +509,7 @@ fn play(w: *const World, g: Given, m: *Memory, k: PlayerNumber, p: *const Entity
     };
     if (a.attack and m.goal == .foe) if (foeAt(w, kinds, m.goal.foe)) |f| noteFutile(w, m, f);
     m.wanted = walkOf(a);
-    return if (ready(p)) safe(w, g, clearOf(m, keepOff(w, m, a, p, partner, leads), p, fire), p) else a;
+    return if (ready(p)) safe(w, g, clearOf(m, keepOffAll(w, m, a, k, p, partner, leads), p, fire), p) else a;
 }
 
 /// A press at foe `f`: counted while its health stays as it was; after `futile_presses`, it backs
@@ -1274,6 +1274,34 @@ fn walkOf(a: Actions) Actions {
 /// Whether `a` walks.
 fn walks(a: Actions) bool {
     return a.up or a.down or a.left or a.right;
+}
+
+/// The actions `a` of player `k`'s CPU, their walk kept off each other player fighting as off
+/// player 1 (three and four players: a walk into any player holds it, and players holding each
+/// other by turns hold the camera back), then off player 1 (`partner`, `keepOff`); a walk that
+/// player 1's rule turned into another's way is left out, the blows kept. With one or two players
+/// there are no others: player 1's rule alone.
+fn keepOffAll(w: *const World, m: *const Memory, a: Actions, k: PlayerNumber, p: *const Entity, partner: ?*const Entity, leads: bool) Actions {
+    var others: [world_mod.max_players]*const Entity = undefined;
+    var n: usize = 0;
+    for (w.players, 0..) |pl, j| {
+        if (j == k or j == partnerPlayer(k)) continue;
+        const q = w.getConst(pl.entity orelse continue) orelse continue;
+        if (q.mind != .player) continue;
+        others[n] = q;
+        n += 1;
+    }
+    var out = a;
+    for (others[0..n]) |q| out = keepOff(w, m, out, p, q, leads);
+    out = keepOff(w, m, out, p, partner, leads);
+    for (others[0..n]) |q| if (!std.meta.eql(keepOff(w, m, out, p, q, leads), out)) {
+        out.up = false;
+        out.down = false;
+        out.left = false;
+        out.right = false;
+        break;
+    };
+    return out;
 }
 
 /// The actions `a`, their walk kept off player 1 `q`, whose body a walk's reach would grab. In

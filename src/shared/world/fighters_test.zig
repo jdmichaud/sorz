@@ -3053,3 +3053,16 @@ test "Mr. X's room of one or two players: no one steps out, the offer's players 
     try testing.expect(!r.w.room.held_out and r.w.room.first == 0);
     try testing.expect(r.w.players[0].entity != null);
 }
+
+test "four CPUs together: none walks into another and holds it; they go on through the round" {
+    var r = try Round.init();
+    defer r.deinit();
+    const hs = try morePlayers(&r, .{ .{ 800, 104 }, .{ 840, 66 }, .{ 870, 30 } }, .{ .right, .left, .right });
+    var pads: input.Pads = .{};
+    for (0..400) |_| {
+        for (0..world_mod.max_players) |k| pads.at(k).* = cpu.pad(&r.w, .{ .kinds = &r.f.kinds, .leads = k == 0 }, &r.w.players[k].cpu, @intCast(k));
+        r.step(pads);
+        for (hs) |h| try testing.expect(r.w.get(h).?.holding == null);
+    }
+    for (hs) |h| try testing.expect(r.w.get(h).?.position.x.whole() > 940);
+}
