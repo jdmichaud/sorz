@@ -437,7 +437,7 @@ pub const RoundClear = struct {
     fn frameOf(self: *const RoundClear, g: *const setup_mod.Progress, a: *const Assets) transfers.Frame {
         const sb = &a.screen.status_bar;
         var players: u16 = 0;
-        for (g.players) |p| players += @intFromBool(p.in_play);
+        for (g.players[0..round_screen.bar_players]) |p| players += @intFromBool(p.in_play);
         return .{
             .colours = self.colours.copy,
             .status_rows = sb.image_rows,
@@ -450,8 +450,7 @@ pub const RoundClear = struct {
 
     /// START held on the pad of a player in play.
     fn startHeld(turn: *const scene.Turn, g: *const setup_mod.Progress) bool {
-        if (g.players[0].in_play and turn.pads.pad1.start) return true;
-        if (g.players[1].in_play and turn.pads.pad2.start) return true;
+        for (g.players, 0..) |p, k| if (p.in_play and turn.pads.of(k).start) return true;
         return false;
     }
 
@@ -581,7 +580,7 @@ fn addScore(p: *setup_mod.Gamer, points: u32, most: u32) void {
 /// The status bar of the game under way: the players in play's parts, the timer.
 fn barOf(g: *const setup_mod.Progress) round_screen.Bar {
     var b: round_screen.Bar = .{ .time = g.timer };
-    for (g.players, &b.players) |p, *o| {
+    for (g.players[0..round_screen.bar_players], &b.players) |p, *o| {
         if (!p.in_play) continue;
         o.* = .{ .playing = .{ .score = p.score, .lives = p.lives, .specials = p.specials, .health = p.health } };
     }

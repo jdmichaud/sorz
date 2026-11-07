@@ -90,10 +90,11 @@ pub const Mind = struct {
     /// The blow met knocks him away; the one holding him let go.
     knocks_down: bool = false,
     let_go: bool = false,
-    /// The special attack is under way; it knocked him out (player 2's).
+    /// The special attack is under way; it knocked him out (whose: player 1's, but another
+    /// player's call).
     special_seen: bool = false,
     special_ko: bool = false,
-    special_p2: bool = false,
+    special_player: u2 = 0,
     /// Done with his knockout (the helper clears him).
     done: bool = false,
     /// A player's new life came: he is knocked away.
@@ -322,9 +323,7 @@ pub fn begin(a: Actor) void {
         a.tick.out.hits.append(.{ .attacker = null, .target = a.handle, .damage = n.special_damage });
         if (e.health <= 0) {
             m.special_ko = true;
-            if (w.special_by) |by| if (w.players[1].entity) |p2| {
-                m.special_p2 = p2.eql(by);
-            };
+            if (w.special_by) |by| m.special_player = w.playerOf(by) orelse 0;
         }
         afterSpecial(a);
     }
@@ -411,22 +410,21 @@ fn target(a: Actor) ?*Entity {
     return a.other(a.mind.target orelse return null);
 }
 
-/// His target: player 1 alone; with player 2 alone, player 2; with both, the nearer across
-/// (player 2 at a tie).
+/// His target: the one player fighting; with more, the nearest across (the later player at a
+/// tie: player 2 of players 1 and 2).
 fn chooseTarget(a: Actor) void {
     const w = a.tick.world;
-    const p1 = fightingPlayer(a, 0);
-    const p2 = fightingPlayer(a, 1);
-    var second = false;
-    if (p2) |h2| {
-        if (p1) |h1| {
-            const x = a.entity.position.x;
-            const near_1 = w.getConst(h1).?.position.x.sub(x).abs();
-            const near_2 = w.getConst(h2).?.position.x.sub(x).abs();
-            second = !near_1.lessThan(near_2);
-        } else second = true;
+    const x = a.entity.position.x;
+    var best: ?Handle = null;
+    var best_near: Fixed = .zero;
+    for (0..w.players.len) |k| {
+        const h = fightingPlayer(a, k) orelse continue;
+        const near = w.getConst(h).?.position.x.sub(x).abs();
+        if (best != null and best_near.lessThan(near)) continue;
+        best = h;
+        best_near = near;
     }
-    a.mind.target = if (second) p2 else p1 orelse p2;
+    a.mind.target = best;
 }
 
 fn fightingPlayer(a: Actor, k: usize) ?Handle {
@@ -1546,15 +1544,17 @@ fn points(a: Actor) void {
     const n = a.numbers();
     const m = a.mind;
     const w = a.tick.world;
-    var second = false;
+    // The special attack's caller; else his target (player 2 when it is no player); else
+    // player 1.
+    var by: usize = 0;
     if (m.special_ko) {
         m.special_ko = false;
-        second = m.special_p2;
-        m.special_p2 = false;
+        by = m.special_player;
+        m.special_player = 0;
     } else if (m.target) |t| {
-        second = if (w.players[0].entity) |p1| !p1.eql(t) else true;
+        by = w.playerOf(t) orelse 1;
     }
-    const p = &w.players[if (second) 1 else 0];
+    const p = &w.players[by];
     p.score = @min(p.score +| n.points, w.score_most);
 }
 

@@ -8,12 +8,12 @@
 //! the continue's question on the status bar: up or down moves the cursor between YES and the
 //! other answer (with its sound), the cursor blinks, A, B, C or START answers at the next tick.
 //! YES spends a continue and its player plays again
-//! (lives.zig); NO, or no continue left, puts it out of the game: while the other player is still
-//! in the game it goes; else it counts the game over down (the game over's music, once for both
-//! players; the round shows its text), and the game is over. In a game of two players (the other
-//! still in it, playing or waiting, as its wait begins) the answer is the first player's or the
-//! second's, and a NO leaves it waiting, its part of the bar cleared, until both are out; then
-//! both count the game over down.
+//! (lives.zig); NO, or no continue left, puts it out of the game: while another player is still
+//! in the game it goes; else it counts the game over down (the game over's music, once for all
+//! the players; the round shows its text), and the game is over. In a game of two players or more
+//! (another still in it, playing or waiting, as its wait begins) the answer is the first player's
+//! or another's, and a NO leaves it waiting, its part of the bar cleared, until all are out; then
+//! they count the game over down.
 //!
 //! Its states, the semantic traces' names: `begin` (its first tick: the name entry, the
 //! question, or out; and the tick its name is entered), `name_entry`, `continue_choose`,
@@ -126,7 +126,8 @@ pub fn control(a: Actor, c: Command) void {
         .both_out => {
             a.mind.named_out = true;
             const w = a.tick.world;
-            if (!w.players[0].out or !w.players[1].out) return;
+            // Players 1 and 2, and those of the port's players in the game.
+            for (w.players, 0..) |p, j| if ((j < 2 or p.inGame()) and !p.out) return;
             a.mind.state = .countdown;
             a.mind.ticks = n.out_wait;
         },
@@ -154,7 +155,9 @@ fn begin(a: Actor) void {
     const k = w.playerOf(a.handle) orelse return a.remove();
     const p = &w.players[k];
     if (p.continues != 0) {
-        a.mind.both = w.players[1 - @as(u2, k)].entity != null;
+        a.mind.both = for (w.players, 0..) |o, j| {
+            if (j != k and o.entity != null) break true;
+        } else false;
         a.mind.state = .continue_choose;
         a.mind.count = p.continues;
         a.mind.cursor = .yes;
@@ -164,25 +167,27 @@ fn begin(a: Actor) void {
         return;
     }
     p.out = true;
-    const other = &w.players[1 - @as(u2, k)];
-    if (other.entity != null and !other.out) {
+    for (w.players, 0..) |other, j| if (j != k and other.entity != null and !other.out) {
         p.entity = null;
         return a.remove();
-    }
+    };
     a.mind.state = .countdown;
     a.mind.ticks = if (a.mind.answered_no) 0 else n.out_wait;
 }
 
-/// Whether the other player, waiting too, has asked for the game over's music already.
+/// Whether another player, waiting too, has asked for the game over's music already.
 fn otherHeard(a: Actor) bool {
     const w = a.tick.world;
     const k = w.playerOf(a.handle) orelse return false;
-    const h = w.players[1 - @as(u2, k)].entity orelse return false;
-    const e = w.getConst(h) orelse return false;
-    return switch (e.mind) {
-        .player_waiting => |m| m.music,
-        else => false,
-    };
+    for (w.players, 0..) |p, j| {
+        if (j == k) continue;
+        const e = w.getConst(p.entity orelse continue) orelse continue;
+        switch (e.mind) {
+            .player_waiting => |m| if (m.music) return true,
+            else => {},
+        }
+    }
+    return false;
 }
 
 /// The name entry's start: the cursor at the first place on the first letter, every place's

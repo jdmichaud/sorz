@@ -222,7 +222,7 @@ fn bits(pad: input.Pad) u8 {
 }
 
 fn padOf(pads: input.Pads, player: usize) input.Pad {
-    return if (player == 0) pads.pad1 else pads.pad2;
+    return pads.of(player);
 }
 
 // Player control ----------------------------------------------------------------------------------
@@ -236,10 +236,11 @@ fn control(t: *Tick) void {
 
 // The others' turns -------------------------------------------------------------------------------
 
-/// The two players meet (the original's players strike and hold each other): outside the
-/// special attack, when both may (`Tick.touchClass` nonzero: neither blinks nor is in a state
-/// apart), each one's attack box is looked at on the other's body, in an order that turns at
-/// each such tick, the last one looked at winning (its striker is not struck): a blow under way
+/// The players meet, two by two (the original's two players strike and hold each other; with
+/// more, each pair in turn, `World.pairOf`'s order: players 1 and 2 first): outside the special
+/// attack, when both may (`Tick.touchClass` nonzero: neither blinks nor is in a state apart),
+/// each one's attack box is looked at on the other's body, in an order that turns at each such
+/// tick of the pair, the last one looked at winning (its striker is not struck): a blow under way
 /// strikes the other; a reach without one holds it, unless either may only strike (class 2).
 /// A player's blow that is not a knock-down frees the one the other holds at once, before the
 /// others' turns: the original's touch puts the blow's kind where the struck one's hold keeps its
@@ -248,11 +249,21 @@ fn control(t: *Tick) void {
 /// the other player (the holds, their team moves, still take).
 fn betweenPlayers(t: *Tick) void {
     if (t.world.special) return;
-    const hs = [2]Handle{ t.world.players[0].entity orelse return, t.world.players[1].entity orelse return };
+    for (1..world_mod.max_players) |second| {
+        for (0..second) |first| betweenTwo(t, first, second);
+    }
+}
+
+/// Players `first` and `second` meet (`betweenPlayers`).
+fn betweenTwo(t: *Tick, first: usize, second: usize) void {
+    const hs = [2]Handle{ t.world.players[first].entity orelse return, t.world.players[second].entity orelse return };
+    // One may have left the world at an earlier pair's meeting.
+    if (t.world.get(hs[0]) == null or t.world.get(hs[1]) == null) return;
     const classes = [2]u8{ t.touchClass(hs[0]), t.touchClass(hs[1]) };
     if (classes[0] == 0 or classes[1] == 0) return;
-    const last: usize = if (t.world.first_touches_last) 0 else 1;
-    t.world.first_touches_last = !t.world.first_touches_last;
+    const turn = &t.world.first_touches_last[world_mod.pairOf(first, second)];
+    const last: usize = if (turn.*) 0 else 1;
+    turn.* = !turn.*;
     const Role = enum { none, striker, struck, grabber, grabbed };
     var roles: [2]Role = .{ .none, .none };
     for ([2]usize{ 1 - last, last }) |a| {
@@ -471,10 +482,11 @@ fn blowsOn(t: *Tick, xh: Handle) void {
 /// Whether player `k`'s blow or grab on an enemy is looked at, at the enemy's turn: the
 /// original's enemy looks at its meetings with the players in turn, and its look ends once player
 /// 1 was struck or caught at this tick (by one whose turn came before), or its reach caught one,
-/// nor looks at player 2 once it was (`catchable`).
-fn playerLooked(t: *Tick, k: u1) bool {
-    if (t.world.players[0].entity) |h| if (!t.catchable(h)) return false;
-    if (k == 1) if (t.world.players[1].entity) |h| if (!t.catchable(h)) return false;
+/// nor looks at player 2 once it was (`catchable`); nor at a player past one that was.
+fn playerLooked(t: *Tick, k: usize) bool {
+    for (t.world.players[0 .. k + 1]) |p| {
+        if (p.entity) |h| if (!t.catchable(h)) return false;
+    }
     return true;
 }
 
@@ -482,9 +494,9 @@ fn playerLooked(t: *Tick, k: u1) bool {
 /// player whose blow or reach meets `x`'s body. The original looks at the player's box first:
 /// then the player's blow, its grab, or neither (a reach that cannot grab: a weapon in hand, `x`
 /// too high) is the tick's meeting of the two, and `x`'s own blow is not looked at. A blow
-/// strikes one player a tick, the first it meets, player 1 before player 2, and none when player
-/// 1 was struck at this tick already: the original's enemy finds one hit a tick, and ends its
-/// search at a player 1 hit before it.
+/// strikes one player a tick, the first it meets, in the players' order, and none when player 1
+/// was struck at this tick already: the original's enemy finds one hit a tick, and ends its
+/// search at a player 1 hit before it (past another struck already, it looks on).
 fn blowsOnPlayers(t: *Tick, xh: Handle) void {
     onPlayers(t, xh, null);
 }
@@ -552,7 +564,7 @@ fn freedByBlow(t: *Tick, xh: Handle, th: Handle) void {
     if (x.move != null and reactionOf(t, x) == .knock_down) return;
     const p = t.world.get(th) orelse return;
     const held = p.holding orelse return;
-    if (t.isPlayer(held) or held.index < xh.index) return;
+    if (t.isPlayer(held) or t.world.turnsBefore(held, xh)) return;
     t.unplaceHeld(th);
     t.letGo(th);
 }
@@ -564,7 +576,7 @@ fn freedByBlow(t: *Tick, xh: Handle, th: Handle) void {
 pub fn heldInFront(t: *Tick, xh: Handle, th: Handle) void {
     const p = t.world.get(th) orelse return;
     const held = p.holding orelse return;
-    if (t.isPlayer(held) or held.index < xh.index) return;
+    if (t.isPlayer(held) or t.world.turnsBefore(held, xh)) return;
     p.move = null;
     switch (p.mind) {
         .player => |*m| m.front_asked = true,
@@ -662,7 +674,7 @@ fn missileOn(t: *Tick, ah: Handle, th: Handle) bool {
     // A missile whose turn came before the target's meets it where its move of this tick takes it
     // (the original's things move in their own turns; the world moves them after all of them).
     var moved = a.*;
-    if (ah.index < th.index) moved.position = movedPlace(a);
+    if (t.world.turnsBefore(ah, th)) moved.position = movedPlace(a);
     if (!meet(&moved, &t.kindOf(a).definition.boxes[attack], target, &t.kindOf(target).definition.boxes[body])) return false;
     const damage = if (target.team == .player) m.player_damage orelse m.damage else m.damage;
     const b: tick_mod.Blow = .{ .attacker = ah, .damage = damage, .reaction = m.reaction, .push = .zero, .missile = true };
@@ -679,7 +691,7 @@ fn heldStruck(t: *Tick, xh: Handle, th: Handle, knocks: bool) void {
     if (knocks) return heldInFront(t, xh, th);
     const p = t.world.get(th) orelse return;
     const held = p.holding orelse return;
-    if (t.isPlayer(held) or held.index < xh.index) return;
+    if (t.isPlayer(held) or t.world.turnsBefore(held, xh)) return;
     t.unplaceHeld(th);
     t.letGo(th);
 }
@@ -704,7 +716,7 @@ fn spansMeet(pa: i32, sa: content_entity.Span, pb: i32, sb: content_entity.Span)
 fn grabbedByPlayers(t: *Tick, xh: Handle) void {
     for (t.world.players, 0..) |p, k| {
         const gh = p.entity orelse continue;
-        if (!playerLooked(t, @intCast(k))) return;
+        if (!playerLooked(t, k)) return;
         if (grab(t, gh, xh)) return;
     }
 }
@@ -967,13 +979,14 @@ pub fn keepPlayers(t: *Tick) void {
 }
 
 /// The camera's move across from where the players were drawn (whole pixels on the screen): one
-/// drawn before its band, or from the band's end on, moves it by as much. With two drawn, it
-/// moves only when both let it: ahead by the lesser of the foremost's way past the band's end
-/// and the hindmost's past its start (none while the hindmost is before the start), back by the
-/// lesser of the hindmost's way before the start and the foremost's before the end (none while
-/// the foremost is past the end), as the original's camera follows two players.
+/// drawn before its band, or from the band's end on, moves it by as much. With two or more
+/// drawn, it moves only when the foremost and the hindmost both let it: ahead by the lesser of
+/// the foremost's way past the band's end and the hindmost's past its start (none while the
+/// hindmost is before the start), back by the lesser of the hindmost's way before the start and
+/// the foremost's before the end (none while the foremost is past the end), as the original's
+/// camera follows two players.
 fn followSpeed(c: *const world_mod.Camera, rules: world_mod.Camera.Rules) i32 {
-    var xs: [2]i32 = undefined;
+    var xs: [world_mod.max_players]i32 = undefined;
     var n: usize = 0;
     for (c.drawn) |d| {
         const x = d orelse continue;
@@ -990,8 +1003,8 @@ fn followSpeed(c: *const world_mod.Camera, rules: world_mod.Camera.Rules) i32 {
             return 0;
         },
         else => {
-            const fore = @max(xs[0], xs[1]);
-            const hind = @min(xs[0], xs[1]);
+            const fore = std.mem.max(i32, xs[0..n]);
+            const hind = std.mem.min(i32, xs[0..n]);
             if (fore >= end) return if (hind < start) 0 else @min(fore - end, hind - start);
             if (hind >= start) return 0;
             return @max(fore - end, hind - start);

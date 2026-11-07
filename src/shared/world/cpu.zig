@@ -67,6 +67,7 @@ const systems = @import("systems.zig");
 const player_waiting = @import("behaviours/player_waiting.zig");
 
 const World = world_mod.World;
+const PlayerNumber = world_mod.PlayerNumber;
 const Actions = world_mod.Actions;
 const Entity = entity.Entity;
 const Handle = entity.Handle;
@@ -321,12 +322,12 @@ pub const Given = struct {
 
 /// Player `k`'s pad as the CPU plays it, its memory `m`, from the world as its last logic tick
 /// left it.
-pub fn pad(w: *const World, g: Given, m: *Memory, k: u1) input.Pad {
+pub fn pad(w: *const World, g: Given, m: *Memory, k: PlayerNumber) input.Pad {
     const layout = g.layout;
     const press = w.tick % 2 == 0;
     const r = &w.room;
-    // Held in the offer's choice: its answer, no, and nothing once given.
-    if (r.choosing[k]) return if (r.answered[k]) .{} else padOf(if (r.on_no[k]) .{ .attack = press } else .{ .down = press }, layout);
+    // Held in the offer's choice (players 1 and 2's): its answer, no, and nothing once given.
+    if (k < 2 and r.choosing[k]) return if (r.answered[k]) .{} else padOf(if (r.on_no[k]) .{ .attack = press } else .{ .down = press }, layout);
     const e = w.getConst(w.players[k].entity orelse return .{}) orelse return .{};
     return switch (e.mind) {
         .player => padOf(choose(w, g, m, k, e), layout),
@@ -365,7 +366,7 @@ fn padOf(a: Actions, layout: Layout) input.Pad {
 
 /// The actions of the CPU's fighter `p`, player `k`, at this logic tick: chosen at its first
 /// display tick, the same at its second.
-fn choose(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions {
+fn choose(w: *const World, g: Given, m: *Memory, k: PlayerNumber, p: *const Entity) Actions {
     if (m.at) |at| if (at == w.tick) return m.chose;
     m.at = w.tick;
     m.urgent = false;
@@ -408,20 +409,26 @@ fn between(m: *Memory, comptime r: anytype) i32 {
     return r[0] + @as(i32, m.draw(r[1] - r[0] + 1));
 }
 
-/// Player 1's fighter for player `k` (the other player's), while it fights.
-fn partnerOf(w: *const World, k: u1) ?*const Entity {
-    const q = w.getConst(w.players[1 - k].entity orelse return null) orelse return null;
+/// The player the CPU of player `k` takes as its player 1 (`partnerOf`): the other player of
+/// players 1 and 2; player 1 for players 3 and 4 (the port's, DESIGN.md 10.7, E4).
+pub fn partnerPlayer(k: PlayerNumber) PlayerNumber {
+    return if (k == 0) 1 else 0;
+}
+
+/// Player 1's fighter for player `k` (`partnerPlayer`'s), while it fights.
+fn partnerOf(w: *const World, k: PlayerNumber) ?*const Entity {
+    const q = w.getConst(w.players[partnerPlayer(k)].entity orelse return null) orelse return null;
     return if (q.mind == .player) q else null;
 }
 
-fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions {
+fn play(w: *const World, g: Given, m: *Memory, k: PlayerNumber, p: *const Entity) Actions {
     const kinds = g.kinds;
     const leads = g.leads;
     const partner = partnerOf(w, k);
     const fire = fireOf(w, kinds, partner);
     const stuck = noteStuck(w, m, p);
     m.wanted = .{};
-    if (p.holding) |h| return withFoeHeld(w, kinds, m, k, p, h);
+    if (p.holding) |h| return withFoeHeld(w, kinds, m, p, h);
     if (breakOut(w, m, p)) |a| return a;
     m.foe_held = null;
     if (m.look == 0) {
@@ -522,7 +529,7 @@ fn noteFutile(w: *const World, m: *Memory, f: *const Entity) void {
 }
 
 /// A look at the fight: what it goes for until its next, and its numbers for it.
-fn lookAround(w: *const World, kinds: *const Kinds, floor: ?*const Floor, m: *Memory, k: u1, p: *const Entity, partner: ?*const Entity, leads: bool) void {
+fn lookAround(w: *const World, kinds: *const Kinds, floor: ?*const Floor, m: *Memory, k: PlayerNumber, p: *const Entity, partner: ?*const Entity, leads: bool) void {
     if (m.seed == 0) m.seed = 0x9E3779B9 ^ w.tick;
     if (m.stuck >= stuck_ticks) switch (m.goal) {
         .take, .smash => |h| {
@@ -902,11 +909,11 @@ fn open(floor: ?*const Floor, solids: []const Rect, x: i32, d: i32) bool {
     return true;
 }
 
-/// Holding `h`: player 1 (walked into after all), let go, away from it; a foe, its knees at its
-/// pace, then the throw (away from it, and the blow).
-fn withFoeHeld(w: *const World, kinds: *const Kinds, m: *Memory, k: u1, p: *const Entity, h: Handle) Actions {
+/// Holding `h`: a player (player 1, walked into after all), let go, away from it; a foe, its
+/// knees at its pace, then the throw (away from it, and the blow).
+fn withFoeHeld(w: *const World, kinds: *const Kinds, m: *Memory, p: *const Entity, h: Handle) Actions {
     const away: Actions = if (p.facing == .left) .{ .right = true } else .{ .left = true };
-    if (w.players[1 - k].entity) |q| if (q.eql(h)) return away;
+    if (w.playerOf(h) != null) return away;
     if (m.foe_held == null or !m.foe_held.?.eql(h)) {
         m.foe_held = h;
         m.knees = @intCast(between(m, knees));
@@ -983,7 +990,7 @@ fn heavy(w: *const World, kinds: *const Kinds, h: Handle) bool {
 /// boss about it (the police hurt a boss as nothing else does), among three foes, or among two
 /// and hurt, or near its end with a foe about; or player 1 near its end among two foes with none
 /// of its own left.
-fn policeDue(w: *const World, kinds: *const Kinds, k: u1, p: *const Entity, partner: ?*const Entity) bool {
+fn policeDue(w: *const World, kinds: *const Kinds, k: PlayerNumber, p: *const Entity, partner: ?*const Entity) bool {
     if (w.players[k].specials == 0 or w.special) return false;
     for (&w.entities) |*f| {
         if (isFoe(kinds, f) and kinds.get(f.kind.?).family() == .boss and apart(p, f) <= crowd_px) return true;
@@ -992,7 +999,7 @@ fn policeDue(w: *const World, kinds: *const Kinds, k: u1, p: *const Entity, part
     const near = foesNear(w, kinds, p, crowd_px);
     if (near >= 3 or (near >= 2 and share < hurt) or (near >= 1 and share < near_end)) return true;
     const q = partner orelse return false;
-    return w.players[1 - k].specials == 0 and healthShare(kinds, q) < near_end and foesNear(w, kinds, q, crowd_px) >= 2;
+    return w.players[partnerPlayer(k)].specials == 0 and healthShare(kinds, q) < near_end and foesNear(w, kinds, q, crowd_px) >= 2;
 }
 
 /// The share of its full health `e` has left, in a hundred.
@@ -1563,7 +1570,7 @@ const blocked_depth = 12;
 
 /// Player `k`'s pad at tick `now` by the fight's rule (the cartridge's buttons: B attacks), while
 /// it is a fighter; null otherwise.
-pub fn fight(w: *const World, kinds: *const Kinds, k: u1, now: u64) ?input.Pad {
+pub fn fight(w: *const World, kinds: *const Kinds, k: PlayerNumber, now: u64) ?input.Pad {
     const p = w.getConst(w.players[k].entity orelse return null) orelse return null;
     if (p.mind != .player) return null;
     const px = p.position.x.whole();

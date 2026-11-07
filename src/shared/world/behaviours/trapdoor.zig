@@ -3,6 +3,7 @@
 //! (the room's `floor_gone`: they fall, and their fall ends the round), the trapdoors open in the
 //! round's plane under the players in play (the round scene's picture of them), and they go.
 const tick = @import("../tick.zig");
+const room = @import("../room.zig");
 
 const Actor = tick.Actor(@This());
 
@@ -23,9 +24,9 @@ pub fn think(a: Actor) void {
     a.entity.flags.hidden = true;
     a.sound(.open);
     w.room.floor_gone = true;
-    var players: u2 = 0;
+    var players: room.Trapdoors = 0;
     for (w.players, 0..) |p, k| {
-        if (p.entity != null) players |= @as(u2, 1) << @intCast(k);
+        if (p.entity != null) players |= @as(room.Trapdoors, 1) << @intCast(k);
     }
     w.room.trapdoors = players;
     a.remove();

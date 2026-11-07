@@ -402,22 +402,21 @@ fn seen(a: Actor) Seen {
     return .{ .x = t.position.x, .depth = t.position.depth, .left = t.facingLeft(), .line = line orelse n.unseen_line };
 }
 
-/// His target: player 1 alone; with player 2 alone, player 2; with both, the nearer across
-/// (player 2 at a tie).
+/// His target: the one player fighting; with more, the nearest across (the later player at a
+/// tie: player 2 of players 1 and 2).
 fn chooseTarget(a: Actor) void {
     const w = a.tick.world;
-    const p1 = fightingPlayer(a, 0);
-    const p2 = fightingPlayer(a, 1);
-    var second = false;
-    if (p2) |h2| {
-        if (p1) |h1| {
-            const x = a.entity.position.x;
-            const near_1 = w.getConst(h1).?.position.x.sub(x).abs();
-            const near_2 = w.getConst(h2).?.position.x.sub(x).abs();
-            second = !near_1.lessThan(near_2);
-        } else second = true;
+    const x = a.entity.position.x;
+    var best: ?Handle = null;
+    var best_near: Fixed = .zero;
+    for (0..w.players.len) |k| {
+        const h = fightingPlayer(a, k) orelse continue;
+        const near = w.getConst(h).?.position.x.sub(x).abs();
+        if (best != null and best_near.lessThan(near)) continue;
+        best = h;
+        best_near = near;
     }
-    a.mind.target = if (second) p2 else p1 orelse p2;
+    a.mind.target = best;
 }
 
 fn fightingPlayer(a: Actor, k: usize) ?Handle {
@@ -1375,11 +1374,11 @@ fn spill(a: Actor) void {
     c.entity.position.x = c.entity.position.x.add(.pixels(dx));
 }
 
-/// His points: to player 2 when it is his target, else to player 1.
+/// His points: to the player who is his target, else to player 1.
 fn points(a: Actor) void {
     const n = a.numbers();
     const w = a.tick.world;
-    const second = if (a.mind.target) |t| if (w.players[1].entity) |p2| p2.eql(t) else false else false;
-    const p = &w.players[if (second) 1 else 0];
+    const by = if (a.mind.target) |t| w.playerOf(t) orelse 0 else 0;
+    const p = &w.players[by];
     p.score = @min(p.score +| n.points, w.score_most);
 }

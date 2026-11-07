@@ -9,6 +9,7 @@ const render = @import("../render/root.zig");
 const entity = @import("entity.zig");
 const random = @import("random.zig");
 const content_round = @import("../content/round.zig");
+const input = @import("../input.zig");
 
 const Handle = entity.Handle;
 const capacity = entity.capacity;
@@ -61,7 +62,7 @@ pub const Pickup = struct { item: Handle, kind: entity.KindId, by: Handle };
 /// last life's end (`name` null: its marks leave the table's entries), or its name was entered
 /// (the table takes its entry: its score, the round, the options' level and `name`, the letters'
 /// numbers at its places, null where none was taken).
-pub const Ranking = struct { player: u1, name: ?[3]?u8 = null };
+pub const Ranking = struct { player: input.Player, name: ?[3]?u8 = null };
 
 /// Colours the round loads into its palettes at the tick: an enemies' colours into one of the
 /// enemies' colours (the first, the second, the other: script.zig), the boss's, the police car's,

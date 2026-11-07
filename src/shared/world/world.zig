@@ -1,6 +1,7 @@
-//! The world of a round (DESIGN.md 10.3): its entities in a fixed pool, the two players, the
-//! camera and the round's script. It is a value, its fields named and typed, with no pointer: its
-//! canonical form (canonical.zig) is what the tests, the replays and network play compare.
+//! The world of a round (DESIGN.md 10.3): its entities in a fixed pool, the players (up to four:
+//! DESIGN.md 10.7, E4), the camera and the round's script. It is a value, its fields named and
+//! typed, with no pointer: its canonical form (canonical.zig) is what the tests, the replays and
+//! network play compare.
 //!
 //! The content the world reads (its kinds, kinds.zig), the random generator (the game's one, which
 //! the screens before play draw from too) and the tick's output (output.zig) are given to each
@@ -28,6 +29,25 @@ pub const Entrance = entity.Entrance;
 pub const Traits = entity.Traits;
 
 pub const capacity = entity.capacity;
+
+/// The players a world holds: the cartridge's two, and the port's third and fourth (DESIGN.md
+/// 10.7, E4). A game of one or two players leaves the others' records empty.
+pub const max_players = input.max_players;
+
+/// A player's number, from 0 (player 1).
+pub const PlayerNumber = input.Player;
+
+/// The pairs of players (`pairOf`): each two of them, once.
+pub const player_pairs = max_players * (max_players - 1) / 2;
+
+/// The index of the pair of players `a` and `b` (two different ones), in the order (1, 2), (1, 3),
+/// (2, 3), (1, 4), (2, 4), (3, 4): the cartridge's one pair first.
+pub fn pairOf(a: usize, b: usize) usize {
+    const lo = @min(a, b);
+    const hi = @max(a, b);
+    std.debug.assert(lo != hi and hi < max_players);
+    return hi * (hi - 1) / 2 + lo;
+}
 
 /// What a player does, in the game's terms: the directions, its actions (the special attack,
 /// the attack, the jump: its pad's buttons by the options' CONTROL, systems.zig `commands`) and
@@ -83,6 +103,27 @@ pub const Player = struct {
     /// the others' turns begin (the original takes the players' bands before the other objects'
     /// handlers, which may move them: a Signal's hold); null, its entity's at the draw.
     band_depth: ?i16 = null,
+
+    /// Whether the player is in the game: it plays, or has played (its record is not a fresh
+    /// one's).
+    pub fn inGame(p: Player) bool {
+        return p.entity != null or p.character != null or p.lives != 0 or p.score != 0 or p.out;
+    }
+
+    /// The world's players are a pool for the canonical form (canonical.zig): a fresh record (a
+    /// player not in a game of fewer) is a free place, which keeps nothing.
+    pub const canonical_pool = struct {
+        pub fn inUse(p: *const Player) bool {
+            return !std.meta.eql(p.*, Player{});
+        }
+        pub const Kept = struct {};
+        pub fn kept(_: *const Player) Kept {
+            return .{};
+        }
+        pub fn free(_: Kept) Player {
+            return .{};
+        }
+    };
 };
 
 /// The view of the round: its top-left corner, and how far it may go.
@@ -97,10 +138,11 @@ pub const Camera = struct {
     /// It follows the players across (in play), by the round's camera's rules, from where the
     /// last tick drew them, and never goes back: its limit on the left follows it.
     follows: ?Rules = null,
-    drawn: [2]?Fixed = .{ null, null },
+    /// Where each player was drawn across at the last tick.
+    drawn: [max_players]?Fixed = @splat(null),
     /// The line each player was drawn on at the last tick, from the screen's top (what Mr. X's
     /// approach reads of his target).
-    drawn_lines: [2]?i16 = .{ null, null },
+    drawn_lines: [max_players]?i16 = @splat(null),
     /// The special attack's run, while it lasts: the camera neither follows nor holds the players.
     run: ?Run = null,
     /// Its place across at the last tick (what moved with it moves by the difference).
@@ -208,7 +250,7 @@ pub const World = struct {
     /// a round's world starts it at 0.
     tick: u32 = 0,
     entities: [capacity]Entity = @splat(.{}),
-    players: [2]Player = @splat(.{}),
+    players: [max_players]Player = @splat(.{}),
     camera: Camera = .{},
     script: Script = .{},
     timer: Timer = .{},
@@ -226,17 +268,17 @@ pub const World = struct {
     /// The sky's flashes while it rains (behaviours/rain.zig): the step shown, and the ticks to
     /// the next (below zero: due).
     sky: struct { step: u8 = 0, ticks: i8 = 0 } = .{},
-    /// Which player's blow or grab on the other is looked at last (it wins) at the next tick the
-    /// two may meet: player 1's (true) or player 2's; it turns at each such tick.
-    first_touches_last: bool = false,
+    /// For each pair of players (`pairOf`): which one's blow or grab on the other is looked at
+    /// last (it wins) at the next tick the two may meet: the first's (true: player 1's of players
+    /// 1 and 2) or the second's; it turns at each such tick.
+    first_touches_last: [player_pairs]bool = @splat(false),
     /// The status bar's bosses, from the first tick of the round's boss: its entry in the bar's
     /// names and bars (the round's script's `bar`), and the bosses whose health its bars show
     /// (the second of twins in the second).
     boss_bar: ?u8 = null,
     bosses: [2]?Handle = .{ null, null },
-    /// The player a rolling trolley rolls at next (behaviours/trolley.zig): the second when
-    /// set (turned at each).
-    trolley_second: bool = false,
+    /// The player a rolling trolley rolls at next (behaviours/trolley.zig): each in turn.
+    trolley_next: PlayerNumber = 0,
     /// The copy of round 5's twins' art from the players' under way (behaviours/boss_r5.zig): the
     /// step it takes at this tick's end. The twins wait hidden while it runs.
     art_copy: ?u8 = null,
@@ -354,6 +396,11 @@ pub const World = struct {
         } else if (k.definition.animations.len != 0) kinds.startAnimation(e, 0);
     }
 
+    /// The places the players' fighters take, by player: the original's first two objects for
+    /// players 1 and 2; players 3 and 4 past the effects' places, which leaves the original's
+    /// order of the others' places as it is.
+    pub const player_places: [max_players]u8 = .{ 0, 1, effect_places.to, effect_places.to + 1 };
+
     /// The places the enemies take (the original's enemies' objects, its 3rd to its 34th): a
     /// shutter and its slats too.
     pub const enemy_places: struct { from: usize, to: usize } = .{ .from = 2, .to = 34 };
@@ -423,30 +470,52 @@ pub const World = struct {
     /// the others in their places' order. Returns their places.
     pub fn updateOrder(self: *const World, buf: *[capacity]u8) []const u8 {
         var n: usize = 0;
-        var player_place: [2]?usize = .{ null, null };
+        var player_place: [max_players]?usize = @splat(null);
         for (self.players, 0..) |p, k| {
             const h = p.entity orelse continue;
             if (self.getConst(h) == null) continue;
-            if (k == 1 and player_place[0] == h.index) continue;
+            if (std.mem.indexOfScalar(?usize, player_place[0..k], h.index) != null) continue;
             player_place[k] = h.index;
             buf[n] = h.index;
             n += 1;
         }
         for (&self.entities, 0..) |*e, i| {
             if (!e.alive()) continue;
-            if (player_place[0] == i or player_place[1] == i) continue;
+            if (std.mem.indexOfScalar(?usize, &player_place, i) != null) continue;
             buf[n] = @intCast(i);
             n += 1;
         }
         return buf[0..n];
     }
 
+    /// Whether `a` has its turn before `b`, as the original compares its objects' places (its
+    /// players' first two): by their places, players 3 and 4 coming right after the second place,
+    /// in their order (their own places are past the others', `player_places`).
+    pub fn turnsBefore(self: *const World, a: Handle, b: Handle) bool {
+        return self.turnRank(a) < self.turnRank(b);
+    }
+
+    fn turnRank(self: *const World, h: Handle) usize {
+        if (self.playerOf(h)) |k| if (k >= 2) return max_players + @as(usize, k) - 1;
+        return @as(usize, h.index) * max_players;
+    }
+
     /// The player who plays the entity `h`, if any.
-    pub fn playerOf(self: *const World, h: Handle) ?u1 {
+    pub fn playerOf(self: *const World, h: Handle) ?PlayerNumber {
         for (self.players, 0..) |p, k| {
             if (p.entity) |x| if (x.eql(h)) return @intCast(k);
         }
         return null;
+    }
+
+    /// The players a record is kept for in the traces and the pictures of the cartridge's: its
+    /// two, and a third and fourth while in the game (`inGame`).
+    pub fn playerRecords(self: *const World) usize {
+        var n: usize = 2;
+        for (self.players[2..], 2..) |p, k| if (p.inGame()) {
+            n = k + 1;
+        };
+        return n;
     }
 
     /// The hash of the world's canonical form.

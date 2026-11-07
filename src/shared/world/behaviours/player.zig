@@ -1113,7 +1113,7 @@ fn feelBlow(a: Actor) void {
 /// hurt, it loses nothing); else the blow's.
 fn strikerDamage(a: Actor, t: Taken) i16 {
     const by = a.tick.world.get(t.by) orelse return t.damage;
-    if (by.mind != .player or t.by.index > a.handle.index) return t.damage;
+    if (by.mind != .player or a.tick.world.turnsBefore(a.handle, t.by)) return t.damage;
     return a.tick.power(by);
 }
 

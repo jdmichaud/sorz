@@ -17,6 +17,7 @@ const player = @import("behaviours/player.zig");
 const Tick = tick_mod.Tick;
 const Handle = entity.Handle;
 const World = @import("world.zig").World;
+const PlayerNumber = @import("world.zig").PlayerNumber;
 
 /// The kind a player out of lives becomes.
 pub const waiting_kind = "player_waiting";
@@ -24,7 +25,7 @@ pub const waiting_kind = "player_waiting";
 /// Whether player `k` is in play, as the original counts its players in play (whom its enemies go
 /// after): while it plays as a fighter; out of lives, at the tick its last life ended (its wait
 /// has not begun) and at the tick its name is entered, not otherwise (nor after a NO).
-pub fn inPlay(w: *const World, k: u1) bool {
+pub fn inPlay(w: *const World, k: PlayerNumber) bool {
     const e = w.getConst(w.players[k].entity orelse return false) orelse return false;
     return switch (e.mind) {
         .player => true,
@@ -86,7 +87,7 @@ pub fn lifeOver(t: *Tick, h: Handle) void {
 
 /// Player `k` answered YES to the continue: a continue spent, the lives of a new game, its score
 /// cleared, and a new life.
-pub fn continueGame(t: *Tick, k: u1) void {
+pub fn continueGame(t: *Tick, k: PlayerNumber) void {
     const p = &t.world.players[k];
     p.continues -|= 1;
     p.score = 0;
@@ -96,13 +97,14 @@ pub fn continueGame(t: *Tick, k: u1) void {
 }
 
 /// Player `k` joins the game under way (the original's second player pressing START while
-/// player 1 plays): its fighter, of `kind`, in its own place in the world (else the first free),
+/// player 1 plays): its fighter, of `kind`, in its own place in the world (`World.player_places`,
+/// else the first free),
 /// with `lives` (the one it plays counted), drawn with its definition's colour map `colours`
 /// (none: its own colours), its first life dropping in as a new life does (the timer starts
 /// again, the enemies on the screen are knocked back). False when the world has no room for it.
-pub fn join(t: *Tick, k: u1, kind: entity.KindId, lives: u8, colours: ?u8) bool {
+pub fn join(t: *Tick, k: PlayerNumber, kind: entity.KindId, lives: u8, colours: ?u8) bool {
     const w = t.world;
-    const h = w.spawnIn(t.kinds, kind, k, .zero, .right) catch w.spawn(t.kinds, kind, .zero, .right) catch return false;
+    const h = w.spawnIn(t.kinds, kind, World.player_places[k], .zero, .right) catch w.spawn(t.kinds, kind, .zero, .right) catch return false;
     const p = &w.players[k];
     p.entity = h;
     p.character = kind;
@@ -115,7 +117,7 @@ pub fn join(t: *Tick, k: u1, kind: entity.KindId, lives: u8, colours: ?u8) bool 
 }
 
 /// Player `k`'s next life drops in.
-pub fn newLife(t: *Tick, k: u1) void {
+pub fn newLife(t: *Tick, k: PlayerNumber) void {
     const w = t.world;
     const p = &w.players[k];
     const h = p.entity orelse return;
@@ -130,7 +132,7 @@ pub fn newLife(t: *Tick, k: u1) void {
         p.specials = r.players.specials;
         e.position = .{
             .x = w.camera.x.add(.pixels(r.players.x)),
-            .depth = .pixels(r.players.depth[k]),
+            .depth = .pixels(r.players.depthOf(k)),
             .height = .pixels(r.players.height),
         };
         script.restartTimer(w, plan);
@@ -144,7 +146,7 @@ pub fn newLife(t: *Tick, k: u1) void {
 /// At the end of player `k`'s turn, as the original's: its score at the plan's next
 /// `extra_lives` score gives it a life more, with its sound; one a turn (a score past two gives
 /// the second at the next). True when it gave one.
-pub fn extraLife(t: *Tick, k: u1) bool {
+pub fn extraLife(t: *Tick, k: PlayerNumber) bool {
     const scores = (t.plan orelse return false).extra_lives;
     const p = &t.world.players[k];
     if (p.extra_lives >= scores.len or p.score < scores[p.extra_lives]) return false;

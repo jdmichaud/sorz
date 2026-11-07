@@ -1546,7 +1546,7 @@ pub const Run = struct {
         self.t += 1;
         self.out.begin();
         if (self.trace) |tw| {
-            tw.held = .{ pads.pad1, pads.pad2 };
+            tw.held = .{ pads.pad1, pads.pad2, pads.pad3, pads.pad4 };
             try tw.observe(self.v, &self.play.world, self.kinds, &self.out);
         }
         return true;

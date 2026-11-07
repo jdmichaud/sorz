@@ -1,11 +1,12 @@
 //! The special attack's own, never drawn: made at the call (`Tick.callSpecial`), it sends the
 //! camera running back across the round; once the camera has run back far enough the police car
-//! comes (police_car.zig, whose bazooka's smoke, or gunfire, sends the camera running ahead);
-//! as it runs ahead, the colours are copied at every tick the round's art is loaded, and within
+//! comes (police_car.zig, whose bazooka's smoke, or gunfire, sends the camera running ahead); as it
+//! runs ahead, the colours are copied at every tick the round's art is loaded, and within
 //! `again_within` of its place at the call the enemies' art the car took the place of streams in
 //! again (the section's `again`); back where it was, the shot comes: player 1's rocket
-//! (special_blast.zig), player 2's fire (special_fire.zig). Then it knocks the enemies down (each a fall without the knock-down's
-//! damage: their health went at the call):
+//! (special_blast.zig), player 2's fire (special_fire.zig); player 3's is player 1's, player 4's
+//! player 2's (the port's, DESIGN.md 10.7, E4). Then it knocks the enemies down (each a fall
+//! without the knock-down's damage: their health went at the call):
 //! - player 1's: as the blast's line (the depth of its latest explosion at its largest, less a
 //!   little) comes up the screen, every enemy below it, but one already falling or lying (in its
 //!   knock-down's pose); when the blast's last explosions have grown, the rest (but those falling
@@ -28,7 +29,7 @@ pub const State = enum { running };
 
 pub const Mind = struct {
     state: State = .running,
-    /// The one who called it, and whether that is the second player.
+    /// The one who called it, and whether its attack is the second player's (player 2's or 4's).
     by: ?Handle = null,
     second: bool = false,
     /// The camera's place at the call; the car came; its art gave way to the enemies' again;
@@ -81,7 +82,7 @@ pub fn specialCalled(a: Actor) void {
     const w = a.tick.world;
     const c = &w.camera;
     m.by = w.special_by;
-    m.second = if (w.special_by) |by| if (w.players[1].entity) |p| p.eql(by) else false else false;
+    m.second = if (w.special_by) |by| if (w.playerOf(by)) |k| k % 2 == 1 else false else false;
     m.from = c.x;
     c.run = .{ .from = c.x, .speed = n.run, .limit = c.x.sub(n.run_most).max(.zero) };
     // A rocking camera is put back level, its rocking from its start.

@@ -173,9 +173,11 @@ pub const State = struct {
     pub fn stepWith(self: *State, given: input.Pads, machine: Machine, assets: ?*const scene.Assets, world_out: ?*world.Output) scene.Turn {
         const config = self.start.variant.config();
         const pads = self.played(given, assets);
+        var pressed: input.Pads = .{};
+        for (0..input.max_players) |k| pressed.at(k).* = newly(pads.of(k), self.held.of(k));
         var turn: scene.Turn = .{
             .pads = pads,
-            .pressed = .{ .pad1 = newly(pads.pad1, self.held.pad1), .pad2 = newly(pads.pad2, self.held.pad2) },
+            .pressed = pressed,
             .second_pad = machine.second_pad,
             .guest = machine.guest,
             .taken = machine.taken,
@@ -188,7 +190,7 @@ pub const State = struct {
         };
         scene.tick(&self.scenes, config.graph, &turn, assets);
         if (turn.release_pads) {
-            self.held = .{ .pad1 = all_buttons, .pad2 = all_buttons };
+            self.held = .{ .pad1 = all_buttons, .pad2 = all_buttons, .pad3 = all_buttons, .pad4 = all_buttons };
         } else if (turn.read_pads) self.held = pads;
         self.tick +%= 1;
         return turn;
@@ -208,13 +210,13 @@ pub const State = struct {
             if (k == 0 and at_select) continue;
             var p = if (assets) |a| self.cpuPad(@intCast(k), a) else input.Pad{};
             if (k == 0 and pads.pad1.start and self.fighting(0)) p.start = true;
-            if (k == 0) out.pad1 = p else out.pad2 = p;
+            out.at(k).* = p;
         };
         return out;
     }
 
     /// Whether player `k` has a fighter in the round under way.
-    fn fighting(self: *const State, k: u1) bool {
+    fn fighting(self: *const State, k: input.Player) bool {
         const r = switch (self.scenes.base) {
             .round => |*r| r,
             else => return false,
@@ -224,7 +226,7 @@ pub const State = struct {
         return e.mind == .player;
     }
 
-    fn cpuPad(self: *State, k: u1, a: *const scene.Assets) input.Pad {
+    fn cpuPad(self: *State, k: input.Player, a: *const scene.Assets) input.Pad {
         const s = switch (self.scenes.top()) {
             .scene => |s| s,
             .overlay => return .{},
@@ -239,7 +241,8 @@ pub const State = struct {
                 .layout = layout,
                 .leads = k == 0 and self.setup.cpu[1],
             }, &r.play.world.players[k].cpu, k),
-            .round_clear => |*c| if (c.names[k]) |*m| (if (c.named[k]) .{} else world.cpu.entry(m, letters, layout, self.tick % 2 == 0)) else .{},
+            // The clear's name entries are players 1 and 2's (PLAN item 53).
+            .round_clear => |*c| if (k >= c.names.len) .{} else if (c.names[k]) |*m| (if (c.named[k]) .{} else world.cpu.entry(m, letters, layout, self.tick % 2 == 0)) else .{},
             else => .{},
         };
     }
@@ -280,19 +283,19 @@ pub const State = struct {
     /// Player `who` goes back to the CPU it was taken from (network play's client who left a
     /// game whose player 2 the CPU played): the CPU plays its fighter on; at the select its
     /// cursor goes, and player 1 chooses for the CPU once it has chosen.
-    pub fn toCpu(self: *State, who: u1, assets: *const scene.Assets) void {
+    pub fn toCpu(self: *State, who: input.Player, assets: *const scene.Assets) void {
         switch (self.scenes.base) {
             .select => |*s| if (who == 1) s.leave(&self.setup, &assets.select),
             else => {},
         }
-        self.setup.players = .two;
+        self.setup.players = .of(@max(self.setup.players.count(), @as(usize, who) + 1, 2));
         self.setup.cpu[who] = true;
     }
 
     /// Player `who` comes back to the round under way as `character` (network play's host's
     /// player, back to the game its clients played on): its fighter drops in at the next logic
     /// tick.
-    pub fn dropIn(self: *State, who: u1, character: setup_mod.Character) void {
+    pub fn dropIn(self: *State, who: input.Player, character: setup_mod.Character) void {
         switch (self.scenes.base) {
             .round => |*r| _ = r.dropIn(who, character),
             else => {},
@@ -303,7 +306,7 @@ pub const State = struct {
     /// host's who left it for its clients): in a round its fighter dies, and it is out of the
     /// game, as a player out of lives who does not continue; out of the next round between two;
     /// the second player gone from the character select.
-    pub fn dropOut(self: *State, who: u1, assets: *const scene.Assets) void {
+    pub fn dropOut(self: *State, who: input.Player, assets: *const scene.Assets) void {
         switch (self.scenes.base) {
             .select => |*s| if (who == 1) s.leave(&self.setup, &assets.select),
             .round => |*r| r.dropOut(who),
@@ -325,7 +328,7 @@ pub const State = struct {
     pub fn backToMenu(self: *State, setup: Setup) void {
         self.setup = setup;
         self.setup.progress = .{};
-        self.setup.characters = .{ null, null };
+        self.setup.characters = @splat(null);
         const back = flow.original.next(.options, .done).?;
         self.scenes = scene.startAt(.menu, back.load, &self.setup);
         self.held = .{};
@@ -731,7 +734,7 @@ pub const Game = struct {
 
     /// Whether this machine plays player `who` (0 or 1): both without network play; in a session,
     /// its role's; outside one, its own game's (the host's players, a client's player 1 there).
-    fn plays(self: *const Game, who: u1) bool {
+    fn plays(self: *const Game, who: input.Player) bool {
         const np = self.netplay orelse return true;
         if (np.observing()) return false;
         if (!np.inSession()) return np.role == .host or who == 0;

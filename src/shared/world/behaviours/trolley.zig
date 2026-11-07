@@ -1,18 +1,18 @@
 //! A covered trolley in round 8's corridor. It waits hidden (`wait`) until the camera nears it:
 //! once its place is right of the camera's less `ahead`, or, one that rolls in from behind (its
 //! record's `rolls` from `from_behind` on), right of the camera's plus `behind`. Then it stands
-//! (`stand`) at its height, solid (the fighters' walks stop at its `solid` box,
-//! `Tick.keptOut`), with no shadow. One that rolls (`rolls` 1 to 4) rolls across at its
-//! `roll_N` speed, with its sound, at the depth and height of a player (player 1 and player 2
-//! in turn, `World.trolley_second`; the other when that one is not in the world), striking the
-//! players and the enemies its box meets as a thing thrown does (its `power`, knocking down). A
-//! blow or a thing thrown on it (on the screen), or a player's grab of one that rolls (the
-//! player then struck by it), knocks it away (`flying`, from its next tick), and so does its own
-//! blow landing on a player: it leaves the item the round's script gave it (`Tick.give`),
-//! sounds, and flies up and across to the side it rolls to, else the one its striker faces; its
-//! speed down grows by `rising` while it goes up, `falling` after; on the floor it bounces back
-//! up at half its speed, its look running, and at its last meeting with the floor it goes. Left
-//! behind the camera, it goes.
+//! (`stand`) at its height, solid (the fighters' walks stop at its `solid` box, `Tick.keptOut`),
+//! with no shadow. One that rolls (`rolls` 1 to 4) rolls across at its `roll_N` speed, with its
+//! sound, at the depth and height of a player (player 1 and player 2 in turn, with players 3 and 4
+//! when in the game, `World.trolley_next`; the next when that one is not in the world), striking
+//! the players and the enemies its box meets as a thing thrown does (its `power`, knocking down). A
+//! blow or a thing thrown on it (on the screen), or a player's grab of one that rolls (the player
+//! then struck by it), knocks it away (`flying`, from its next tick), and so does its own blow
+//! landing on a player: it leaves the item the round's script gave it (`Tick.give`), sounds, and
+//! flies up and across to the side it rolls to, else the one its striker faces; its speed down
+//! grows by `rising` while it goes up, `falling` after; on the floor it bounces back up at half its
+//! speed, its look running, and at its last meeting with the floor it goes. Left behind the camera,
+//! it goes.
 //!
 //! The other program's traces name its states by number (`trace_states`).
 const tick = @import("../tick.zig");
@@ -137,10 +137,15 @@ fn appear(a: Actor) void {
             else => n.roll_4,
         };
         e.velocity.x = .parts(@intCast(speed.whole()), e.velocity.x.frac());
-        const second = w.trolley_second;
-        w.trolley_second = !second;
-        const first: u1 = if (second) 1 else 0;
-        const k: u1 = if (w.players[first].entity != null) first else 1 - first;
+        // The players in turn (the cartridge's two, and those of the port's in the game), the
+        // next with a fighter from the one whose turn it is.
+        const records = w.playerRecords();
+        const first = w.trolley_next % records;
+        w.trolley_next = @intCast((first + 1) % records);
+        const k = for (0..records) |i| {
+            const c = (first + i) % records;
+            if (w.players[c].entity != null) break c;
+        } else first;
         if (w.players[k].entity) |ph| if (w.getConst(ph)) |p| {
             e.position.depth = p.position.depth;
             e.position.height = p.position.height;

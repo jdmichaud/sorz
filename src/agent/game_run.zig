@@ -194,7 +194,7 @@ pub const Run = struct {
         if (self.trace) |tw| {
             // The pads the game read: the attract demo's own.
             const read = if (self.round()) |r| r.pads_read else pads;
-            tw.held = .{ read.pad1, read.pad2 };
+            tw.held = .{ read.pad1, read.pad2, read.pad3, read.pad4 };
         }
         try self.observe(&turn);
         if (self.forms) |f| if (!try f.after(&self.state)) {
@@ -301,7 +301,7 @@ pub const Run = struct {
         // The colours the script loaded before the take-up, as the round shows them.
         r.showHeldColours(&self.assets.round);
         if (scenario.generatorOf(tu.situation)) |g| self.state.random = g;
-        for (&r.drawn_scores, &r.bar_specials, &r.seen_specials, w.players) |*d, *shown, *seen, p| {
+        for (&r.drawn_scores, &r.bar_specials, &r.seen_specials, w.players[0..r.drawn_scores.len]) |*d, *shown, *seen, p| {
             d.* = p.score;
             shown.* = p.specials;
             seen.* = p.specials;

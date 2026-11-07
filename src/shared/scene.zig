@@ -157,7 +157,7 @@ pub const Turn = struct {
     /// The player who asked for the settings at this tick (OPTIONS' ADVANCED SETTINGS, START
     /// during play where the variant says so): the game opens them over the scenes, on that
     /// player's machine (game.zig).
-    settings: ?u1 = null,
+    settings: ?input.Player = null,
     /// They were asked for from the options, which faded out first: they fade in and out as the
     /// menus' screens do, without the pause's jingle.
     settings_fade: bool = false,

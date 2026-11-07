@@ -350,7 +350,7 @@ pub const Select = struct {
                 self.players = if (turn.setup.cpu[1]) .one else turn.setup.players;
                 self.cpu_label = if (self.cpu_pass) (if (turn.setup.cpu[0]) 2 else 1) else if (turn.setup.cpu[0]) 1 else 0;
                 self.seat = if (turn.net.role == .client and self.players == .one) 1 else 0;
-                if (!self.cpu_pass) turn.setup.characters = .{ null, null };
+                if (!self.cpu_pass) turn.setup.characters = @splat(null);
                 self.colours.aim(a.colours);
                 self.colours.aim(if (self.players == .two) a.two_players else a.one_player);
                 // Alone, the cursor starts on the first character no other machine's player has.
@@ -806,7 +806,7 @@ test "1 PLAYER - 1 CPU: player 1 chooses, the select comes again, its music on, 
     var tp: TestPoses = .{};
     tp.init();
     const a = testAssets(&tp);
-    var setup: Setup = .{ .players = .two, .cpu = .{ false, true } };
+    var setup: Setup = .{ .players = .two, .cpu = .{ false, true, false, false } };
     var s: Select = .start(&setup);
     var turn: scene.Turn = .{ .setup = &setup };
     for (0..66) |_| _ = s.tick(&turn, &a);
@@ -846,7 +846,7 @@ test "0 PLAYERS - 2 CPU: player 1's pad chooses for CPU 1, then, the select agai
     var tp: TestPoses = .{};
     tp.init();
     const a = testAssets(&tp);
-    var setup: Setup = .{ .players = .two, .cpu = .{ true, true } };
+    var setup: Setup = .{ .players = .two, .cpu = .{ true, true, false, false } };
     var s: Select = .start(&setup);
     var turn: scene.Turn = .{ .setup = &setup };
     for (0..66) |_| _ = s.tick(&turn, &a);
@@ -866,5 +866,5 @@ test "0 PLAYERS - 2 CPU: player 1's pad chooses for CPU 1, then, the select agai
         turn = .{ .setup = &setup, .pressed = .{ .pad1 = p } };
         _ = s.tick(&turn, &a);
     }
-    try testing.expectEqual([2]?Character{ .adam, .axel }, setup.characters);
+    try testing.expectEqual([4]?Character{ .adam, .axel, null, null }, setup.characters);
 }

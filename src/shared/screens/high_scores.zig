@@ -127,9 +127,10 @@ pub const HighScores = struct {
     }
 
     /// An entry on `row`: its score (six digits, the first blank when it is 0), its round (two,
-    /// the first blank when 0), its name, its level's name, in its player's colours if it is new.
+    /// the first blank when 0), its name, its level's name, in its player's colours if it is new
+    /// (players 3 and 4 in players 1 and 2's: PLAN item 53 gives them their own).
     fn drawEntry(e: Score, row: i32, v: *view.View, a: *const Assets) !void {
-        const look: render.Look = .{ .palette = if (e.new) |p| @as(u2, p) + 1 else 0 };
+        const look: render.Look = .{ .palette = if (e.new) |p| @as(u2, p % 2) + 1 else 0 };
         var score: [6]u8 = undefined;
         _ = std.fmt.bufPrint(&score, "{d:0>6}", .{@min(e.score, 999_999)}) catch unreachable;
         if (score[0] == '0') score[0] = ' ';

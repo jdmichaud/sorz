@@ -273,7 +273,7 @@ pub fn takeUp(a: Actor, elapsed: u32) void {
 pub fn takeUpPlayersThen(a: Actor, depths: [2]?i32) void {
     if (a.mind.state != .wait) return;
     const th = a.mind.body.target orelse return;
-    const then = for (a.tick.world.players, depths) |p, d| {
+    const then = for (a.tick.world.players[0..depths.len], depths) |p, d| {
         if (p.entity != null and p.entity.?.eql(th)) break d orelse return;
     } else return;
     const here = a.entity.position.depth.whole();

@@ -136,9 +136,13 @@ pub const PlayerBar = union(enum) {
     pub const Out = struct { name: bool, score: u32, game_over: bool };
 };
 
+/// The players the status bar shows, and whose art the picture's frames carry (the cartridge's
+/// two: PLAN item 48 brings players 3 and 4's).
+pub const bar_players = 2;
+
 /// What the status bar shows.
 pub const Bar = struct {
-    players: [2]PlayerBar = .{ .none, .none },
+    players: [bar_players]PlayerBar = .{ .none, .none },
     time: u8 = 0,
     join: bool = false,
     /// The bosses' bars, from the second tick after a boss's first in its section.
@@ -229,7 +233,7 @@ pub const Round = struct {
     /// The places of the camera its cycles' waits have passed (`content.round.CycleWait`).
     cycle_places: u8 = 0,
     /// START pressed since the last logic tick began (the pause's), and by which player first.
-    start_pressed: ?u1 = null,
+    start_pressed: ?input.Player = null,
     /// The logic tick ran at this display tick (the traces observe the world then).
     logic_ran: bool = false,
     /// The bosses' bars as the last logic tick left them, and as the one before did (which the
@@ -270,7 +274,7 @@ pub const Round = struct {
     /// Round 8's door of Mr. X's room is broken open; its trapdoors open under the players then
     /// in play (a bit each).
     shown_door_open: bool = false,
-    shown_trapdoors: ?u2 = null,
+    shown_trapdoors: ?world.room.Trapdoors = null,
     /// Round 8's offer's window.
     shown_offer: OfferShown = .{},
     /// The art play streams in (a section's, the boss's, an arriving enemy's, the special
@@ -668,10 +672,11 @@ pub const Round = struct {
     /// START on the pad of a player in play (world/lives.zig's `inPlay`: a fighter, or out of
     /// lives at the tick its last life ended, its wait not begun, whose START pauses then): the
     /// player, player 1's first.
-    fn startPressed(self: *const Round, turn: *const scene.Turn) ?u1 {
+    fn startPressed(self: *const Round, turn: *const scene.Turn) ?input.Player {
         const w = &self.play.world;
-        if (world.lives.inPlay(w, 0) and turn.pressed.pad1.start) return 0;
-        if (world.lives.inPlay(w, 1) and turn.pressed.pad2.start) return 1;
+        for (0..w.players.len) |k| {
+            if (world.lives.inPlay(w, @intCast(k)) and turn.pressed.of(k).start) return @intCast(k);
+        }
         return null;
     }
 
@@ -817,7 +822,7 @@ pub const Round = struct {
     /// due at the next picture.
     fn noteTransfers(self: *Round, kinds: *const world.Kinds, out: *const world.Output) void {
         const w = &self.play.world;
-        for (w.players, 0..) |p, k| {
+        for (w.players[0..bar_players], 0..) |p, k| {
             const h = p.entity orelse continue;
             const e = w.getConst(h) orelse continue;
             // The original copies a player's art at each new frame, and at each of its states it
@@ -857,7 +862,7 @@ pub const Round = struct {
     /// Each player's health bar's partial cell is built again when its health changed.
     fn noteBars(self: *Round) void {
         const w = &self.play.world;
-        for (w.players, 0..) |p, k| {
+        for (w.players[0..bar_players], 0..) |p, k| {
             const h = p.entity orelse continue;
             const e = w.getConst(h) orelse continue;
             if (e.mind != .player) continue;
@@ -922,26 +927,26 @@ pub const Round = struct {
     /// The colours player `k` playing `character` (of kind `kind`) is drawn with: the variant's
     /// for a second player playing the first's character (`Policies.duplicate_colours`), when
     /// the character's definition has them; else its own.
-    fn playerColours(turn: *const scene.Turn, k: u1, character: setup_mod.Character, kind: world.entity.KindId, a: *const Assets) ?u8 {
+    fn playerColours(turn: *const scene.Turn, k: input.Player, character: setup_mod.Character, kind: world.entity.KindId, a: *const Assets) ?u8 {
         const name = turn.policies.duplicate_colours orelse return null;
         if (k != 1 or turn.setup.characters[0] != character) return null;
         return a.kinds.get(kind).definition.colourMap(name);
     }
 
     /// A player joined at this logic tick, as `joining`: player 2 makes two players in the game
-    /// from now on.
+    /// from now on (player 3 three, player 4 four).
     fn joined(self: *Round, turn: *scene.Turn) void {
         const w = &self.play.world;
         const d = self.joining orelse return;
         if (w.players[d.player].entity == null) return;
         turn.setup.characters[d.player] = d.character;
-        if (d.player == 1) turn.setup.players = .two;
+        if (d.player >= 1) turn.setup.players = .of(@max(turn.setup.players.count(), @as(usize, d.player) + 1));
     }
 
     /// A player and the character it joins as.
     /// A join: who, as which character, and whether it takes the place of the fighter there
     /// (the CPU's: `takeOver`).
-    pub const Drop = struct { player: u1, character: setup_mod.Character, replace: bool = false };
+    pub const Drop = struct { player: input.Player, character: setup_mod.Character, replace: bool = false };
 
     /// Whether a join asked now is made (`dropIn`, `takeOver`): at the round's next play tick,
     /// which a round fading out to its end does not have.
@@ -953,7 +958,7 @@ pub const Round = struct {
     /// dropping in as the original's PRESS 2UP START's does (network play's second player joining
     /// a game, or its host's player coming back to it: DESIGN.md 9). False when that player plays
     /// already, or the round takes no join.
-    pub fn dropIn(self: *Round, k: u1, character: setup_mod.Character) bool {
+    pub fn dropIn(self: *Round, k: input.Player, character: setup_mod.Character) bool {
         if (self.play.world.players[k].entity != null or !self.takesJoins()) return false;
         self.join_as = .{ .player = k, .character = character };
         return true;
@@ -962,7 +967,7 @@ pub const Round = struct {
     /// Player `k`, the CPU's, is another's as `character` at the next logic tick (network play's
     /// client taking the CPU's player, `State.join`): the CPU's fighter goes, and the newcomer's
     /// drops in as `dropIn`'s does. Nothing while the round takes no join.
-    pub fn takeOver(self: *Round, k: u1, character: setup_mod.Character) void {
+    pub fn takeOver(self: *Round, k: input.Player, character: setup_mod.Character) void {
         if (!self.takesJoins()) return;
         self.join_as = .{ .player = k, .character = character, .replace = true };
     }
@@ -971,7 +976,7 @@ pub const Round = struct {
     /// back): its fighter dies as at the time over, and its life over it is out of the game, as
     /// a player out of lives who does not continue; out of lives already, it is out at once.
     /// Another may join once its fighter is gone (`dropIn`).
-    pub fn dropOut(self: *Round, k: u1) void {
+    pub fn dropOut(self: *Round, k: input.Player) void {
         const w = &self.play.world;
         const p = &w.players[k];
         if (self.join_as) |d| if (d.player == k) {
@@ -1029,7 +1034,7 @@ pub const Round = struct {
     /// game holds them as it holds the pause (game.zig: the pause's jingle with them), and the
     /// logic tick that START was seen at waits, as the pause's first tick does; play goes on with
     /// it once they close.
-    fn startOpensSettings(_: *Round, turn: *scene.Turn, who: u1) ?flow.Exit {
+    fn startOpensSettings(_: *Round, turn: *scene.Turn, who: input.Player) ?flow.Exit {
         turn.settings = who;
         return null;
     }
@@ -1073,7 +1078,7 @@ pub const Round = struct {
         const join = if (self.play.logicNext()) self.joinTick(turn, a) else null;
         // The players' turn draws their scores as the tick begins: points scored later in the
         // tick (an enemy's turn) show at the next.
-        if (self.play.logicNext()) for (&self.drawn_scores, &self.continuing, self.play.world.players) |*d, *cont, pl| {
+        if (self.play.logicNext()) for (&self.drawn_scores, &self.continuing, self.play.world.players[0..bar_players]) |*d, *cont, pl| {
             d.* = pl.score;
             cont.* = if (pl.entity) |h| if (self.play.world.getConst(h)) |e| e.mind == .player_waiting else false else false;
         };
@@ -1086,7 +1091,7 @@ pub const Round = struct {
         self.trace_t += 1;
         // A player's continue: the original's new life draws the status bar's part anew, its
         // score cleared, at once.
-        for (&self.drawn_scores, self.continuing, self.play.world.players) |*d, cont, pl| {
+        for (&self.drawn_scores, self.continuing, self.play.world.players[0..bar_players]) |*d, cont, pl| {
             if (!cont) continue;
             const e = self.play.world.getConst(pl.entity orelse continue) orelse continue;
             if (e.mind == .player) d.* = pl.score;
@@ -1108,8 +1113,8 @@ pub const Round = struct {
         self.noteLamps(a);
         const w = &self.play.world;
         if (join != null) self.joined(turn);
-        for (&self.out_blinks, w.players) |*b, pl| b.blink(pl.out, !self.answeredNo(pl), a.screen.status_bar.join.blink);
-        for (w.players, &self.seen_specials, &self.bar_specials) |pl, *seen, *shown| if (pl.specials != seen.*) {
+        for (&self.out_blinks, w.players[0..bar_players]) |*b, pl| b.blink(pl.out, !self.answeredNo(pl), a.screen.status_bar.join.blink);
+        for (w.players[0..bar_players], &self.seen_specials, &self.bar_specials) |pl, *seen, *shown| if (pl.specials != seen.*) {
             seen.* = pl.specials;
             shown.* = pl.specials;
         };
@@ -1202,7 +1207,7 @@ pub const Round = struct {
         const d = &a.screen.demo;
         var demo_game: setup_mod.Progress = .{ .round = 1 };
         var characters = setup.characters;
-        if (self.demo) for (&demo_game.players, &characters, d.players) |*gp, *c, name| {
+        if (self.demo) for (demo_game.players[0..d.players.len], characters[0..d.players.len], d.players) |*gp, *c, name| {
             gp.* = .{ .in_play = true, .lives = d.lives };
             c.* = std.meta.stringToEnum(setup_mod.Character, name);
         };
@@ -1229,15 +1234,18 @@ pub const Round = struct {
         const r = s.script;
         for (&w.players, g.players, 0..) |*wp, gp, k| {
             wp.* = .{ .lives = gp.lives, .specials = gp.specials, .score = gp.score, .extra_lives = gp.extra_lives, .continues = gp.continues, .out = gp.out };
-            self.drawn_scores[k] = gp.score;
+            if (k < bar_players) self.drawn_scores[k] = gp.score;
             if (!gp.in_play) continue;
             const character = characters[k] orelse continue;
             const kind = a.kinds.find(@tagName(character)) orelse {
                 std.log.warn("the content defines no {s} yet: player {d} sits out", .{ @tagName(character), k + 1 });
                 continue;
             };
-            const at: world.Vec3 = .{ .x = w.camera.x.add(.pixels(r.players.x)), .depth = .pixels(r.players.depth[k]), .height = .pixels(r.players.height) };
-            const h = w.spawn(a.kinds, kind, at, if (r.players.left) .left else .right) catch continue;
+            const at: world.Vec3 = .{ .x = w.camera.x.add(.pixels(r.players.x)), .depth = .pixels(r.players.depthOf(k)), .height = .pixels(r.players.height) };
+            const facing: world.entity.Facing = if (r.players.left) .left else .right;
+            // Players 1 and 2 in the first free places (the original's first objects); 3 and 4
+            // in their own (`World.player_places`).
+            const h = (if (k < 2) w.spawn(a.kinds, kind, at, facing) else w.spawnIn(a.kinds, kind, world.World.player_places[k], at, facing)) catch continue;
             wp.entity = h;
             wp.character = kind;
             wp.colours = playerColours(turn, @intCast(k), character, kind, a);
@@ -1246,7 +1254,7 @@ pub const Round = struct {
         }
         // The status bar shows the special attacks a new life gives; the demo's players have
         // their own, which it shows once they change.
-        for (&w.players, &self.bar_specials, &self.seen_specials) |*wp, *shown, *seen| {
+        for (w.players[0..bar_players], &self.bar_specials, &self.seen_specials) |*wp, *shown, *seen| {
             shown.* = wp.specials;
             if (self.demo and wp.entity != null) wp.specials = d.specials;
             seen.* = wp.specials;
@@ -1404,7 +1412,7 @@ pub const Round = struct {
     fn bar(self: *const Round, a: *const Assets) Bar {
         const w = &self.play.world;
         var out: Bar = .{ .time = w.timer.shown, .join = self.join.shown };
-        for (w.players, &out.players, self.out_blinks, 0..) |p, *o, ob, k| {
+        for (w.players[0..bar_players], &out.players, self.out_blinks, 0..) |p, *o, ob, k| {
             const playing: PlayerBar = .{ .playing = .{ .score = self.drawn_scores[k], .lives = p.lives, .specials = self.bar_specials[k], .health = 0 } };
             const gone: PlayerBar = .{ .out = .{ .name = true, .score = p.score, .game_over = ob.shown } };
             const h = p.entity orelse {
@@ -1475,7 +1483,8 @@ pub const Round = struct {
             const place = m.place.?;
             try v.board(.a).drawMap(m, place.x, place.y);
         };
-        if (self.shown_trapdoors) |players| if (players != 0 and (prev == null or prev.?.shown_trapdoors == null)) if (s.trapdoors[players - 1]) |m| {
+        // The round's pictures of them are players 1 and 2's (alone, or both).
+        if (self.shown_trapdoors) |all| if (all & 3 != 0 and (prev == null or prev.?.shown_trapdoors == null)) if (s.trapdoors[(all & 3) - 1]) |m| {
             const place = m.place.?;
             try v.board(.a).drawMap(m, place.x, place.y);
         };
@@ -1658,7 +1667,7 @@ fn naming(p: world.Player, m: *const world.behaviours.player_waiting.Mind) Playe
 /// A player ranked in the high-score table: its marks leave it; its entry, when it entered its
 /// name, takes the last one's place, marked as its player's new one, and the table is sorted
 /// again.
-pub fn rankIn(table: []Score, player: u1, entry: ?Score) void {
+pub fn rankIn(table: []Score, player: input.Player, entry: ?Score) void {
     for (table) |*e| if (e.new == player) {
         e.new = null;
     };
@@ -1935,14 +1944,14 @@ test "a name entered in the high-score table: the last entry's place, marked, so
     try std.testing.expectEqualStrings("C  ", &name);
     rankIn(&t, 0, .{ .score = 55_000, .round = 2, .level = 1, .name = name });
     try std.testing.expectEqual(@as(u32, 55_000), t[5].score);
-    try std.testing.expectEqual(@as(?u1, 0), t[5].new);
-    try std.testing.expectEqual(@as(?u1, null), t[3].new);
-    try std.testing.expectEqual(@as(?u1, 1), t[4].new);
+    try std.testing.expectEqual(@as(?input.Player, 0), t[5].new);
+    try std.testing.expectEqual(@as(?input.Player, null), t[3].new);
+    try std.testing.expectEqual(@as(?input.Player, 1), t[4].new);
     try std.testing.expectEqual(@as(u32, 20_000), t[9].score);
     // Ranked without an entry: its marks only leave.
     rankIn(&t, 1, null);
-    try std.testing.expectEqual(@as(?u1, null), t[4].new);
-    try std.testing.expectEqual(@as(?u1, 0), t[5].new);
+    try std.testing.expectEqual(@as(?input.Player, null), t[4].new);
+    try std.testing.expectEqual(@as(?input.Player, 0), t[5].new);
 }
 
 test "a number's digits: its last ones, zeros first" {

@@ -560,7 +560,8 @@ fn toOwnSelect(g: *Game) bool {
     var own = g.net.own_setup orelse g.state.setup;
     own.progress = .{};
     own.players = .one;
-    own.characters = .{ if (sel.cursors[0].chosen) sel.cursors[0].place else null, null };
+    own.characters = @splat(null);
+    if (sel.cursors[0].chosen) own.characters[0] = sel.cursors[0].place;
     own.same_character = null;
     g.state.setup = own;
     g.state.start = g.start();

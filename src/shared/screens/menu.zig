@@ -212,7 +212,7 @@ pub const Menu = struct {
             // host's player goes to the character select alone; with EXIT, back to the menu.
             .network => if (turn.net.intent == .start_game) {
                 turn.setup.players = .one;
-                turn.setup.cpu = .{ false, false };
+                turn.setup.cpu = @splat(false);
                 turn.setup.rules = if (turn.policies.settings_rules) turn.rules else null;
                 turn.setup.same_character = turn.net.same_character;
                 return .network_play;
@@ -232,7 +232,7 @@ pub const Menu = struct {
                 // join this game.
                 .one_player => {
                     turn.setup.players = .one;
-                    turn.setup.cpu = .{ false, false };
+                    turn.setup.cpu = @splat(false);
                     turn.setup.rules = if (turn.policies.settings_rules) turn.rules else null;
                     turn.setup.same_character = if (turn.net.hosting) turn.net.same_character else null;
                     return .one_player;
@@ -242,7 +242,7 @@ pub const Menu = struct {
                 .two_players, .join => {
                     turn.setup.players = if (turn.policies.two_players_here) .two else .one;
                     const two = self.choice == .two_players;
-                    turn.setup.cpu = .{ two and self.cpus == 2, two and self.cpus != 0 };
+                    turn.setup.cpu = .{ two and self.cpus == 2, two and self.cpus != 0, false, false };
                     turn.setup.rules = if (turn.policies.settings_rules) turn.rules else null;
                     turn.setup.same_character = null;
                     return .two_players;
@@ -509,7 +509,7 @@ test "the extended menu: right on 2 PLAYERS makes it 1 PLAYER - 1 CPU, then 0 PL
     while (exit == null) exit = press(&m, &setup, .extended, true, .{}).exit;
     try std.testing.expectEqual(flow.Exit.two_players, exit.?);
     try std.testing.expectEqual(Players.two, setup.players);
-    try std.testing.expectEqual([2]bool{ false, true }, setup.cpu);
+    try std.testing.expectEqual([4]bool{ false, true, false, false }, setup.cpu);
 
     // Two CPUs: both players the CPU's; the next menu keeps the reading.
     m = .{};
@@ -520,7 +520,7 @@ test "the extended menu: right on 2 PLAYERS makes it 1 PLAYER - 1 CPU, then 0 PL
     _ = press(&m, &setup, .extended, true, .{ .pad1 = .{ .right = true } });
     exit = press(&m, &setup, .extended, true, .{ .pad1 = .{ .start = true } }).exit;
     while (exit == null) exit = press(&m, &setup, .extended, true, .{}).exit;
-    try std.testing.expectEqual([2]bool{ true, true }, setup.cpu);
+    try std.testing.expectEqual([4]bool{ true, true, false, false }, setup.cpu);
     m = .{};
     _ = press(&m, &setup, .extended, true, .{});
     try std.testing.expectEqual(@as(u2, 2), m.cpus);
@@ -540,7 +540,7 @@ test "the extended menu: right on 2 PLAYERS makes it 1 PLAYER - 1 CPU, then 0 PL
     _ = press(&m, &setup, .extended, false, .{ .pad1 = .{ .up = true } });
     exit = press(&m, &setup, .extended, false, .{ .pad1 = .{ .a = true } }).exit;
     while (exit == null) exit = press(&m, &setup, .extended, false, .{}).exit;
-    try std.testing.expectEqual([2]bool{ false, false }, setup.cpu);
+    try std.testing.expectEqual([4]bool{ false, false, false, false }, setup.cpu);
 
     // The cartridge's menu has no CPU.
     m = .{};

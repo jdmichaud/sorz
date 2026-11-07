@@ -10,6 +10,9 @@
 //! (`offer`): while it runs, play's phase is the traces' `script` (the original's offer machine
 //! keeps running through the fight, in its last step).
 //!
+//! The offer is players 1 and 2's (the cartridge's two; players 3 and 4, the port's, walk in with
+//! them and take no part in it: DESIGN.md 10.7, E4; PLAN item 53 brings them in).
+//!
 //! The offer's script (`offerTick`, before the players' turns) is the original's machine of steps,
 //! by their numbers: Mr. X's window opens a row a tick, his texts are typed in it a letter every
 //! few ticks (each letter's sound, but a blank's), waits between them; the players are held in
@@ -48,8 +51,8 @@ pub const State = struct {
     walking: bool = false,
     /// Each player: at the door's depths (its first stop), at its place; the players at their
     /// places.
-    at_door: [2]bool = .{ false, false },
-    in_place: [2]bool = .{ false, false },
+    at_door: [world_mod.max_players]bool = @splat(false),
+    in_place: [world_mod.max_players]bool = @splat(false),
     arrived: u8 = 0,
     /// The door was put up; it broke (its cells of the plane cleared); the room's opening is due.
     door_made: bool = false,
@@ -58,7 +61,7 @@ pub const State = struct {
     /// The next of the fight's waves.
     wave: u8 = 0,
     /// A player out of the game left the room (as the fight began, or beaten in the duel).
-    gone: [2]bool = .{ false, false },
+    gone: [world_mod.max_players]bool = @splat(false),
     /// The offer's window: its rows open (closing, `shutting`), the text in it (by its index in
     /// the offer's texts) and its letters typed, the ticks to the next letter; a wait's ticks.
     rows: u8 = 0,
@@ -67,7 +70,7 @@ pub const State = struct {
     typed: u8 = 0,
     type_ticks: u8 = 0,
     wait: u8 = 0,
-    /// Each player: held in the choice, its mark on no, answered; its answers shown in the
+    /// Players 1 and 2: held in the choice, its mark on no, answered; its answers shown in the
     /// window, and its mark.
     choosing: [2]bool = .{ false, false },
     on_no: [2]bool = .{ false, false },
@@ -82,7 +85,7 @@ pub const State = struct {
     back: bool = false,
     accepted_before: bool = false,
     /// The trapdoors opened under the players in play then (a bit each): the floor is gone.
-    trapdoors: ?u2 = null,
+    trapdoors: ?Trapdoors = null,
     floor_gone: bool = false,
 
     pub fn has(s: *const State, bit: Progress) bool {
@@ -95,6 +98,9 @@ pub const State = struct {
         return s.has(bit);
     }
 };
+
+/// The players a trapdoor opened under: a bit each.
+pub const Trapdoors = @Int(.unsigned, world_mod.max_players);
 
 /// The fight's progress, the original's bits by number: Mr. X's first laugh (the fight's first
 /// wave due), the first wave cleared, his second laugh (the second wave due), his standing up,
@@ -139,9 +145,10 @@ pub fn scrolls(t: *const Tick) ?i32 {
 /// The command player `k` (its fighter `h`) takes in the walk in, instead of its own: none outside
 /// it, and none in the air (its own then). What it holds it lets go. To the door's depths and
 /// left of its place: the first there puts up the door and strikes it, facing left. Then to the
-/// room's depths and its place: there, as the last player arrives, the walk in ends and the
-/// offer begins (the timer stops); player 1 turns right as it arrives.
-pub fn walkIn(t: *Tick, k: u1, h: Handle) ?world_mod.Command {
+/// room's depths and its place (players 3 and 4 player 1's and 2's): there, as the last player
+/// arrives, the walk in ends and the offer begins (the timer stops); player 1 turns right as it
+/// arrives.
+pub fn walkIn(t: *Tick, k: world_mod.PlayerNumber, h: Handle) ?world_mod.Command {
     const r = &t.world.room;
     if (!r.walking) return null;
     const p = t.plan orelse return null;
@@ -171,11 +178,11 @@ pub fn walkIn(t: *Tick, k: u1, h: Handle) ?world_mod.Command {
         if (d < wk.depth[0]) break :way .{ .down = true };
         if (d >= wk.depth[1]) break :way .{ .up = true };
         if (r.in_place[k]) break :way .{};
-        const place: u16 = @intCast(wk.places[k]);
+        const place: u16 = @intCast(wk.places[k % 2]);
         if (place < x) break :way .{ .left = true };
         if (place -% @as(u16, @intCast(wk.near)) >= x) break :way .{ .right = true };
         r.arrived +%= 1;
-        const needed: u8 = if (t.playersInPlay() == 2) 1 else 0;
+        const needed: u8 = t.playersInPlay() -| 1;
         if (r.arrived > needed) {
             r.walking = false;
             // The offer begins (back after the duel, it goes on).
@@ -305,13 +312,13 @@ pub fn offerTick(t: *Tick) void {
             r.answers_shown = .{ false, false };
             r.mark_shown = .{ false, false };
             next(r);
-            r.in_place = .{ false, false };
+            r.in_place = @splat(false);
         },
         // The duel's end: a player out of the game, the one left walks back to its place.
         0x29 => {
             const w = t.world;
             const out = [2]bool{ r.gone[0] or w.players[0].out, r.gone[1] or w.players[1].out };
-            const left: u1 = if (out[0]) 1 else if (out[1]) 0 else return;
+            const left: usize = if (out[0]) 1 else if (out[1]) 0 else return;
             if (!out[0]) r.duel = false;
             r.walking = true;
             if (!r.in_place[left]) return;
@@ -356,7 +363,7 @@ fn ask(r: *State, n: u8) void {
 /// The window's text is set up: the players stand where they are (out of their places), the
 /// next step.
 fn openText(r: *State) void {
-    r.in_place = .{ false, false };
+    r.in_place = @splat(false);
     next(r);
 }
 
@@ -399,13 +406,13 @@ fn typeLetter(t: *Tick, r: *State, o: *const Offer) void {
     if (bottom != ' ') t.out.sounds.append(.{ .name = o.letter, .first = true });
 }
 
-/// Whether player `k` is in the game (not out of it, nor gone from the room).
+/// Whether player `k` (1 or 2) is in the game (not out of it, nor gone from the room).
 fn inGame(t: *const Tick, k: u1) bool {
     const p = t.world.players[k];
     return p.entity != null and !p.out and !t.world.room.gone[k];
 }
 
-/// The players in the game: 1 or 2.
+/// The players of the offer in the game: 1 or 2.
 fn playersIn(t: *const Tick) u8 {
     return @as(u8, @intFromBool(inGame(t, 0))) + @intFromBool(inGame(t, 1));
 }
@@ -417,8 +424,10 @@ fn lone(t: *const Tick) u1 {
 
 /// The command player `k` takes while held in the choice: none (its pads are taken). When the
 /// step lets it answer and it has not, up and down move its mark (yes, no) with their sound, a
-/// button answers (its sound): the next step, or, alone and saying no, seven steps on.
-pub fn choice(t: *Tick, k: u1, h: Handle) ?world_mod.Command {
+/// button answers (its sound): the next step, or, alone and saying no, seven steps on. Players 3
+/// and 4 are not held.
+pub fn choice(t: *Tick, player: world_mod.PlayerNumber, h: Handle) ?world_mod.Command {
+    const k = std.math.cast(u1, player) orelse return null;
     const r = &t.world.room;
     if (!r.choosing[k]) return null;
     const step = r.offer orelse return null;

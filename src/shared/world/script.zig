@@ -241,7 +241,7 @@ pub const State = struct {
     /// The enemies that went far off the screen since its last tick (draw_list.zig): they call
     /// none of the reserve (the original deletes them; only one knocked out calls one).
     culled: u8 = 0,
-    /// Two players were in play when a section started: the two players' records come (and
+    /// Two players or more were in play when a section started: the two players' records come (and
     /// keep coming).
     two_players: bool = false,
     /// The enemies' colours the palettes hold.
@@ -270,7 +270,7 @@ pub const State = struct {
     animation: struct { step: u8 = 0, ticks: u8 = 0 } = .{},
     /// The players' walk out (`Round.exit`): under way (still once the round is won), each
     /// player past the exit's place across, each at its depths; the turns of a player there left.
-    exit: struct { on: bool = false, past: [2]bool = .{ false, false }, there: [2]bool = .{ false, false }, ticks: u16 = 0 } = .{},
+    exit: struct { on: bool = false, past: [world_mod.max_players]bool = @splat(false), there: [world_mod.max_players]bool = @splat(false), ticks: u16 = 0 } = .{},
 };
 
 /// The round's timer, part of the world.
@@ -611,7 +611,7 @@ pub fn exiting(w: anytype) bool {
 /// it is at or past the exit's place across; once before it, up or down into the exit's depths;
 /// there, left, and each such turn counts down the round's end (`won` at none left, its own
 /// command at that turn; the last player there counts again from the exit's ticks).
-pub fn exitWalk(t: *Tick, k: u1, h: entity.Handle) ?world_mod.Command {
+pub fn exitWalk(t: *Tick, k: world_mod.PlayerNumber, h: entity.Handle) ?world_mod.Command {
     const p = t.plan orelse return null;
     const ex = p.round.exit orelse return null;
     const s = &t.world.script;
@@ -857,7 +857,7 @@ fn beginSection(t: *Tick, p: *const Plan, k: u8) void {
     s.next = 0;
     s.calls = 0;
     s.arriving = 0;
-    s.two_players = s.two_players or t.playersInPlay() == 2;
+    s.two_players = s.two_players or t.playersInPlay() >= 2;
     for (sec.placed) |*rec| {
         if (comes(p, s, rec)) placeAhead(t, rec);
     }
@@ -880,7 +880,7 @@ fn beginRoom(t: *Tick, p: *const Plan) void {
     s.next = 0;
     s.calls = 0;
     s.arriving = 0;
-    s.two_players = s.two_players or t.playersInPlay() == 2;
+    s.two_players = s.two_players or t.playersInPlay() >= 2;
     for (rm.placed) |*rec| {
         if (comes(p, s, rec)) placeAhead(t, rec);
     }

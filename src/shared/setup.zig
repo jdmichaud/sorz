@@ -3,8 +3,32 @@
 //! players and their characters, the high-score table; and the game under way, which play keeps
 //! from one round to the next. It is part of the game's canonical state.
 const std = @import("std");
+const input = @import("input.zig");
 
-pub const Players = enum(u8) { one, two };
+/// The players of the game: one or two (the game menu's), three or four (the port's, DESIGN.md
+/// 10.7, E4).
+pub const Players = enum(u8) {
+    one,
+    two,
+    three,
+    four,
+
+    pub fn count(p: Players) u8 {
+        return @backingInt(p) + 1;
+    }
+
+    /// The players' choice of `n` players (1 to 4).
+    pub fn of(n: usize) Players {
+        return @fromBackingInt(@intCast(n - 1));
+    }
+};
+
+/// The players a game may have.
+pub const max_players = input.max_players;
+
+comptime {
+    std.debug.assert(std.enums.values(Players).len == max_players);
+}
 
 pub const Character = enum(u8) { adam, axel, blaze };
 
@@ -17,7 +41,7 @@ pub const Score = struct {
     /// A level of the options (0 the easiest).
     level: u8 = 0,
     /// A new entry, shown once in its player's colours.
-    new: ?u1 = null,
+    new: ?input.Player = null,
 };
 
 pub const high_scores = 10;
@@ -58,7 +82,7 @@ pub const Gamer = struct {
 /// the round reached and each player's part. Round 0 is no game: the next round starts one.
 pub const Progress = struct {
     round: u8 = 0,
-    players: [2]Gamer = .{ .{}, .{} },
+    players: [max_players]Gamer = @splat(.{}),
     /// The round's timer when its round was won, for the clear's time bonus.
     timer: u8 = 0,
     /// The bosses' bars the round showed: the picture builds their partial cells at each frame
@@ -71,12 +95,13 @@ pub const Progress = struct {
 
     /// A new game: the players of the game menu's choice in play, each with the lives of the
     /// options (1, 3, 5 or 7) and three continues (the original's, set as the character select
-    /// ends), or the settings' rules', the other player's lives set too, as the original's are. It
-    /// starts at the options' first round (round 1 but by the hidden line).
+    /// ends), or the settings' rules', the other player's lives set too, as the original's are
+    /// (players 1 and 2's; a third and fourth's in a game of them). It starts at the options' first
+    /// round (round 1 but by the hidden line).
     pub fn new(setup: *const Setup) Progress {
         var p: Progress = .{ .round = setup.first_round + 1 };
-        for (&p.players, 0..) |*g, k| g.* = .{
-            .in_play = k == 0 or setup.players == .two,
+        for (p.players[0..@max(2, setup.players.count())], 0..) |*g, k| g.* = .{
+            .in_play = k < setup.players.count(),
             .lives = livesOf(setup),
             .continues = if (setup.rules) |r| r.continues else 3,
         };
@@ -91,7 +116,7 @@ pub const Progress = struct {
 };
 
 pub const Setup = struct {
-    /// The game menu's choice: one or two players.
+    /// The game menu's choice: one or two players (three or four, the port's).
     players: Players = .one,
     /// The options' values: LEVEL (0 easy to 3 hardest; normal at power-on), CONTROL (0 to 2),
     /// the lives (0 to 3: 1, 3, 5 or 7 lives), the first round (0 to 7, back to 0 at each intro),
@@ -105,10 +130,10 @@ pub const Setup = struct {
     /// game menu, for one visit of the options.
     hidden_lines: bool = false,
     /// Each player's character, once chosen.
-    characters: [2]?Character = .{ null, null },
+    characters: [max_players]?Character = @splat(null),
     /// The players the CPU plays (world/cpu.zig), outside the original: player 2 by the game
     /// menu's 1 PLAYER - 1 CPU.
-    cpu: [2]bool = .{ false, false },
+    cpu: [max_players]bool = @splat(false),
     /// The high-score table; null until a game changes it: the content's first one stands.
     high_scores: ?[high_scores]Score = null,
     /// The game under way.

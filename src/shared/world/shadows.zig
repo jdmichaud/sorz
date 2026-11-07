@@ -64,7 +64,7 @@ pub fn at(w: *World, i: usize) ?*Shadow {
 /// shadow's place when it should.
 pub fn afterTurn(t: *Tick, i: usize) void {
     const w = t.world;
-    if (i >= owners_below or !t.play_mode) return;
+    if (!owns(w, i) or !t.play_mode) return;
     if (at(w, i)) |s| {
         if (s.has_shadow) return;
         if (take(w, i, s.in_front)) s.has_shadow = true;
@@ -73,6 +73,16 @@ pub fn afterTurn(t: *Tick, i: usize) void {
     const e = &w.entities[i];
     if (!e.alive() or e.flags.has_shadow or !takes(t, e)) return;
     if (take(w, i, e.flags.in_front)) e.flags.has_shadow = true;
+}
+
+/// Whether the one in place `i` may take a shadow's place: of the first 50 places, or a player's
+/// fighter in its place past them (players 3 and 4, `World.player_places`), as the original's
+/// players are of its first objects.
+fn owns(w: *const World, i: usize) bool {
+    if (i < owners_below) return true;
+    if (std.mem.indexOfScalar(u8, &World.player_places, @intCast(i)) == null) return false;
+    const h = w.handleAt(i) orelse return false;
+    return w.playerOf(h) != null;
 }
 
 /// Whether the entity takes a shadow (no mark against one).

@@ -429,11 +429,11 @@ pub fn Of(comptime M: type) type {
             a.remove();
         }
 
-        /// His points to the player who struck him last: player 1, else player 2.
+        /// His points to the player who struck him last; to player 2 when no player did.
         pub fn scorePoints(a: A) void {
             const w = a.tick.world;
-            const by_first = if (a.mind.attacker) |h| if (w.players[0].entity) |p| p.eql(h) else false else false;
-            const p = &w.players[if (by_first) 0 else 1];
+            const by = if (a.mind.attacker) |h| w.playerOf(h) orelse 1 else 1;
+            const p = &w.players[by];
             p.score = @min(p.score +| a.numbers().points, w.score_most);
         }
 
@@ -893,13 +893,13 @@ pub fn Of(comptime M: type) type {
             if (m.state == .appear or m.special_taken) return false;
             m.special_taken = true;
             if (m.state == .special_still or a.entity.health <= 0) return false;
-            const second = if (w.special_by) |by| if (w.players[1].entity) |p| p.eql(by) else false else false;
-            m.attacker = w.players[if (second) 1 else 0].entity;
+            const caller = if (w.special_by) |by| w.playerOf(by) orelse 0 else 0;
+            m.attacker = w.players[caller].entity;
             m.grounded_in = n.special_grounded;
             m.state = .special_still;
             a.endMove();
             a.pause(true);
-            m.special_left = if (second) n.special_ticks_second else n.special_ticks;
+            m.special_left = if (caller % 2 == 1) n.special_ticks_second else n.special_ticks;
             m.hold = .{};
             M.walkAfresh(a);
             return true;

@@ -232,7 +232,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     for (0..@backingInt(o.characters[1])) |_| try r.press(.right);
     try r.press(.z);
     try r.until(inRound, 600);
-    for (r.game.state.setup.characters, o.characters) |got, want| if (got != want) return error.WrongCharacter;
+    for (r.game.state.setup.characters[0..2], o.characters) |got, want| if (got != want) return error.WrongCharacter;
 
     var rounds: [16]RoundStats = undefined;
     var n: usize = 0;
@@ -284,7 +284,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
             rounds[n] = .{ .number = round.number };
             n += 1;
             // Each round's world is new, its CPUs' memories too.
-            if (seed != 0) for (&w.players, [2]u32{ 0x2545F491, 0x9E3779B9 }) |*pl, mix| {
+            if (seed != 0) for (w.players[0..2], [2]u32{ 0x2545F491, 0x9E3779B9 }) |*pl, mix| {
                 pl.cpu.seed = mix *% (seed *% 31 +% round.number) | 1;
             };
         }
@@ -296,7 +296,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
         timed_out = round.phase == .time_over;
         if (o.scenes and w.script.stage != stage) std.debug.print("seed {d}: round {d} {t} at display tick {d}\n", .{ seed, round.number, w.script.stage, r.updates });
         stage = w.script.stage;
-        for (w.players, &lives, &each.lives_lost) |pl, *was, *lost| {
+        for (w.players[0..2], &lives, &each.lives_lost) |pl, *was, *lost| {
             if (pl.lives < was.*) {
                 stats.lives_lost += was.* - pl.lives;
                 lost.* += was.* - pl.lives;
@@ -694,7 +694,7 @@ const Sides = struct {
         if (!foes_left or !foes_right) return;
         s.ticks += 1;
         var side: [2]i32 = .{ 0, 0 };
-        for (w.players, &side) |pl, *d| switch (pl.cpu.goal) {
+        for (w.players[0..2], &side) |pl, *d| switch (pl.cpu.goal) {
             .foe => |h| if (w.getConst(h)) |e| {
                 const x = e.position.x.whole();
                 d.* = if (x < lo) -1 else if (x > hi) 1 else 0;
@@ -767,9 +767,9 @@ fn spotOf(w: *const sorz.world.World, k: u1, was: ?@FieldType(sorz.world.entity.
 /// The CPU whose blow `attacker` is: the player itself, or the thing it threw.
 fn striker(w: *const sorz.world.World, attacker: ?sorz.world.Handle) ?u1 {
     const h = attacker orelse return null;
-    if (w.playerOf(h)) |p| return p;
+    if (w.playerOf(h)) |p| return std.math.cast(u1, p);
     const m = (w.getConst(h) orelse return null).missile orelse return null;
-    return w.playerOf(m.by);
+    return std.math.cast(u1, w.playerOf(m.by) orelse return null);
 }
 
 /// The picture just presented, as DIR/NNNN-TICKS-WHAT.png.

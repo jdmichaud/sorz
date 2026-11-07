@@ -495,7 +495,8 @@ fn deflect(a: Actor, by: Handle) void {
     e.velocity.depth = h.depth;
 }
 
-/// At the player other than `by` (player 1 when `by` is none), with more power.
+/// At the player after `by` (player 1 when `by` is none or the last: the other of two), with more
+/// power.
 fn atOtherPlayer(a: Actor, by: ?Handle) void {
     const n = a.numbers();
     const e = a.entity;
@@ -503,8 +504,8 @@ fn atOtherPlayer(a: Actor, by: ?Handle) void {
     a.mind.power = n.redirect_power;
     e.missile = missile(a);
     const w = a.tick.world;
-    const first = w.players[0].entity;
-    const other = if (by != null and first != null and first.?.eql(by.?)) w.players[1].entity else first;
+    const after: usize = if (by) |h| if (w.playerOf(h)) |k| (k + 1) % w.playerRecords() else 0 else 0;
+    const other = w.players[after].entity;
     const o = if (other) |h| w.get(h) else null;
     const tx: i32 = if (o) |t| t.position.x.whole() else 0;
     const td: i32 = if (o) |t| t.position.depth.whole() else 0;

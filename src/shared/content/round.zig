@@ -485,6 +485,18 @@ pub const Players = struct {
     /// A life starts facing left (round 8's), with `specials` special attacks (round 8's none).
     left: bool = false,
     specials: u8 = 1,
+
+    /// The depth player `k`'s life starts at: players 1 and 2 their own; players 3 and 4 (the
+    /// port's, DESIGN.md 10.7, E4) half the step between those two away: the third midway between
+    /// them, the fourth that far beyond player 1.
+    pub fn depthOf(p: Players, k: usize) i32 {
+        const half = @divTrunc(p.depth[0] - p.depth[1], 2);
+        return switch (k) {
+            0, 1 => p.depth[k],
+            2 => p.depth[1] + half,
+            else => p.depth[0] + half,
+        };
+    }
 };
 
 pub const Timer = struct {

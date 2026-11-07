@@ -40,6 +40,7 @@ const content_round = @import("../../content/round.zig");
 const systems = @import("../systems.zig");
 const script = @import("../script.zig");
 const player = @import("player.zig");
+const world_mod = @import("../world.zig");
 
 const Fixed = fixed.Fixed;
 const Handle = entity.Handle;
@@ -524,34 +525,34 @@ pub fn Of(comptime M: type) type {
 
         // Targets and places ------------------------------------------------------------------
 
-        /// It picks the player it goes after: with two players in play (`Tick.fighting`), the
-        /// nearer across (the second on a tie); with one, that one. With none, it stands and
-        /// waits for one. Returns whether it found one.
+        /// It picks the player it goes after: with two players in play or more (`Tick.fighting`),
+        /// the nearest across (the later player on a tie: the second of two); with one, that one.
+        /// With none, it stands and waits for one. Returns whether it found one.
         pub fn chooseTarget(a: A) bool {
             const w = a.tick.world;
-            const found = inPlay(a);
-            const first = found[0] orelse {
-                body(a).target = found[1] orelse {
-                    enter(a, .stand);
-                    body(a).alone = true;
-                    return false;
-                };
-                return true;
-            };
-            const second = found[1] orelse {
-                body(a).target = first;
-                return true;
-            };
             const x = a.entity.position.x.whole();
-            const to_first = @abs(w.getConst(first).?.position.x.whole() - x);
-            const to_second = @abs(w.getConst(second).?.position.x.whole() - x);
-            body(a).target = if (to_second > to_first) first else second;
+            var best: ?Handle = null;
+            var best_to: u32 = 0;
+            for (inPlay(a)) |found| {
+                const h = found orelse continue;
+                const to = @abs(w.getConst(h).?.position.x.whole() - x);
+                if (best != null and to > best_to) continue;
+                best = h;
+                best_to = to;
+            }
+            body(a).target = best orelse {
+                enter(a, .stand);
+                body(a).alone = true;
+                return false;
+            };
             return true;
         }
 
         /// The players in play, by player (`Tick.fighting`).
-        fn inPlay(a: A) [2]?Handle {
-            return .{ a.tick.fighting(0), a.tick.fighting(1) };
+        fn inPlay(a: A) [world_mod.max_players]?Handle {
+            var found: [world_mod.max_players]?Handle = undefined;
+            for (&found, 0..) |*f, k| f.* = a.tick.fighting(k);
+            return found;
         }
 
         pub fn target(a: A) ?*Entity {
@@ -1792,8 +1793,9 @@ pub fn Of(comptime M: type) type {
             const b = body(a);
             if (!a.tick.world.special) {
                 if (b.alone) {
-                    const players = inPlay(a);
-                    if (players[0] == null and players[1] == null) return;
+                    for (inPlay(a)) |found| {
+                        if (found != null) break;
+                    } else return;
                     b.alone = false;
                     return enter(a, M.fights);
                 }

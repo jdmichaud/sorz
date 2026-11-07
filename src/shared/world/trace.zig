@@ -30,6 +30,7 @@ const Kinds = kinds_mod.Kinds;
 const Output = output.Output;
 const Family = content_entity.Family;
 const capacity = entity.capacity;
+const max_players = world_mod.max_players;
 
 pub const format = "sor-trace";
 pub const version = 1;
@@ -90,13 +91,15 @@ pub const Writer = struct {
     preset: [capacity]?struct { generation: u16, id: u32 } = @splat(null),
     phase: ?[]const u8 = null,
     phase_told: bool = false,
-    pads: [2]input.Pad = .{ .{}, .{} },
+    /// By player: the cartridge's two, and the port's third and fourth while in the game
+    /// (`World.playerRecords`).
+    pads: [max_players]input.Pad = @splat(.{}),
     /// The pads as read at the display tick observed, when the observer knows them (a run of
     /// the whole game): the pad events tell them, as sor-remaster's observer does; else the
     /// pads the world last read.
-    held: ?[2]input.Pad = null,
-    lives: [2][2]u8 = .{ .{ 0, 0 }, .{ 0, 0 } },
-    scores: [2]u32 = .{ 0, 0 },
+    held: ?[max_players]input.Pad = null,
+    lives: [max_players][2]u8 = @splat(.{ 0, 0 }),
+    scores: [max_players]u32 = @splat(0),
     camera: [2]i32 = .{ 0, 0 },
     camera_stop: [3]i32 = .{ 0, 0, 0 },
     section: u8 = 0,
@@ -176,7 +179,8 @@ pub const Writer = struct {
     pub fn observeAt(self: *Writer, v: u64, t: u64, world: *const World, kinds: *const Kinds, out: *const Output) std.Io.Writer.Error!void {
         try self.atTick(v, t);
 
-        for (world.players, 0..) |p, k| {
+        const players = world.players[0..world.playerRecords()];
+        for (players, 0..) |p, k| {
             const pad = if (self.held) |h| h[k] else p.last;
             if (pad == self.pads[k]) continue;
             self.pads[k] = pad;
@@ -190,7 +194,7 @@ pub const Writer = struct {
         try self.draws(out);
         try self.entities(world, kinds, out);
 
-        for (world.players, 0..) |p, k| {
+        for (players, 0..) |p, k| {
             const now = [2]u8{ p.lives, p.specials };
             if (self.first or !std.mem.eql(u8, &now, &self.lives[k])) {
                 self.lives[k] = now;
@@ -203,7 +207,7 @@ pub const Writer = struct {
         }
         // The scores as they change from none (sor-remaster's observer tells them from power-on,
         // where they are none).
-        for (world.players, 0..) |p, k| {
+        for (players, 0..) |p, k| {
             if (p.score == self.scores[k]) continue;
             self.scores[k] = p.score;
             var l = try self.line("score");
