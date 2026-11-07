@@ -7,6 +7,7 @@
 //!
 //!   sorz-cpus-check ROM [--lives N] [--level L] [--from R] [--to R] [--chars C1,C2]
 //!                       [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]
+//!                       [--player1 cpu|bot] [--turns on]
 //!
 //! - `--lives`: the lives a game and a continue give (the settings' rules); 3 by default.
 //! - `--level`: the options' LEVEL, 0 easy to 3 hardest; 1 (normal) by default.
@@ -15,14 +16,20 @@
 //! - `--chars`: the CPUs' characters (adam, axel, blaze); adam,axel by default.
 //! - `--shots`: a picture at each round's clear, each life lost and the end, into DIR.
 //! - `--scenes on`: each scene's start told on stderr; the game followed past the ending.
+//! - `--player1 bot`: 1 PLAYER - 1 CPU instead, player 1 played by item 30's rule (`cpu.fight`,
+//!   the agent host's bot: on to the right, at the nearest foe), the CPU player 2 (`--chars`
+//!   player 1's, then the CPU's). Not for round 8, which goes left.
+//! - `--turns on`: each CPU's quick turns (`Turns`) told on stderr, with its memory (`tellTurn`).
 //!
 //! Prints a JSON line per seed: the characters, how it ended (`ending`, `game_over`, `limit`,
 //! `to`), the round reached, the display ticks, each CPU's blows landed on the other by what
 //! struck (`Causes`) and where the one struck stood (`HitSpot`), the ticks with foes on both sides
 //! of the CPUs by where the CPUs went (`Sides`), and what each CPU did of a player's skills (holds
-//! broken, weapons, food: `Skills`); per round its display ticks, the lives lost, the time overs,
-//! the damage the CPUs took by the kind of what dealt it, and each CPU's blows landed (what it
-//! threw too) on the enemies and on the other CPU. Build it fast and alone: `zig build
+//! broken, weapons, food: `Skills`), each player's turns that look unnatural (`Turns`), lives
+//! lost and damage taken from the foes, player 2's pace with player 1 on a free screen (`Pace`);
+//! per round its display ticks, the lives lost, the time overs, the damage the CPUs took by the
+//! kind of what dealt it, and each CPU's blows landed (what it threw too) on the enemies and on
+//! the other CPU. Build it fast and alone: `zig build
 //! cpus-check-exe -Doptimize=ReleaseFast --prefix DIR`; a whole game takes about a minute then.
 const std = @import("std");
 const sorz = @import("sorz");
@@ -193,6 +200,11 @@ const Options = struct {
     shots: ?[]const u8 = null,
     /// Each scene's start told on stderr, and the game followed past the ending to the title.
     scenes: bool = false,
+    /// Who plays player 1: the CPU (0 PLAYERS - 2 CPU), or item 30's rule (`cpu.fight`, the
+    /// agent host's bot) in 1 PLAYER - 1 CPU, the CPU player 2.
+    player1: enum { cpu, bot } = .cpu,
+    /// Each CPU's quick turns told on stderr (`tellTurn`).
+    turns: bool = false,
 };
 
 /// One game the two CPUs play with seed `seed`, reported as a JSON line on `out`.
@@ -211,7 +223,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     r.game.state.setup.first_round = o.from - 1;
     try r.press(.down);
     try r.press(.right);
-    try r.press(.right);
+    if (o.player1 == .cpu) try r.press(.right);
     try r.press(.enter);
     try r.until(inSelect, 600);
     for (0..@backingInt(o.characters[0])) |_| try r.press(.right);
@@ -240,7 +252,14 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     defer spots.deinit(gpa);
     var was_scene = r.scene();
     var ended = false;
+    var turns: [2]Turns = .{ .{}, .{} };
+    var pace: Pace = .{};
+    var held: sorz.input.Pad = .{};
+    var logic: u32 = 0;
+    // Each player's lives lost, and the damage it took from the foes.
+    var each: struct { lives_lost: [2]u32 = .{ 0, 0 }, damage: [2]u32 = .{ 0, 0 } } = .{};
     const how: []const u8 = while (r.updates < o.limit) {
+        if (o.player1 == .bot) try hold(r, &held, botPad(r));
         try r.update();
         if (o.scenes and r.scene() != was_scene) {
             was_scene = r.scene();
@@ -277,15 +296,19 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
         timed_out = round.phase == .time_over;
         if (o.scenes and w.script.stage != stage) std.debug.print("seed {d}: round {d} {t} at display tick {d}\n", .{ seed, round.number, w.script.stage, r.updates });
         stage = w.script.stage;
-        for (w.players, &lives) |pl, *was| {
+        for (w.players, &lives, &each.lives_lost) |pl, *was, *lost| {
             if (pl.lives < was.*) {
                 stats.lives_lost += was.* - pl.lives;
+                lost.* += was.* - pl.lives;
                 if (o.shots) |dir| try shot(gpa, io, r, dir, &shots, "life");
             }
             was.* = pl.lives;
         }
         if (!round.logic_ran) continue;
+        logic += 1;
         sides.see(w, r.game.scene_assets.?.round.kinds);
+        for (&turns, 0..) |*t, i| t.see(w, r.game.scene_assets.?.round.kinds, @intCast(i), logic, o.turns and (o.player1 == .cpu or i == 1));
+        pace.see(w, r.game.scene_assets.?.round.kinds);
         const v = if (r.game.view) |*v| v else continue;
         for (v.world_out.hits.slice()) |hit| {
             const to_player = w.playerOf(hit.target) != null;
@@ -307,6 +330,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
                 };
             };
             if (!to_player or hit.damage <= 0) continue;
+            if (striker(w, hit.attacker) == null) each.damage[w.playerOf(hit.target).?] += @intCast(hit.damage);
             const by = if (hit.attacker) |h| w.getConst(h) else null;
             stats.hurt(if (by) |e| r.game.scene_assets.?.round.kinds.get(e.kind.?).name() else "gone", hit.damage);
         }
@@ -382,7 +406,15 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
         inline for (@typeInfo(Skills).@"struct".field_names, 0..) |name, j| try out.print("{s}\"{s}\":{d}", .{ if (j == 0) "" else ",", name, @field(sk, name) });
         try out.writeAll("}");
     }
-    try out.writeAll("],\"partner_hits\":[");
+    try out.writeAll("],\"turns\":[");
+    for (turns, 0..) |t, i| {
+        try out.writeAll(if (i == 0) "{" else ",{");
+        inline for (.{ "calm_ticks", "flips", "quick_flips", "calm_quick_flips", "depth_turns", "quick_depth_turns", "calm_quick_depth_turns" }, 0..) |name, j| try out.print("{s}\"{s}\":{d}", .{ if (j == 0) "" else ",", name, @field(t, name) });
+        try out.writeAll("}");
+    }
+    try out.print("],\"lives_lost\":[{d},{d}],\"damage_taken\":[{d},{d}]", .{ each.lives_lost[0], each.lives_lost[1], each.damage[0], each.damage[1] });
+    try out.print(",\"pace\":{{\"free_ticks\":{d},\"held_ticks\":{d},\"behind_ticks\":{d},\"trail_sum\":{d}}}", .{ pace.free_ticks, pace.held_ticks, pace.behind_ticks, pace.trail_sum });
+    try out.writeAll(",\"partner_hits\":[");
     for (spots.items, 0..) |x, i| try out.print("{s}[{d},{d},{d},\"{t}\",\"{s}\",{d},\"{s}\",{},{d},{d},\"{t}\"]", .{ if (i == 0) "" else ",", x.striker, x.ahead, x.depth, x.state, x.foe, x.foe_ahead, x.goal, x.same_foe, x.moved_ahead, x.moved_depth, x.striker_state });
     try out.writeAll("],\"rounds\":[");
     for (rounds[0..n], 0..) |*s, i| {
@@ -430,6 +462,189 @@ fn playerMind(w: *const sorz.world.World, p: u1) ?*const sorz.world.behaviours.p
 fn playerState(w: *const sorz.world.World, p: u1) ?PlayerState {
     return (playerMind(w, p) orelse return null).state;
 }
+
+/// Player 1's pad by item 30's rule (`cpu.fight`, the agent host's bot) while it fights; out of
+/// the fight (the offer's choice, the continue's question, the name entry) the CPU's own answers.
+fn botPad(r: *const Run) sorz.input.Pad {
+    const cpu = sorz.world.cpu;
+    const a = if (r.game.scene_assets) |*a| a else return .{};
+    const layout = a.round.screen.buttons.of(r.game.state.setup.control);
+    const letters = a.round.screen.name_entry.letters;
+    switch (r.game.state.scenes.base) {
+        .round => |*round| {
+            const w = &round.play.world;
+            if (!w.room.choosing[0]) if (cpu.fight(w, a.round.kinds, 0, r.updates)) |p| return p;
+            var m: cpu.Memory = .{};
+            return cpu.pad(w, .{ .kinds = a.round.kinds, .letters = letters, .layout = layout }, &m, 0);
+        },
+        .round_clear => |*c| if (c.names[0]) |*m| if (!c.named[0]) return cpu.entry(m, letters, layout, r.updates % 2 == 0),
+        else => {},
+    }
+    return .{};
+}
+
+/// Player 1's keys held as `want` plays them (the default keys), from `held`.
+fn hold(r: *Run, held: *sorz.input.Pad, want: sorz.input.Pad) !void {
+    const keys = .{ .{ "up", Key.up }, .{ "down", Key.down }, .{ "left", Key.left }, .{ "right", Key.right }, .{ "a", Key.z }, .{ "b", Key.x }, .{ "c", Key.c }, .{ "start", Key.enter } };
+    inline for (keys) |kv| if (@field(want, kv[0]) != @field(held.*, kv[0])) {
+        try r.backend.inject(.{ .time_ns = r.backend.clock_ns, .payload = if (@field(want, kv[0])) .{ .key_down = .{ .key = kv[1] } } else .{ .key_up = .{ .key = kv[1] } } });
+    };
+    held.* = want;
+}
+
+/// A quick turn of player `k`'s CPU told on stderr (`--turns on`): `what` (`flip`, `depth`, with
+/// a foe near `fflip`, `fdepth`), the world's clock, its place (across, on the screen, in depth),
+/// facing and state; its goal and where it lies from it; player 1's place from it, state and
+/// facing; its memory's actions chosen and walk wanted (bits from the right: up, down, left,
+/// right, special, attack, jump, start) and its counters.
+fn tellTurn(w: *const sorz.world.World, k: u1, what: []const u8) void {
+    const e = w.getConst(w.players[k].entity.?).?;
+    const m = &w.players[k].cpu;
+    const q = if (w.players[1 - k].entity) |h| w.getConst(h) else null;
+    const px = e.position.x.whole();
+    const pd = e.position.depth.whole();
+    std.debug.print("turn {s} t={d} cpu={d} x={d} sx={d} d={d} f={t} st={t} goal={t}", .{ what, w.tick, k, px, px - w.camera.x.whole(), pd, e.facing, e.mind.player.state, m.goal });
+    switch (m.goal) {
+        .roam => |s| std.debug.print(" at=({d},{d})", .{ s.x - px, s.depth - pd }),
+        inline else => |h| if (w.getConst(h)) |x| std.debug.print(" at=({d},{d})", .{ x.position.x.whole() - px, x.position.depth.whole() - pd }),
+    }
+    if (q) |p1| if (p1.mind == .player) std.debug.print(" p1=({d},{d}) p1st={t} p1f={t}", .{ p1.position.x.whole() - px, p1.position.depth.whole() - pd, p1.mind.player.state, p1.facing });
+    std.debug.print(" chose={b:0>8} wanted={b:0>8} wait={d} detour={d} linger={d} stuck={d} dodge={} back={d} look={d}\n", .{ @as(u8, @bitCast(m.chose)), @as(u8, @bitCast(m.wanted)), m.wait, m.detour, m.linger, m.stuck, m.dodge, m.back_off, m.look });
+}
+
+/// A CPU's turns that look unnatural: its facing turned round, and its walk in depth reversed,
+/// while it stands free to act (ready, idle or walking) at both logic ticks; quick, within
+/// `quick_ticks` of its last turn with nothing else in between (no blow, no hurt: neither leaves
+/// it free); calm, with no foe within `calm_px` (across plus in depth). Its logic ticks free to
+/// act and calm.
+const Turns = struct {
+    calm_ticks: u32 = 0,
+    flips: u32 = 0,
+    quick_flips: u32 = 0,
+    calm_quick_flips: u32 = 0,
+    depth_turns: u32 = 0,
+    quick_depth_turns: u32 = 0,
+    calm_quick_depth_turns: u32 = 0,
+    /// Its facing and depth at the last logic tick (null: not free to act then), the tick of its
+    /// last turn round, its walk's way in depth and the tick that way began.
+    facing: ?sorz.world.entity.Facing = null,
+    depth: i32 = 0,
+    flip_at: ?u32 = null,
+    way: i2 = 0,
+    way_at: ?u32 = null,
+
+    const quick_ticks = 15;
+    const calm_px = 120;
+
+    fn see(t: *Turns, w: *const sorz.world.World, kinds: anytype, k: u1, now: u32, tell: bool) void {
+        const m = playerMind(w, k) orelse return t.reset();
+        switch (m.state) {
+            .ready, .idle, .walk, .armed_stand, .armed_walk => {},
+            else => return t.reset(),
+        }
+        const e = w.getConst(w.players[k].entity.?).?;
+        var calm = true;
+        for (&w.entities) |*f| {
+            if (Sides.foe(f, kinds) and @abs(f.position.x.whole() - e.position.x.whole()) + @abs(f.position.depth.whole() - e.position.depth.whole()) <= calm_px) calm = false;
+        }
+        if (calm) t.calm_ticks += 1;
+        const depth = e.position.depth.raw;
+        if (t.facing) |f| {
+            if (f != e.facing) {
+                t.flips += 1;
+                if (t.flip_at) |at| if (now - at < quick_ticks) {
+                    t.quick_flips += 1;
+                    if (calm) t.calm_quick_flips += 1;
+                    if (tell) tellTurn(w, k, if (calm) "flip" else "fflip");
+                };
+                t.flip_at = now;
+            }
+            const way: i2 = if (depth > t.depth) 1 else if (depth < t.depth) -1 else 0;
+            if (way != 0 and way != t.way) {
+                if (t.way != 0) {
+                    t.depth_turns += 1;
+                    if (t.way_at) |at| if (now - at < quick_ticks) {
+                        t.quick_depth_turns += 1;
+                        if (calm) t.calm_quick_depth_turns += 1;
+                        if (tell) tellTurn(w, k, if (calm) "depth" else "fdepth");
+                    };
+                }
+                t.way = way;
+                t.way_at = now;
+            }
+        }
+        t.facing = e.facing;
+        t.depth = depth;
+    }
+
+    fn reset(t: *Turns) void {
+        t.facing = null;
+        t.flip_at = null;
+        t.way = 0;
+        t.way_at = null;
+    }
+};
+
+/// Player 2 keeping up with player 1 while no foe is on the screen and both fight (the screen
+/// free): its logic ticks (`free_ticks`); those it held the camera back (the camera would move on
+/// the round's way, further by player 1 alone, and is not at its wall: it follows two players
+/// only as both let it); those it trailed player 1 by more than `behind_px` on the round's way;
+/// and how far it trailed in all (pixels, ahead counted less).
+const Pace = struct {
+    free_ticks: u32 = 0,
+    held_ticks: u32 = 0,
+    behind_ticks: u32 = 0,
+    trail_sum: i64 = 0,
+
+    const behind_px = 32;
+
+    fn see(s: *Pace, w: *const sorz.world.World, kinds: anytype) void {
+        const c = &w.camera;
+        const rules = c.follows orelse return;
+        if (c.run != null) return;
+        var at: [2]i32 = undefined;
+        for (0..2) |i| {
+            const p: u1 = @intCast(i);
+            if (playerMind(w, p) == null) return;
+            at[p] = w.getConst(w.players[p].entity.?).?.position.x.whole();
+        }
+        const left = c.x.whole();
+        for (&w.entities) |*e| {
+            if (!Sides.foe(e, kinds)) continue;
+            const x = e.position.x.whole();
+            if (x >= left and x < left + 320) return;
+        }
+        const way: i32 = if (rules.leftward) -1 else 1;
+        s.free_ticks += 1;
+        const trail = (at[0] - at[1]) * way;
+        s.trail_sum += trail;
+        if (trail > behind_px) s.behind_ticks += 1;
+        const d0 = c.drawn[0] orelse return;
+        const d1 = c.drawn[1] orelse return;
+        const alone = std.math.clamp(follow(c, rules, &.{d0}), -rules.most, rules.most) * way;
+        const both = std.math.clamp(follow(c, rules, &.{ d0, d1 }), -rules.most, rules.most) * way;
+        const wall = if (rules.leftward) c.x.whole() <= c.x_min.whole() else c.x.whole() >= c.x_max.whole();
+        if (alone > 0 and both < alone and !wall) s.held_ticks += 1;
+    }
+
+    /// The camera's move across by the players drawn at `drawn` (systems.zig `followSpeed`).
+    fn follow(c: *const sorz.world.Camera, rules: sorz.world.Camera.Rules, drawn: []const sorz.world.Fixed) i32 {
+        const start: i32 = rules.band[0];
+        const end: i32 = rules.band[1];
+        var xs: [2]i32 = undefined;
+        for (drawn, 0..) |d, i| xs[i] = d.whole() - c.x.whole();
+        if (drawn.len == 1) {
+            if (xs[0] < start) return xs[0] - start;
+            if (xs[0] >= end) return xs[0] - end;
+            return 0;
+        }
+        const fore = @max(xs[0], xs[1]);
+        const hind = @min(xs[0], xs[1]);
+        if (fore >= end) return if (hind < start) 0 else @min(fore - end, hind - start);
+        if (hind >= start) return 0;
+        return @max(fore - end, hind - start);
+    }
+};
 
 /// What struck a CPU from its partner, `attacker`: a thing it threw; the blow it felt, landed at
 /// the last tick (`struck`: the striker's state then); a knee in a hold, or a throw's fall (by
@@ -569,7 +784,7 @@ fn shot(gpa: std.mem.Allocator, io: std.Io, r: *const Run, dir: []const u8, coun
 }
 
 fn usage(io: std.Io) noreturn {
-    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--level L] [--from R] [--to R] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]\n") catch {};
+    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--level L] [--from R] [--to R] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on] [--player1 cpu|bot] [--turns on]\n") catch {};
     std.process.exit(2);
 }
 
@@ -604,6 +819,10 @@ pub fn main(init: std.process.Init) !void {
             o.shots = value;
         } else if (std.mem.eql(u8, arg, "--scenes")) {
             o.scenes = std.mem.eql(u8, value, "on");
+        } else if (std.mem.eql(u8, arg, "--turns")) {
+            o.turns = std.mem.eql(u8, value, "on");
+        } else if (std.mem.eql(u8, arg, "--player1")) {
+            o.player1 = std.meta.stringToEnum(@FieldType(Options, "player1"), value) orelse usage(io);
         } else usage(io);
     }
     const rom = try std.Io.Dir.cwd().readFileAlloc(io, rom_path, gpa, .limited(extract.rom.size + 1));
