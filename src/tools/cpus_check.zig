@@ -7,7 +7,7 @@
 //!
 //!   sorz-cpus-check ROM [--lives N] [--level L] [--from R] [--to R] [--chars C1,C2]
 //!                       [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]
-//!                       [--player1 cpu|bot] [--turns on]
+//!                       [--player1 cpu|bot] [--turns on] [--players N]
 //!
 //! - `--lives`: the lives a game and a continue give (the settings' rules); 3 by default.
 //! - `--level`: the options' LEVEL, 0 easy to 3 hardest; 1 (normal) by default.
@@ -20,6 +20,10 @@
 //!   the agent host's bot: on to the right, at the nearest foe), the CPU player 2 (`--chars`
 //!   player 1's, then the CPU's). Not for round 8, which goes left.
 //! - `--turns on`: each CPU's quick turns (`Turns`) told on stderr, with its memory (`tellTurn`).
+//! - `--players N`: a game of N players (2 to 4; the port's 3 and 4, DESIGN.md 10.7 E4), the CPU in
+//!   every place: the menu's game of two, then players 3 and 4 put in the game before the round's
+//!   set-up (`--chars` takes N characters; the third and fourth follow player 1 as the CPU does),
+//!   and the line measures each of them (below).
 //!
 //! Prints a JSON line per seed: the characters, how it ended (`ending`, `game_over`, `limit`,
 //! `to`), the round reached, the display ticks, each CPU's blows landed on the other by what
@@ -29,7 +33,10 @@
 //! lost and damage taken from the foes, player 2's pace with player 1 on a free screen (`Pace`);
 //! per round its display ticks, the lives lost, the time overs, the damage the CPUs took by the
 //! kind of what dealt it, and each CPU's blows landed (what it threw too) on the enemies and on
-//! the other CPU. Build it fast and alone: `zig build
+//! the other CPU. With `--players`, the line names the players, each player's lists hold N, and
+//! each round tells the enemies that came out (`enemies`, the bosses among them) and the health
+//! the players' blows took off them (`enemy_damage`); the lists between players 1 and 2 stay
+//! theirs (the causes, the sides, the turns, the pace, the hits). Build it fast and alone: `zig build
 //! cpus-check-exe -Doptimize=ReleaseFast --prefix DIR`; a whole game takes about a minute then.
 const std = @import("std");
 const sorz = @import("sorz");
@@ -125,7 +132,12 @@ const RoundStats = struct {
     damage: [max_kinds]struct { kind: []const u8, damage: i32 } = undefined,
     kinds: usize = 0,
     /// Each CPU's blows landed (with what it threw), on the enemies and on the other CPU.
-    blows: [2]struct { enemies: u32 = 0, partner: u32 = 0 } = .{ .{}, .{} },
+    blows: [max_players]struct { enemies: u32 = 0, partner: u32 = 0 } = @splat(.{}),
+    /// The enemies that came out (the bosses among them), and the health the players' blows
+    /// took off them (`--players`).
+    enemies: u32 = 0,
+    bosses: u32 = 0,
+    enemy_damage: u32 = 0,
 
     const max_kinds = 32;
 
@@ -161,6 +173,8 @@ const Causes = struct {
 };
 
 const Character = sorz.setup.Character;
+const max_players = sorz.input.max_players;
+const PlayerNumber = sorz.input.Player;
 
 /// What each CPU did of a player's skills: held from behind by an enemy (its holds, those it may
 /// jump out of: not round 5's twins'), its jumps out and its throws of the holder; held from the
@@ -195,7 +209,10 @@ const Options = struct {
     /// as the next begins).
     from: u8 = 1,
     to: u8 = 8,
-    characters: [2]Character = .{ .adam, .axel },
+    characters: [max_players]Character = .{ .adam, .axel, .adam, .axel },
+    /// The players of the game, the CPU in every place; null: the menu's two, the line as it was
+    /// before games of more (`--players`).
+    players: ?u8 = null,
     limit: u32 = 900_000,
     shots: ?[]const u8 = null,
     /// Each scene's start told on stderr, and the game followed past the ending to the title.
@@ -231,23 +248,37 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     try r.until(againForCpu2, 600);
     for (0..@backingInt(o.characters[1])) |_| try r.press(.right);
     try r.press(.z);
+    // Players 3 and 4 into the game the round's set-up makes, the CPU playing them.
+    const np: usize = o.players orelse 2;
+    if (o.players != null) {
+        const setup = &r.game.state.setup;
+        if (setup.progress.round != 0) return error.RoundBegun;
+        setup.players = .of(np);
+        for (2..np) |k| {
+            setup.characters[k] = o.characters[k];
+            setup.cpu[k] = true;
+        }
+    }
     try r.until(inRound, 600);
-    for (r.game.state.setup.characters[0..2], o.characters) |got, want| if (got != want) return error.WrongCharacter;
+    for (r.game.state.setup.characters[0..np], o.characters[0..np]) |got, want| if (got != want) return error.WrongCharacter;
+    for (r.game.state.scenes.base.round.play.world.players[0..np]) |pl| if (pl.entity == null) return error.PlayerMissing;
 
     var rounds: [16]RoundStats = undefined;
     var n: usize = 0;
-    var lives: [2]u8 = .{ 0, 0 };
+    var lives: [max_players]u8 = @splat(0);
     var timed_out = false;
     var stage: @TypeOf(r.game.state.scenes.base.round.play.world.script.stage) = .opening;
     var shots: u32 = 0;
     var causes: [2]Causes = .{ .{}, .{} };
     // Each CPU's state at the last logic tick, and the state its partner struck it in then (a
     // blow is felt, its damage taken, at the tick after it lands).
-    var was_in: [2]?PlayerState = .{ null, null };
-    var struck_in: [2]?PlayerState = .{ null, null };
+    var was_in: [max_players]?PlayerState = @splat(null);
+    var struck_in: [max_players]?PlayerState = @splat(null);
     var was_at: [2]?@FieldType(sorz.world.entity.Entity, "position") = .{ null, null };
     var sides: Sides = .{};
-    var skills: [2]Skills = .{ .{}, .{} };
+    var skills: [max_players]Skills = @splat(.{});
+    // The generation of each entity counted as an enemy come out this round.
+    var seen: [@typeInfo(@FieldType(sorz.world.World, "entities")).array.len]?u16 = @splat(null);
     var spots: std.ArrayList(HitSpot) = .empty;
     defer spots.deinit(gpa);
     var was_scene = r.scene();
@@ -257,7 +288,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     var held: sorz.input.Pad = .{};
     var logic: u32 = 0;
     // Each player's lives lost, and the damage it took from the foes.
-    var each: struct { lives_lost: [2]u32 = .{ 0, 0 }, damage: [2]u32 = .{ 0, 0 } } = .{};
+    var each: struct { lives_lost: [max_players]u32 = @splat(0), damage: [max_players]u32 = @splat(0) } = .{};
     const how: []const u8 = while (r.updates < o.limit) {
         if (o.player1 == .bot) try hold(r, &held, botPad(r));
         try r.update();
@@ -283,8 +314,10 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
             if (n != 0 and o.shots != null) try shot(gpa, io, r, o.shots.?, &shots, "clear");
             rounds[n] = .{ .number = round.number };
             n += 1;
+            seen = @splat(null);
             // Each round's world is new, its CPUs' memories too.
-            if (seed != 0) for (w.players[0..2], [2]u32{ 0x2545F491, 0x9E3779B9 }) |*pl, mix| {
+            const mixes = [max_players]u32{ 0x2545F491, 0x9E3779B9, 0x85EBCA6B, 0xC2B2AE35 };
+            if (seed != 0) for (w.players[0..np], mixes[0..np]) |*pl, mix| {
                 pl.cpu.seed = mix *% (seed *% 31 +% round.number) | 1;
             };
         }
@@ -296,7 +329,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
         timed_out = round.phase == .time_over;
         if (o.scenes and w.script.stage != stage) std.debug.print("seed {d}: round {d} {t} at display tick {d}\n", .{ seed, round.number, w.script.stage, r.updates });
         stage = w.script.stage;
-        for (w.players[0..2], &lives, &each.lives_lost) |pl, *was, *lost| {
+        for (w.players[0..np], lives[0..np], each.lives_lost[0..np]) |pl, *was, *lost| {
             if (pl.lives < was.*) {
                 stats.lives_lost += was.* - pl.lives;
                 lost.* += was.* - pl.lives;
@@ -306,6 +339,16 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
         }
         if (!round.logic_ran) continue;
         logic += 1;
+        const kinds = r.game.scene_assets.?.round.kinds;
+        if (o.players != null) for (&w.entities, &seen) |*e, *was_seen| {
+            if (!e.alive() or e.flags.hidden) continue;
+            const family = kinds.get(e.kind.?).family();
+            if (family != .enemy and family != .boss) continue;
+            if (was_seen.* == e.generation) continue;
+            was_seen.* = e.generation;
+            stats.enemies += 1;
+            if (family == .boss) stats.bosses += 1;
+        };
         sides.see(w, r.game.scene_assets.?.round.kinds);
         for (&turns, 0..) |*t, i| t.see(w, r.game.scene_assets.?.round.kinds, @intCast(i), logic, o.turns and (o.player1 == .cpu or i == 1));
         pace.see(w, r.game.scene_assets.?.round.kinds);
@@ -316,12 +359,15 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
                 if (w.playerOf(hit.target)) |q| {
                     if (q != p) {
                         stats.blows[p].partner += 1;
-                        const c = cause(r, w, hit.attacker.?, struck_in[q], was_in[q]);
-                        causes[p].add(c[0], c[1]);
+                        if (p < 2 and q < 2) {
+                            const c = cause(r, w, hit.attacker.?, struck_in[q], was_in[q]);
+                            causes[p].add(c[0], c[1]);
+                        }
                     }
                 } else if (w.getConst(hit.target)) |e| if (e.team == .enemy) {
                     stats.blows[p].enemies += 1;
                     skills[p].dealt += @intCast(@max(hit.damage, 0));
+                    stats.enemy_damage += @intCast(@max(hit.damage, 0));
                     // An armed player's blow is its weapon's, a thing that strikes in its hand.
                     if (w.getConst(hit.attacker.?)) |x| if (r.game.scene_assets.?.round.kinds.get(x.kind.?).family() == .weapon) if (playerState(w, p)) |st| if (armed(st)) {
                         skills[p].armed_blows += 1;
@@ -334,7 +380,6 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
             const by = if (hit.attacker) |h| w.getConst(h) else null;
             stats.hurt(if (by) |e| r.game.scene_assets.?.round.kinds.get(e.kind.?).name() else "gone", hit.damage);
         }
-        const kinds = r.game.scene_assets.?.round.kinds;
         for (v.world_out.pickups.slice()) |pick| {
             const p = w.playerOf(pick.by) orelse continue;
             const k = kinds.get(pick.kind);
@@ -342,8 +387,8 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
             if (isFood(k)) skills[p].food += 1;
         }
         const food_lying = foodLying(w, kinds);
-        for (0..2) |i| {
-            const p: u1 = @intCast(i);
+        for (0..np) |i| {
+            const p: PlayerNumber = @intCast(i);
             const m = playerMind(w, p) orelse continue;
             const e = w.getConst(w.players[p].entity.?).?;
             const by_enemy = if (e.holder) |h| w.playerOf(h) == null else false;
@@ -378,22 +423,28 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
                 if (food_lying) sk.hurt_food_ticks += 1;
             }
         }
-        for (0..2) |i| {
-            const p: u1 = @intCast(i);
+        for (0..np) |i| {
+            const p: PlayerNumber = @intCast(i);
             was_in[p] = playerState(w, p);
             struck_in[p] = null;
+            if (p >= 2) continue;
             const m = playerMind(w, p) orelse continue;
             const t = m.taken orelse continue;
-            if (w.playerOf(t.by) == 1 - p) {
-                struck_in[p] = playerState(w, 1 - p);
-                if (spotOf(w, 1 - p, was_at[p])) |x| try spots.append(gpa, x);
+            const q: u1 = @intCast(1 - p);
+            if (w.playerOf(t.by) == q) {
+                struck_in[p] = playerState(w, q);
+                if (spotOf(w, q, was_at[p])) |x| try spots.append(gpa, x);
             }
         }
         for (0..2) |i| was_at[i] = if (w.players[i].entity) |h| if (w.getConst(h)) |e| e.position else null else null;
     } else "limit";
     if (o.shots) |dir| try shot(gpa, io, r, dir, &shots, "end");
 
-    try out.print("{{\"seed\":{d},\"characters\":[\"{t}\",\"{t}\"],\"outcome\":\"{s}\",\"round\":{d},\"ticks\":{d},\"partner_causes\":[", .{ seed, o.characters[0], o.characters[1], how, if (n == 0) 0 else rounds[n - 1].number, r.updates });
+    try out.print("{{\"seed\":{d},", .{seed});
+    if (o.players) |count| try out.print("\"players\":{d},", .{count});
+    try out.writeAll("\"characters\":[");
+    for (o.characters[0..np], 0..) |c, i| try out.print("{s}\"{t}\"", .{ if (i == 0) "" else ",", c });
+    try out.print("],\"outcome\":\"{s}\",\"round\":{d},\"ticks\":{d},\"partner_causes\":[", .{ how, if (n == 0) 0 else rounds[n - 1].number, r.updates });
     for (causes, 0..) |c, i| {
         try out.writeAll(if (i == 0) "{" else ",{");
         for (c.list[0..c.len], 0..) |x, j| try out.print("{s}\"{s}{s}{s}\":{d}", .{ if (j == 0) "" else ",", x.how, if (x.what.len == 0) "" else " ", x.what, x.count });
@@ -401,7 +452,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     }
     try out.print("],\"sides\":{{\"ticks\":{d},\"same\":{d},\"split\":{d},\"other\":{d}}}", .{ sides.ticks, sides.same, sides.split, sides.other });
     try out.writeAll(",\"skills\":[");
-    for (skills, 0..) |sk, i| {
+    for (skills[0..np], 0..) |sk, i| {
         try out.writeAll(if (i == 0) "{" else ",{");
         inline for (@typeInfo(Skills).@"struct".field_names, 0..) |name, j| try out.print("{s}\"{s}\":{d}", .{ if (j == 0) "" else ",", name, @field(sk, name) });
         try out.writeAll("}");
@@ -412,7 +463,11 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
         inline for (.{ "calm_ticks", "flips", "quick_flips", "calm_quick_flips", "depth_turns", "quick_depth_turns", "calm_quick_depth_turns" }, 0..) |name, j| try out.print("{s}\"{s}\":{d}", .{ if (j == 0) "" else ",", name, @field(t, name) });
         try out.writeAll("}");
     }
-    try out.print("],\"lives_lost\":[{d},{d}],\"damage_taken\":[{d},{d}]", .{ each.lives_lost[0], each.lives_lost[1], each.damage[0], each.damage[1] });
+    try out.writeAll("],\"lives_lost\":[");
+    for (each.lives_lost[0..np], 0..) |x, i| try out.print("{s}{d}", .{ if (i == 0) "" else ",", x });
+    try out.writeAll("],\"damage_taken\":[");
+    for (each.damage[0..np], 0..) |x, i| try out.print("{s}{d}", .{ if (i == 0) "" else ",", x });
+    try out.writeAll("]");
     try out.print(",\"pace\":{{\"free_ticks\":{d},\"held_ticks\":{d},\"behind_ticks\":{d},\"trail_sum\":{d}}}", .{ pace.free_ticks, pace.held_ticks, pace.behind_ticks, pace.trail_sum });
     try out.writeAll(",\"partner_hits\":[");
     for (spots.items, 0..) |x, i| try out.print("{s}[{d},{d},{d},\"{t}\",\"{s}\",{d},\"{s}\",{},{d},{d},\"{t}\"]", .{ if (i == 0) "" else ",", x.striker, x.ahead, x.depth, x.state, x.foe, x.foe_ahead, x.goal, x.same_foe, x.moved_ahead, x.moved_depth, x.striker_state });
@@ -422,8 +477,10 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
         try out.print("{{\"round\":{d},\"ticks\":{d},\"lives_lost\":{d},\"time_overs\":{d},\"damage\":{{", .{ s.number, s.ticks, s.lives_lost, s.time_overs });
         for (s.damage[0..s.kinds], 0..) |d, j| try out.print("{s}\"{s}\":{d}", .{ if (j == 0) "" else ",", d.kind, d.damage });
         try out.writeAll("},\"blows\":[");
-        for (s.blows, 0..) |b, j| try out.print("{s}{{\"enemies\":{d},\"partner\":{d}}}", .{ if (j == 0) "" else ",", b.enemies, b.partner });
-        try out.writeAll("]}");
+        for (s.blows[0..np], 0..) |b, j| try out.print("{s}{{\"enemies\":{d},\"partner\":{d}}}", .{ if (j == 0) "" else ",", b.enemies, b.partner });
+        try out.writeAll("]");
+        if (o.players != null) try out.print(",\"enemies\":{d},\"bosses\":{d},\"enemy_damage\":{d}", .{ s.enemies, s.bosses, s.enemy_damage });
+        try out.writeAll("}");
     }
     try out.writeAll("]}\n");
     try out.flush();
@@ -451,7 +508,7 @@ fn foodLying(w: *const sorz.world.World, kinds: anytype) bool {
     return false;
 }
 
-fn playerMind(w: *const sorz.world.World, p: u1) ?*const sorz.world.behaviours.player.Mind {
+fn playerMind(w: *const sorz.world.World, p: PlayerNumber) ?*const sorz.world.behaviours.player.Mind {
     const e = w.getConst(w.players[p].entity orelse return null) orelse return null;
     return switch (e.mind) {
         .player => |*m| m,
@@ -459,7 +516,7 @@ fn playerMind(w: *const sorz.world.World, p: u1) ?*const sorz.world.behaviours.p
     };
 }
 
-fn playerState(w: *const sorz.world.World, p: u1) ?PlayerState {
+fn playerState(w: *const sorz.world.World, p: PlayerNumber) ?PlayerState {
     return (playerMind(w, p) orelse return null).state;
 }
 
@@ -765,11 +822,11 @@ fn spotOf(w: *const sorz.world.World, k: u1, was: ?@FieldType(sorz.world.entity.
 }
 
 /// The CPU whose blow `attacker` is: the player itself, or the thing it threw.
-fn striker(w: *const sorz.world.World, attacker: ?sorz.world.Handle) ?u1 {
+fn striker(w: *const sorz.world.World, attacker: ?sorz.world.Handle) ?PlayerNumber {
     const h = attacker orelse return null;
-    if (w.playerOf(h)) |p| return std.math.cast(u1, p);
+    if (w.playerOf(h)) |p| return p;
     const m = (w.getConst(h) orelse return null).missile orelse return null;
-    return std.math.cast(u1, w.playerOf(m.by) orelse return null);
+    return w.playerOf(m.by);
 }
 
 /// The picture just presented, as DIR/NNNN-TICKS-WHAT.png.
@@ -784,7 +841,7 @@ fn shot(gpa: std.mem.Allocator, io: std.Io, r: *const Run, dir: []const u8, coun
 }
 
 fn usage(io: std.Io) noreturn {
-    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--level L] [--from R] [--to R] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on] [--player1 cpu|bot] [--turns on]\n") catch {};
+    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--level L] [--from R] [--to R] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on] [--player1 cpu|bot] [--turns on] [--players N]\n") catch {};
     std.process.exit(2);
 }
 
@@ -810,7 +867,12 @@ pub fn main(init: std.process.Init) !void {
             if (arg[2] == 'f') o.from = r else o.to = r;
         } else if (std.mem.eql(u8, arg, "--chars")) {
             var it = std.mem.tokenizeScalar(u8, value, ',');
-            for (&o.characters) |*c| c.* = std.meta.stringToEnum(Character, it.next() orelse usage(io)) orelse usage(io);
+            var k: usize = 0;
+            while (it.next()) |name| : (k += 1) {
+                if (k == max_players) usage(io);
+                o.characters[k] = std.meta.stringToEnum(Character, name) orelse usage(io);
+            }
+            if (k < 2) usage(io);
         } else if (std.mem.eql(u8, arg, "--seeds")) {
             seeds_text = value;
         } else if (std.mem.eql(u8, arg, "--limit")) {
@@ -821,6 +883,10 @@ pub fn main(init: std.process.Init) !void {
             o.scenes = std.mem.eql(u8, value, "on");
         } else if (std.mem.eql(u8, arg, "--turns")) {
             o.turns = std.mem.eql(u8, value, "on");
+        } else if (std.mem.eql(u8, arg, "--players")) {
+            const count = std.fmt.parseInt(u8, value, 10) catch usage(io);
+            if (count < 2 or count > max_players) usage(io);
+            o.players = count;
         } else if (std.mem.eql(u8, arg, "--player1")) {
             o.player1 = std.meta.stringToEnum(@FieldType(Options, "player1"), value) orelse usage(io);
         } else usage(io);
