@@ -18,6 +18,12 @@
 //! - extended, 0 PLAYERS - 2 CPU (PLAN item 33): right twice on 2 PLAYERS; pad 1 chooses Adam
 //!   for CPU 1, then Axel for CPU 2; round 1 with both CPUs, no key pressed: they walk on, fight
 //!   and score; START (pad 1's) still opens the settings, Escape closes them.
+//! - extended, 4 PLAYERS on one machine (PLAN item 50): two gamepads plugged, four input
+//!   methods with the keyboard's two; in the settings' INPUT CONFIGURATION (four players'
+//!   columns, two at a time) players 3 and 4 take the gamepads, player 1 back on its keys; right
+//!   twice on 2 PLAYERS reads 4 PLAYERS; the select's four cursors chosen by their own pads (the
+//!   keys, the gamepads' buttons); round 1 with four fighters, player 4 on player 2's Blaze in the
+//!   duplicate's colours, player 3 walking by its gamepad's d-pad.
 //! - network, as a browser's page plays it alone (one player): 2 PLAYERS and OPTIONS; ADVANCED
 //!   SETTINGS opens one player's settings; 2 PLAYERS to the select with this machine's player
 //!   alone, then the round, where START opens the settings.
@@ -69,6 +75,24 @@ const Run = struct {
 
     fn key(r: *Run, k: Key, pressed: bool) !void {
         try r.backend.inject(.{ .time_ns = r.backend.clock_ns, .payload = if (pressed) .{ .key_down = .{ .key = k } } else .{ .key_up = .{ .key = k } } });
+    }
+
+    /// Gamepad `id` connected.
+    fn plug(r: *Run, id: platform.ControllerId) !void {
+        try r.backend.inject(.{ .time_ns = r.backend.clock_ns, .payload = .{ .controller_added = id } });
+    }
+
+    fn button(r: *Run, id: platform.ControllerId, b: platform.ControllerButton, pressed: bool) !void {
+        const e: platform.Event.ControllerButtonEvent = .{ .controller = id, .button = b };
+        try r.backend.inject(.{ .time_ns = r.backend.clock_ns, .payload = if (pressed) .{ .controller_button_down = e } else .{ .controller_button_up = e } });
+    }
+
+    /// Gamepad `id`'s button `b` pressed for an update, then released for one.
+    fn pressButton(r: *Run, id: platform.ControllerId, b: platform.ControllerButton) !void {
+        try r.button(id, b, true);
+        try r.update();
+        try r.button(id, b, false);
+        try r.update();
     }
 
     /// `k` pressed for an update, then released for one.
@@ -294,6 +318,80 @@ fn cpusGame(f: *Flow, r: *Run) !void {
     try f.check(!settingsOpen(r), "Escape closes them");
 }
 
+fn fourGame(f: *Flow, r: *Run) !void {
+    const pads = [2]platform.ControllerId{ @fromBackingInt(1), @fromBackingInt(2) };
+    for (pads) |id| try r.plug(id);
+    // GAMEPAD 1 is player 1's: its START and d-pad to the menu, OPTIONS and ADVANCED SETTINGS.
+    while (r.updates < 500) try r.update();
+    try r.pressButton(pads[0], .start);
+    while (r.updates < 560) try r.update();
+    try r.pressButton(pads[0], .start);
+    try f.until(r, choosing, 400, "the game menu");
+    const layout = &r.game.settings.layout;
+    try f.check(r.game.controls.players() == 4 and layout.players[0].gamepad == 1, "four input methods, GAMEPAD 1 player 1's");
+    for (0..2) |_| try r.pressButton(pads[0], .dpad_down);
+    try r.pressButton(pads[0], .start);
+    try f.until(r, inOptions, 400, "OPTIONS");
+    for (0..2) |_| {
+        try r.pressButton(pads[0], .dpad_up);
+        try r.update();
+    }
+    try r.pressButton(pads[0], .x);
+    try f.until(r, settingsOpen, 80, "ADVANCED SETTINGS opens the settings");
+    try f.check(r.game.overlays.find(.settings).?.settings.facts.players == 4, "four players' columns");
+    // INPUT CONFIGURATION: right to player 3, its input method GAMEPAD 1 (player 1 back on its
+    // keys); right to player 4, GAMEPAD 1 then 2; left, player 3 GAMEPAD 1 again. START (player
+    // 1's Enter) back, Escape saves and leaves.
+    try r.pressButton(pads[0], .x);
+    try f.until(r, onInputPage, 80, "INPUT CONFIGURATION");
+    for ([_]platform.ControllerButton{ .dpad_right, .dpad_right, .x, .dpad_right, .x, .x, .dpad_left, .x }) |b| try r.pressButton(pads[0], b);
+    try f.check(layout.players[0].gamepad == null and layout.players[2].gamepad == 1 and layout.players[3].gamepad == 2, "players 3 and 4 on the gamepads, player 1 on its keys");
+    try r.press(.enter);
+    try f.until(r, onFirstPage, 80, "back on the first page");
+    const saves = r.game.saves_written;
+    try r.press(.escape);
+    try f.until(r, settingsClosed, 80, "the settings saved and closed");
+    try f.check(r.game.saves_written == saves + 1, "the settings saved");
+    try f.until(r, inOptions, 80, "OPTIONS go on");
+    try r.press(.down);
+    try r.update();
+    try r.press(.enter);
+    // The menu: right twice on 2 PLAYERS, 4 PLAYERS.
+    try f.until(r, choosing, 400, "the menu");
+    try down(r, 1);
+    try r.press(.right);
+    try f.check(r.menu().?.players == 3, "3 PLAYERS");
+    try r.press(.right);
+    try f.check(r.menu().?.players == 4 and r.menu().?.cpus == 0, "4 PLAYERS");
+    try r.press(.enter);
+    try f.until(r, inSelect, 600, "the select");
+    const sel = &r.game.state.scenes.base.select;
+    try f.check(r.game.state.setup.players == .four and sel.players == .four, "four players at the select");
+    // Player 1 Adam (Z), player 2 Blaze (F), player 3 Axel (its gamepad's A), player 4 right to
+    // Blaze, chosen (its gamepad's d-pad, its A).
+    try r.press(.z);
+    try r.press(.f);
+    try r.pressButton(pads[0], .x);
+    try r.pressButton(pads[1], .dpad_right);
+    try r.update();
+    try r.pressButton(pads[1], .x);
+    try f.until(r, playing, 2400, "the round's play");
+    const setup = &r.game.state.setup;
+    try f.check(std.meta.eql(setup.characters, .{ .adam, .blaze, .axel, .blaze }), "Adam, Blaze, Axel, Blaze");
+    const w = &roundOf(r).?.play.world;
+    var fighters: usize = 0;
+    for (w.players) |wp| fighters += @intFromBool(wp.entity != null);
+    try f.check(fighters == 4, "four fighters in round 1");
+    try f.check(w.players[1].colours == null and w.players[3].colours != null and w.players[2].colours == null, "player 4 in Blaze's duplicate colours");
+    // Player 3 walks right by its gamepad's d-pad.
+    const x0 = w.getConst(w.players[2].entity.?).?.position.x;
+    try r.button(pads[0], .dpad_right, true);
+    for (0..60) |_| try r.update();
+    try r.button(pads[0], .dpad_right, false);
+    try r.update();
+    try f.check(w.getConst(w.players[2].entity.?).?.position.x.raw > x0.raw, "player 3 walks by its gamepad");
+}
+
 fn original(f: *Flow, r: *Run) !void {
     try toMenu(f, r);
     try f.check(std.mem.eql(sorz.variant.MenuLine, lines(r), &.{ .one_player, .two_players, .options }), "the cartridge's menu");
@@ -469,6 +567,7 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "extended", .variant = .extended, .run = extended },
         .{ .name = "extended_cpu", .variant = .extended, .run = cpuGame },
         .{ .name = "extended_cpus", .variant = .extended, .run = cpusGame },
+        .{ .name = "extended_four", .variant = .extended, .run = fourGame },
         .{ .name = "network_page", .variant = .network, .page = true, .run = page },
         .{ .name = "network_guest_options", .variant = .network, .page = true, .guest = true, .run = guestOptions },
     }) |sg| {
