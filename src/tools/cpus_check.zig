@@ -229,7 +229,6 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     const r = try Run.create(gpa, assets);
     defer r.destroy(gpa);
     r.game.settings.rules.lives = o.lives;
-    r.game.state.setup.level = o.level;
     // START on the intro, then on the title; right twice on 2 PLAYERS; each CPU's character, its
     // cursor from Adam.
     while (r.updates < 500) try r.update();
@@ -237,6 +236,9 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
     while (r.updates < 560) try r.update();
     try r.press(.enter);
     try r.until(choosing, 400);
+    // The options' level and first round, set at the menu: the game's first update (its
+    // power-on) starts its state anew.
+    r.game.state.setup.level = o.level;
     r.game.state.setup.first_round = o.from - 1;
     try r.press(.down);
     try r.press(.right);
