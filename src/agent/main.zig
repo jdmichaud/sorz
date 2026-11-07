@@ -20,7 +20,7 @@ const usage =
     \\                  [--axis FRAME:NAME:VALUE[:HOLD]]... [--shot FRAME:PATH]... [--wav PATH]
     \\                  [DIR|ROM] [--saves DIR] [--original | --page]
     \\       sorz-agent [DIR|ROM] (--netplay [ADDRESS:]PORT [--delay N] | --join ws://ADDRESS:PORT)
-    \\                  [--frames N] [--until-session N] [--key FRAME:NAME[:HOLD]]...
+    \\                  [--frames N] [--until-session N] [--sound-from N] [--key FRAME:NAME[:HOLD]]...
     \\       sorz-agent DIR|ROM --server [ADDRESS:]PORT
     \\       sorz-agent DIR|ROM --scenario FILE [--situation TRACE [--situation-probe PROBE]
     \\                  [--game-tick N | --take-up] [--level N] [--continues N]] [--trace-events OUT]
@@ -50,14 +50,16 @@ const usage =
     \\                   game, network play's the network variant
     \\  --page           the game as a browser's page runs it alone: the network variant, one
     \\                   player (pad 1's keys and every gamepad), the page's own volume
-    \\  --netplay, --join  network play over WebSockets, as the host (player 1) or the guest
-    \\                   (player 2): each game plays its own front end with its keys (--key by
+    \\  --netplay, --join  network play over WebSockets, as the host (player 1) or a guest
+    \\                   (player 2 to 4): each game plays its own front end with its keys (--key by
     \\                   update; a guest's `place+FRAME` counts from the update at which the
     \\                   host first offers a place in its round, once the guest's other
     \\                   presses are done), and the guest's JOIN and
     \\                   character join the host's game;
     \\                   --frames counts the updates, --until-session N ends the run once the
-    \\                   session ran N ticks; prints the game's hashes and its network play
+    \\                   session ran N ticks; prints the game's hashes and its network play;
+    \\                   --sound-from N hashes the sound from the session's tick N (machines
+    \\                   that joined at different ticks compare the same ticks' sound)
     \\  --delay N        the host's input delay, 2 to 6 (default: from the round trip)
     \\  --server         server mode, as sorz-server: serve the page and the game's files of
     \\                   DIR|ROM, and relay network play between two browsers, with no game
@@ -126,6 +128,7 @@ pub fn main(init: std.process.Init) !void {
     defer shots.deinit(gpa);
     var wav_path: ?[]const u8 = null;
     var until_session: ?u32 = null;
+    var sound_from: u32 = 0;
     var as_page = false;
     var scenario: ?agent.scenario_cmd.Options = null;
     var situation: ?[]const u8 = null;
@@ -172,6 +175,8 @@ pub fn main(init: std.process.Init) !void {
             wav_path = args.next() orelse return fail(io);
         } else if (std.mem.eql(u8, arg, "--until-session")) {
             until_session = std.fmt.parseInt(u32, args.next() orelse return fail(io), 10) catch return fail(io);
+        } else if (std.mem.eql(u8, arg, "--sound-from")) {
+            sound_from = std.fmt.parseInt(u32, args.next() orelse return fail(io), 10) catch return fail(io);
         } else if (std.mem.eql(u8, arg, "--page")) {
             as_page = true;
         } else if (std.mem.eql(u8, arg, "--scenario")) {
@@ -282,7 +287,7 @@ pub fn main(init: std.process.Init) !void {
         };
         var obuf: [2048]u8 = undefined;
         var ow = std.Io.File.stdout().writerStreaming(io, &obuf);
-        const ok = try agent.netplay_cmd.process(gpa, io, assets, storage, options.netplayOptions(identity), page, providers.assetSource(), frames, until_session, presses.items, &ow.interface);
+        const ok = try agent.netplay_cmd.process(gpa, io, assets, storage, options.netplayOptions(identity), page, providers.assetSource(), frames, until_session, sound_from, presses.items, &ow.interface);
         try ow.interface.flush();
         if (!ok) std.process.exit(1);
         return;

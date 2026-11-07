@@ -1361,6 +1361,13 @@ pub const Netplay = struct {
         }
     }
 
+    /// The session's first tick on this machine (a guest's join; the host's, its first
+    /// client's: 0).
+    pub fn firstTick(self: *const Netplay) u32 {
+        const s = self.main() orelse return 0;
+        return if (self.role == .host) 0 else s.start;
+    }
+
     /// The next tick of the session.
     pub fn tick(self: *const Netplay) u32 {
         const s = self.main() orelse return 0;

@@ -24,8 +24,8 @@
 //! `round-check` round 1's scenes from power-on (`-Drom=ROM -Dremaster=DIR|AGENT`);
 //! `variants-check` plays each variant's flow from power-on on the ROM's content (`-Drom=ROM`),
 //! `netplay-check` network play's flows on it (the joins, leaving, a dropped connection, a
-//! difference named; two agent hosts over WebSockets), and `cpus-check` the whole game played by
-//! the two CPUs.
+//! difference named, with two to four machines; two, three and four agent hosts over WebSockets),
+//! and `cpus-check` the whole game played by the two CPUs.
 const std = @import("std");
 
 /// The SDL2 release that the Linux host is built and tested against.
@@ -672,14 +672,15 @@ pub fn build(b: *std.Build) void {
     settings_check.has_side_effects = true;
     smoke_step.dependOn(&settings_check.step);
 
-    // Network play on the real game (PLAN item 18), from the user's ROM: its flows with several
-    // games in one process (src/tools/netplay_check.zig: each machine's own menus, the joins at the
-    // select and mid-round, a guest leaving and another joining, a third turned away, a dropped
-    // connection, a planted difference named), and two agent hosts over WebSockets
-    // (tools/check_netplay.sh: the host alone into round 1, the guest joining mid-round, the same
-    // state). `-Dnetplay-only=FLOW,...` runs some of the flows.
-    const netplay_check_step = b.step("netplay-check", "Play network play's flows on the content of -Drom=ROM: own menus, joins at the select and mid-round, leaving, a dropped connection, a planted difference; two agent hosts over WebSockets");
-    const netplay_only = b.option([]const u8, "netplay-only", "netplay-check: the flows to run (comma-separated: own_menus, select, round, away, difference)");
+    // Network play on the real game (PLAN items 18 and 51), from the user's ROM: its flows with
+    // several games in one process (src/tools/netplay_check.zig: each machine's own menus, the
+    // joins at the select and mid-round, a guest leaving and another joining, a third turned away,
+    // a dropped connection, a planted difference named; with three and four machines too), and
+    // two, three and four agent hosts over WebSockets (tools/check_netplay.sh, check_netplay_many.sh:
+    // the host alone into round 1, the guests joining mid-round, the same state and sound).
+    // `-Dnetplay-only=FLOW,...` runs some of the flows.
+    const netplay_check_step = b.step("netplay-check", "Play network play's flows on the content of -Drom=ROM: own menus, joins at the select and mid-round, leaving, a dropped connection, a planted difference, with 2 to 4 machines; 2, 3 and 4 agent hosts over WebSockets");
+    const netplay_only = b.option([]const u8, "netplay-only", "netplay-check: the flows to run (comma-separated: own_menus, select, round, away, difference, select_four...)");
     if (rom_path) |rom| {
         const netplay_exe = b.addExecutable(.{
             .name = "sorz-netplay-check",
@@ -709,6 +710,19 @@ pub fn build(b: *std.Build) void {
             netplay_check.expectExitCode(0);
             netplay_check.has_side_effects = true;
             netplay_check_step.dependOn(&netplay_check.step);
+            // Three and four agent hosts over WebSockets (tools/check_netplay_many.sh), one after
+            // the other: their ports apart.
+            var before: *std.Build.Step = &netplay_check.step;
+            for ([_][]const u8{ "3", "4" }) |n| {
+                const many = b.addSystemCommand(&.{ "sh", "tools/check_netplay_many.sh" });
+                many.addArtifactArg(agent_exe);
+                many.addArgs(&.{ rom, n });
+                many.expectExitCode(0);
+                many.has_side_effects = true;
+                many.step.dependOn(before);
+                before = &many.step;
+                netplay_check_step.dependOn(&many.step);
+            }
         }
     } else {
         netplay_check_step.dependOn(&b.addFail("netplay-check needs the user's ROM: -Drom=PATH").step);

@@ -8,8 +8,9 @@
 //! whose game holds for the peer waits a millisecond of real time and advances the clock as much.
 //! The run ends after `--frames` updates, or once
 //! the session ran `--until-session` ticks; it prints the game's hashes, its network play, and its
-//! sound since the session began (its frames' hash, their number and their peak): two machines in
-//! a session play the same sound from its first tick, the guest's carried over at the join.
+//! sound since the session began, or from its tick `--sound-from` (its frames' hash, their number
+//! and their peak): the machines in a session play the same sound from its first tick, a guest's
+//! carried over at its join (a guest that joined later from there).
 const std = @import("std");
 const sorz = @import("sorz");
 const AgentBackend = @import("backend.zig").AgentBackend;
@@ -76,6 +77,7 @@ pub fn writeGame(w: *std.Io.Writer, label: []const u8, game: *const sorz.Game) !
     try w.print(",\"variant\":\"{s}\",\"scene\":\"{s}\",\"players\":\"{s}\"", .{ @tagName(game.state.start.variant), @tagName(std.meta.activeTag(game.state.scenes.base)), @tagName(game.state.setup.players) });
     if (game.netplay) |n| {
         try w.print(",\"phase\":\"{s}\",\"delay\":{d},\"sessions\":{d},\"session_tick\":{d}", .{ @tagName(n.phase()), n.delay(), n.sessions, n.tick() });
+        try w.print(",\"session_start\":{d},\"player\":{d}", .{ n.firstTick(), @as(u8, n.localPlayer()) + 1 });
         if (n.difference) |d| try w.print(",\"difference\":\"{f}\"", .{d});
     }
     try w.writeAll("}");
@@ -95,6 +97,7 @@ pub fn process(
     served: ?platform.AssetSource,
     frames: u64,
     until_session: ?u32,
+    sound_from: u32,
     presses: []const Press,
     out: *std.Io.Writer,
 ) !bool {
@@ -129,11 +132,13 @@ pub fn process(
             if (np.role == .guest and st.game == .play and st.place) place_at = updates;
         };
         try script.inject(&backend, updates, place_at);
+        // The tick this update runs, if any: its sound is hashed from `sound_from` on.
+        const at = if (game.netplay) |n| n.tick() else 0;
         if (try game.update(&p) == .finished) {
             finished = true;
             break;
         }
-        if (game.netplay) |n| if (n.inSession()) sound.add(backend.audio.pcm.items);
+        if (game.netplay) |n| if (n.inSession() and at >= sound_from) sound.add(backend.audio.pcm.items);
         backend.audio.pcm.clearRetainingCapacity();
         const np = game.netplay orelse break;
         if (np.phase() == .ended or (np.phase() == .desynced and np.difference != null)) break;
