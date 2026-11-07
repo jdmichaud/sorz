@@ -144,4 +144,7 @@ pub const Setup = struct {
     /// Whether the two players may choose one character, the host's network options' (a game of
     /// NETWORK PLAY); null: the variant's rule.
     same_character: ?bool = null,
+    /// Each player's name in network play (its machine's settings' name), which the status bar
+    /// of three or four players shows; null: none (PLAN item 51 gives them).
+    names: [max_players]?[3]u8 = @splat(null),
 };

@@ -23,7 +23,8 @@
 //!   when its score enters the high-score table (the table takes its entry), then asks the
 //!   continue's question there; out of the game (until the game ends), its part shows its name,
 //!   its score and a blinking GAME OVER; the last one out counts the game over down, its text
-//!   over the picture;
+//!   over the picture. A game of three or four players has the port's status bar of four slots
+//!   instead (party_bar.zig);
 //! - the end: the round won (its boss beaten), the screen fades out, and the round's clear
 //!   follows, the game under way kept; or the game over, the screen fades out, and the high
 //!   scores follow.
@@ -49,6 +50,7 @@ const setup_mod = @import("../setup.zig");
 const Colours = @import("colours.zig").Colours;
 const transfers = @import("transfers.zig");
 const HighScores = @import("high_scores.zig").HighScores;
+const party_bar = @import("party_bar.zig");
 const Setup = setup_mod.Setup;
 const Score = setup_mod.Score;
 
@@ -136,13 +138,20 @@ pub const PlayerBar = union(enum) {
     pub const Out = struct { name: bool, score: u32, game_over: bool };
 };
 
-/// The players the status bar shows, and whose art the picture's frames carry (the cartridge's
-/// two: PLAN item 48 brings players 3 and 4's).
-pub const bar_players = 2;
+/// The players the status bar shows: the cartridge's two, or the four slots of a game of three
+/// or four players (party_bar.zig).
+pub const bar_players = setup_mod.max_players;
+
+/// The players whose art the picture's frames carry, and whose health bars' partial cells they
+/// build: the cartridge's two.
+pub const cartridge_players = 2;
 
 /// What the status bar shows.
 pub const Bar = struct {
-    players: [bar_players]PlayerBar = .{ .none, .none },
+    players: [bar_players]PlayerBar = @splat(.none),
+    /// A game of three or four players: the bar of four slots, their names; null, the
+    /// cartridge's bar of players 1 and 2.
+    party: ?[bar_players]party_bar.Name = null,
     time: u8 = 0,
     join: bool = false,
     /// The bosses' bars, from the second tick after a boss's first in its section.
@@ -283,8 +292,8 @@ pub const Round = struct {
     /// The players' scores as the status bar draws them (those the last logic tick began with,
     /// but a new life's from a continue: its own at once), and whether each was waiting to
     /// continue as that tick began.
-    drawn_scores: [2]u32 = .{ 0, 0 },
-    continuing: [2]bool = .{ false, false },
+    drawn_scores: [bar_players]u32 = @splat(0),
+    continuing: [bar_players]bool = @splat(false),
     /// The colours shown as the special attack was called, which it gives back.
     kept: render.palettes.Colours = render.palettes.black,
     /// The round ended (its last tick).
@@ -324,7 +333,7 @@ pub const Round = struct {
     join_as: ?Drop = null,
     /// The join under way: who, as which character.
     joining: ?Drop = null,
-    out_blinks: [2]OutBlink = .{ .{}, .{} },
+    out_blinks: [bar_players]OutBlink = @splat(.{}),
     /// The last player out of the game is at its game over: the round ends at the next tick.
     over: bool = false,
     /// The attract demo (`startDemo`): the round played on the content's pads (`records.Demo`),
@@ -336,8 +345,8 @@ pub const Round = struct {
     pads_read: input.Pads = .{},
     /// The special attacks the status bar shows of each player, and the world's when it last
     /// drew them: it draws them as they change (the demo's own are not drawn until then).
-    bar_specials: [2]u8 = .{ 0, 0 },
-    seen_specials: [2]u8 = .{ 0, 0 },
+    bar_specials: [bar_players]u8 = @splat(0),
+    seen_specials: [bar_players]u8 = @splat(0),
 
     pub const Assets = struct {
         kinds: *const world.Kinds,
@@ -524,7 +533,7 @@ pub const Round = struct {
             self.bosses_before = self.bosses_last;
             self.bosses_last = self.bossesBar(a);
         }
-        self.shown_bar = self.bar(a);
+        self.shown_bar = self.bar(turn.setup, a);
         self.shown_game_over = self.gameOver() != null;
         self.shown_animation = self.animation_shown;
         self.shown_lamps = self.lamps;
@@ -822,7 +831,7 @@ pub const Round = struct {
     /// due at the next picture.
     fn noteTransfers(self: *Round, kinds: *const world.Kinds, out: *const world.Output) void {
         const w = &self.play.world;
-        for (w.players[0..bar_players], 0..) |p, k| {
+        for (w.players[0..cartridge_players], 0..) |p, k| {
             const h = p.entity orelse continue;
             const e = w.getConst(h) orelse continue;
             // The original copies a player's art at each new frame, and at each of its states it
@@ -862,7 +871,7 @@ pub const Round = struct {
     /// Each player's health bar's partial cell is built again when its health changed.
     fn noteBars(self: *Round) void {
         const w = &self.play.world;
-        for (w.players[0..bar_players], 0..) |p, k| {
+        for (w.players[0..cartridge_players], 0..) |p, k| {
             const h = p.entity orelse continue;
             const e = w.getConst(h) orelse continue;
             if (e.mind != .player) continue;
@@ -1408,10 +1417,11 @@ pub const Round = struct {
         self.lamps.set(p.x, p.y, p.lit);
     }
 
-    /// What the status bar shows.
-    fn bar(self: *const Round, a: *const Assets) Bar {
+    /// What the status bar shows: the game's players' parts (four slots for three or four).
+    fn bar(self: *const Round, setup: *const Setup, a: *const Assets) Bar {
         const w = &self.play.world;
         var out: Bar = .{ .time = w.timer.shown, .join = self.join.shown };
+        if (party_bar.shows(setup)) out.party = party_bar.namesOf(setup);
         for (w.players[0..bar_players], &out.players, self.out_blinks, 0..) |p, *o, ob, k| {
             const playing: PlayerBar = .{ .playing = .{ .score = self.drawn_scores[k], .lives = p.lives, .specials = self.bar_specials[k], .health = 0 } };
             const gone: PlayerBar = .{ .out = .{ .name = true, .score = p.score, .game_over = ob.shown } };
@@ -1700,11 +1710,17 @@ fn healthOf(a: *const Round.Assets, e: *const world.Entity) u8 {
 /// that changes its kind (playing, asking, out) is cleared, then drawn whole.
 pub fn drawBar(v: *view.View, a: anytype, now: Bar, was: ?Bar) !void {
     const board = v.board(.window);
+    if (now.party != null) {
+        // From the cartridge's bar (a third player come in), the four slots are drawn whole.
+        const before = if (was) |w| if (w.party != null) w else null else null;
+        try party_bar.draw(board, a, now, before);
+        return drawTime(board, a, now, before);
+    }
     // The invitation first: gone (player 2 dropped in), the cells under it come back, and player
     // 2's part is drawn whole over them.
     const changed = (was == null and now.join) or (was != null and was.?.join != now.join);
     if (changed) try drawJoin(v, a, now.join);
-    for (now.players, 0..) |p, k| {
+    for (now.players[0..cartridge_players], 0..) |p, k| {
         const before: ?PlayerBar = if (was) |w| (if (k == 1 and changed and !now.join) null else w.players[k]) else null;
         if (before) |b| {
             if (std.meta.eql(b, p)) continue;
@@ -1716,10 +1732,14 @@ pub fn drawBar(v: *view.View, a: anytype, now: Bar, was: ?Bar) !void {
         }
         try drawPlayer(v, a, k, p, before);
     }
-    if (was == null or was.?.time != now.time) {
-        try bigDigit(board, a, a.screen.status_bar.time, now.time / 10);
-        try bigDigit(board, a, .{ .x = a.screen.status_bar.time.x + 1, .y = a.screen.status_bar.time.y }, now.time % 10);
-    }
+    try drawTime(board, a, now, was);
+}
+
+/// The round's timer, when it changed since `was`.
+fn drawTime(board: *render.Board, a: anytype, now: Bar, was: ?Bar) !void {
+    if (was != null and was.?.time == now.time) return;
+    try bigDigit(board, a, a.screen.status_bar.time, now.time / 10);
+    try bigDigit(board, a, .{ .x = a.screen.status_bar.time.x + 1, .y = a.screen.status_bar.time.y }, now.time % 10);
 }
 
 /// The bosses' bars that changed since `was`: shown, their rectangle and its label, then each
