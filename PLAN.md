@@ -697,11 +697,33 @@ machine in network play; CPUs in the free places and several local players a mac
     and x1.5, the bosses' x1.5 and x2; the breakables among them bring more food and goodies.
   - Gate: zig build test; the numbers measured with CPUs in every place (a tool's games of 3 and
     4 players: lives lost, damage taken, rounds' times against 2), tuned, and the user's play.
-- [ ] **53 — Mr. X's room, the continues and the high scores for 4** — Depends: 47, 48.
+- [x] **53 — Mr. X's room, the continues and the high scores for 4** — Depends: 47, 48.
   - Mr. X's offer for players 1 and 2 alone, played as two until he rises; then the others come
     in. Each player's continue's question and name entry on its own slot; the high scores take
     four entries.
   - Gate: zig build test; round 8's room and a game over played with 4 players (pictures).
+  - [x] Checked 2026-11-07: zig build test (the room of four: players 3 and 4 walking away and
+    out, the fight as two until Mr. X rises, their drop with their records; the offer's players
+    out of lives letting them in, no game over; players 3 and 4 in the offer's seats, player 4
+    answering with its own pad; a join stepping out; the slot's question, name entry and game
+    over; the last round's lives of four; the table's last place in a game of four; players 3
+    and 4's colours; the chair's player; the agent's `cpu` lines). Pictures of `start adam axel
+    blaze adam round 8` played by four CPUs (the agent's new `cpu N on`): players 3 and 4
+    walking off to the right as 1 and 2 walk to the door, their slots kept; the offer for
+    players 1 and 2; Mr. X rising and players 3 and 4 dropping in; the fight of four to the
+    round's clear (1UP to 4UP's lives counted, four names entered) and the ending; with pads 1
+    and 2 answering yes, the trapdoors under them, then round 6 with four players. A game of
+    four from round 1 (CPUs, then idle pads): CONTINUE over ->YES x3 on the slots, the name
+    entries' scores over NAME, GAME OVER beside each name, the high scores with players 1 to 3's
+    new entries in red, yellow and green (player 4's blue in a run before the table's last place
+    was guarded). Games of one and two as before: cpus-check (ReleaseFast) built on the base and
+    on the change, 39 games (the nine pairings at level 3, 7 lives, seeds 1 and 2, the whole
+    game through the room to the ending; the nine `--player1 bot` to round 7, seeds 1 and 2; the
+    defaults, seeds 1 to 3): every JSON line and stderr byte-identical; round-check's report and
+    screens-check's 23 runs' lines identical to the base's; six recorded two-player games to
+    round 8 (their traces, which end before the offer) identical; netplay-check (its 25 flows)
+    passes. Players 3 and 4 come in by dropping in, as Mr. X's room's door and camera leave no
+    side to walk in from; the boss ending of four was not pictured (no scenario reaches it).
 
 ## Standing rule
 
