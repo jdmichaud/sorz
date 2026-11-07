@@ -295,12 +295,12 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
 }
 
 /// What the host's session offers beside its game: whether its game is a local one of two or
-/// more (no place), its places (the network options' PLAYERS), and the places its clients play
-/// or are about to (a bit each).
-pub const Offer = struct { local_two: bool = false, places: u8 = 2, taken: u8 = 0 };
+/// more (no place), its places (the network options' PLAYERS), the places its clients play or
+/// are about to (a bit each), and whether two players may play one character.
+pub const Offer = struct { local_two: bool = false, places: u8 = 2, taken: u8 = 0, same_character: bool = false };
 
 fn offerOf(g: *const Game, np: *const net.Netplay) Offer {
-    var o: Offer = .{ .local_two = g.net.local_two, .places = g.net.options.places };
+    var o: Offer = .{ .local_two = g.net.local_two, .places = g.net.options.places, .same_character = np.same_character };
     for (1..net.netplay.max_players) |k| if (np.placeTaken(k)) {
         o.taken |= @as(u8, 1) << @intCast(k);
     };
@@ -363,13 +363,14 @@ fn firstFree(o: Offer, sel: ?*const @import("screens/select.zig").Select) ?u8 {
 }
 
 /// Whether the host's game takes a join now, as `character` (null: none chosen): its offer, the
-/// same reading as `statusOf`'s.
+/// same reading as `statusOf`'s; in play, not as a character its round's players play unless
+/// two may play one (two clients may have asked for it at once).
 fn takes(s: *const State, o: Offer, join_in_progress: bool, character: ?Character) bool {
     const st = statusOf(s, o);
     return switch (st.game) {
         .none => false,
         .select => st.place,
-        .play => st.place and join_in_progress and character != null,
+        .play => st.place and join_in_progress and if (character) |c| o.same_character or st.taken & @as(u8, 1) << @intCast(@backingInt(c)) == 0 else false,
     };
 }
 
@@ -534,7 +535,16 @@ fn client(g: *Game, p: *platform.Platform, np: *net.Netplay, start_new: bool) vo
         .menu => if (atOwnSelect(&g.state)) {
             g.net.client = .own_select;
         },
-        .own_select => ask(g, p, np),
+        .own_select => {
+            // Its choice taken meanwhile by another client's join: its player chooses again.
+            if (choice(&g.state)) |c| if (taken(g) & @as(u8, 1) << @intCast(@backingInt(c)) != 0) switch (g.state.scenes.base) {
+                .select => |*sel| if (sel.unchoose(&g.state.setup)) {
+                    g.redraw = true;
+                },
+                else => {},
+            };
+            ask(g, p, np);
+        },
         .asking => {},
         .watch_asked => if (!np.observeWanted() and !np.observing()) {
             g.net.client = .menu;
@@ -911,6 +921,9 @@ test "the join the host takes is its offer: its select at once, play with a char
     try std.testing.expect(takes(&s, .{}, true, .adam));
     try std.testing.expect(!takes(&s, .{}, true, null));
     try std.testing.expect(!takes(&s, .{}, false, .adam));
+    // Player 1's character in the round: not as it, unless two may play one.
+    s.scenes.base.round.play.world.players[0].entity = .{ .index = 0, .generation = 0 };
+    try std.testing.expect(!takes(&s, .{}, true, .axel) and takes(&s, .{ .same_character = true }, true, .axel));
 }
 
 test "a client's own select is the select alone" {

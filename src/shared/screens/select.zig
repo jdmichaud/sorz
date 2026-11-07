@@ -629,7 +629,7 @@ pub const Select = struct {
         }
         const place = self.cursors[k].place;
         self.cursors[k] = .{ .place = first_places[k] };
-        if (k + 1 == self.count()) {
+        if (@as(usize, k) + 1 == self.count()) {
             // The last: one fewer, and those gone before it with it.
             var n: usize = k;
             while (n > 1 and !self.present(n - 1)) n -= 1;
@@ -686,6 +686,20 @@ pub const Select = struct {
     pub fn chosenAlone(self: *const Select) ?Character {
         if (self.players != .one or !self.cursors[0].chosen) return null;
         return self.cursors[0].place;
+    }
+
+    /// The only player's choice is taken back (a guest's own select, whose character another
+    /// machine's player took meanwhile): it chooses again. False past the choice's wait.
+    pub fn unchoose(self: *Select, setup: *Setup) bool {
+        if (self.players != .one or !self.cursors[0].chosen) return false;
+        switch (self.phase) {
+            .first_half, .second_half => {},
+            .wait => self.phase = .first_half,
+            else => return false,
+        }
+        self.cursors[0].chosen = false;
+        setup.characters[0] = null;
+        return true;
     }
 
     /// The select's music, which plays from its set-up.
@@ -1074,4 +1088,52 @@ test "three players by the cartridge's rule: a move passes the others' portraits
     pressOf(&s, &setup, &a, original, 0, .{ .left = true });
     pressOf(&s, &setup, &a, original, 0, .{});
     try testing.expectEqual(Character.axel, s.cursors[0].place);
+}
+
+test "a guest's own choice taken back: it chooses again, its wait over; not past the fade" {
+    var setup: Setup = .{};
+    var s: Select = .{ .phase = .wait };
+    s.cursors[0] = .{ .place = .blaze, .chosen = true };
+    setup.characters[0] = .blaze;
+    try testing.expect(s.unchoose(&setup));
+    try testing.expect(!s.cursors[0].chosen and s.phase == .first_half and setup.characters[0] == null);
+    try testing.expect(!s.unchoose(&setup));
+    s.cursors[0].chosen = true;
+    s.phase = .fade_out;
+    try testing.expect(!s.unchoose(&setup));
+}
+
+test "players at the select: joins in their places; one leaving before the last leaves its place free" {
+    var tp: TestPoses = .{};
+    tp.init();
+    const a = testAssets(&tp);
+    var setup: Setup = .{ .same_character = false };
+    var s: Select = .{ .phase = .first_half };
+    // Players 2, 3 and 4 come: Blaze's, Axel's, and the fourth (with four, any) on Axel's too.
+    s.join(1, &setup, &a, null, false);
+    s.join(2, &setup, &a, null, false);
+    try testing.expectEqual(setup_mod.Players.three, s.players);
+    try testing.expectEqual(Character.axel, s.cursors[2].place);
+    // Player 3 chosen at its own select on player 2's character: moved on, its choice not kept.
+    s.leave(2, &setup, &a);
+    s.join(2, &setup, &a, .blaze, true);
+    try testing.expect(s.cursors[2].place != .blaze and !s.cursors[2].chosen);
+    s.join(3, &setup, &a, null, false);
+    try testing.expectEqual(setup_mod.Players.four, setup.players);
+    try testing.expect(!s.joinableUpTo(4) and s.freePlace(4) == null);
+    // Player 3 goes: its place free, the others on; it comes back to its place.
+    s.leave(2, &setup, &a);
+    try testing.expect(!s.has(2) and s.has(3) and s.freePlace(4) == 2 and s.joinableUpTo(4));
+    try testing.expectEqual(@as(?Character, null), s.listed.labels[2]);
+    s.join(2, &setup, &a, null, false);
+    try testing.expect(s.has(2) and s.gone == 0);
+    // The last goes, then the one before it gone already: two players left.
+    s.leave(2, &setup, &a);
+    s.leave(3, &setup, &a);
+    try testing.expectEqual(setup_mod.Players.two, s.players);
+    try testing.expectEqual(setup_mod.Players.two, setup.players);
+    try testing.expect(s.gone == 0);
+    // A guest keeps its own cursor alone, named its player's.
+    try testing.expect(s.keepOnly(1, &a));
+    try testing.expect(s.players == .one and s.seat == 1 and s.cursors[0].place == .blaze);
 }
