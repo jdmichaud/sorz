@@ -640,7 +640,7 @@ machine in network play; CPUs in the free places and several local players a mac
     is empty; the continue's question, the name entry and the game over have short forms on a
     slot until item 53; the setup's network names are given by item 51; the round clear of 3 or
     4 players was not pictured.
-- [ ] **49 — The select for 4** — Depends: 47.
+- [x] **49 — The select for 4** — Depends: 47.
   - A cursor each, 1P to 4P; with 4 players SAME CHARACTER on. A character's third and fourth
     players take colour sets of the port's own (shown to the user first).
   - The colour sets, approved by the user (2026-11-07), maps of the players' palette (line 0)
@@ -650,6 +650,23 @@ machine in network play; CPUs in the free places and several local players a mac
     (6, 7) white and light grey for the third (8, 12), yellow and orange for the fourth (14, 15).
   - Gate: zig build test; pictures of the select with 3 and 4 cursors and of each character's
     four colour sets in a round.
+  - [x] Checked 2026-11-07: zig build test (four cursors sharing portraits even by the
+    cartridge's rule, their labels taking turns in front, the four choices; three passing the
+    others' portraits by the cartridge's rule; two as before; the colour maps' rule, own,
+    `duplicate`, `third`, `fourth` by the players before on a character; the 3P and 4P labels'
+    digit and outline). The extractor writes `third` and `fourth` beside `duplicate` and the
+    labels `select/label_02` and `_03` (2PLAYER with the main font's 3 and 4), their provenance
+    the port's; extract-check identical. Pictures through the agent host, players 3 and 4 on keys
+    of the settings: the select of three (1PLAYER on Adam, 3PLAYER on Axel, 2PLAYER on Blaze,
+    three frames lit) and of four (3PLAYER and 4PLAYER by turns on Axel, then on Blaze and Adam,
+    Axel's frame dimmed); rounds of four on one character: Adam yellow, blue, red, white; Axel's
+    jeans blue, red (hair grey), grey, yellow and orange; Blaze red, blue, white, yellow.
+    cpus-check (ReleaseFast) built before and after, 39 games (the nine pairings at level 3, 7
+    lives, seeds 1 and 2, to round 3; the nine `--player1 bot` to round 7, seeds 1 and 2; the
+    defaults, seeds 1 to 3): every JSON line, stderr and exit byte-identical. round-check (its
+    report identical), screens-check (its 23 scenarios as before, none differing),
+    variants-check's six flows of before as before, netplay-check (its 25 flows and its two
+    processes pass, as before).
 - [ ] **50 — 3 and 4 PLAYERS in the menu** — Depends: 48, 49.
   - Right on 2 PLAYERS: 3 PLAYERS, 4 PLAYERS, then the CPU's readings; skipped without as many
     input methods (the keyboard's two pads, the gamepads).
