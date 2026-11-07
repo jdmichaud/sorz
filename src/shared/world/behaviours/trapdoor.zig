@@ -1,7 +1,8 @@
 //! Mr. X's trapdoors (round 8's room: the offer accepted, world/room.zig puts them in the
 //! effects' places). At their first tick: their sound, the floor gone from under the players
 //! (the room's `floor_gone`: they fall, and their fall ends the round), the trapdoors open in the
-//! round's plane under the players in play (the round scene's picture of them), and they go.
+//! round's plane under the offer's players in the room (the round scene's picture of them, at
+//! their seats' places: the others are outside, world/room.zig), and they go.
 const tick = @import("../tick.zig");
 const room = @import("../room.zig");
 
@@ -25,8 +26,8 @@ pub fn think(a: Actor) void {
     a.sound(.open);
     w.room.floor_gone = true;
     var players: room.Trapdoors = 0;
-    for (w.players, 0..) |p, k| {
-        if (p.entity != null) players |= @as(room.Trapdoors, 1) << @intCast(k);
+    for (0..2) |seat| {
+        if (w.players[room.playerAt(&w.room, @intCast(seat))].entity != null) players |= @as(room.Trapdoors, 1) << @intCast(seat);
     }
     w.room.trapdoors = players;
     a.remove();

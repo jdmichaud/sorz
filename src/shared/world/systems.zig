@@ -154,10 +154,11 @@ pub fn runRound(world: *World, kinds: *const Kinds, rng: *random.Random, in: Inp
 /// network play's second player): its first life drops in after the players' turns and before
 /// the camera's and the others' (the original's join comes before its objects' update, and its
 /// joining player's first update sets it up without moving it), so that the camera keeps it in
-/// its view and the enemies it knocks back move away at this tick.
+/// its view and the enemies it knocks back move away at this tick. In round 8's last room, while
+/// the room keeps the others out, one outside the offer steps out at once (room.zig).
 fn joining(t: *Tick) void {
     const j = t.input.join orelse return;
-    _ = lives.join(t, j.player, j.kind, j.lives, j.colours);
+    if (lives.join(t, j.player, j.kind, j.lives, j.colours)) room.joined(t, j.player);
 }
 
 // Input to commands -------------------------------------------------------------------------------
@@ -968,9 +969,9 @@ pub fn wobble(c: *world_mod.Camera) void {
 pub fn keepPlayers(t: *Tick) void {
     const c = &t.world.camera;
     const rules = c.follows orelse return;
-    for (t.world.players) |p| {
+    for (t.world.players, 0..) |p, k| {
         const e = t.world.get(p.entity orelse continue) orelse continue;
-        if (!script.exiting(t.world) and t.keptInView(p.entity.?)) {
+        if (!script.exiting(t.world) and !room.walksAway(&t.world.room, k) and t.keptInView(p.entity.?)) {
             const left = c.x.whole();
             e.position.x = keptWithin(e.position.x, left + rules.kept_x[0], left + rules.kept_x[1]);
         }

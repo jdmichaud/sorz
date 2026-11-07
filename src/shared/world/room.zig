@@ -10,8 +10,15 @@
 //! (`offer`): while it runs, play's phase is the traces' `script` (the original's offer machine
 //! keeps running through the fight, in its last step).
 //!
-//! The offer is players 1 and 2's (the cartridge's two; players 3 and 4, the port's, walk in with
-//! them and take no part in it: DESIGN.md 10.7, E4; PLAN item 53 brings them in).
+//! The offer is the cartridge's two players' (DESIGN.md 10.7, E4): players 1 and 2, or players 3
+//! and 4 (the port's) when neither of them is in the room (`first`, the offer's first player; the
+//! offer's seats, `seatOf`). As the room's script starts and the offer's players walk in, the
+//! others walk away, back the way the round came, and step out of the game's picture once off the
+//! screen (`stepOut`: their fighters go, their records stay; at the walk in's end at the latest).
+//! The room plays as a game of two until Mr. X rises from his chair; then they drop into the room
+//! as a new life does, blinking, their lives, specials and scores as they were (`comeIn`). They
+//! come in sooner when neither of the offer's players fights any more (both out of lives), so that
+//! the game goes on with them.
 //!
 //! The offer's script (`offerTick`, before the players' turns) is the original's machine of steps,
 //! by their numbers: Mr. X's window opens a row a tick, his texts are typed in it a letter every
@@ -31,6 +38,7 @@ const tick_mod = @import("tick.zig");
 const entity = @import("entity.zig");
 const world_mod = @import("world.zig");
 const content_round = @import("../content/round.zig");
+const lives = @import("lives.zig");
 
 const Tick = tick_mod.Tick;
 const Handle = entity.Handle;
@@ -62,6 +70,14 @@ pub const State = struct {
     wave: u8 = 0,
     /// A player out of the game left the room (as the fight began, or beaten in the duel).
     gone: [world_mod.max_players]bool = @splat(false),
+    /// The offer's first player (its seats are this one and the next): player 1, or player 3 when
+    /// neither player 1 nor player 2 is in the room as its script starts.
+    first: world_mod.PlayerNumber = 0,
+    /// The players walking away from the room, and those outside it, which the room keeps out
+    /// (`held_out`) until Mr. X rises.
+    leaving: [world_mod.max_players]bool = @splat(false),
+    outside: [world_mod.max_players]bool = @splat(false),
+    held_out: bool = false,
     /// The offer's window: its rows open (closing, `shutting`), the text in it (by its index in
     /// the offer's texts) and its letters typed, the ticks to the next letter; a wait's ticks.
     rows: u8 = 0,
@@ -70,8 +86,8 @@ pub const State = struct {
     typed: u8 = 0,
     type_ticks: u8 = 0,
     wait: u8 = 0,
-    /// Players 1 and 2: held in the choice, its mark on no, answered; its answers shown in the
-    /// window, and its mark.
+    /// The offer's two players, by their seats: held in the choice, its mark on no, answered; its
+    /// answers shown in the window, and its mark.
     choosing: [2]bool = .{ false, false },
     on_no: [2]bool = .{ false, false },
     answered: [2]bool = .{ false, false },
@@ -84,7 +100,8 @@ pub const State = struct {
     yes_kept: bool = false,
     back: bool = false,
     accepted_before: bool = false,
-    /// The trapdoors opened under the players in play then (a bit each): the floor is gone.
+    /// The trapdoors opened under the offer's players in the room then (a bit each, by their
+    /// seats): the floor is gone.
     trapdoors: ?Trapdoors = null,
     floor_gone: bool = false,
 
@@ -99,8 +116,123 @@ pub const State = struct {
     }
 };
 
-/// The players a trapdoor opened under: a bit each.
-pub const Trapdoors = @Int(.unsigned, world_mod.max_players);
+/// The offer's players a trapdoor opened under: a bit each seat (the room's places of players 1
+/// and 2, where the offer's players stand).
+pub const Trapdoors = u2;
+
+/// The offer's seat of player `k` (0 or 1), when it is one of the offer's two players.
+pub fn seatOf(r: *const State, k: world_mod.PlayerNumber) ?u1 {
+    if (k < r.first) return null;
+    return std.math.cast(u1, k - r.first);
+}
+
+/// The player in the offer's seat `seat`.
+pub fn playerAt(r: *const State, seat: u1) world_mod.PlayerNumber {
+    return r.first + seat;
+}
+
+/// The room's script starts (script.zig): the offer's players are players 1 and 2, or 3 and 4
+/// when neither of the first two is in the room; the others walk away (`walkIn`), and the room
+/// keeps them out.
+pub fn begin(t: *Tick) void {
+    const w = t.world;
+    const r = &w.room;
+    var in: [world_mod.max_players]bool = undefined;
+    for (&in, w.players) |*x, p| x.* = p.entity != null;
+    r.first = if (!in[0] and !in[1] and (in[2] or in[3])) 2 else 0;
+    for (in, 0..) |fights, k| if (fights and seatOf(r, @intCast(k)) == null) {
+        r.leaving[k] = true;
+        r.held_out = true;
+    };
+}
+
+/// The pixels past the screen's edge a player walking away steps out at (its sprite gone).
+const away_past = 48;
+
+/// At the logic tick's start, the players walking away step out once off the screen on the side
+/// they walk to, or when the walk in has ended.
+fn leaveTick(t: *Tick) void {
+    const w = t.world;
+    const r = &w.room;
+    for (&r.leaving, 0..) |*l, k| {
+        if (!l.*) continue;
+        const e = w.getConst(w.players[k].entity orelse {
+            l.* = false;
+            continue;
+        }) orelse continue;
+        const left = w.camera.x.whole();
+        const x = e.position.x.whole();
+        const off = if (awayRight(t)) x > left + screen_width + away_past else x < left - away_past;
+        if (!off and r.walking) continue;
+        l.* = false;
+        stepOut(t, @intCast(k));
+    }
+}
+
+/// The screen's pixels across.
+const screen_width = 320;
+
+/// Whether the way back the round came is to the right (a round going left).
+fn awayRight(t: *const Tick) bool {
+    const p = t.plan orelse return true;
+    return p.round.camera.leftward;
+}
+
+/// Player `k` joined the game under way (network play's): while the room keeps the others out,
+/// it steps out at once, unless it is one of the offer's.
+pub fn joined(t: *Tick, k: world_mod.PlayerNumber) void {
+    if (t.world.room.held_out) stepOut(t, k);
+}
+
+/// Whether player `k` walks away from the room (the camera keeps it in view no more).
+pub fn walksAway(r: *const State, k: usize) bool {
+    return r.leaving[k];
+}
+
+/// Player `k`'s fighter steps out of the room, which keeps it out from then on: its record stays
+/// as it is (its lives, specials, score), its fighter goes. One of the offer's, or one without a
+/// fighter, stays as it is.
+fn stepOut(t: *Tick, k: world_mod.PlayerNumber) void {
+    const w = t.world;
+    const r = &w.room;
+    if (seatOf(r, k) != null) return;
+    const p = &w.players[k];
+    const h = p.entity orelse return;
+    p.entity = null;
+    w.remove(h);
+    r.outside[k] = true;
+    r.held_out = true;
+}
+
+/// Whether the room's players outside come in: once Mr. X has risen, or once neither of the
+/// offer's players fights (out of lives, or out of the game).
+fn comesIn(t: *const Tick) bool {
+    const w = t.world;
+    const r = &w.room;
+    if (r.has(.stands)) return true;
+    for (0..2) |seat| {
+        const e = w.getConst(w.players[playerAt(r, @intCast(seat))].entity orelse continue) orelse continue;
+        if (e.mind == .player) return false;
+    }
+    return true;
+}
+
+/// At the logic tick's start, when they come in (`comesIn`): the players outside drop in as a new
+/// life does (lives.zig, `comeIn`), each in its turn, and the room keeps no one out any more.
+fn letIn(t: *Tick) void {
+    const r = &t.world.room;
+    if (!r.held_out) return;
+    leaveTick(t);
+    if (!comesIn(t)) return;
+    r.held_out = false;
+    for (&r.outside, &r.leaving, 0..) |*o, *l, k| {
+        // One still walking away turns back.
+        l.* = false;
+        if (!o.*) continue;
+        o.* = false;
+        _ = lives.comeIn(t, @intCast(k));
+    }
+}
 
 /// The fight's progress, the original's bits by number: Mr. X's first laugh (the fight's first
 /// wave due), the first wave cleared, his second laugh (the second wave due), his standing up,
@@ -143,11 +275,12 @@ pub fn scrolls(t: *const Tick) ?i32 {
 }
 
 /// The command player `k` (its fighter `h`) takes in the walk in, instead of its own: none outside
-/// it, and none in the air (its own then). What it holds it lets go. To the door's depths and
+/// it, and none in the air (its own then). What it holds it lets go. One outside the offer walks
+/// away, back the way the round came (`begin`). The offer's players: to the door's depths and
 /// left of its place: the first there puts up the door and strikes it, facing left. Then to the
-/// room's depths and its place (players 3 and 4 player 1's and 2's): there, as the last player
-/// arrives, the walk in ends and the offer begins (the timer stops); player 1 turns right as it
-/// arrives.
+/// room's depths and its place (the offer's first seat's, or its second's): there, as the last
+/// player arrives, the walk in ends and the offer begins (the timer stops); the first seat's
+/// player turns right as it arrives.
 pub fn walkIn(t: *Tick, k: world_mod.PlayerNumber, h: Handle) ?world_mod.Command {
     const r = &t.world.room;
     if (!r.walking) return null;
@@ -160,6 +293,10 @@ pub fn walkIn(t: *Tick, k: world_mod.PlayerNumber, h: Handle) ?world_mod.Command
     }
     if (!e.velocity.height.eql(.zero)) return null;
     const own = t.world.players[k].command;
+    if (r.leaving[k]) {
+        const away: world_mod.Actions = if (awayRight(t)) .{ .right = true } else .{ .left = true };
+        return .{ .held = away, .pressed = away, .last = away };
+    }
     const d = e.position.depth.whole();
     const x: u16 = @truncate(@as(u32, @bitCast(e.position.x.whole())));
     const way: world_mod.Actions = way: {
@@ -178,11 +315,12 @@ pub fn walkIn(t: *Tick, k: world_mod.PlayerNumber, h: Handle) ?world_mod.Command
         if (d < wk.depth[0]) break :way .{ .down = true };
         if (d >= wk.depth[1]) break :way .{ .up = true };
         if (r.in_place[k]) break :way .{};
-        const place: u16 = @intCast(wk.places[k % 2]);
+        const seat: u1 = seatOf(r, k) orelse @truncate(k);
+        const place: u16 = @intCast(wk.places[seat]);
         if (place < x) break :way .{ .left = true };
         if (place -% @as(u16, @intCast(wk.near)) >= x) break :way .{ .right = true };
         r.arrived +%= 1;
-        const needed: u8 = t.playersInPlay() -| 1;
+        const needed: u8 = seatsInPlay(t) -| 1;
         if (r.arrived > needed) {
             r.walking = false;
             // The offer begins (back after the duel, it goes on).
@@ -190,7 +328,7 @@ pub fn walkIn(t: *Tick, k: world_mod.PlayerNumber, h: Handle) ?world_mod.Command
             t.world.timer.stopped = true;
         }
         r.in_place[k] = true;
-        break :way if (k == 0) .{ .right = true } else .{};
+        break :way if (seat == 0) .{ .right = true } else .{};
     };
     var held = way;
     held.start = own.held.start;
@@ -201,12 +339,25 @@ pub fn walkIn(t: *Tick, k: world_mod.PlayerNumber, h: Handle) ?world_mod.Command
 
 // The offer ------------------------------------------------------------------------------------
 
+/// The offer's players in play (the players walking away not counted).
+fn seatsInPlay(t: *const Tick) u8 {
+    var n: u8 = 0;
+    for (t.world.players, 0..) |p, k| {
+        if (seatOf(&t.world.room, @intCast(k)) == null) continue;
+        if (p.entity) |h| if (t.world.getConst(h) != null) {
+            n += 1;
+        };
+    }
+    return n;
+}
+
 /// The kind of the trapdoors the offer accepted opens.
 pub const trapdoor_kind = "trapdoor";
 
-/// The offer's script's tick (before the players' turns): the step's hold on the players, then
-/// the step.
+/// The offer's script's tick (before the players' turns): the players outside let in when they
+/// come in; the step's hold on the players, then the step.
 pub fn offerTick(t: *Tick) void {
+    letIn(t);
     const r = &t.world.room;
     const step = r.offer orelse return;
     const p = t.plan orelse return;
@@ -317,8 +468,9 @@ pub fn offerTick(t: *Tick) void {
         // The duel's end: a player out of the game, the one left walks back to its place.
         0x29 => {
             const w = t.world;
-            const out = [2]bool{ r.gone[0] or w.players[0].out, r.gone[1] or w.players[1].out };
-            const left: usize = if (out[0]) 1 else if (out[1]) 0 else return;
+            const seats = [2]usize{ playerAt(r, 0), playerAt(r, 1) };
+            const out = [2]bool{ r.gone[seats[0]] or w.players[seats[0]].out, r.gone[seats[1]] or w.players[seats[1]].out };
+            const left = if (out[0]) seats[1] else if (out[1]) seats[0] else return;
             if (!out[0]) r.duel = false;
             r.walking = true;
             if (!r.in_place[left]) return;
@@ -406,8 +558,10 @@ fn typeLetter(t: *Tick, r: *State, o: *const Offer) void {
     if (bottom != ' ') t.out.sounds.append(.{ .name = o.letter, .first = true });
 }
 
-/// Whether player `k` (1 or 2) is in the game (not out of it, nor gone from the room).
-fn inGame(t: *const Tick, k: u1) bool {
+/// Whether the offer's player in seat `seat` is in the game (not out of it, nor gone from the
+/// room).
+fn inGame(t: *const Tick, seat: u1) bool {
+    const k = playerAt(&t.world.room, seat);
     const p = t.world.players[k];
     return p.entity != null and !p.out and !t.world.room.gone[k];
 }
@@ -417,24 +571,25 @@ fn playersIn(t: *const Tick) u8 {
     return @as(u8, @intFromBool(inGame(t, 0))) + @intFromBool(inGame(t, 1));
 }
 
-/// The one player asked alone: player 1 when it is the only one in the game, else player 2.
+/// The seat of the one player asked alone: the first's when it is the only one in the game, else
+/// the second's.
 fn lone(t: *const Tick) u1 {
     return if (inGame(t, 0) and !inGame(t, 1)) 0 else 1;
 }
 
 /// The command player `k` takes while held in the choice: none (its pads are taken). When the
 /// step lets it answer and it has not, up and down move its mark (yes, no) with their sound, a
-/// button answers (its sound): the next step, or, alone and saying no, seven steps on. Players 3
-/// and 4 are not held.
+/// button answers (its sound): the next step, or, alone and saying no, seven steps on. Players
+/// outside the offer are not held.
 pub fn choice(t: *Tick, player: world_mod.PlayerNumber, h: Handle) ?world_mod.Command {
-    const k = std.math.cast(u1, player) orelse return null;
     const r = &t.world.room;
+    const k = seatOf(r, player) orelse return null;
     if (!r.choosing[k]) return null;
     const step = r.offer orelse return null;
     const p = t.plan orelse return null;
     const o = &(p.round.room orelse return null).offer;
     if (step >= o.steps.len or o.steps[step] != .answer or r.answered[k]) return .{};
-    const pressed = t.world.players[k].command.pressed;
+    const pressed = t.world.players[player].command.pressed;
     const was = r.on_no[k];
     if (pressed.up) r.on_no[k] = false else if (pressed.down) r.on_no[k] = true;
     if (r.on_no[k] != was) t.sound(o.move, h);

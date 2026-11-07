@@ -1899,43 +1899,44 @@ test "the CPU out of lives: its name CPU entered, then yes to the continue's que
     try testing.expectEqual(@as(u8, 2), r.w.players[0].continues);
 }
 
+/// A room whose offer's first step asks for the answers.
+const room_round: content_round.Round = blk: {
+    var x = lives_round;
+    const cell: content_round.Cell = .{ .x = 0, .y = 0 };
+    x.room = .{
+        .wall = 0,
+        .timer = 0,
+        .starts_after = 0,
+        .scroll = 0,
+        .walk = .{ .door_depth = .{ 0, 0 }, .door_x = 0, .depth = .{ 0, 0 }, .places = .{ 0, 0 }, .near = 0 },
+        .door = .{ .x = 0, .depth = 0, .height = 0 },
+        .music = "",
+        .fade = "",
+        .last_music = "",
+        .last_art_after = 0,
+        .stand_art_after = 0,
+        .offer = .{
+            .texts = &.{},
+            .answers = &.{},
+            .mark = "",
+            .mark_lines = .{ 0, 0 },
+            .window = .{ .text = cell, .answers = .{ cell, cell }, .marks = .{ cell, cell }, .open = 0, .shut = 0 },
+            .steps = &.{.answer},
+            .type_period = 1,
+            .rows = 0,
+            .wait = 0,
+            .letter = "",
+            .move = "move",
+            .answer = "answer",
+            .duel_music = "",
+        },
+    };
+    break :blk x;
+};
+
 test "the CPU at Mr. X's offer: its mark moved to no, then its answer, by the room's choice" {
     var r = try Round.init();
     defer r.deinit();
-    // A room whose offer's first step asks for the answers.
-    const room_round: content_round.Round = blk: {
-        var x = lives_round;
-        const cell: content_round.Cell = .{ .x = 0, .y = 0 };
-        x.room = .{
-            .wall = 0,
-            .timer = 0,
-            .starts_after = 0,
-            .scroll = 0,
-            .walk = .{ .door_depth = .{ 0, 0 }, .door_x = 0, .depth = .{ 0, 0 }, .places = .{ 0, 0 }, .near = 0 },
-            .door = .{ .x = 0, .depth = 0, .height = 0 },
-            .music = "",
-            .fade = "",
-            .last_music = "",
-            .last_art_after = 0,
-            .stand_art_after = 0,
-            .offer = .{
-                .texts = &.{},
-                .answers = &.{},
-                .mark = "",
-                .mark_lines = .{ 0, 0 },
-                .window = .{ .text = cell, .answers = .{ cell, cell }, .marks = .{ cell, cell }, .open = 0, .shut = 0 },
-                .steps = &.{.answer},
-                .type_period = 1,
-                .rows = 0,
-                .wait = 0,
-                .letter = "",
-                .move = "move",
-                .answer = "answer",
-                .duel_music = "",
-            },
-        };
-        break :blk x;
-    };
     const plan: script.Plan = .{ .round = &room_round, .lives = 3 };
     r.w.room.offer = 0;
     r.w.room.choosing = .{ true, false };
@@ -2886,4 +2887,169 @@ test "four players: player 4 calls the special attack: its own, player 2's kind 
         if (e.alive() and e.mind == .special_knockdown) break e.mind.special_knockdown;
     } else return error.NoSpecial;
     try testing.expect(own.second and own.by.?.eql(hs[3]));
+}
+
+// Round 8's last room with three and four players (DESIGN.md 10.7, E4) --------------------------
+
+/// Four players, their records told apart, and the room's script begun (room.zig, `begin`) as
+/// the room's script begins it: the plan's.
+fn roomOfFour(r: *Round, plan: *const script.Plan) ![world_mod.max_players]Handle {
+    script.start(&r.w, plan);
+    const hs = try morePlayers(r, .{ .{ 880, 100 }, .{ 760, 40 }, .{ 700, 88 } }, .{ .left, .right, .right });
+    for (r.w.players[2..], 2..) |*p, k| {
+        p.lives = @intCast(k);
+        p.specials = 0;
+        p.score = 1000 * @as(u32, @intCast(k));
+    }
+    var t = r.tick();
+    t.plan = plan;
+    room.begin(&t);
+    return hs;
+}
+
+test "Mr. X's room of four: players 3 and 4 step out, the room plays as two; they drop in as he rises" {
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &room_round, .lives = 3 };
+    const hs = try roomOfFour(&r, &plan);
+    const rm = &r.w.room;
+    try testing.expectEqual(@as(input.Player, 0), rm.first);
+    try testing.expect(rm.held_out);
+    // They walk away, back the way the round came (a round going right: left), the camera not
+    // keeping them, until off the screen or the walk in's end.
+    try testing.expect(!room_round.camera.leftward);
+    try testing.expect(rm.leaving[2] and rm.leaving[3] and !rm.leaving[0]);
+    try testing.expect(room.walksAway(rm, 3));
+    rm.walking = true;
+    const x = r.w.get(hs[2]).?.position.x;
+    for (0..4) |_| r.stepPlan(.{}, &plan);
+    try testing.expect(r.w.get(hs[2]).?.position.x.lessThan(x));
+    try testing.expectEqual(entity.Facing.left, r.w.get(hs[2]).?.facing);
+    rm.walking = false;
+    r.stepPlan(.{}, &plan);
+    for (r.w.players, 0..) |p, k| {
+        try testing.expectEqual(k >= 2, rm.outside[k]);
+        try testing.expectEqual(k < 2, p.entity != null);
+        if (k >= 2) try testing.expect(r.w.get(hs[k]) == null and !p.out);
+    }
+    try testing.expectEqual(@as(?u1, 0), room.seatOf(rm, 0));
+    try testing.expectEqual(@as(?u1, 1), room.seatOf(rm, 1));
+    try testing.expectEqual(@as(?u1, null), room.seatOf(rm, 2));
+    // The fight goes on as two players' until Mr. X rises.
+    for (0..30) |_| r.stepPlan(.{}, &plan);
+    try testing.expect(r.w.players[2].entity == null and r.w.players[3].entity == null);
+    var t = r.tick();
+    try testing.expectEqual(@as(u8, 2), t.playersInPlay());
+    _ = rm.set(.stands);
+    r.stepPlan(.{}, &plan);
+    try testing.expect(!rm.held_out);
+    for (r.w.players[2..], 2..) |p, k| {
+        try testing.expect(!rm.outside[k]);
+        const e = r.w.get(p.entity.?).?;
+        try testing.expect(e.mind == .player);
+        try testing.expectEqual(@as(i16, 80), e.health);
+        try testing.expectEqual(room_round.players.depthOf(k), e.position.depth.whole());
+        // Its record as it was.
+        try testing.expectEqual(@as(u8, @intCast(k)), p.lives);
+        try testing.expectEqual(@as(u8, 0), p.specials);
+        try testing.expectEqual(1000 * @as(u32, @intCast(k)), p.score);
+    }
+    t = r.tick();
+    try testing.expectEqual(@as(u8, 4), t.playersInPlay());
+    // A new life's drop: falling, blinking.
+    for (0..60) |_| r.stepPlan(.{}, &plan);
+    for (r.w.players) |p| try testing.expect(r.w.get(p.entity.?).?.mind == .player);
+}
+
+test "Mr. X's room of four: neither of the offer's players fights any more, the others come in at once" {
+    const level = testing.log_level;
+    testing.log_level = .err;
+    defer testing.log_level = level;
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &room_round, .lives = 3 };
+    _ = try roomOfFour(&r, &plan);
+    r.stepPlan(.{}, &plan);
+    try testing.expect(r.w.room.outside[2] and r.w.room.outside[3]);
+    // Player 2 out of the game; player 1's last life ends.
+    r.w.remove(r.w.players[1].entity.?);
+    r.w.players[1].entity = null;
+    r.w.players[1].out = true;
+    r.w.players[0].lives = 1;
+    r.w.players[0].continues = 0;
+    r.player().health = 0;
+    var came: ?usize = null;
+    for (0..200) |i| {
+        r.stepPlan(.{}, &plan);
+        if (came == null and r.w.players[2].entity != null) came = i;
+    }
+    try testing.expect(came != null);
+    // Player 1 out of the game goes, players 3 and 4 play on: no game over.
+    try testing.expect(r.w.players[0].out and r.w.players[0].entity == null);
+    for (r.w.players[2..]) |p| try testing.expect(r.w.get(p.entity.?).?.mind == .player and !p.out);
+}
+
+test "Mr. X's room: neither player 1 nor 2 in it, players 3 and 4 take the offer's seats" {
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &room_round, .lives = 3 };
+    script.start(&r.w, &plan);
+    const hs = try morePlayers(&r, .{ .{ 880, 100 }, .{ 760, 40 }, .{ 700, 88 } }, .{ .left, .right, .right });
+    for (r.w.players[0..2]) |*p| {
+        r.w.remove(p.entity.?);
+        p.entity = null;
+        p.out = true;
+    }
+    var t = r.tick();
+    t.plan = &plan;
+    room.begin(&t);
+    const rm = &r.w.room;
+    try testing.expectEqual(@as(input.Player, 2), rm.first);
+    try testing.expect(!rm.held_out);
+    try testing.expectEqual(@as(?u1, 0), room.seatOf(rm, 2));
+    try testing.expectEqual(@as(?u1, 1), room.seatOf(rm, 3));
+    try testing.expectEqual(@as(?u1, null), room.seatOf(rm, 1));
+    try testing.expectEqual(@as(input.Player, 3), room.playerAt(rm, 1));
+    // Player 4 answers in the second seat, with its own pad: down to no, then B.
+    rm.offer = 0;
+    rm.choosing = .{ true, true };
+    r.w.players[3].command = .{ .pressed = .{ .down = true } };
+    try testing.expect(room.choice(&t, 3, hs[3]) != null);
+    try testing.expect(rm.on_no[1] and !rm.on_no[0]);
+    r.w.players[3].command = .{ .pressed = .{ .attack = true } };
+    _ = room.choice(&t, 3, hs[3]);
+    try testing.expect(rm.answered[1] and !rm.answered[0]);
+    // Players 1 and 2 are not held.
+    try testing.expect(room.choice(&t, 0, hs[0]) == null);
+}
+
+test "Mr. X's room: a player joining while the others are kept out steps out at once" {
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &room_round, .lives = 3 };
+    _ = try roomOfFour(&r, &plan);
+    r.stepPlan(.{}, &plan);
+    const kind = r.f.kinds.find("hero").?;
+    r.w.players[3] = .{};
+    var t = r.tick();
+    t.plan = &plan;
+    try testing.expect(lives.join(&t, 3, kind, 3, null));
+    room.joined(&t, 3);
+    try testing.expect(r.w.players[3].entity == null and r.w.room.outside[3]);
+    try testing.expectEqual(@as(u8, 3), r.w.players[3].lives);
+    // One of the offer's stays.
+    room.joined(&t, 1);
+    try testing.expect(r.w.players[1].entity != null);
+}
+
+test "Mr. X's room of one or two players: no one steps out, the offer's players 1 and 2" {
+    var r = try Round.init();
+    defer r.deinit();
+    const plan: script.Plan = .{ .round = &room_round, .lives = 3 };
+    script.start(&r.w, &plan);
+    var t = r.tick();
+    t.plan = &plan;
+    room.begin(&t);
+    try testing.expect(!r.w.room.held_out and r.w.room.first == 0);
+    try testing.expect(r.w.players[0].entity != null);
 }

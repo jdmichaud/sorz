@@ -65,6 +65,7 @@ const content_round = @import("../content/round.zig");
 const behaviours = @import("behaviours.zig");
 const systems = @import("systems.zig");
 const player_waiting = @import("behaviours/player_waiting.zig");
+const room_mod = @import("room.zig");
 
 const World = world_mod.World;
 const PlayerNumber = world_mod.PlayerNumber;
@@ -326,8 +327,8 @@ pub fn pad(w: *const World, g: Given, m: *Memory, k: PlayerNumber) input.Pad {
     const layout = g.layout;
     const press = w.tick % 2 == 0;
     const r = &w.room;
-    // Held in the offer's choice (players 1 and 2's): its answer, no, and nothing once given.
-    if (k < 2 and r.choosing[k]) return if (r.answered[k]) .{} else padOf(if (r.on_no[k]) .{ .attack = press } else .{ .down = press }, layout);
+    // Held in the offer's choice (its two players'): its answer, no, and nothing once given.
+    if (room_mod.seatOf(r, k)) |seat| if (r.choosing[seat]) return if (r.answered[seat]) .{} else padOf(if (r.on_no[seat]) .{ .attack = press } else .{ .down = press }, layout);
     const e = w.getConst(w.players[k].entity orelse return .{}) orelse return .{};
     return switch (e.mind) {
         .player => padOf(choose(w, g, m, k, e), layout),

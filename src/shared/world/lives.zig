@@ -116,6 +116,31 @@ pub fn join(t: *Tick, k: PlayerNumber, kind: entity.KindId, lives: u8, colours: 
     return true;
 }
 
+/// Player `k`, kept outside round 8's last room (room.zig), comes in: its fighter in its own place
+/// in the world (`World.player_places`, else the first free), dropping in where a new life does,
+/// blinking, its record as it was (its lives, specials, score; its health full). Neither the timer
+/// nor the enemies are touched. False when the world has no room for it.
+pub fn comeIn(t: *Tick, k: PlayerNumber) bool {
+    const w = t.world;
+    const p = &w.players[k];
+    const kind = p.character orelse return false;
+    const h = w.spawnIn(t.kinds, kind, World.player_places[k], .zero, .right) catch w.spawn(t.kinds, kind, .zero, .right) catch return false;
+    p.entity = h;
+    const e = w.get(h).?;
+    if (t.plan) |plan| {
+        const r = plan.round;
+        if (r.players.left) e.facing = .left;
+        e.position = .{
+            .x = w.camera.x.add(.pixels(r.players.x)),
+            .depth = .pixels(r.players.depthOf(k)),
+            .height = .pixels(r.players.height),
+        };
+    }
+    if (t.actor(player, h)) |a| player.startLife(a);
+    e.flags.still = true;
+    return true;
+}
+
 /// Player `k`'s next life drops in.
 pub fn newLife(t: *Tick, k: PlayerNumber) void {
     const w = t.world;

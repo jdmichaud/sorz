@@ -280,8 +280,8 @@ pub const Round = struct {
     /// shows (as the display tick began).
     lamps: Lamps = .{},
     shown_lamps: Lamps = .{},
-    /// Round 8's door of Mr. X's room is broken open; its trapdoors open under the players then
-    /// in play (a bit each).
+    /// Round 8's door of Mr. X's room is broken open; its trapdoors open under the offer's
+    /// players in the room then (a bit each seat).
     shown_door_open: bool = false,
     shown_trapdoors: ?world.room.Trapdoors = null,
     /// Round 8's offer's window.
@@ -1194,8 +1194,8 @@ pub const Round = struct {
         g.boss_ending = w.room.yes_kept;
         g.boss_bars = 0;
         for (w.bosses) |h| g.boss_bars += @intFromBool(h != null);
-        for (&g.players, w.players) |*gp, wp| gp.* = .{
-            .in_play = wp.entity != null,
+        for (&g.players, w.players, 0..) |*gp, wp, k| gp.* = .{
+            .in_play = wp.entity != null or w.room.outside[k],
             .score = wp.score,
             .extra_lives = wp.extra_lives,
             .lives = wp.lives,
@@ -1426,6 +1426,12 @@ pub const Round = struct {
             const gone: PlayerBar = .{ .out = .{ .name = true, .score = p.score, .game_over = ob.shown } };
             const h = p.entity orelse {
                 if (p.out) o.* = gone;
+                // Outside round 8's last room, its part as it plays (it comes in with its health
+                // full).
+                if (w.room.outside[k]) if (p.character) |c| {
+                    const most = a.kinds.get(c).definition.health;
+                    o.* = .{ .playing = .{ .score = self.drawn_scores[k], .lives = p.lives, .specials = self.bar_specials[k], .health = @intCast(std.math.clamp(most, 0, std.math.maxInt(u8))) } };
+                };
                 continue;
             };
             const e = w.getConst(h) orelse continue;
@@ -1493,7 +1499,7 @@ pub const Round = struct {
             try v.board(.a).drawMap(m, place.x, place.y);
         };
         // The round's pictures of them are players 1 and 2's (alone, or both).
-        if (self.shown_trapdoors) |all| if (all & 3 != 0 and (prev == null or prev.?.shown_trapdoors == null)) if (s.trapdoors[(all & 3) - 1]) |m| {
+        if (self.shown_trapdoors) |all| if (all != 0 and (prev == null or prev.?.shown_trapdoors == null)) if (s.trapdoors[@as(usize, all) - 1]) |m| {
             const place = m.place.?;
             try v.board(.a).drawMap(m, place.x, place.y);
         };

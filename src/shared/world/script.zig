@@ -43,6 +43,7 @@ const fixed = @import("fixed.zig");
 const entity = @import("entity.zig");
 const tick_mod = @import("tick.zig");
 const behaviours = @import("behaviours.zig");
+const room = @import("room.zig");
 
 const Fixed = fixed.Fixed;
 const Tick = tick_mod.Tick;
@@ -888,8 +889,9 @@ fn beginRoom(t: *Tick, p: *const Plan) void {
 }
 
 /// The room's fight's step: at its first, Mr. X's colours, a player out of the game
-/// leaves, the players walk in, the art slots the room's; then, once Mr. X has laughed, the
-/// fight's music and its first wave; after it, once he has laughed again, its next wave.
+/// leaves, the players outside the offer step out (room.zig, `begin`), the others walk in, the
+/// art slots the room's; then, once Mr. X has laughed, the fight's music and its first wave;
+/// after it, once he has laughed again, its next wave.
 fn roomFight(t: *Tick, p: *const Plan) void {
     const rm = &p.round.room.?;
     const s = &t.world.script;
@@ -905,6 +907,7 @@ fn roomFight(t: *Tick, p: *const Plan) void {
             pl.out = true;
             t.world.remove(h);
         }
+        room.begin(t);
         r.walking = true;
         s.art[0] = room_slot_art;
         s.art[boss_slot] = 0;
