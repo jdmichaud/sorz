@@ -6,7 +6,7 @@
 //! first look; 0 leaves them); the game's draws are the original's.
 //!
 //!   sorz-cpus-check ROM [--lives N] [--level L] [--from R] [--to R] [--chars C1,C2]
-//!                       [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on]
+//!                       [--seeds S,S,...] [--limit TICKS] [--shots DIR [--every N]] [--scenes on]
 //!                       [--player1 cpu|bot] [--turns on] [--players N]
 //!
 //! - `--lives`: the lives a game and a continue give (the settings' rules); 3 by default.
@@ -14,7 +14,8 @@
 //! - `--from`, `--to`: the rounds played, 1 to 8 by default: the game starts at `--from` (the
 //!   options' first round) and is left as the round after `--to` begins (`to`).
 //! - `--chars`: the CPUs' characters (adam, axel, blaze); adam,axel by default.
-//! - `--shots`: a picture at each round's clear, each life lost and the end, into DIR.
+//! - `--shots`: a picture at each round's clear, each life lost and the end, into DIR; with
+//!   `--every N`, one every N display ticks in a round too.
 //! - `--scenes on`: each scene's start told on stderr; the game followed past the ending.
 //! - `--player1 bot`: 1 PLAYER - 1 CPU instead, player 1 played by item 30's rule (`cpu.fight`,
 //!   the agent host's bot: on to the right, at the nearest foe), the CPU player 2 (`--chars`
@@ -215,6 +216,8 @@ const Options = struct {
     players: ?u8 = null,
     limit: u32 = 900_000,
     shots: ?[]const u8 = null,
+    /// A picture every this many display ticks in a round as well (0: none).
+    every: u32 = 0,
     /// Each scene's start told on stderr, and the game followed past the ending to the title.
     scenes: bool = false,
     /// Who plays player 1: the CPU (0 PLAYERS - 2 CPU), or item 30's rule (`cpu.fight`, the
@@ -324,6 +327,7 @@ fn play(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.AssetSource, s
             };
         }
         const stats = &rounds[n - 1];
+        if (o.every != 0 and r.updates % o.every == 0) if (o.shots) |dir| try shot(gpa, io, r, dir, &shots, "every");
         stats.ticks += 1;
         if (round.phase == .time_over and !timed_out) stats.time_overs += 1;
         // The time over's end, and the boss's fall, credit their harm to the last striker.
@@ -843,7 +847,7 @@ fn shot(gpa: std.mem.Allocator, io: std.Io, r: *const Run, dir: []const u8, coun
 }
 
 fn usage(io: std.Io) noreturn {
-    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--level L] [--from R] [--to R] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR] [--scenes on] [--player1 cpu|bot] [--turns on] [--players N]\n") catch {};
+    std.Io.File.stderr().writeStreamingAll(io, "usage: sorz-cpus-check ROM [--lives N] [--level L] [--from R] [--to R] [--chars C1,C2] [--seeds S,S,...] [--limit TICKS] [--shots DIR [--every N]] [--scenes on] [--player1 cpu|bot] [--turns on] [--players N]\n") catch {};
     std.process.exit(2);
 }
 
@@ -879,6 +883,8 @@ pub fn main(init: std.process.Init) !void {
             seeds_text = value;
         } else if (std.mem.eql(u8, arg, "--limit")) {
             o.limit = std.fmt.parseInt(u32, value, 10) catch usage(io);
+        } else if (std.mem.eql(u8, arg, "--every")) {
+            o.every = std.fmt.parseInt(u32, value, 10) catch usage(io);
         } else if (std.mem.eql(u8, arg, "--shots")) {
             o.shots = value;
         } else if (std.mem.eql(u8, arg, "--scenes")) {
