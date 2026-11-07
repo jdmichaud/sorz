@@ -131,8 +131,8 @@ pub const PlayerBar = union(enum) {
     /// letters; null: none).
     pub const Naming = struct { score: u32, places: [world.behaviours.player_waiting.places]?u8 };
     /// The continues left, the second answer (NEW GAME, or GAME OVER), the cursor (null: hidden
-    /// by its blink).
-    pub const Asking = struct { continues: u8, new_game: bool, cursor: ?Answer };
+    /// by its blink) and the answer it is on.
+    pub const Asking = struct { continues: u8, new_game: bool, cursor: ?Answer, answer: Answer = .yes };
     /// Its name and score (not at the tick its part is cleared), and the game over's text,
     /// which blinks.
     pub const Out = struct { name: bool, score: u32, game_over: bool };
@@ -1442,10 +1442,10 @@ pub const Round = struct {
                     // Its first tick: the bar as it was (the question still, after a NO; the name,
                     // the tick it was entered).
                     .begin => if (m.answered_no)
-                        .{ .asking = .{ .continues = m.count, .new_game = new_game, .cursor = if (m.shown) m.cursor else null } }
+                        .{ .asking = .{ .continues = m.count, .new_game = new_game, .cursor = if (m.shown) m.cursor else null, .answer = m.cursor } }
                     else if (m.named) naming(p, &m) else playing,
                     .name_entry => naming(p, &m),
-                    .continue_choose, .continue_chosen, .join_first, .join_second => .{ .asking = .{ .continues = m.count, .new_game = new_game, .cursor = if (m.shown) m.cursor else null } },
+                    .continue_choose, .continue_chosen, .join_first, .join_second => .{ .asking = .{ .continues = m.count, .new_game = new_game, .cursor = if (m.shown) m.cursor else null, .answer = m.cursor } },
                     // The tick it went out its part is cleared: its name comes at the next.
                     .both_out, .countdown, .game_over => .{ .out = .{ .name = m.named_out or m.state == .game_over or m.music, .score = p.score, .game_over = ob.shown } },
                 },

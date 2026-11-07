@@ -6,9 +6,21 @@
 //! No score shows (it still counts, for the high scores); the bosses' bars stay below the bar. A
 //! slot whose player is not in the game is the bar's own cells.
 //!
-//! A player out of lives answers the continue's question on its slot, enters its name there, and
-//! out of the game shows the game over's words, blinking: short forms of the cartridge's, until
-//! PLAN item 53 lays them out for four.
+//! A player out of lives enters its name on its slot and answers the continue's question there,
+//! with its own pad (world/behaviours/player_waiting.zig), and out of the game its slot shows the
+//! game over; the slot's two rows of eight cells lay out the cartridge's texts (PLAN item 53),
+//! in its font, its cursor blinking as the cartridge's does:
+//!
+//!     CONTINUE        052300    1P- GAME
+//!     ->YES x3      NAME ABC        OVER
+//!
+//! - the question: the cartridge's (CONTINUE), then the answer under the cursor, YES or NO (up
+//!   or down turns it, as up or down moves the cartridge's cursor between its two rows), and the
+//!   continues left as the slot counts its lives (x and a digit, the lives' cells);
+//! - the name entry: the score that enters the high-score table (the bar's six digits, as the
+//!   cartridge's bar shows it), then the label and the name's three places (the letter at the
+//!   cursor blinking; the end mark shows there when it is chosen);
+//! - out of the game: the player's name as it plays, and GAME OVER, blinking.
 const std = @import("std");
 const art = @import("../content/art.zig");
 const records = @import("../content/screens.zig");
@@ -38,11 +50,17 @@ pub const mark_at = 6;
 pub const count_at = 7;
 pub const health_cells = 6;
 
-/// The continue's question and its second answers (GAME OVER, NEW GAME), cut to a slot: the
-/// port's words, the cartridge's being too long for it.
-const question = "CONT";
-const game_over = "OVER";
-const new_game = "NEW";
+/// The continue's answers on a slot: the port's words (the cartridge's rows, CONTINUE and GAME
+/// OVER, do not fit with the cursor and the count).
+pub const yes = "YES";
+pub const no = "NO";
+
+/// From a slot's first cell: the answer after the cursor; the game over's words.
+const answer_at = 1;
+const out_at = 4;
+
+/// The places of a name.
+const places = world.behaviours.player_waiting.places;
 
 /// The places of a slot's parts on the fixed layer.
 pub const Places = struct {
@@ -97,22 +115,24 @@ pub fn shows(setup: *const setup_mod.Setup) bool {
     return setup.players.count() > 2;
 }
 
-/// What a slot shows of its player (`round.PlayerBar` without the score).
+/// What a slot shows of its player (`round.PlayerBar`, the score only while it enters its name).
 pub const Slot = union(enum) {
     none,
     playing: struct { lives: u8, specials: u8, health: u8 },
-    asking: round.PlayerBar.Asking,
-    naming: [world.behaviours.player_waiting.places]?u8,
-    /// Out of the game: whether the game over's words show (they blink).
-    out: bool,
+    /// The continues left, the answer the cursor is on, whether the cursor shows (it blinks).
+    asking: struct { continues: u8, answer: Answer, cursor: bool },
+    naming: round.PlayerBar.Naming,
+    /// Out of the game: whether its name shows (not at the tick its slot is cleared), and the game
+    /// over's words (they blink).
+    out: struct { name: bool, game_over: bool },
 
     pub fn of(p: round.PlayerBar) Slot {
         return switch (p) {
             .none => .none,
             .playing => |x| .{ .playing = .{ .lives = x.lives, .specials = x.specials, .health = x.health } },
-            .asking => |x| .{ .asking = x },
-            .naming => |x| .{ .naming = x.places },
-            .out => |x| .{ .out = x.game_over },
+            .asking => |x| .{ .asking = .{ .continues = x.continues, .answer = x.answer, .cursor = x.cursor != null } },
+            .naming => |x| .{ .naming = x },
+            .out => |x| .{ .out = .{ .name = x.name, .game_over = x.game_over } },
         };
     }
 };
@@ -139,6 +159,8 @@ pub fn draw(board: *render.Board, a: anytype, now: round.Bar, was: ?round.Bar) !
         const slot: Slot = .of(now.players[k]);
         const before: ?Slot = if (was) |w| .of(w.players[k]) else null;
         const renamed = if (was) |w| if (w.party) |n| !std.mem.eql(u8, &n[k], &names[k]) else true else true;
+        // A name changed (the CPU's player taken, a shorter name): the slot is drawn whole again.
+        if (renamed and was != null) clear(board, a, at);
         try drawSlot(board, a, k, at, names[k], slot, if (renamed) null else before);
     }
 }
@@ -170,28 +192,45 @@ fn drawSlot(board: *render.Board, a: anytype, k: usize, at: Places, name: Name, 
         },
         .asking => |x| {
             const cq = &a.screen.continue_question;
-            try board.write(text.sheet, text.font, at.rows[0].x + 1, at.rows[0].y, question, .{});
-            try digit(board, a, at.specials, x.continues);
-            try board.write(text.sheet, text.font, at.rows[1].x + 1, at.rows[1].y, if (x.new_game) new_game else game_over, .{});
-            if (x.cursor) |c| {
-                const row = at.rows[if (c == .yes) 0 else 1];
-                try board.write(text.sheet, text.font, row.x, row.y, cq.cursor, .{});
-            }
+            try writeCut(board, a, at.rows[0], width, cq.question);
+            if (x.cursor) try board.write(text.sheet, text.font, at.rows[1].x, at.rows[1].y, cq.cursor, .{});
+            try board.write(text.sheet, text.font, at.rows[1].x + answer_at, at.rows[1].y, if (x.answer == .yes) yes else no, .{});
+            try board.write(text.sheet, text.font, at.lives_mark.x, at.lives_mark.y, "x", .{});
+            try digit(board, a, at.lives, x.continues);
         },
-        .naming => |places| {
+        .naming => |x| {
             const ne = &a.screen.name_entry;
-            try board.write(text.sheet, text.font, at.rows[0].x, at.rows[0].y, ne.label, .{});
-            for (places, 0..) |letter, q| {
+            var buf: [10]u8 = undefined;
+            const most = round.digitsOf(a.screen.status_bar.score_most);
+            const score = round.digits(&buf, x.score, @min(most, width));
+            try board.write(text.sheet, text.font, at.rows[0].x + width - @as(u8, @intCast(score.len)), at.rows[0].y, score, .{});
+            try writeCut(board, a, at.rows[1], width - places - 1, ne.label);
+            const first = at.rows[1].x + width - places;
+            for (x.places, 0..) |letter, q| {
                 const l = letter orelse continue;
-                if (l < ne.letters.len) try board.write(text.sheet, text.font, at.rows[1].x + @as(u8, @intCast(q)), at.rows[1].y, ne.letters[l], .{});
+                if (l < ne.letters.len) try board.write(text.sheet, text.font, first + @as(u8, @intCast(q)), at.rows[1].y, ne.letters[l], .{});
             }
-            if (ne.letters.len != 0) try board.write(text.sheet, text.font, at.rows[1].x + @as(u8, @intCast(places.len)), at.rows[1].y, ne.letters[ne.letters.len - 1], .{});
         },
-        // The game over's words, a row each.
-        .out => |shown| if (shown) {
-            var words = std.mem.tokenizeScalar(u8, a.screen.continue_question.game_over, ' ');
-            for (at.rows) |row| try board.write(text.sheet, text.font, row.x, row.y, words.next() orelse break, .{});
+        // Its name, and the game over's words a row each, after it.
+        .out => |x| {
+            if (x.name) try writeName(board, a, at.name, name);
+            if (x.game_over) {
+                var words = std.mem.tokenizeScalar(u8, a.screen.continue_question.game_over, ' ');
+                for (at.rows) |row| try writeCut(board, a, .{ .x = row.x + out_at, .y = row.y }, width - out_at, words.next() orelse break);
+            }
         },
+    }
+}
+
+/// `text` from `at`, its first `cells` glyphs at most (a glyph a cell).
+fn writeCut(board: *render.Board, a: anytype, at: Cell, cells: u8, text: []const u8) !void {
+    const font = a.text.font;
+    var rest = text;
+    var x = at.x;
+    while (rest.len != 0 and x < at.x + cells) : (x += 1) {
+        const g = font.glyphAt(rest) orelse return error.NoGlyph;
+        try board.write(a.text.sheet, font, x, at.y, rest[0..g.len], .{});
+        rest = rest[g.len..];
     }
 }
 
@@ -316,29 +355,30 @@ test "the police icon: the bar's colours, the ground at its corners" {
 }
 
 /// A synthetic status bar's content, each tile a number (all its pixels): the bar's ground 0;
-/// the font's letters from 1 (`glyphs`), its `->` 30; the health bar's full cells 28, empty 29;
-/// the fills 40 on.
+/// the font's letters from 1 (`glyphs`), its `->` 62, its end mark 63; the health bar's full
+/// cells 60, empty 61; the fills 64 on.
 const Fixture = struct {
-    const glyphs = "-x0123456789ABCDEGMNOPRTV";
-    const tiles: [64]art.Tile = blk: {
-        var t: [64]art.Tile = undefined;
+    const glyphs = "-x0123456789ABCDEGIMNOPRSTUVY";
+    const tiles: [80]art.Tile = blk: {
+        var t: [80]art.Tile = undefined;
         for (&t, 0..) |*x, i| x.* = @splat(@intCast(i));
         break :blk t;
     };
     const font_glyphs = blk: {
-        var g: [glyphs.len + 1]art.Glyph = undefined;
+        var g: [glyphs.len + 2]art.Glyph = undefined;
         for (glyphs, 0..) |c, i| g[i] = .{ .text = &[1]u8{c}, .tile = @intCast(i + 1) };
-        g[glyphs.len] = .{ .text = "->", .tile = 30 };
+        g[glyphs.len] = .{ .text = "->", .tile = 62 };
+        g[glyphs.len + 1] = .{ .text = "(ED)", .tile = 63 };
         break :blk g;
     };
     const font: art.Font = .{ .name = "f", .sheet = "f", .glyphs = &font_glyphs };
     const sheet: art.TileSheet = .{ .name = "f", .file = "", .tiles = &tiles };
-    const fills: art.TileSheet = .{ .name = "fills", .file = "", .tiles = tiles[40..56] };
+    const fills: art.TileSheet = .{ .name = "fills", .file = "", .tiles = tiles[64..80] };
     const bar_cells: [40 * 4]art.Cell = @splat(.{ .tile = 0 });
     const status_bar: art.TileMap = .{ .name = "b", .file = "", .width = 40, .height = 4, .sheets = &.{}, .tiles = &tiles, .cells = &bar_cells };
     const health_cells_: [21]art.Cell = blk: {
         var c: [21]art.Cell = undefined;
-        for (&c, 0..) |*x, i| x.* = .{ .tile = if (i < 10) 28 else if (i == 10) 40 else 29 };
+        for (&c, 0..) |*x, i| x.* = .{ .tile = if (i < 10) 60 else if (i == 10) 64 else 61 };
         break :blk c;
     };
     const health: art.TileMap = .{ .name = "h", .file = "", .width = 21, .height = 1, .sheets = &.{}, .tiles = &tiles, .cells = &health_cells_ };
@@ -346,13 +386,13 @@ const Fixture = struct {
     const icon: art.TileMap = .{ .name = "i", .file = "", .width = 2, .height = 2, .sheets = &.{}, .tiles = &tiles, .cells = &icon_cells };
     const player: records.BarPlayer = .{ .name = "1UP-", .name_at = .{ .x = 1, .y = 1 }, .score = .{ .x = 5, .y = 1 }, .health = .{ .x = 1, .y = 2 }, .lives = .{ .x = 12, .y = 1 }, .lives_mark = .{ .x = 11, .y = 2 }, .icon = .{ .x = 14, .y = 1 }, .specials = .{ .x = 17, .y = 1 }, .specials_mark = .{ .x = 16, .y = 2 } };
     const Screen = struct {
-        status_bar: struct { players: [2]records.BarPlayer, time: Cell },
-        continue_question: struct { cursor: []const u8, game_over: []const u8 },
+        status_bar: struct { players: [2]records.BarPlayer, time: Cell, score_most: u32 },
+        continue_question: struct { question: []const u8, cursor: []const u8, game_over: []const u8 },
         name_entry: struct { label: []const u8, letters: []const []const u8 },
     };
     const screen: Screen = .{
-        .status_bar = .{ .players = .{ player, player }, .time = .{ .x = 19, .y = 1 } },
-        .continue_question = .{ .cursor = "->", .game_over = "GAME OVER" },
+        .status_bar = .{ .players = .{ player, player }, .time = .{ .x = 19, .y = 1 }, .score_most = 999_999 },
+        .continue_question = .{ .question = "CONTINUE", .cursor = "->", .game_over = "GAME OVER" },
         .name_entry = .{ .label = "NAME", .letters = &.{ "A", "B", "(ED)" } },
     };
     const Assets = struct {
@@ -374,8 +414,9 @@ const Fixture = struct {
         .text = .{ .font = &font, .sheet = &sheet },
     };
 
-    /// Row `y` of the board as the fixture's tiles read: a glyph, `=` a full cell of the health
-    /// bar, `.` an empty one, a to h a partial one's fill (its pixels), S the police icon.
+    /// Row `y` of the board as the fixture's tiles read: a glyph (`>` the cursor, `#` the end
+    /// mark), `=` a full cell of the health bar, `.` an empty one, a to h a partial one's fill (its
+    /// pixels), S the police icon.
     fn row(board: *const render.Board, y: i32) [40]u8 {
         var out: [40]u8 = undefined;
         for (&out, 0..) |*o, x| {
@@ -385,10 +426,11 @@ const Fixture = struct {
             o.* = if (t == &police_icon) 'S' else switch (n) {
                 0 => ' ',
                 1...glyphs.len => glyphs[n - 1],
-                28 => '=',
-                29 => '.',
-                30 => '>',
-                40...47 => 'a' + (n - 40),
+                60 => '=',
+                61 => '.',
+                62 => '>',
+                63 => '#',
+                64...71 => 'a' + (n - 64),
                 else => '?',
             };
         }
@@ -403,10 +445,10 @@ test "the bar of four: names, counts and health bars on their slots; a slot chan
     var bar: round.Bar = .{ .party = .{ "1P ".*, "BOB".*, "CPU".*, "4P ".* } };
     bar.players[0] = .{ .playing = .{ .score = 0, .lives = 3, .specials = 1, .health = 80 } };
     bar.players[1] = .{ .playing = .{ .score = 0, .lives = 12, .specials = 0, .health = 40 } };
-    bar.players[2] = .{ .asking = .{ .continues = 2, .new_game = false, .cursor = .yes } };
+    bar.players[2] = .{ .asking = .{ .continues = 2, .new_game = false, .cursor = .yes, .answer = .yes } };
     try draw(&board, Fixture.assets, bar, null);
-    try testing.expectEqualStrings(" 1P-  Sx1 BOB- Sx0    >CONT  2          ", &Fixture.row(&board, 1));
-    try testing.expectEqualStrings(" ======x3 ===a..x9     OVER             ", &Fixture.row(&board, 2));
+    try testing.expectEqualStrings(" 1P-  Sx1 BOB- Sx0    CONTINUE          ", &Fixture.row(&board, 1));
+    try testing.expectEqualStrings(" ======x3 ===a..x9    >YES  x2          ", &Fixture.row(&board, 2));
     // Player 2 struck, its score up: its health bar alone changes; player 3 answers NO; player 4
     // is out of the game, its words shown.
     var next = bar;
@@ -415,11 +457,64 @@ test "the bar of four: names, counts and health bars on their slots; a slot chan
     next.players[2] = .{ .out = .{ .name = true, .score = 0, .game_over = true } };
     next.players[3] = .{ .out = .{ .name = true, .score = 0, .game_over = true } };
     try draw(&board, Fixture.assets, next, bar);
-    try testing.expectEqualStrings(" 1P-  Sx1 BOB- Sx0    GAME     GAME     ", &Fixture.row(&board, 1));
-    try testing.expectEqualStrings(" ======x3 ==h...x9    OVER     OVER     ", &Fixture.row(&board, 2));
-    // The blink hides player 4's: its slot's cells are the bar's own again.
+    try testing.expectEqualStrings(" 1P-  Sx1 BOB- Sx0    CPU-GAME 4P- GAME ", &Fixture.row(&board, 1));
+    try testing.expectEqualStrings(" ======x3 ==h...x9        OVER     OVER ", &Fixture.row(&board, 2));
+    // The blink hides player 4's words: its name stays.
     var hidden = next;
     hidden.players[3].out.game_over = false;
     try draw(&board, Fixture.assets, hidden, next);
-    try testing.expectEqualStrings(" 1P-  Sx1 BOB- Sx0    GAME              ", &Fixture.row(&board, 1));
+    try testing.expectEqualStrings(" 1P-  Sx1 BOB- Sx0    CPU-GAME 4P-      ", &Fixture.row(&board, 1));
+    try testing.expectEqualStrings(" ======x3 ==h...x9        OVER          ", &Fixture.row(&board, 2));
+}
+
+test "a slot's question: the answer the cursor is on, the cursor's blink, the continues left" {
+    var board = try render.Board.init(testing.allocator, 40, 4);
+    defer board.deinit();
+    try board.drawMap(&Fixture.status_bar, 0, 0);
+    var bar: round.Bar = .{ .party = .{ "1P ".*, "2P ".*, "3P ".*, "4P ".* } };
+    bar.players[0] = .{ .asking = .{ .continues = 3, .new_game = true, .cursor = null, .answer = .yes } };
+    try draw(&board, Fixture.assets, bar, null);
+    try testing.expectEqualStrings(" CONTINUE                               ", &Fixture.row(&board, 1));
+    try testing.expectEqualStrings("  YES  x3                               ", &Fixture.row(&board, 2));
+    // Down: the cursor on NO, shown.
+    var next = bar;
+    next.players[0].asking = .{ .continues = 3, .new_game = true, .cursor = .no, .answer = .no };
+    try draw(&board, Fixture.assets, next, bar);
+    try testing.expectEqualStrings(" >NO   x3                               ", &Fixture.row(&board, 2));
+    // Its blink hides the cursor alone.
+    var blink = next;
+    blink.players[0].asking.cursor = null;
+    try draw(&board, Fixture.assets, blink, next);
+    try testing.expectEqualStrings("  NO   x3                               ", &Fixture.row(&board, 2));
+    try testing.expectEqualStrings(" CONTINUE                               ", &Fixture.row(&board, 1));
+}
+
+test "a slot's name entry: the score over the label and the name's places" {
+    var board = try render.Board.init(testing.allocator, 40, 4);
+    defer board.deinit();
+    try board.drawMap(&Fixture.status_bar, 0, 0);
+    var bar: round.Bar = .{ .party = .{ "1P ".*, "2P ".*, "3P ".*, "4P ".* } };
+    bar.players[3] = .{ .naming = .{ .score = 52_300, .places = .{ 1, 0, null } } };
+    try draw(&board, Fixture.assets, bar, null);
+    try testing.expectEqualStrings("                                 052300 ", &Fixture.row(&board, 1));
+    try testing.expectEqualStrings("                               NAME BA  ", &Fixture.row(&board, 2));
+    // The end mark at the third place.
+    var next = bar;
+    next.players[3].naming.places[2] = 2;
+    try draw(&board, Fixture.assets, next, bar);
+    try testing.expectEqualStrings("                               NAME BA# ", &Fixture.row(&board, 2));
+}
+
+test "a slot renamed (the CPU's player taken): drawn whole again, nothing of the old name left" {
+    var board = try render.Board.init(testing.allocator, 40, 4);
+    defer board.deinit();
+    try board.drawMap(&Fixture.status_bar, 0, 0);
+    var bar: round.Bar = .{ .party = .{ "CPU".*, "2P ".*, "3P ".*, "4P ".* } };
+    bar.players[0] = .{ .playing = .{ .score = 0, .lives = 3, .specials = 1, .health = 80 } };
+    try draw(&board, Fixture.assets, bar, null);
+    try testing.expectEqualStrings(" CPU- Sx1", Fixture.row(&board, 1)[0..9]);
+    var next = bar;
+    next.party.?[0] = "1P ".*;
+    try draw(&board, Fixture.assets, next, bar);
+    try testing.expectEqualStrings(" 1P-  Sx1", Fixture.row(&board, 1)[0..9]);
 }
