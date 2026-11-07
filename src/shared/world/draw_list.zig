@@ -34,6 +34,7 @@ const world_mod = @import("world.zig");
 const tick_mod = @import("tick.zig");
 const systems = @import("systems.zig");
 const shadows = @import("shadows.zig");
+const script = @import("script.zig");
 const output = @import("output.zig");
 
 const Entity = entity.Entity;
@@ -120,6 +121,9 @@ pub fn listOf(t: *Tick, remove_far_off: bool) void {
             .enemy, .boss => w.script.culled +|= 1,
             else => {},
         }
+        // With three or four players, one of the enemies' is counted off as one knocked out (it
+        // calls the next of the reserve too: script.zig's `went`).
+        if (w.script.players >= 3 and t.kindOf(&w.entities[i]).family() == .enemy) script.countOff(t, &w.entities[i]);
         w.remove(w.handleAt(i).?);
     };
     // The shadows' places far off the screen go too (shadows.zig).

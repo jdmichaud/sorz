@@ -34,6 +34,16 @@
 //! The original's level events do not run during the special attack, nor does its timer: the
 //! script and the timer wait while it lasts.
 //!
+//! Three and four players (the port's, DESIGN.md 10.7, E4): the two players' records come once
+//! more (`again`): with four all of them, with three every other of a part's (a section's, the
+//! boss's, the room's), counted in the script's order (its placed, its wave, its reserve), each
+//! from the first. A boss's record does not: the bosses are as many as with two. A placed one
+//! comes again `Crowd.placed_apart` pixels back from its first, against the round's way (so that
+//! it comes out no later than its first: on the screen, or once the camera has come by); a
+//! wave's, once the wave is in, in a second pass of its own, each at least `Crowd.wave_apart`
+//! ticks after the one before it; a reserve's, called as the others are, after those of the first
+//! pass it may have. Games of one and two players are the cartridge's.
+//!
 //! The original's routines for the enemies' art slots and colour lines, which the script models,
 //! are named in sor-re's gameplay port map (3.8), not here (DESIGN.md P1).
 const std = @import("std");
@@ -53,6 +63,14 @@ const Round = content_round.Round;
 const Spawn = content_round.Spawn;
 const StreamOf = content_round.StreamOf;
 const Streamed = content_round.Streamed;
+
+/// The port's rules for three and four players (DESIGN.md 10.7, E4): how far a placed record that
+/// comes again is from its first, in pixels; how long a wave's record that comes again waits at
+/// least after the one before it, in logic ticks.
+pub const Crowd = struct {
+    pub const placed_apart = 40;
+    pub const wave_apart = 32;
+};
 
 /// What the script follows besides the world: the round's script and the options of the game.
 pub const Plan = struct {
@@ -240,11 +258,17 @@ pub const State = struct {
     /// The script's enemies in the world at the end of its last tick.
     enemies: u8 = 0,
     /// The enemies that went far off the screen since its last tick (draw_list.zig): they call
-    /// none of the reserve (the original deletes them; only one knocked out calls one).
+    /// none of the reserve (the original deletes them; only one knocked out calls one), but with
+    /// three or four players.
     culled: u8 = 0,
     /// Two players or more were in play when a section started: the two players' records come (and
     /// keep coming).
     two_players: bool = false,
+    /// The most players in play as a section started: with three or four, the two players'
+    /// records come again (`again`).
+    players: u8 = 0,
+    /// The wave's second pass under way: its records that come again.
+    again: bool = false,
     /// The enemies' colours the palettes hold.
     held: Held = .{},
     /// The colours the arriving enemy takes.
@@ -261,6 +285,10 @@ pub const State = struct {
     /// The reserve's records brought or left out (a bit each), the one arriving and the art
     /// slot its art takes (null: none of the enemies').
     taken: u32 = 0,
+    /// Those of its records that come again brought or left out, and whether the one arriving
+    /// is one of them.
+    taken_again: u32 = 0,
+    chosen_again: bool = false,
     chosen: u8 = 0,
     chosen_art: ?u3 = null,
     /// The arriving one's art is in its slot already: none is streamed (a reserve's boss's).
@@ -466,7 +494,10 @@ pub fn run(t: *Tick) void {
         return;
     }
     const now = countEnemies(t);
-    const went = (s.enemies -| now) -| s.culled;
+    // With three or four players, one gone far off the screen calls the next as one knocked out
+    // does: their blows knock the enemies across past it, and the reserve would wait for calls
+    // that never come.
+    const went = (s.enemies -| now) -| if (s.players >= 3) 0 else s.culled;
     s.enemies = now;
     s.culled = 0;
     const r = p.round;
@@ -481,17 +512,13 @@ pub fn run(t: *Tick) void {
                 if (s.ticks == 0) l.jolted = false;
             }
             if (s.ticks != 0 or !l.jolted) return;
-            s.stage = .wave;
-            s.next = 0;
-            nextWave(t, p);
+            startWave(t, p);
         },
         .wall => {
             const c = &t.world.camera;
             if (c.x_max.sub(c.x_min).whole() >= r.camera.wall_within) return;
             bringBack(t, r);
-            s.stage = .wave;
-            s.next = 0;
-            nextWave(t, p);
+            startWave(t, p);
         },
         .wave => {
             s.ticks -|= 1;
@@ -512,8 +539,10 @@ pub fn run(t: *Tick) void {
             s.stage = .reserve;
             s.waiting = true;
             s.taken = 0;
+            s.taken_again = 0;
             for (reserveOf(r, s.part), 0..) |*rec, k| {
                 if (!comes(p, s, rec)) s.taken |= @as(u32, 1) << @intCast(k);
+                if (!again(t, p, .reserve, k)) s.taken_again |= @as(u32, 1) << @intCast(k);
             }
             tally(t, p);
             // None left: two are called at once.
@@ -544,7 +573,9 @@ pub fn run(t: *Tick) void {
                     s.art_counts[slot] +%= 1;
                 };
                 bring(t, p, rec);
-                s.taken |= @as(u32, 1) << @intCast(s.chosen);
+                if (s.chosen_again) {
+                    s.taken_again |= @as(u32, 1) << @intCast(s.chosen);
+                } else s.taken |= @as(u32, 1) << @intCast(s.chosen);
                 s.calls -|= 1;
                 s.enemies = countEnemies(t);
             } else if (s.calls != 0) if (chooseWaiting(t, p, list)) |k| {
@@ -589,9 +620,7 @@ pub fn run(t: *Tick) void {
             s.ticks -|= 1;
             if (s.ticks != 0) return;
             // The boss's fight (its colours loaded again only in round 8's, which has a room).
-            s.stage = .wave;
-            s.next = 0;
-            nextWave(t, p);
+            startWave(t, p);
         },
     }
 }
@@ -664,15 +693,30 @@ pub fn won(w: anytype) void {
     w.script.stage = .won;
 }
 
+/// The wave comes in: its first record that comes is due.
+fn startWave(t: *Tick, p: *const Plan) void {
+    const s = &t.world.script;
+    s.stage = .wave;
+    s.next = 0;
+    s.again = false;
+    nextWave(t, p);
+}
+
 /// The wave's next record that comes (by its level and players), and its delay; after the last,
-/// the wave's end: read at the next tick, the reserve set up at the one after.
+/// those that come again (`again`), each at least `Crowd.wave_apart` ticks after the one before
+/// it; then the wave's end: read at the next tick, the reserve set up at the one after.
 fn nextWave(t: *Tick, p: *const Plan) void {
     const s = &t.world.script;
     const list = waveOf(t, p.round, s.part);
-    while (s.next < list.len and !comes(p, s, &list[s.next])) s.next += 1;
-    if (s.next < list.len) {
-        s.ticks = @max(list[s.next].after, 1);
-        return;
+    while (true) {
+        while (s.next < list.len and !(if (s.again) again(t, p, .wave, s.next) else comes(p, s, &list[s.next]))) s.next += 1;
+        if (s.next < list.len) {
+            s.ticks = @max(list[s.next].after, @as(u16, if (s.again) Crowd.wave_apart else 1));
+            return;
+        }
+        if (s.again or s.players < 3) break;
+        s.again = true;
+        s.next = 0;
     }
     s.stage = .wave_end;
     s.ticks = 2;
@@ -682,17 +726,20 @@ fn nextWave(t: *Tick, p: *const Plan) void {
 /// it takes their slots (`chosen_art`, `taking`).
 fn chooseWaiting(t: *Tick, p: *const Plan, list: []const Spawn) ?u8 {
     const s = &t.world.script;
-    for (list, 0..) |*rec, k| {
-        if (s.taken & (@as(u32, 1) << @intCast(k)) != 0) continue;
+    // Those that come again after the others it may have.
+    for (0..2) |pass| for (list, 0..) |*rec, k| {
+        const taken = if (pass == 0) s.taken else s.taken_again;
+        if (taken & (@as(u32, 1) << @intCast(k)) != 0) continue;
         const art = artSlot(t.world, p, rec) orelse continue;
         const colours = coloursSlot(t.world, p, rec) orelse continue;
         s.chosen_art = art.slot;
         s.chosen_loaded = art.loaded;
         s.taking = colours.slot;
+        s.chosen_again = pass == 1;
         // A reserve's boss's colours hold the first line too from now.
         if (rec.reserve_boss) |b| s.held.colours[Held.first] = b.colours;
         return @intCast(k);
-    }
+    };
     return null;
 }
 
@@ -811,7 +858,7 @@ fn clearIfDone(t: *Tick, p: *const Plan) void {
     const s = &t.world.script;
     const r = p.round;
     const all = (@as(u64, 1) << @intCast(reserveOf(r, s.part).len)) - 1;
-    if (s.taken != all or s.arriving != 0 or s.enemies != 0) return;
+    if (s.taken != all or s.taken_again != all or s.arriving != 0 or s.enemies != 0) return;
     // Round 8's room ends with Mr. X's beating.
     if (s.part >= r.sections.len and r.room != null) return;
     if (s.part >= r.sections.len) {
@@ -859,9 +906,11 @@ fn beginSection(t: *Tick, p: *const Plan, k: u8) void {
     s.calls = 0;
     s.arriving = 0;
     s.two_players = s.two_players or t.playersInPlay() >= 2;
+    s.players = @max(s.players, t.playersInPlay());
     for (sec.placed) |*rec| {
         if (comes(p, s, rec)) placeAhead(t, rec);
     }
+    placeAgain(t, p, sec.placed);
     s.enemies = countEnemies(t);
 }
 
@@ -882,9 +931,11 @@ fn beginRoom(t: *Tick, p: *const Plan) void {
     s.calls = 0;
     s.arriving = 0;
     s.two_players = s.two_players or t.playersInPlay() >= 2;
+    s.players = @max(s.players, t.playersInPlay());
     for (rm.placed) |*rec| {
         if (comes(p, s, rec)) placeAhead(t, rec);
     }
+    placeAgain(t, p, rm.placed);
     s.enemies = countEnemies(t);
 }
 
@@ -920,9 +971,7 @@ fn roomFight(t: *Tick, p: *const Plan) void {
         t.sound(rm.music, null);
         _ = r.set(.music);
     }
-    s.stage = .wave;
-    s.next = 0;
-    nextWave(t, p);
+    startWave(t, p);
 }
 
 /// The art the room's first slot holds from the fight's start ($F, none of the enemies'),
@@ -1021,6 +1070,53 @@ fn comes(p: *const Plan, s: *const State, rec: *const Spawn) bool {
     if (rec.level > p.level) return false;
     if (rec.two_players and !s.two_players) return false;
     return true;
+}
+
+/// The lists of a part's records, in the script's order: its placed, its wave, its reserve.
+const List = enum(u2) { placed, wave, reserve };
+
+/// Whether the record `k` of the open part's `list` comes again (three and four players): one of
+/// the two players' records that comes, not a boss's; with four players each, with three every
+/// other of the part's, counted in the script's order from the first.
+fn again(t: *const Tick, p: *const Plan, list: List, k: usize) bool {
+    const s = &t.world.script;
+    if (s.players < 3) return false;
+    const lists: [3][]const Spawn = .{ placedOf(p.round, s.part), waveOf(t, p.round, s.part), reserveOf(p.round, s.part) };
+    if (!repeats(t, p, &lists[@backingInt(list)][k])) return false;
+    if (s.players >= 4) return true;
+    var before: usize = 0;
+    for (lists[0..@backingInt(list)]) |l| for (l) |*rec| {
+        before += @intFromBool(repeats(t, p, rec));
+    };
+    for (lists[@backingInt(list)][0..k]) |*rec| before += @intFromBool(repeats(t, p, rec));
+    return before % 2 == 0;
+}
+
+/// Whether a record may come again: one of the two players' that comes in this game, not a
+/// boss's.
+fn repeats(t: *const Tick, p: *const Plan, rec: *const Spawn) bool {
+    if (!rec.two_players or !comes(p, &t.world.script, rec) or rec.reserve_boss != null) return false;
+    const kind = t.kinds.find(rec.kind) orelse return false;
+    return t.kinds.get(kind).family() != .boss;
+}
+
+/// The part's placed that come again, each `Crowd.placed_apart` pixels back from its first,
+/// against the round's way: an enemy comes out of hiding no later than its first (its place on
+/// the screen, or the camera at it or past it), where one ahead might wait beyond the wall.
+fn placeAgain(t: *Tick, p: *const Plan, placed: []const Spawn) void {
+    const way: i32 = if (p.round.camera.leftward) -1 else 1;
+    for (placed, 0..) |*rec, k| {
+        if (!again(t, p, .placed, k)) continue;
+        var copy = rec.*;
+        copy.x -= way * Crowd.placed_apart;
+        placeAhead(t, &copy);
+    }
+}
+
+fn placedOf(r: *const Round, part: u8) []const Spawn {
+    if (part < r.sections.len) return r.sections[part].placed;
+    if (r.room) |*rm| return rm.placed;
+    return &.{};
 }
 
 fn waveOf(t: *const Tick, r: *const Round, part: u8) []const Spawn {

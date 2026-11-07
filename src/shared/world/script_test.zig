@@ -99,8 +99,13 @@ const Fixture = struct {
     plan: script.Plan = .{ .round = &round, .level = 1 },
 
     fn init() !*Fixture {
+        return initWith(&round, 0);
+    }
+
+    /// The fixture on round `r`, its script counting `players` in play (none are in the world).
+    fn initWith(r: *const content_round.Round, players: u8) !*Fixture {
         const f = try testing.allocator.create(Fixture);
-        f.* = .{ .arena = .init(testing.allocator), .kinds = undefined };
+        f.* = .{ .arena = .init(testing.allocator), .kinds = undefined, .plan = .{ .round = r, .level = 1 } };
         errdefer f.deinit();
         const arena = f.arena.allocator();
         var defs: [definitions.len]content_entity.Definition = undefined;
@@ -111,6 +116,8 @@ const Fixture = struct {
         }
         f.kinds = try Kinds.bind(arena, try arena.dupe(content_entity.Definition, &defs), &test_art, &diag);
         script.start(&f.w, &f.plan);
+        f.w.script.players = players;
+        f.w.script.two_players = players >= 2;
         var t = f.tick();
         script.placeFirst(&t, &f.plan);
         return f;
@@ -337,4 +344,121 @@ test "the timer: a second every pace's ticks, held in the special attack, up at 
     try testing.expect(f.w.timer.up);
     f.step();
     try testing.expect(!f.w.timer.up);
+}
+
+/// A round of the two players' records (DESIGN.md 10.7, E4): its section's placed, three of them
+/// the two players' (and their boss); its wave's first, its reserve's first, the two players'.
+const crowd_round: content_round.Round = blk: {
+    var r = round;
+    r.sections = &.{
+        .{
+            .wall = 400,
+            .timer = 40,
+            .opens_after = 5,
+            .placed = &.{
+                .{ .kind = "punk", .x = 300, .depth = 50, .two_players = true },
+                .{ .kind = "crate", .x = 320, .depth = 40, .two_players = true },
+                .{ .kind = "punk", .x = 340, .depth = 42, .two_players = true },
+                .{ .kind = "punk", .x = 360, .depth = 44 },
+                .{ .kind = "boss", .x = 380, .depth = 46, .two_players = true },
+            },
+            .wave = &.{
+                .{ .kind = "punk", .side = .left, .depth = 32, .after = 3, .two_players = true },
+                .{ .kind = "punk", .side = .right, .depth = 60, .after = 4 },
+            },
+            .reserve = &.{
+                .{ .kind = "punk", .side = .left, .depth = 70, .arrives_after = 6, .two_players = true },
+                .{ .kind = "punk", .side = .right, .depth = 72, .arrives_after = 6 },
+            },
+        },
+        .{ .wall = 800, .timer = 50, .opens_after = 7 },
+    };
+    break :blk r;
+};
+
+/// The places across of the live entities of kind `name`, in the world's order.
+fn placesOf(f: *const Fixture, name: []const u8, into: []i32) []i32 {
+    const k = f.kinds.find(name).?;
+    var n: usize = 0;
+    for (&f.w.entities) |*e| if (e.alive() and e.kind == k) {
+        into[n] = e.position.x.whole();
+        n += 1;
+    };
+    return into[0..n];
+}
+
+test "three and four players: the section's two players' placed come again 40 pixels back, every other of them with three, each with four; no boss again" {
+    // The players in play: the placed punks', crates' and bosses' places across.
+    const Want = struct { players: u8, punks: []const i32, crates: []const i32 };
+    const wants = [_]Want{
+        .{ .players = 1, .punks = &.{360}, .crates = &.{} },
+        .{ .players = 2, .punks = &.{ 300, 340, 360 }, .crates = &.{320} },
+        .{ .players = 3, .punks = &.{ 300, 340, 360, 260, 300 }, .crates = &.{320} },
+        .{ .players = 4, .punks = &.{ 300, 340, 360, 260, 300 }, .crates = &.{ 320, 280 } },
+    };
+    for (wants) |want| {
+        var f = try Fixture.initWith(&crowd_round, want.players);
+        defer f.deinit();
+        var buf: [16]i32 = undefined;
+        try testing.expectEqualSlices(i32, want.punks, placesOf(f, "punk", &buf));
+        try testing.expectEqualSlices(i32, want.crates, placesOf(f, "crate", &buf));
+        try testing.expectEqual(@as(usize, if (want.players >= 2) 1 else 0), f.count("boss"));
+    }
+}
+
+/// Into the wave of `f`'s first section: its opening, the camera at its wall.
+fn toWall(f: *Fixture) void {
+    for (0..5) |_| f.step();
+    f.w.camera.x = .pixels(398);
+    f.w.camera.x_min = .pixels(398);
+    f.step();
+}
+
+test "four players: the wave's two players' records come again once it is in, each at least 32 ticks after the one before; with three, every other" {
+    for ([_]u8{ 2, 3, 4 }) |players| {
+        var f = try Fixture.initWith(&crowd_round, players);
+        defer f.deinit();
+        f.knockOut("punk");
+        f.knockOut("boss");
+        toWall(f);
+        try testing.expectEqual(script.Stage.wave, f.w.script.stage);
+        // The wave, 3 then 4 ticks later.
+        for (0..7) |_| f.step();
+        try testing.expectEqual(@as(usize, 2), f.count("punk"));
+        // Its two players' record again 32 ticks later (four players: the part's fourth of the
+        // two players', not again with three).
+        for (0..31) |_| f.step();
+        try testing.expectEqual(@as(usize, 2), f.count("punk"));
+        f.step();
+        try testing.expectEqual(@as(usize, if (players == 4) 3 else 2), f.count("punk"));
+        for (0..3) |_| f.step();
+        try testing.expect(f.w.script.stage == .reserve);
+    }
+}
+
+test "three and four players: the reserve's two players' records come again, after the others; the section is cleared after them" {
+    for ([_]u8{ 2, 3, 4 }) |players| {
+        var f = try Fixture.initWith(&crowd_round, players);
+        defer f.deinit();
+        f.knockOut("punk");
+        f.knockOut("boss");
+        toWall(f);
+        // Each punk knocked out as it comes: the reserve's come, one called by each.
+        var reserve: usize = 0;
+        var in_reserve = false;
+        var ticks: usize = 0;
+        while (f.w.script.part == 0 and ticks < 2000) : (ticks += 1) {
+            f.step();
+            if (f.w.script.stage == .reserve) in_reserve = true;
+            const n = f.count("punk");
+            if (n != 0) {
+                if (in_reserve) reserve += n;
+                f.knockOut("punk");
+            }
+        }
+        try testing.expectEqual(@as(u8, 1), f.w.script.part);
+        // The reserve's two, and with three or four players its two players' again (the part's
+        // fifth of the two players').
+        try testing.expectEqual(@as(usize, if (players >= 3) 3 else 2), reserve);
+    }
 }
