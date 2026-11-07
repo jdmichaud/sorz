@@ -1204,6 +1204,35 @@ test "the CPU by player 1: out of its line, aside as player 1 walks through, nev
     try testing.expect(r.player().position.x.whole() > 900);
 }
 
+test "the CPU keeps its course: a turn round within a third of a second of its last waits" {
+    var r = try Round.init();
+    defer r.deinit();
+    const m = &r.w.players[0].cpu;
+    const step = struct {
+        fn run(x: *Round, mem: *cpu.Memory) input.Pad {
+            const pad = cpu.pad(&x.w, .{ .kinds = &x.f.kinds }, mem, 0);
+            x.step(.{ .pad1 = pad });
+            return pad;
+        }
+    }.run;
+    // Its place behind it, no look due: it turns round to it, at once.
+    m.seed = 1;
+    m.look = 200;
+    m.linger = 200;
+    m.goal = .{ .roam = .{ .x = 700, .depth = 64 } };
+    try testing.expect(step(&r, m).left);
+    for (0..4) |_| _ = step(&r, m);
+    try testing.expect(r.player().facing == .left);
+    // Its place behind it again, ahead of it now: it stands that way a moment, then turns.
+    m.goal = .{ .roam = .{ .x = r.player().position.x.whole() + 100, .depth = 64 } };
+    var turned: ?usize = null;
+    for (0..20) |i| if (step(&r, m).right) {
+        turned = i;
+        break;
+    };
+    try testing.expect(turned.? >= 4 and turned.? <= 6);
+}
+
 test "a grab: the walk's reach catches the punk; two knees, and the last knocks it down" {
     var r = try Round.init();
     defer r.deinit();

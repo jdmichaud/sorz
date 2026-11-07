@@ -32,6 +32,9 @@
 //!   person's reaction, and out from under a press about to come down (round 6's).
 //! - It calls the police (a life brings one) when a boss is near, among three foes, among two
 //!   when hurt, near its end with a foe about, or for player 1 near its end without one.
+//! - Its walk keeps its course a while, as a person's: it turns round, or walks back in depth, a
+//!   third of a second after its last turn at the soonest, unless a foe is close or it has a
+//!   strong reason (`settle`).
 //! - It never blocks player 1's way: walked at, it steps out of its line, and it never walks into
 //!   it, which would grab it. With two CPUs (0 PLAYERS - 2 CPU), each takes the other for its
 //!   player 1, and CPU 1 leads: it goes on through the round as a CPU alone does, and keeps off
@@ -131,6 +134,13 @@ pub const Memory = struct {
     given_up: [4]?Handle = @splat(null),
     given_at: [4]u32 = @splat(0),
     give_up_at: u2 = 0,
+    /// Its walk's course (`settle`): the world's clock at its last turn round, its way in depth
+    /// (-1 up, 1 down) and the clock as it took it; whether this tick's choice has a strong reason
+    /// to change it at once.
+    turned_at: ?u32 = null,
+    way_depth: i2 = 0,
+    way_depth_at: u32 = 0,
+    urgent: bool = false,
 
     /// A draw of its own, from 0 to `n` - 1.
     fn draw(m: *Memory, n: u8) u8 {
@@ -188,6 +198,14 @@ const recover_chance = 60;
 const short_px = .{ 2, 6 };
 const slack_px = .{ 2, 6 };
 const too_close = 14;
+/// Stepping back from a foe too close, the room past the near end of its reach it steps back to,
+/// its back turned: its turn to face it again is a step toward it (a walk's, up to 4 pixels).
+const turn_room = 8;
+/// Its walk's course (`settle`): the ticks a turn round, or a way in depth, holds before it walks
+/// the other way, but for a strong reason; a foe within these across and in depth is one (the
+/// fight's own turns are quick).
+const commit_ticks = 10;
+const close_px = .{ 72, 24 };
 const jab_level = 10;
 /// Armed, the near end of its weapon's band less this (a body's half): nearer, it steps back.
 const armed_room = 8;
@@ -339,8 +357,39 @@ fn padOf(a: Actions, layout: Layout) input.Pad {
 fn choose(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions {
     if (m.at) |at| if (at == w.tick) return m.chose;
     m.at = w.tick;
-    m.chose = play(w, g, m, k, p);
+    m.urgent = false;
+    m.chose = settle(w, g.kinds, m, p, play(w, g, m, k, p));
     return m.chose;
+}
+
+/// The walk of `a` held to its course a while (`commit_ticks`), as a person's: a turn round (a walk
+/// across against its facing) within that of its last turn, or a walk in depth against the way
+/// it took less than that ago, is left out (it stands that way a moment, which is not being
+/// stuck), but for a strong reason: a foe close (`close_px`), or this tick's choice's own
+/// (`Memory.urgent`: a turn to strike, out from under a press, out of the way of what comes at
+/// it, out of a solid thing). Its blows and jumps stay, and so does what it does not free to act.
+fn settle(w: *const World, kinds: *const Kinds, m: *Memory, p: *const Entity, a: Actions) Actions {
+    if (!ready(p)) return a;
+    var out = a;
+    const turns = (a.left and p.facing == .right) or (a.right and p.facing == .left);
+    const way: i2 = if (a.down) 1 else if (a.up) -1 else 0;
+    if (!m.urgent and !a.attack and !a.jump and !a.special and !foeClose(w, kinds, p)) {
+        if (turns and m.turned_at != null and w.tick -% m.turned_at.? < commit_ticks) {
+            out.left = false;
+            out.right = false;
+        }
+        if (way != 0 and way == -m.way_depth and w.tick -% m.way_depth_at < commit_ticks) {
+            out.up = false;
+            out.down = false;
+        }
+    }
+    if ((out.left and p.facing == .right) or (out.right and p.facing == .left)) m.turned_at = w.tick;
+    if ((out.up or out.down) and way != m.way_depth) {
+        m.way_depth = way;
+        m.way_depth_at = w.tick;
+    }
+    if (out != a) m.wanted = walkOf(out);
+    return out;
 }
 
 /// A draw from the range `r` (its least and its most) of the rule's numbers.
@@ -374,7 +423,10 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
         return .{ .special = true };
     }
     // Under a press about to come down: out from under it, the nearest way.
-    if (ready(p)) if (pressOver(w, kinds, spotHere(p), press_out)) |out| return safe(w, g, out, p);
+    if (ready(p)) if (pressOver(w, kinds, spotHere(p), press_out)) |out| {
+        m.urgent = true;
+        return safe(w, g, out, p);
+    };
     // Something coming at it in its line: once it sees it, it steps out of the way.
     const jab = jabAhead(kinds, p);
     const blow = reachOf(w, kinds, p);
@@ -383,6 +435,7 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
         if (m.dodge and ready(p)) {
             const dd = t.position.depth.whole() - p.position.depth.whole();
             const up = if (dd != 0) dd > 0 else m.above;
+            m.urgent = true;
             return safe(w, g, .{ .up = up, .down = !up }, p);
         }
     } else m.dodge = false;
@@ -407,7 +460,10 @@ fn play(w: *const World, g: Given, m: *Memory, k: u1, p: *const Entity) Actions 
     };
     // Inside a solid thing (a new life dropped in it): out across, the nearer way (a walk across
     // alone stands it against the thing's side; any other is undone).
-    if (ready(p)) if (solidSide(w, kinds, p)) |out| return out;
+    if (ready(p)) if (solidSide(w, kinds, p)) |out| {
+        m.urgent = true;
+        return out;
+    };
     if (m.detour > 0) {
         m.detour -= 1;
         if (goalPlace(w, m.goal)) |to| {
@@ -583,6 +639,14 @@ fn roamSpot(w: *const World, floor: ?*const Floor, m: *Memory, p: *const Entity,
     s.x = std.math.clamp(s.x, left + margin_left, left + screen_width - margin_right);
     if (w.camera.follows) |rules| s.depth = std.math.clamp(s.depth, rules.kept_depth[0], rules.kept_depth[1]);
     return onFloor(floor, s);
+}
+
+/// Whether a foe stands within `close_px` of `p`, across and in depth.
+fn foeClose(w: *const World, kinds: *const Kinds, p: *const Entity) bool {
+    for (&w.entities) |*e| {
+        if (isFoe(kinds, e) and @abs(e.position.x.whole() - p.position.x.whole()) <= close_px[0] and @abs(e.position.depth.whole() - p.position.depth.whole()) <= close_px[1]) return true;
+    }
+    return false;
 }
 
 fn spotHere(p: *const Entity) Spot {
@@ -986,6 +1050,7 @@ fn fightFoe(w: *const World, m: *Memory, p: *const Entity, f: *const Entity, par
             if (!walks(a) and (p.facing == .left) != (dx < 0)) {
                 a.left = dx < 0;
                 a.right = dx > 0;
+                m.urgent = true;
             }
             return a;
         }
@@ -1013,7 +1078,9 @@ fn sideTaken(f: *const Entity, partner: ?*const Entity, fire: ?Fire, side: i32, 
 
 /// `f` struck: within `within` across and level with it, faced and struck at its pace; else to
 /// `from` pixels across from it on the CPU's side (into it, at 0), level with it. Too close, it
-/// steps back, the other way at the edge of the view the players are kept in.
+/// steps back, and on, its back turned, until `turn_room` past the near end of its reach (its
+/// turn is a step toward it); at the edge of the view the players are kept in, or unarmed facing
+/// it without the room for that before the edge, it goes the other way, past it.
 fn strikeAt(w: *const World, m: *Memory, p: *const Entity, f: *const Entity, from: u8, within: i32, r: Reach) Actions {
     const px = p.position.x.whole();
     const dx = f.position.x.whole() - px;
@@ -1024,17 +1091,22 @@ fn strikeAt(w: *const World, m: *Memory, p: *const Entity, f: *const Entity, fro
         go(&a, dx, dd, 0, m.slack);
         return a;
     }
-    if (@abs(dx) < r.near) {
+    const facing_it = (dx < 0) == (p.facing == .left);
+    if (@abs(dx) < r.near or (!facing_it and @abs(dx) < r.near + turn_room)) {
         a.left = dx >= 0;
         a.right = dx < 0;
-        if (atEdge(w, p, a.left)) {
+        const room = roomBehind(w, p, a.left);
+        if (room <= 0 or (facing_it and !armed(p) and room < r.near + turn_room - @as(i32, @intCast(@abs(dx))))) {
             a.left = !a.left;
             a.right = !a.right;
         }
         return a;
     }
     if (@abs(dx) <= within and @abs(dd) <= r.level) {
-        if ((dx < 0) != (p.facing == .left)) return .{ .left = dx < 0, .right = dx >= 0 };
+        if ((dx < 0) != (p.facing == .left)) {
+            m.urgent = true;
+            return .{ .left = dx < 0, .right = dx >= 0 };
+        }
         return .{ .attack = strike(m) };
     }
     go(&a, f.position.x.whole() + side * @as(i32, from) - px, dd, 6, m.slack);
@@ -1252,18 +1324,21 @@ fn safe(w: *const World, g: Given, a: Actions, p: *const Entity) Actions {
 }
 
 /// The walk of `a` kept from under the presses about to come down (`pressOver`): a step across or
-/// in depth that would take it under one is left out (from under one, it goes on).
+/// in depth that would take it under one is left out (from under one, it goes on; within the
+/// margin it does not walk into, it keeps out of the one it walks out from under: else it would
+/// walk in and out of it at every tick).
 fn offPresses(w: *const World, kinds: *const Kinds, a: Actions, p: *const Entity) Actions {
     const here = spotHere(p);
-    if (pressOver(w, kinds, here, press_in) != null) return a;
+    if (pressOver(w, kinds, here, press_out) != null) return a;
+    const margin: i32 = if (pressOver(w, kinds, here, press_in) != null) press_out else press_in;
     var out = a;
     const sx: i32 = if (a.right) hole_ahead[0] else if (a.left) -hole_ahead[0] else 0;
     const sd: i32 = if (a.down) hole_ahead[1] else if (a.up) -hole_ahead[1] else 0;
-    if (sx != 0 and pressOver(w, kinds, .{ .x = here.x + sx, .depth = here.depth }, press_in) != null) {
+    if (sx != 0 and pressOver(w, kinds, .{ .x = here.x + sx, .depth = here.depth }, margin) != null) {
         out.left = false;
         out.right = false;
     }
-    if (sd != 0 and pressOver(w, kinds, .{ .x = here.x, .depth = here.depth + sd }, press_in) != null) {
+    if (sd != 0 and pressOver(w, kinds, .{ .x = here.x, .depth = here.depth + sd }, margin) != null) {
         out.up = false;
         out.down = false;
     }
@@ -1337,6 +1412,14 @@ fn atEdge(w: *const World, p: *const Entity, left: bool) bool {
     const rules = w.camera.follows orelse return false;
     const x = p.position.x.whole() - w.camera.x.whole();
     return if (left) x - edge_room <= rules.kept_x[0] else x + edge_room >= rules.kept_x[1];
+}
+
+/// How far `p` may walk on its left (or its right) before `edge_room` of the edge of the view the
+/// players are kept in (the camera's rules); no end without them.
+fn roomBehind(w: *const World, p: *const Entity, left: bool) i32 {
+    const rules = w.camera.follows orelse return std.math.maxInt(i32);
+    const x = p.position.x.whole() - w.camera.x.whole();
+    return if (left) x - edge_room - rules.kept_x[0] else rules.kept_x[1] - edge_room - x;
 }
 
 /// Whether the depth `d` is on the depths the players are kept on (the camera's rules).
