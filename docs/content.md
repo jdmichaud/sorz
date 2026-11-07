@@ -255,7 +255,10 @@ a second in play). The axes are `x` across, `depth` on the ground (toward the pl
   that asks for it: 16 colour indices, index `i` of a frame's pixels drawn as the map's `i`th (0,
   transparent, kept so). The players' `duplicate`, which the extended variant gives a second
   player playing the first's character, is the port's choice (the ROM has none): Axel's jeans
-  red and his hair grey, Adam's top blue, Blaze's clothes blue, in the players' palette.
+  red and his hair grey, Adam's top blue, Blaze's clothes blue, in the players' palette. So are
+  `third` and `fourth`, a third and a fourth player on one character's (DESIGN.md 10.7, E4):
+  Axel's jeans grey, then yellow and orange; Adam's top red, then white and light grey; Blaze's
+  clothes white and light grey, then yellow and orange.
 
 The optional fields are written only when they are not their defaults, so a file read and
 written again keeps its bytes. The extractor writes the players (`axel`, `adam`, `blaze`, each

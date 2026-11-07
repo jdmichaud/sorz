@@ -197,8 +197,8 @@ pub const PartnerPlaces = struct { partner: []const u8, places: []const Place };
 
 /// Other colours for its frames within their palette: each colour index of a frame's pixels
 /// (`map[i]`) drawn as another of the same palette, 0 (transparent) kept so. Its name is the
-/// rule's that asks for it (a variant's policy: `duplicate`, a second player playing the
-/// first's character).
+/// rule's that asks for it (a variant's policy: `duplicate`, a second player playing a
+/// character a player before it plays; `third`, `fourth`, the third and the fourth on it).
 pub const ColourMap = struct { name: []const u8, map: [art.palette_size]u8 };
 
 pub const Definition = struct {

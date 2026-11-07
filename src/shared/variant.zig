@@ -87,9 +87,20 @@ pub const Policies = struct {
     /// Whether character `wanted` is taken for a player, the other player's cursor on `other` at
     /// the character select (two players): their cursor then passes it.
     characterTaken: *const fn (other: Character, wanted: Character) bool = takenByTheOther,
-    /// The colours a second player playing the first player's character is drawn with: the
-    /// colour map of that name in the character's definition (`colour_maps`); none: its own.
-    duplicate_colours: ?[]const u8 = null,
+    /// The colours a player playing a character that players before it play is drawn with, by
+    /// how many play it before it (the second on a character, the third, the fourth: DESIGN.md
+    /// 10.7, E4): the colour maps of these names in the character's definition (`colour_maps`);
+    /// none (or past the list): its own.
+    duplicate_colours: []const []const u8 = &.{},
+
+    /// The colour map (`duplicate_colours`) of a player playing `character`, the players before
+    /// it playing `before`: none on a character none of them plays (its own colours).
+    pub fn coloursOf(p: *const Policies, before: []const ?Character, character: Character) ?[]const u8 {
+        var on: usize = 0;
+        for (before) |c| on += @intFromBool(c == character);
+        if (on == 0 or on > p.duplicate_colours.len) return null;
+        return p.duplicate_colours[on - 1];
+    }
 };
 
 pub const Config = struct {
@@ -108,7 +119,7 @@ pub const extended: Config = .{ .graph = &flow.extended, .policies = .{
     .settings_rules = true,
     .menuLines = extendedMenu,
     .characterTaken = neverTaken,
-    .duplicate_colours = "duplicate",
+    .duplicate_colours = &same_character_colours,
 } };
 
 pub const network: Config = .{ .graph = &flow.network, .policies = .{
@@ -118,8 +129,12 @@ pub const network: Config = .{ .graph = &flow.network, .policies = .{
     .start_opens_settings = true,
     .settings_key = false,
     .settings_rules = true,
-    .duplicate_colours = "duplicate",
+    .duplicate_colours = &same_character_colours,
 } };
+
+/// The colour maps of the second, the third and the fourth player of one character: the
+/// content's `duplicate` (PLAN item 20), `third` and `fourth` (item 49).
+const same_character_colours = [_][]const u8{ "duplicate", "third", "fourth" };
 
 // --- the policies -------------------------------------------------------------------------------
 
@@ -175,8 +190,18 @@ test "each variant: its graph, its menu, its options' lines, START and the setti
     try testing.expect(e.cpu_player and !o.cpu_player and !Variant.network.config().policies.cpu_player);
     try testing.expect(e.local_players == 4 and o.local_players == 2 and Variant.network.config().policies.local_players == 2);
     try testing.expect(!e.characterTaken(.axel, .axel) and o.characterTaken(.axel, .axel));
-    try testing.expectEqualStrings("duplicate", e.duplicate_colours.?);
-    try testing.expect(o.duplicate_colours == null);
+    try testing.expectEqualStrings("duplicate", e.duplicate_colours[0]);
+    try testing.expectEqualStrings("fourth", e.duplicate_colours[2]);
+    try testing.expect(o.duplicate_colours.len == 0);
+    // A character's first player its own colours, the second `duplicate`, the third and fourth
+    // theirs; in the cartridge, its own.
+    const four = [_]?Character{ .adam, .axel, .adam, .adam };
+    try testing.expect(e.coloursOf(four[0..0], .adam) == null and e.coloursOf(four[0..1], .axel) == null);
+    try testing.expectEqualStrings("duplicate", e.coloursOf(four[0..2], .adam).?);
+    try testing.expectEqualStrings("third", e.coloursOf(four[0..3], .adam).?);
+    try testing.expectEqualStrings("duplicate", e.coloursOf(four[0..3], .axel).?);
+    try testing.expectEqualStrings("fourth", e.coloursOf(&four, .adam).?);
+    try testing.expect(o.coloursOf(four[0..1], .adam) == null);
 
     const n = &Variant.network.config().policies;
     try testing.expectEqualSlices(MenuLine, &.{ .two_players, .options }, n.menuLines(.none));

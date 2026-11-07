@@ -933,12 +933,11 @@ pub const Round = struct {
         return .{ .player = d.player, .kind = kind, .lives = lives, .colours = playerColours(turn, d.player, d.character, kind, a) };
     }
 
-    /// The colours player `k` playing `character` (of kind `kind`) is drawn with: the variant's
-    /// for a second player playing the first's character (`Policies.duplicate_colours`), when
-    /// the character's definition has them; else its own.
+    /// The colours player `k` playing `character` (of kind `kind`) is drawn with: its own on a
+    /// character no player before it plays; else the variant's for the second on it, the third,
+    /// the fourth (`Policies.coloursOf`), when the character's definition has them.
     fn playerColours(turn: *const scene.Turn, k: input.Player, character: setup_mod.Character, kind: world.entity.KindId, a: *const Assets) ?u8 {
-        const name = turn.policies.duplicate_colours orelse return null;
-        if (k != 1 or turn.setup.characters[0] != character) return null;
+        const name = turn.policies.coloursOf(turn.setup.characters[0..k], character) orelse return null;
         return a.kinds.get(kind).definition.colourMap(name);
     }
 

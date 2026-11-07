@@ -144,6 +144,21 @@ const duplicate_colours = [_][]const [2]u8{
     &.{ .{ 6, 10 }, .{ 7, 11 } },
 };
 
+/// The colours of a third and a fourth player of one character (DESIGN.md 10.7, E4; the user's
+/// choice, PLAN item 49), by character, as `duplicate_colours` are: the port's, of the same 16
+/// colours. Axel's jeans grey, then yellow and orange; Adam's top red, then white and light grey;
+/// Blaze's clothes white and light grey, then yellow and orange.
+const third_colours = [_][]const [2]u8{
+    &.{ .{ 9, 8 }, .{ 10, 12 }, .{ 11, 13 } },
+    &.{ .{ 14, 6 }, .{ 15, 7 } },
+    &.{ .{ 6, 8 }, .{ 7, 12 } },
+};
+const fourth_colours = [_][]const [2]u8{
+    &.{ .{ 9, 14 }, .{ 10, 15 }, .{ 11, 5 } },
+    &.{ .{ 14, 1 }, .{ 15, 8 } },
+    &.{ .{ 6, 14 }, .{ 7, 15 } },
+};
+
 // --- Reading an animation ----------------------------------------------------------------------
 
 /// A frame of an animation as the set holds it: the frame's address, drawn mirrored or not, and
@@ -987,7 +1002,7 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
     const health = try moveq(rom, 0x1F12, 7);
     return .{
         .name = name,
-        .provenance = try std.fmt.allocPrint(arena, "player character {d}: the animation set at ROM 0x{X:0>5} (0x1F20), the states' animations (0x2F2C), the durations (0x3A30), the boxes (0x1ABA8, 0x1AB8E), the blows (0x423C); health ROM 0x01F12: moveq #N,d7; gravity ROM 0x0389A: move.l #N,d0{s}; colour_maps.duplicate: the port's colours for a second player of the same character, not the ROM's (it has none)", .{ character, set, d.number_notes.items }),
+        .provenance = try std.fmt.allocPrint(arena, "player character {d}: the animation set at ROM 0x{X:0>5} (0x1F20), the states' animations (0x2F2C), the durations (0x3A30), the boxes (0x1ABA8, 0x1AB8E), the blows (0x423C); health ROM 0x01F12: moveq #N,d7; gravity ROM 0x0389A: move.l #N,d0{s}; colour_maps.duplicate: the port's colours for a second player of the same character, not the ROM's (it has none); colour_maps.third and .fourth: the port's for a third and a fourth (PLAN item 49)", .{ character, set, d.number_notes.items }),
         .family = .player,
         .team = .player,
         .behaviour = "player",
@@ -1001,16 +1016,26 @@ pub fn player(arena: std.mem.Allocator, rom: []const u8, name: []const u8, chara
         .animations = d.animations.items,
         .moves = d.moves.items,
         .partners = d.partners.items,
-        .colour_maps = try duplicateColours(arena, character),
+        .colour_maps = try sameCharacterColours(arena, character),
     };
 }
 
-/// The colour map `duplicate` of character `character` (`duplicate_colours`).
-fn duplicateColours(arena: std.mem.Allocator, character: u8) Error![]const entity.ColourMap {
-    var map: [art.palette_size]u8 = undefined;
-    for (&map, 0..) |*m, i| m.* = @intCast(i);
-    for (duplicate_colours[character]) |pair| map[pair[0]] = pair[1];
-    return arena.dupe(entity.ColourMap, &.{.{ .name = "duplicate", .map = map }});
+/// The colour maps `duplicate`, `third` and `fourth` of character `character`
+/// (`duplicate_colours`, `third_colours`, `fourth_colours`).
+fn sameCharacterColours(arena: std.mem.Allocator, character: u8) Error![]const entity.ColourMap {
+    const sets = [_]struct { []const u8, []const []const [2]u8 }{
+        .{ "duplicate", &duplicate_colours },
+        .{ "third", &third_colours },
+        .{ "fourth", &fourth_colours },
+    };
+    const out = try arena.alloc(entity.ColourMap, sets.len);
+    for (out, sets) |*o, set| {
+        var map: [art.palette_size]u8 = undefined;
+        for (&map, 0..) |*m, i| m.* = @intCast(i);
+        for (set[1][character]) |pair| map[pair[0]] = pair[1];
+        o.* = .{ .name = set[0], .map = map };
+    }
+    return out;
 }
 
 /// Each frame of `frames` takes its place from the one held: the list of animation `which`
