@@ -2,9 +2,11 @@
 //! screen's style (screen.zig): the host's network options, opened by its menu's NETWORK PLAY, and
 //! a client's name entry.
 //!
-//! - **The network options**: PLAYERS (2, the only number today), PORT (the native host's, which
-//!   it listens at once its server starts: fixed from then on; none on a page), OBSERVERS (whether
-//!   the session takes them), SAME CHARACTER (whether the two players may choose one character),
+//! - **The network options**: PLAYERS (2 to 4: the places of the game, one player a machine, the
+//!   host's player 1; DESIGN.md 10.7, E4), PORT (the native host's, which it listens at once its
+//!   server starts: fixed from then on; none on a page), OBSERVERS (whether the session takes
+//!   them), SAME CHARACTER (whether two players may choose one character: always with 4 players,
+//!   who cannot all differ),
 //!   JOIN IN PROGRESS (whether a player may join a game under way, past its select: the host's own
 //!   player coming back too); then START SERVER (the session opens: the screen stays, the host's
 //!   lobby, listing who is connected while clients come), or STOP SERVER while it runs (its
@@ -99,6 +101,8 @@ const first_row = 5;
 /// The host's network options.
 pub const NetOptions = struct {
     row: Row = .observers,
+    /// The players of the game, the host's among them (2 to 4).
+    places: u8 = 2,
     observers: bool = true,
     same_character: bool = false,
     join_in_progress: bool = true,
@@ -129,11 +133,19 @@ pub const NetOptions = struct {
     const digits = 5;
 
     /// What the options choose of the session.
-    pub const Choice = struct { observers: bool = true, same_character: bool = false, join_in_progress: bool = true };
+    pub const Choice = struct { places: u8 = 2, observers: bool = true, same_character: bool = false, join_in_progress: bool = true };
 
     pub fn choice(self: *const NetOptions) Choice {
-        return .{ .observers = self.observers, .same_character = self.same_character, .join_in_progress = self.join_in_progress };
+        return .{ .places = self.places, .observers = self.observers, .same_character = self.sameCharacter(), .join_in_progress = self.join_in_progress };
     }
+
+    /// Whether two players may choose one character: the line's, and always with four.
+    pub fn sameCharacter(self: *const NetOptions) bool {
+        return self.same_character or self.places == max_places;
+    }
+
+    pub const min_places = 2;
+    pub const max_places = 4;
 
     /// The options as they open: the cursor on the first line it takes.
     pub fn open(self: NetOptions) NetOptions {
@@ -165,14 +177,14 @@ pub const NetOptions = struct {
         switch (nav) {
             .up => self.move(-1),
             .down => self.move(1),
-            .left, .right => self.change(),
+            .left, .right => self.change(nav == .right),
             .choose => switch (self.row) {
                 .server, .game, .exit => return self.act(self.row),
                 .port => {
                     self.port_before = self.port.?;
                     self.editing = 0;
                 },
-                else => self.change(),
+                else => self.change(true),
             },
             // On an action, START is A there; on a value, START GAME.
             .start => return self.act(switch (self.row) {
@@ -209,12 +221,12 @@ pub const NetOptions = struct {
         if (!serving) self.client_count = 0;
     }
 
-    /// Whether the cursor takes line `r`: not PLAYERS (two today), PORT when there is one to
-    /// change.
+    /// Whether the cursor takes line `r`: PORT when there is one to change, SAME CHARACTER but
+    /// with four players.
     fn takes(self: *const NetOptions, r: Row) bool {
         return switch (r) {
-            .players => false,
             .port => self.port != null and !self.port_fixed,
+            .same_character => self.places != max_places,
             .game => !self.in_game or self.can_return,
             else => true,
         };
@@ -231,8 +243,13 @@ pub const NetOptions = struct {
         self.row = @fromBackingInt(@intCast(i));
     }
 
-    fn change(self: *NetOptions) void {
+    /// The value of the cursor's line changed: a yes or no turned, PLAYERS one up (`up`) or down,
+    /// round from 4 to 2.
+    fn change(self: *NetOptions, up: bool) void {
         switch (self.row) {
+            .players => self.places = if (up)
+                (if (self.places >= max_places) min_places else self.places + 1)
+            else if (self.places <= min_places) max_places else self.places - 1,
             .observers => self.observers = !self.observers,
             .same_character => self.same_character = !self.same_character,
             .join_in_progress => self.join_in_progress = !self.join_in_progress,
@@ -268,11 +285,16 @@ pub const NetOptions = struct {
         try p.text(label_col, title_row, "NETWORK PLAY", .bright);
         var port_buf: [8]u8 = undefined;
         const port_text: ?[]const u8 = if (self.port) |v| std.fmt.bufPrint(&port_buf, "{d}", .{v}) catch unreachable else null;
+        const places_text: []const u8 = switch (self.places) {
+            2 => "2",
+            3 => "3",
+            else => "4",
+        };
         const rows = [_]struct { Row, []const u8, ?[]const u8 }{
-            .{ .players, "PLAYERS", "2" },
+            .{ .players, "PLAYERS", places_text },
             .{ .port, "PORT", port_text },
             .{ .observers, "OBSERVERS", if (self.observers) "YES" else "NO" },
-            .{ .same_character, "SAME CHARACTER", if (self.same_character) "YES" else "NO" },
+            .{ .same_character, "SAME CHARACTER", if (self.sameCharacter()) "YES" else "NO" },
             .{ .join_in_progress, "JOIN IN PROGRESS", if (self.join_in_progress) "YES" else "NO" },
             .{ .server, if (self.serving) "STOP SERVER" else "START SERVER", null },
             .{ .game, if (self.in_game) "RETURN TO GAME" else "START GAME", null },
@@ -280,7 +302,7 @@ pub const NetOptions = struct {
         };
         for (rows) |r| {
             if (r[0] == .port and self.port == null) continue;
-            // PLAYERS is two today, a fixed port the one listened at: dim, never chosen.
+            // A fixed port the one listened at, SAME CHARACTER with four: dim, never chosen.
             const tone: panel_mod.Tone = if (r[0] == self.row) .bright else .dim;
             const row = self.rowOf(r[0]);
             try p.text(label_col, row, r[1], tone);
@@ -396,10 +418,33 @@ test "the network options: values changed, START SERVER or GAME, STOP SERVER; EX
     try testing.expectEqual(NetOptions.Action.start_server, o.action);
     o.row = .exit;
     try testing.expectEqual(Result.cancel, o.handle(&s, key(.enter)));
-    // PLAYERS is not a line the cursor takes, nor PORT without one.
+    // PORT is not a line the cursor takes without one: up from OBSERVERS, PLAYERS.
     o.row = .observers;
     _ = o.handle(&s, key(.up));
-    try testing.expectEqual(NetOptions.Row.exit, o.row);
+    try testing.expectEqual(NetOptions.Row.players, o.row);
+}
+
+test "the network options' PLAYERS: 2 to 4 round both ways; with 4, SAME CHARACTER on and fixed" {
+    const s: Settings = .{};
+    var o: NetOptions = .{ .row = .players };
+    try testing.expectEqual(@as(u8, 2), o.choice().places);
+    _ = o.handle(&s, key(.right));
+    try testing.expectEqual(@as(u8, 3), o.places);
+    try testing.expect(!o.choice().same_character);
+    _ = o.handle(&s, key(.z));
+    try testing.expectEqual(@as(u8, 4), o.places);
+    try testing.expect(o.choice().same_character and !o.same_character);
+    // SAME CHARACTER is skipped: down from OBSERVERS goes to JOIN IN PROGRESS.
+    o.row = .observers;
+    _ = o.handle(&s, key(.down));
+    try testing.expectEqual(NetOptions.Row.join_in_progress, o.row);
+    o.row = .players;
+    _ = o.handle(&s, key(.right));
+    try testing.expectEqual(@as(u8, 2), o.places);
+    _ = o.handle(&s, key(.left));
+    try testing.expectEqual(@as(u8, 4), o.places);
+    _ = o.handle(&s, key(.left));
+    try testing.expectEqual(@as(u8, 3), o.places);
 }
 
 test "over a game in progress: RETURN TO GAME when player 1 can come back, else skipped; EXIT" {
@@ -440,13 +485,15 @@ test "the network options' PORT: edited a digit at a time, kept or left; fixed, 
     try testing.expectEqual(@as(?u16, 65535), o.port);
     _ = o.handle(&s, key(.escape));
     try testing.expectEqual(@as(?u16, 27000), o.port);
-    // Up from PORT goes round to EXIT; fixed, the cursor does not take it.
+    // Up from PORT goes to PLAYERS, then round to EXIT; fixed, the cursor does not take it.
+    _ = o.handle(&s, key(.up));
+    try testing.expectEqual(NetOptions.Row.players, o.row);
     _ = o.handle(&s, key(.up));
     try testing.expectEqual(NetOptions.Row.exit, o.row);
     var fixed = (NetOptions{ .port = 8000, .port_fixed = true }).open();
     try testing.expectEqual(NetOptions.Row.observers, fixed.row);
     _ = fixed.handle(&s, key(.up));
-    try testing.expectEqual(NetOptions.Row.exit, fixed.row);
+    try testing.expectEqual(NetOptions.Row.players, fixed.row);
 }
 
 test "the name entry: letters up and down, the cursor round, A keeps it" {
