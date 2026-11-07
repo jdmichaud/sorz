@@ -720,12 +720,38 @@ machine in network play; CPUs in the free places and several local players a mac
     of four with its slots named, the stats of four, PLAYER 3 DISCONNECTED on a client, player
     3 dropped in. Not checked: real machines on a network, the input delay grown by a slow
     link between clients (the checks fix it at 3), a page as one of three or four clients.
-- [ ] **52 — The rounds with 3 and 4 players** — Depends: 47.
+- [x] **52 — The rounds with 3 and 4 players** — Depends: 47.
   - The two-player spawns again: half of them with 3 players, all of them with 4 (the second
     boss among them not again: as many bosses as with two players); the enemies' health x1.25
     and x1.5, the bosses' x1.5 and x2; the breakables among them bring more food and goodies.
   - Gate: zig build test; the numbers measured with CPUs in every place (a tool's games of 3 and
     4 players: lives lost, damage taken, rounds' times against 2), tuned, and the user's play.
+  - [x] Checked 2026-11-07: zig build test (518 tests: the placed of 1 to 4 players, copied 40
+    pixels back, no boss again; the wave's second pass, 32 ticks apart; the reserve's repeats
+    before the clear; the health factors, their rounding and the bosses' bar's measure; worlds of
+    3 and 4 players whose script brings a punk again with more health and Antonio alone; four
+    CPUs that never hold each other). Half: every other two-player record of a part (a section,
+    the boss's, the room) in the script's order, placed then wave then reserve. cpus-check's
+    `--players 3|4` (CPUs in every place; its `--level` now applied, it was not before) measured
+    the whole game at 7 lives, levels 1 and 3, six sets of characters, seeds 1 to 4: 24 games
+    per level and count. Rounds 1 to 7, lives lost per player (time overs a game, display ticks):
+    level 1, 2 players 10.79 (2.33, 186k); before, 3 players 5.40 (1.38, 175k), 4 players 8.43
+    (5.08, 231k); after, 9.47 (1.92, 211k) and 10.60 (3.17, 248k). Level 3, 2 players 22.56
+    (2.29, 233k); before, 13.46 (1.21, 222k) and 13.40 (2.83, 248k); after, 21.04 (3.25, 274k)
+    and 21.93 (5.71, 306k). Settled: the enemies x1.25 and x1.5, the bosses x1.5 with 3 and with
+    4 (x2 with 4 gave 11.60 and 25.19 lives a player, 3.96 and 7.83 time overs). The rounds of 3
+    and 4 still last longer than 2's (more time overs): four CPUs crowd each other. Found on the
+    way and fixed: the CPUs of 3 and 4 held each other by turns and the camera waited (a CPU now
+    keeps off every player); with 3 or 4 players an enemy gone far off the screen calls the
+    reserve and is counted off (the reserve waited forever in round 4). The no-enemies report: a
+    player standing behind holds the camera back (its band's start), as with two; not the
+    spawns. 1 and 2 players unchanged: cpus-check built before and after, 39 games (the nine
+    pairings at level 3, 7 lives, seeds 1 and 2; the nine `--player1 bot` to round 7, seeds 1
+    and 2; the defaults, seeds 1 to 3): JSON and stderr byte-identical; round-check's report
+    identical; netplay-check's 25 flows pass. Pictures: a round 1 of four CPUs and its two
+    Antonios, their bars full at the start and emptying. Left: the user's play; round 8's room
+    (item 53); in round 8 a twin stuck past the wall and in round 5 a twins' fight of 3 players
+    that outlasted its timer many times, both seen with CPUs.
 - [x] **53 — Mr. X's room, the continues and the high scores for 4** — Depends: 47, 48.
   - Mr. X's offer for players 1 and 2 alone, played as two until he rises; then the others come
     in. Each player's continue's question and name entry on its own slot; the high scores take
