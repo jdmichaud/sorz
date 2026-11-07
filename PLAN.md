@@ -720,6 +720,12 @@ machine in network play; CPUs in the free places and several local players a mac
     of four with its slots named, the stats of four, PLAYER 3 DISCONNECTED on a client, player
     3 dropped in. Not checked: real machines on a network, the input delay grown by a slow
     link between clients (the checks fix it at 3), a page as one of three or four clients.
+  - [x] Checked 2026-11-07, after the item: a page as one of three machines (browser-check's
+    `netplay_three`, Chromium: the agent host with PLAYERS 3, the page joining as player 2, an
+    agent host as player 3; the same state at the session's tick 900, twice); the delay over slow
+    links (netplay-check's `slow_three`: every link 30 ms one way, the delay from the round trips:
+    4 ticks with one client, 6 on every machine once the second joins, the same games). Left: real
+    machines on a network, and the user's play.
 - [x] **52 — The rounds with 3 and 4 players** — Depends: 47.
   - The two-player spawns again: half of them with 3 players, all of them with 4 (the second
     boss among them not again: as many bosses as with two players); the enemies' health x1.25
