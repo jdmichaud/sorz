@@ -24,6 +24,7 @@ const records = @import("../content/screens.zig");
 const setup_mod = @import("../setup.zig");
 const Colours = @import("colours.zig").Colours;
 const round_screen = @import("round.zig");
+const party_bar = @import("party_bar.zig");
 const transfers = @import("transfers.zig");
 const input = @import("../input.zig");
 const world = @import("../world/root.zig");
@@ -352,7 +353,7 @@ pub const RoundClear = struct {
                 return if (a.rounds.of(g.round) != null) .done else .missing;
             },
         }
-        self.now.bar = barOf(g);
+        self.now.bar = barOf(turn.setup);
         // A name entry shows on its player's part of the status bar.
         for (self.names, 0..) |m_, k| {
             const m = m_ orelse continue;
@@ -437,7 +438,7 @@ pub const RoundClear = struct {
     fn frameOf(self: *const RoundClear, g: *const setup_mod.Progress, a: *const Assets) transfers.Frame {
         const sb = &a.screen.status_bar;
         var players: u16 = 0;
-        for (g.players[0..round_screen.bar_players]) |p| players += @intFromBool(p.in_play);
+        for (g.players[0..round_screen.cartridge_players]) |p| players += @intFromBool(p.in_play);
         return .{
             .colours = self.colours.copy,
             .status_rows = sb.image_rows,
@@ -501,7 +502,7 @@ pub const RoundClear = struct {
         self.colours.aim(a.players_colours);
         self.colours.aim(a.end_colours);
         self.colours.startFade(.target);
-        self.now.bar = barOf(g);
+        self.now.bar = barOf(turn.setup);
         self.round = g.round;
         self.set_up = true;
         turn.play(a.music);
@@ -577,9 +578,12 @@ fn addScore(p: *setup_mod.Gamer, points: u32, most: u32) void {
     p.score = @min(p.score +| points, most);
 }
 
-/// The status bar of the game under way: the players in play's parts, the timer.
-fn barOf(g: *const setup_mod.Progress) round_screen.Bar {
+/// The status bar of the game under way: the players in play's parts (four slots for three or
+/// four players), the timer.
+fn barOf(setup: *const Setup) round_screen.Bar {
+    const g = &setup.progress;
     var b: round_screen.Bar = .{ .time = g.timer };
+    if (party_bar.shows(setup)) b.party = party_bar.namesOf(setup);
     for (g.players[0..round_screen.bar_players], &b.players) |p, *o| {
         if (!p.in_play) continue;
         o.* = .{ .playing = .{ .score = p.score, .lives = p.lives, .specials = p.specials, .health = p.health } };
@@ -611,4 +615,19 @@ test "START held at the counting's first wait: the bonuses at once, held at the 
     try std.testing.expectEqual(@as(u8, skip_to), r.act);
     try std.testing.expectEqual(@as(u8, 0), g.timer);
     for (r.now.lines[0..3]) |l| try std.testing.expect(l.shown and !l.counted and l.digits == null);
+}
+
+test "the clear's status bar: the cartridge's for two players, the four slots for three" {
+    var setup: Setup = .{ .players = .two };
+    setup.progress.timer = 12;
+    for (setup.progress.players[0..3], 0..) |*p, k| p.* = .{ .in_play = true, .lives = @intCast(k + 1), .specials = 1, .health = 50, .score = 300 };
+    var b = barOf(&setup);
+    try std.testing.expect(b.party == null and b.time == 12);
+    try std.testing.expectEqual(@as(u8, 2), b.players[1].playing.lives);
+    setup.players = .three;
+    setup.cpu[2] = true;
+    b = barOf(&setup);
+    try std.testing.expectEqualStrings("CPU", &b.party.?[2]);
+    try std.testing.expectEqual(round_screen.PlayerBar.Playing{ .score = 300, .lives = 3, .specials = 1, .health = 50 }, b.players[2].playing);
+    try std.testing.expect(b.players[3] == .none);
 }
