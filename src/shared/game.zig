@@ -738,7 +738,7 @@ pub const Game = struct {
         const np = self.netplay orelse return true;
         if (np.observing()) return false;
         if (!np.inSession()) return np.role == .host or who == 0;
-        return @intFromBool(np.role == .guest) == who;
+        return np.localPlayer() == who;
     }
 
     /// Opens the settings screen over the game, which holds while it is open; the controls let go,
@@ -1178,7 +1178,7 @@ pub const Game = struct {
         if (in == shown) return;
         self.overlay_dirty = true;
         if (!in) return self.overlays.remove(.peer_settings);
-        self.overlays.push(.{ .peer_settings = @intFromBool(np.role == .host) });
+        self.overlays.push(.{ .peer_settings = np.peerPlayer() });
         self.jingle_at = 0;
     }
 
@@ -1296,7 +1296,7 @@ pub const Game = struct {
         if (self.netplay) |np| {
             if (session != null) np.ran();
             // The host's observers get each tick's pads.
-            if (np.role == .host) np.observed(p, pads);
+            if (np.role == .host) np.observed(p, pads, @max(2, self.state.setup.players.count()));
             // The game ended: so does the session, on both machines at this tick.
             if (session != null and !self.state.inGame()) {
                 np.end(p, .game_over);

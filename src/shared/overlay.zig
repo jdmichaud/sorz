@@ -16,6 +16,7 @@
 const std = @import("std");
 const settings_mod = @import("settings/root.zig");
 const panel_mod = @import("panel.zig");
+const input = @import("input.zig");
 
 const Panel = panel_mod.Panel;
 const Settings = settings_mod.Settings;
@@ -140,8 +141,8 @@ pub const Overlay = union(Kind) {
     settings: settings_mod.screen.Screen,
     net_options: net_screens.NetOptions,
     name_entry: net_screens.NameEntry,
-    /// The other player (of network play) is in their settings: this player, `player` (0 or 1).
-    peer_settings: u1,
+    /// The other player (of network play) is in their settings: this player, `player` (from 0).
+    peer_settings: input.Player,
     /// Network play's wait (it holds the game while it lasts), its count where it has one.
     network: struct { what: Message, seconds: u8 = 0 },
     /// Network play's notice, until the time it goes (set when first shown): over a wait, it
@@ -246,8 +247,13 @@ fn statsLine(buf: *[40]u8, name: []const u8, load: ?protocol.Load, delay: u8) []
 }
 
 /// What a player sees while the other is in the settings, by the other player.
-pub fn peerText(player: u1) []const u8 {
-    return if (player == 1) "PLAYER 2 IS IN THE SETTINGS MENU" else "PLAYER 1 IS IN THE SETTINGS MENU";
+pub fn peerText(player: input.Player) []const u8 {
+    return switch (player) {
+        0 => "PLAYER 1 IS IN THE SETTINGS MENU",
+        1 => "PLAYER 2 IS IN THE SETTINGS MENU",
+        2 => "PLAYER 3 IS IN THE SETTINGS MENU",
+        3 => "PLAYER 4 IS IN THE SETTINGS MENU",
+    };
 }
 
 /// A gamepad's message, by its label: it came, or went.
@@ -327,7 +333,7 @@ test "the overlays: one of each kind, the settings hold and dim, a notice does n
     s.push(.{ .settings = .open(&.{}, .{}) });
     s.push(.{ .peer_settings = 0 });
     try std.testing.expectEqual(@as(u8, 3), s.len);
-    try std.testing.expectEqual(@as(u1, 0), s.items[1].peer_settings);
+    try std.testing.expectEqual(@as(input.Player, 0), s.items[1].peer_settings);
     try std.testing.expect(s.holds() and s.dims());
     s.remove(.peer_settings);
     try std.testing.expect(s.items[1] == .settings and s.len == 2);

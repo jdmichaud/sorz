@@ -1,6 +1,7 @@
 //! The netplay session of one peer (DESIGN.md 9): two machines, each running its own game, whose
-//! players meet in one: a host (player 1) and a guest (player 2), outside the simulation and
-//! without I/O. The driver (netplay.zig) gives it the connection's events and messages, the game's
+//! players meet in one: a host (player 1) and a guest (player 2, its `place`: the game holds up to
+//! four players, DESIGN.md 10.7, E4), outside the simulation and without I/O. The driver
+//! (netplay.zig) gives it the connection's events and messages, the game's
 //! status, pads and state checks; it answers with the merged pads of each display tick of a
 //! session, the messages to send (`outbox`) and what happened (`notes`).
 //!
@@ -12,9 +13,10 @@
 //! - **The lobby.** Welcomed, each machine plays its own game. The host says what its game is
 //!   (`status`, `setStatus`); the guest asks to join (`askJoin`, with its player's character or
 //!   none), and the host's game decides when (a note `join_asked`, then `begin` or `declineJoin`).
-//! - **The join.** `begin` starts a session with the host's game's canonical form: a new id, its
-//!   form in `game` chunks, then the session's pads; the guest gathers the chunks (a note `joined`:
-//!   its game loads `gameForm`). From that tick, both run the same game.
+//! - **The join.** `begin` starts a session with the host's game's canonical form: a new id, the
+//!   guest's player in it (`place`), its form in `game` chunks, then the session's pads; the guest
+//!   gathers the chunks (a note `joined`: its game loads `gameForm`). From that tick, both run the
+//!   same game, each machine's pad its own player's.
 //! - **Pads.** Before tick N runs, the peer samples its pad for tick N + D and sends it; the pads
 //!   of ticks 0 to D - 1 are empty on both sides. Tick N runs once both pads for N are in; until
 //!   then the game holds (`pads` returns null).
@@ -211,15 +213,17 @@ pub const Session = struct {
     /// An observer whose ticks outran its window (`onTicks`) asked for the host's game again,
     /// once, until it comes.
     resync_asked: bool = false,
-    /// The host: the ticks of an observer's game sent so far, and the pads still to send (a pair
-    /// a tick, from tick `ticks_first`).
+    /// The host: the ticks of an observer's game sent so far, and the pads still to send (those
+    /// of `ticks_players` players a tick, from tick `ticks_first`).
     ticks_sent: u32 = 0,
     ticks_first: u32 = 0,
-    ticks_out: [2 * protocol.max_pads]u8 = undefined,
-    ticks_len: u8 = 0,
-    /// The observer: the host's ticks in hand (a pair a tick, in a ring), the count of them,
-    /// and whether it started running them (after `observe_cushion`).
-    seen: [window][2]u8 = undefined,
+    ticks_out: [input.max_players * protocol.max_pads]u8 = undefined,
+    ticks_len: u16 = 0,
+    ticks_players: u8 = 2,
+    /// The observer: the host's ticks in hand (every player's pad a tick, none for a player the
+    /// host's ticks did not carry; in a ring), the count of them, and whether it started running
+    /// them (after `observe_cushion`).
+    seen: [window][input.max_players]u8 = undefined,
     seen_count: u32 = 0,
     watching: bool = false,
 
@@ -233,6 +237,10 @@ pub const Session = struct {
     game_form: Form,
     game_chunks: u8 = 0,
     game_id: u64 = 0,
+
+    /// The guest's player in the session's game (from 0: player 2 is 1): the host's choice, the
+    /// guest's as the game's chunks said.
+    place: input.Player = 1,
 
     /// The next tick to run.
     next: u32 = 0,
@@ -294,6 +302,7 @@ pub const Session = struct {
     comptime {
         // The chunks of the longest form fit `peer_chunks`' bits.
         std.debug.assert(protocol.chunks(protocol.max_state_len) < 8);
+        std.debug.assert(protocol.max_players == input.max_players);
     }
 
     pub fn init(allocator: std.mem.Allocator, config: Config, diff: canonical.DiffFn) error{OutOfMemory}!Session {
@@ -652,9 +661,19 @@ pub const Session = struct {
         var offset: u32 = 0;
         const length: u32 = @intCast(form.len);
         while (offset < length) : (offset += protocol.chunk_size) {
-            self.send(.{ .game = .{ .session = id, .delay = self.delay, .length = length, .offset = offset, .bytes = form[offset..][0..protocol.chunkLen(length, offset)] } });
+            self.send(.{ .game = .{ .session = id, .delay = self.delay, .place = self.place, .length = length, .offset = offset, .bytes = form[offset..][0..protocol.chunkLen(length, offset)] } });
         }
         self.startSession(id);
+    }
+
+    /// This machine's player in the session's game: the host's player 1, the guest's `place`.
+    pub fn localPlayer(self: *const Session) input.Player {
+        return if (self.config.role == .host) 0 else self.place;
+    }
+
+    /// The other machine's player in the session's game.
+    pub fn peerPlayer(self: *const Session) input.Player {
+        return if (self.config.role == .host) self.place else 0;
     }
 
     fn onGame(self: *Session, g: protocol.GameChunk) Verdict {
@@ -675,6 +694,7 @@ pub const Session = struct {
         if (self.game_chunks != all) return .accepted;
         self.game_chunks = 0;
         self.delay = g.delay;
+        if (!g.observe) self.place = @intCast(g.place);
         if (g.observe) {
             self.startWatching(g.session);
             return .accepted;
@@ -758,21 +778,24 @@ pub const Session = struct {
         self.ticks_len = 0;
     }
 
-    /// The host's game ran a tick with `pads`: the observer gets them (sent in runs).
-    pub fn observed(self: *Session, pads_: input.Pads) void {
+    /// The host's game ran a tick with `pads`, the pads of its first `players` players (2 to 4;
+    /// the others hold none): the observer gets them (sent in runs).
+    pub fn observed(self: *Session, pads_: input.Pads, players: u8) void {
+        std.debug.assert(players >= 1 and players <= input.max_players);
         if (self.config.role != .host or self.phase != .observing) return;
+        if (players != self.ticks_players) self.flushTicks();
+        self.ticks_players = players;
         if (self.ticks_len == 0) self.ticks_first = self.ticks_sent;
-        self.ticks_out[self.ticks_len] = @bitCast(pads_.pad1);
-        self.ticks_out[self.ticks_len + 1] = @bitCast(pads_.pad2);
-        self.ticks_len += 2;
+        for (0..players) |k| self.ticks_out[self.ticks_len + k] = @bitCast(pads_.of(k));
+        self.ticks_len += players;
         self.ticks_sent += 1;
-        if (self.ticks_len == self.ticks_out.len) self.flushTicks();
+        if (self.ticks_len == @as(u16, players) * protocol.max_pads) self.flushTicks();
     }
 
     /// Sends the observer the ticks' pads in hand.
     pub fn flushTicks(self: *Session) void {
         if (self.ticks_len == 0) return;
-        self.send(.{ .ticks = .{ .first = self.ticks_first, .pads = self.ticks_out[0..self.ticks_len] } });
+        self.send(.{ .ticks = .{ .first = self.ticks_first, .players = self.ticks_players, .pads = self.ticks_out[0..self.ticks_len] } });
         self.ticks_len = 0;
     }
 
@@ -832,7 +855,7 @@ pub const Session = struct {
     /// it.
     fn onTicks(self: *Session, t: protocol.Ticks) Verdict {
         if (self.config.role != .guest or self.phase != .observing) return .unexpected;
-        const count: u32 = @intCast(t.pads.len / 2);
+        const count: u32 = @intCast(t.pads.len / t.players);
         if (t.first + count <= self.seen_count) return .duplicate;
         if (t.first > self.seen_count) {
             self.resync();
@@ -845,7 +868,9 @@ pub const Session = struct {
                 self.resync();
                 return .ahead;
             }
-            self.seen[tick_ % window] = .{ t.pads[2 * i], t.pads[2 * i + 1] };
+            const slot = &self.seen[tick_ % window];
+            slot.* = @splat(0);
+            @memcpy(slot[0..t.players], t.pads[t.players * i ..][0..t.players]);
             self.seen_count = tick_ + 1;
         }
         return .accepted;
@@ -866,8 +891,10 @@ pub const Session = struct {
             self.watching = true;
         }
         if (self.next >= self.seen_count) return null;
-        const pair = self.seen[self.next % window];
-        return .{ .pad1 = @bitCast(pair[0]), .pad2 = @bitCast(pair[1]) };
+        const slot = self.seen[self.next % window];
+        var out: input.Pads = .{};
+        for (slot, 0..) |b, k| out.at(k).* = @bitCast(b);
+        return out;
     }
 
     /// The host's game, which the guest's game loads (after the note `joined`).
@@ -1051,12 +1078,10 @@ pub const Session = struct {
             return null;
         }
         const slot = self.next % window;
-        const mine: input.Pad = @bitCast(self.local[slot]);
-        const theirs: input.Pad = @bitCast(self.remote[slot]);
-        return switch (self.config.role) {
-            .host => .{ .pad1 = mine, .pad2 = theirs },
-            .guest => .{ .pad1 = theirs, .pad2 = mine },
-        };
+        var out: input.Pads = .{};
+        out.at(self.localPlayer()).* = @bitCast(self.local[slot]);
+        out.at(self.peerPlayer()).* = @bitCast(self.remote[slot]);
+        return out;
     }
 
     /// The host changes the game at the first tick whose pads it has not sent (`change`, its tick
@@ -1358,7 +1383,7 @@ test "an observer: it asks, takes the host's game, then runs its ticks behind; h
     try testing.expect(watcher.pads(.{}) == null);
     for (0..40) |t| {
         if (host.observerCheckDue()) host.observerHash(1000 + t);
-        host.observed(.{ .pad1 = @bitCast(@as(u8, @intCast(t))), .pad2 = @bitCast(@as(u8, @intCast(t + 100))) });
+        host.observed(.{ .pad1 = @bitCast(@as(u8, @intCast(t))), .pad2 = @bitCast(@as(u8, @intCast(t + 100))) }, 2);
     }
     host.flushTicks();
     _ = pump(&host, &watcher, 0);
@@ -1375,7 +1400,7 @@ test "an observer: it asks, takes the host's game, then runs its ticks behind; h
     watcher.stopObserve();
     _ = pump(&watcher, &host, 0);
     try testing.expect(host.phase == .lobby and watcher.phase == .lobby);
-    host.observed(.{});
+    host.observed(.{}, 2);
     try testing.expectEqual(@as(usize, 0), host.outbox.items.len);
 }
 
@@ -1393,7 +1418,7 @@ test "an observer whose ticks outran its window asks for the host's game again, 
     try testing.expect(watcher.phase == .observing);
     // The host runs 300 ticks while the observer runs none (its page hidden): those past its
     // window are lost, and it asks for the game again, once.
-    for (0..300) |t| host.observed(.{ .pad1 = @bitCast(@as(u8, @truncate(t))) });
+    for (0..300) |t| host.observed(.{ .pad1 = @bitCast(@as(u8, @truncate(t))) }, 2);
     host.flushTicks();
     _ = pump(&host, &watcher, 0);
     try testing.expect(watcher.resync_asked and watcher.outbox.items.len == 1);
@@ -1404,7 +1429,7 @@ test "an observer whose ticks outran its window asks for the host's game again, 
     _ = pump(&host, &watcher, 0);
     try testing.expect(watcher.phase == .observing and !watcher.resync_asked and watcher.seen_count == 0);
     try testing.expectEqualSlices(u8, formOf(.{ .x = 9 }, &buf), watcher.gameForm());
-    for (0..10) |t| host.observed(.{ .pad1 = @bitCast(@as(u8, @intCast(t + 50))) });
+    for (0..10) |t| host.observed(.{ .pad1 = @bitCast(@as(u8, @intCast(t + 50))) }, 2);
     host.flushTicks();
     _ = pump(&host, &watcher, 0);
     for (0..10) |t| {
@@ -1426,7 +1451,7 @@ test "an observer whose hash differs from the host's stops, and the host goes on
     host.beginObserve(formOf(.{}, &buf), 5);
     for (0..31) |_| {
         if (host.observerCheckDue()) host.observerHash(1);
-        host.observed(.{});
+        host.observed(.{}, 2);
     }
     host.flushTicks();
     _ = pump(&host, &watcher, 0);
@@ -1511,6 +1536,73 @@ test "the join: the host's game crosses, and both run the same game from its nex
     _ = guest.pads(.{ .b = true });
     _ = pump(&guest, &host, 5);
     try testing.expect(host.pads(.{}).?.pad2.b);
+}
+
+test "a guest in player 4's place: the game's chunks say it, and each machine's pad is its player's" {
+    var host = try testSession(.host, 2);
+    defer host.deinit();
+    var guest = try testSession(.guest, null);
+    defer guest.deinit();
+    try welcomePair(&host, &guest);
+    host.setStatus(.{ .game = .play, .character = 1 });
+    _ = pump(&host, &guest, 0);
+    guest.askJoin(2);
+    _ = pump(&guest, &host, 0);
+    host.place = 3;
+    var buf: [canonical.maxSize(TestState)]u8 = undefined;
+    host.begin(formOf(.{ .x = 3 }, &buf), 5);
+    _ = pump(&host, &guest, 5);
+    try testing.expect(hasNote(&guest, .joined));
+    try testing.expectEqual(@as(input.Player, 3), guest.place);
+    try testing.expectEqual(@as(input.Player, 3), guest.localPlayer());
+    try testing.expectEqual(@as(input.Player, 0), guest.peerPlayer());
+    // Past the delay, each side's pad of tick 2 is in player 1's and player 4's places alike.
+    for (0..2) |_| {
+        _ = host.pads(.{ .a = true }) orelse return error.Held;
+        host.ran();
+        _ = guest.pads(.{ .c = true }) orelse return error.Held;
+        guest.ran();
+    }
+    _ = pump(&host, &guest, 5);
+    _ = pump(&guest, &host, 5);
+    const h = host.pads(.{}) orelse return error.Held;
+    const g = guest.pads(.{}) orelse return error.Held;
+    try testing.expect(std.meta.eql(h, g));
+    try testing.expect(h.pad1.a and h.pad4.c and @as(u8, @bitCast(h.pad2)) == 0 and @as(u8, @bitCast(h.pad3)) == 0);
+}
+
+test "an observer of a game of four players gets each tick's four pads" {
+    var host = try testSession(.host, 2);
+    defer host.deinit();
+    var watcher = try testSession(.guest, null);
+    defer watcher.deinit();
+    try welcomePair(&host, &watcher);
+    watcher.askObserve();
+    _ = pump(&watcher, &host, 0);
+    var buf: [canonical.maxSize(TestState)]u8 = undefined;
+    host.beginObserve(formOf(.{}, &buf), 5);
+    _ = pump(&host, &watcher, 0);
+    // Two ticks of a game of two, then a run of a game of four (its message apart).
+    for (0..2) |t| host.observed(.{ .pad1 = @bitCast(@as(u8, @intCast(t + 1))), .pad2 = @bitCast(@as(u8, 9)) }, 2);
+    for (0..6) |t| {
+        const b: u8 = @intCast(10 * t);
+        host.observed(.{ .pad1 = @bitCast(b + 1), .pad2 = @bitCast(b + 2), .pad3 = @bitCast(b + 3), .pad4 = @bitCast(b + 4) }, 4);
+    }
+    host.flushTicks();
+    try testing.expectEqual(@as(usize, 2), host.outbox.items.len);
+    _ = pump(&host, &watcher, 0);
+    try testing.expectEqual(@as(u32, 8), watcher.seen_count);
+    for (0..8) |t| {
+        const got = watcher.pads(.{}) orelse return error.Held;
+        if (t < 2) {
+            try testing.expectEqual(@as(u8, @intCast(t + 1)), @as(u8, @bitCast(got.pad1)));
+            try testing.expectEqual(@as(u8, 0), @as(u8, @bitCast(got.pad3)));
+        } else {
+            const b: u8 = @intCast(10 * (t - 2));
+            for (0..4) |k| try testing.expectEqual(b + @as(u8, @intCast(k)) + 1, @as(u8, @bitCast(got.of(k))));
+        }
+        watcher.ran();
+    }
 }
 
 test "a join at the select that came too late: the guest chooses, then joins the game in play" {

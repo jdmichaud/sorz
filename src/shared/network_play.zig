@@ -691,7 +691,7 @@ pub fn applyEvent(g: *Game, p: *platform.Platform, np: *net.Netplay, e: protocol
     const a = if (g.scene_assets) |*x| x else return;
     switch (e.what) {
         .leave => {
-            g.state.dropOut(0, a);
+            g.state.dropOut(@intCast(e.player), a);
             if (np.role == .guest) g.notify(.player_1_left);
         },
         .back => {
@@ -702,7 +702,7 @@ pub fn applyEvent(g: *Game, p: *platform.Platform, np: *net.Netplay, e: protocol
                 else => false,
             };
             if (in_round and e.character < protocol.characters) {
-                g.state.dropIn(0, @fromBackingInt(e.character));
+                g.state.dropIn(@intCast(e.player), @fromBackingInt(e.character));
             } else if (np.role == .host) {
                 g.net.host = .left;
                 openLobby(g, p, true);

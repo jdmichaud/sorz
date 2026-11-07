@@ -696,10 +696,11 @@ pub const Netplay = struct {
         for (self.peers.items) |peer| if (peer.session.phase == .observing) self.beginObserve(p, peer, form);
     }
 
-    /// The host's game ran a tick with `pads`: its observers get them, at once.
-    pub fn observed(self: *Netplay, p: *platform.Platform, pads_: input.Pads) void {
+    /// The host's game ran a tick with `pads`, those of its first `players` players: its
+    /// observers get them, at once.
+    pub fn observed(self: *Netplay, p: *platform.Platform, pads_: input.Pads, players: u8) void {
         for (self.peers.items) |peer| if (peer.session.phase == .observing) {
-            peer.session.observed(pads_);
+            peer.session.observed(pads_, players);
             peer.session.flushTicks();
             self.flush(p, peer);
         };
@@ -937,6 +938,19 @@ pub const Netplay = struct {
     pub fn phase(self: *const Netplay) session_mod.Phase {
         const s = self.main() orelse return if (self.open) .lobby else .idle;
         return s.phase;
+    }
+
+    /// This machine's player in the session's game (`Session.localPlayer`): the host's player
+    /// 1, a guest's its place (player 2 until a session says otherwise).
+    pub fn localPlayer(self: *const Netplay) input.Player {
+        const s = self.main() orelse return if (self.role == .host) 0 else 1;
+        return s.localPlayer();
+    }
+
+    /// The other machine's player in the session's game.
+    pub fn peerPlayer(self: *const Netplay) input.Player {
+        const s = self.main() orelse return if (self.role == .host) 1 else 0;
+        return s.peerPlayer();
     }
 
     /// Whether a session runs (held or not, stopped at a mismatch), or the client watches.
