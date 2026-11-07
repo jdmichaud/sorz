@@ -5,7 +5,9 @@
 //! Each player has its input method, the keyboard or a gamepad, its keys and its autofire, which
 //! the player changes in the settings' INPUT CONFIGURATION (`settings/`). By default player 1 is
 //! on the arrows, Z (A: the special attack), X (B: attack), C (C: jump) and Enter (start), player 2
-//! on W, A, S, D, F, G, H and Tab.
+//! on W, A, S, D, F, G, H and Tab; players 3 and 4 (DESIGN.md 10.7, E4) have no keys until the
+//! settings give them some. A machine has as many players as input methods (`Controls.players`):
+//! the keyboard's, and a gamepad each.
 //!
 //! The gamepads are known by their model, as the platform names them (DESIGN.md 3.3): every gamepad
 //! seen keeps a label of its own for good (GAMEPAD 1, 2...), identical ones numbered in the order
@@ -158,6 +160,12 @@ pub const PlayerInput = struct {
     keys: [8]platform.Key = @splat(no_key),
     /// Holding the attack button (the options' CONTROL says which) attacks again and again.
     autofire: bool = false,
+
+    /// Whether a key of its is set (players 3 and 4 have none at first).
+    pub fn hasKey(self: *const PlayerInput) bool {
+        for (self.keys) |k| if (k != no_key) return true;
+        return false;
+    }
 };
 
 /// Which keys and gamepads press which player's pad buttons, and the gamepads known.
@@ -327,9 +335,23 @@ pub const Controls = struct {
 
     pub const max_controllers = 4;
 
-    /// The players on this machine.
+    /// The players this machine's input methods can play (DESIGN.md 10.7, E4): one on a machine
+    /// of one player; else the keyboard's (players 1 and 2, and players 3 and 4 once the settings
+    /// give them a key) and one more for each gamepad connected, four at most. Which player plays
+    /// with which is the settings' (`Layout.assign`: a gamepad given to player 3 sends player 1
+    /// back to its keys).
     pub fn players(self: *const Controls) usize {
-        return if (self.one_player) 1 else 2;
+        if (self.one_player) return 1;
+        var n: usize = 2;
+        for (self.layout.players[2..]) |p| n += @intFromBool(p.hasKey());
+        for (self.labels) |l| n += @intFromBool(l != null);
+        return @min(n, max_players);
+    }
+
+    /// The players whose keys and gamepads this machine reads: player 1 alone on a machine of one
+    /// player, else every one (a player past the game's players presses a pad no one plays).
+    fn local(self: *const Controls) usize {
+        return if (self.one_player) 1 else max_players;
     }
 
     /// Takes one platform event; returns whether it concerned the controls. A gamepad that comes
@@ -385,7 +407,7 @@ pub const Controls = struct {
     /// gamepad's buttons and stick.
     pub fn pads(self: *const Controls) Pads {
         var bits: [max_players]u8 = @splat(0);
-        for (0..self.players()) |p| if (self.keysPlay(p)) {
+        for (0..self.local()) |p| if (self.keysPlay(p)) {
             bits[p] = self.keys[p];
         };
         for (0..max_controllers) |slot| {
@@ -430,7 +452,7 @@ pub const Controls = struct {
     /// Whether `key` presses a button of a player of this machine now.
     pub fn uses(self: *const Controls, k: platform.Key) bool {
         const place = self.layout.find(k) orelse return false;
-        return place.player < self.players() and self.keysPlay(place.player);
+        return place.player < self.local() and self.keysPlay(place.player);
     }
 
     fn key(self: *Controls, k: platform.Key, down: bool) bool {
@@ -462,7 +484,7 @@ pub const Controls = struct {
     /// The player of this machine the gamepad at `slot` plays, if any.
     pub fn playerOfSlot(self: *const Controls, slot: usize) ?usize {
         const label = self.labels[slot] orelse return null;
-        for (0..self.players()) |p| if (self.layout.players[p].gamepad == label) return p;
+        for (0..self.local()) |p| if (self.layout.players[p].gamepad == label) return p;
         return null;
     }
 
@@ -586,6 +608,36 @@ test "a full list makes room: the unconnected gamepad of the lowest label goes" 
     for (0..max_known) |i| _ = l.identify(&[_]u8{ 'A' + @as(u8, @intCast(i % 26)), 'a' + @as(u8, @intCast(i / 26)) }, "", &.{});
     const got = l.identify("one more", "", &.{ 1, null });
     try std.testing.expect(got.new and l.pad(1) != null and l.pad(2) == null and l.pad(got.label) != null);
+}
+
+test "the machine's players: the keyboard's two, a gamepad each, players 3 and 4 by their keys" {
+    var c: Controls = .{};
+    try std.testing.expectEqual(@as(usize, 2), c.players());
+    const first: platform.ControllerId = @fromBackingInt(@intCast(3));
+    const second: platform.ControllerId = @fromBackingInt(@intCast(4));
+    // The first gamepad goes to player 1, as ever; it counts for a third player all the same.
+    _ = c.add(first, named("6B"));
+    try std.testing.expect(c.players() == 3 and c.layout.players[0].gamepad == 1);
+    _ = c.add(second, named("6B"));
+    try std.testing.expectEqual(@as(usize, 4), c.players());
+    // Given to players 3 and 4, the gamepads fill their pads; player 1 is back on its keys.
+    c.layout.assign(2, 1);
+    c.layout.assign(3, 2);
+    try std.testing.expect(c.layout.players[0].gamepad == null and c.uses(.x));
+    _ = c.handle(.{ .time_ns = 0, .payload = .{ .controller_button_down = .{ .controller = first, .button = .start } } });
+    _ = c.handle(.{ .time_ns = 0, .payload = .{ .controller_button_down = .{ .controller = second, .button = .x } } });
+    _ = c.handle(.{ .time_ns = 0, .payload = .{ .key_down = .{ .key = .x } } });
+    const pads_ = c.pads();
+    try std.testing.expect(pads_.pad3.start and pads_.pad4.a and pads_.pad1.b);
+    try std.testing.expectEqual(@as(u8, 0), @as(u8, @bitCast(pads_.pad2)));
+    // Gone, the gamepads leave two players, but player 3 with a key of its own.
+    _ = c.handle(.{ .time_ns = 0, .payload = .{ .controller_removed = first } });
+    _ = c.handle(.{ .time_ns = 0, .payload = .{ .controller_removed = second } });
+    try std.testing.expectEqual(@as(usize, 2), c.players());
+    c.layout.players[2].keys[@backingInt(Button.start)] = .i;
+    try std.testing.expectEqual(@as(usize, 3), c.players());
+    _ = c.handle(.{ .time_ns = 0, .payload = .{ .key_down = .{ .key = .i } } });
+    try std.testing.expect(c.pads().pad3.start);
 }
 
 test "one player: player 1 alone, its keys or its gamepad" {

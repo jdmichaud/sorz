@@ -11,13 +11,15 @@
 //! play's: overlay.zig, DESIGN.md 9; F3 too turns them on and off); the game's rules where the
 //! settings give them (the lives, the continues, the friendly hits: setup.zig `Rules`); the
 //! defaults; and the two ways out, SAVE AND EXIT and EXIT WITHOUT SAVING. INPUT CONFIGURATION has a
-//! column for each player of this machine (one with network play or a browser): its input method
-//! (the keyboard, or a gamepad connected: a gamepad one player takes goes from the other, who goes
-//! back to the keyboard), its keys, or its gamepad's A, B, C and START (its model's: the directions
-//! are the gamepad's d-pad and stick), and its autofire; the settings key where the variant has it;
-//! GAMEPAD LIST...; and EXIT, back to the first page. HELP tells the keys outside the pads: Escape
-//! (where the host gives it to the game), START's pause or settings, the settings key where the
-//! variant has it, and F3's stats (game.zig), and what the frame's stats are; EXIT goes back.
+//! column for each player of this machine (one with network play or a browser; up to four,
+//! input.zig `Controls.players`, two shown at once, left and right reaching the other pair): its
+//! input method (the keyboard, or a gamepad connected: a gamepad one player takes goes from the
+//! other, who goes back to the keyboard), its keys, or its gamepad's A, B, C and START (its
+//! model's: the directions are the gamepad's d-pad and stick), and its autofire; the settings key
+//! where the variant has it; GAMEPAD LIST...; and EXIT, back to the first page. HELP tells the
+//! keys outside the pads: Escape (where the host gives it to the game), START's pause or
+//! settings, the settings key where the variant has it, and F3's stats (game.zig), and what the
+//! frame's stats are; EXIT goes back.
 //! GAMEPAD LIST shows every gamepad the machine knows (input.zig), by its label, with its name, the
 //! connected ones bright, the others dim, scrolling past the screen's rows; an unconnected one is
 //! forgotten with DEL, or with A, B or C and a yes (A, B or C again; START: no).
@@ -109,7 +111,8 @@ const volume_step = 10;
 
 /// What the screen shows on this machine.
 pub const Facts = struct {
-    /// The players of this machine: their columns in INPUT CONFIGURATION.
+    /// The players of this machine (input.zig `Controls.players`): their columns in INPUT
+    /// CONFIGURATION, two shown at once.
     players: u3 = 2,
     /// The settings key opens the settings (the original): its row, and it leaves them.
     settings_key: bool = true,
@@ -571,10 +574,11 @@ pub const Screen = struct {
 
     fn drawInput(self: *const Screen, settings: *const Settings, p: *Panel, arrow: bool) Panel.Error!void {
         try p.text(label_col, title_row, "INPUT CONFIGURATION", .bright);
-        for (0..self.facts.players) |c| {
+        const shown = self.shownColumns();
+        for (shown.first..shown.end) |c| {
             var buf: [16]u8 = undefined;
             const header = std.fmt.bufPrint(&buf, "PLAYER {d}", .{c + 1}) catch unreachable;
-            try p.text(player_cols[c], header_row, header, .dim);
+            try p.text(player_cols[c - shown.first], header_row, header, .dim);
         }
         try p.text(label_col, configuration_row, "CONFIGURATION", .dim);
         for (std.enums.values(InputRow)) |row| {
@@ -587,16 +591,16 @@ pub const Screen = struct {
                 continue;
             }
             if (!row.perPlayer()) continue;
-            for (0..self.facts.players) |c| {
+            for (shown.first..shown.end) |c| {
                 const here = chosen and c == self.column;
                 var buf: [16]u8 = undefined;
                 const text = if (here and self.waiting) "" else cell(settings, row, c, &buf);
-                try p.text(player_cols[c], y, text, if (here) .bright else .dim);
+                try p.text(player_cols[c - shown.first], y, text, if (here) .bright else .dim);
             }
         }
         if (arrow) {
             const y = self.inputScreenRow(self.input_row);
-            const x: i32 = if (self.input_row.perPlayer()) player_cols[self.column] - 1 else if (self.input_row == .settings_key) player_cols[0] - 1 else label_col - 1;
+            const x: i32 = if (self.input_row.perPlayer()) player_cols[self.column - shown.first] - 1 else if (self.input_row == .settings_key) player_cols[0] - 1 else label_col - 1;
             p.arrowAt(x, y);
         }
         var buf: [panel_mod.columns]u8 = undefined;
@@ -618,12 +622,21 @@ pub const Screen = struct {
         };
     }
 
-    /// The bottom line: what the screen waits for, or that the chosen player's gamepad is away.
+    /// The players' columns shown, two at once (more players than two: the chosen player's pair,
+    /// players 1 and 2 or 3 and 4; left and right go on to the other).
+    fn shownColumns(self: *const Screen) struct { first: usize, end: usize } {
+        const first = @as(usize, self.column) / player_cols.len * player_cols.len;
+        return .{ .first = first, .end = @min(first + player_cols.len, self.facts.players) };
+    }
+
+    /// The bottom line: what the screen waits for, that the chosen player's gamepad is away, or,
+    /// with more players than its two columns, that left and right reach the others.
     fn prompt(self: *const Screen, settings: *const Settings, buf: []u8) []const u8 {
         if (self.waiting) return if (self.waitsForButton(settings)) "PRESS THE NEW GAMEPAD BUTTON." else "PRESS THE NEW KEY.";
         if (!self.input_row.perPlayer()) return "";
-        const g = settings.layout.players[self.column].gamepad orelse return "";
-        if (self.facts.connected(g)) return "";
+        const more: []const u8 = if (self.facts.players > player_cols.len) std.fmt.bufPrint(buf, "LEFT, RIGHT: PLAYERS 1 TO {d}.", .{self.facts.players}) catch "" else "";
+        const g = settings.layout.players[self.column].gamepad orelse return more;
+        if (self.facts.connected(g)) return more;
         return std.fmt.bufPrint(buf, "GAMEPAD {d} IS AWAY: THE KEYS PLAY.", .{g}) catch "";
     }
 
@@ -853,6 +866,40 @@ test "the input method: the keyboard, then the gamepads connected; a gamepad tak
     _ = press(&screen, &s, .down);
     _ = pressTurning(&screen, &s, .z);
     try testing.expectEqual(Page.main, screen.page);
+}
+
+test "four players: their columns two at once, players 3 and 4 given keys and a gamepad" {
+    var s: Settings = .{};
+    knownPads(&s, &.{ "6B", "6B" });
+    s.layout.players[0].gamepad = 1;
+    var screen: Screen = .open(&s, .{ .players = 4, .gamepads = .{ 1, 2, null, null } });
+    screen.page = .input;
+    var buf: [panel_mod.columns]u8 = undefined;
+    try testing.expectEqualStrings("LEFT, RIGHT: PLAYERS 1 TO 4.", screen.prompt(&s, &buf));
+    try testing.expectEqual(@as(usize, 0), screen.shownColumns().first);
+    // Right to player 3: the second pair shows; on to player 4, and no further.
+    for (0..4) |_| _ = press(&screen, &s, .right);
+    try testing.expect(screen.column == 3 and screen.shownColumns().first == 2 and screen.shownColumns().end == 4);
+    // Player 4 takes GAMEPAD 1: player 1 goes back to its keys.
+    _ = press(&screen, &s, .z);
+    try testing.expect(s.layout.players[3].gamepad == 1 and s.layout.players[0].gamepad == null);
+    // Player 3's START: a key of its own.
+    _ = press(&screen, &s, .left);
+    try testing.expect(screen.column == 2 and screen.shownColumns().first == 2);
+    for (0..8) |_| _ = press(&screen, &s, .down);
+    try testing.expectEqual(InputRow.start, screen.input_row);
+    _ = press(&screen, &s, .z);
+    _ = press(&screen, &s, .i);
+    try testing.expect(!screen.waiting and s.layout.players[2].keys[@backingInt(input.Button.start)] == .i);
+    // Back left to the first pair.
+    _ = press(&screen, &s, .up);
+    _ = press(&screen, &s, .left);
+    _ = press(&screen, &s, .left);
+    try testing.expect(screen.column == 0 and screen.shownColumns().first == 0);
+    // Two players: one pair, and no word of others.
+    screen = .open(&s, .{});
+    screen.page = .input;
+    try testing.expectEqualStrings("", screen.prompt(&s, &buf));
 }
 
 test "GAMEPAD LIST: every gamepad known, an unconnected one forgotten (DEL, or A and a yes), scrolling" {
