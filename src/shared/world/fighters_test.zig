@@ -1204,6 +1204,38 @@ test "the CPU by player 1: out of its line, aside as player 1 walks through, nev
     try testing.expect(r.player().position.x.whole() > 900);
 }
 
+test "the CPU keeps up with player 1 on a free screen: the camera follows them on as one alone" {
+    const reach = struct {
+        /// The tick at which the camera, following both, reaches its wall as player 1 walks
+        /// right, the CPU (player 2) `behind` pixels behind it at first.
+        fn wall(behind: i32) !?usize {
+            var x = try Round.init();
+            defer x.deinit();
+            x.player().position.x = .pixels(900);
+            _ = try secondPlayer(&x, 900 - behind, .right);
+            for (0..600) |i| {
+                x.step(.{ .pad1 = .{ .right = true }, .pad2 = cpu.pad(&x.w, .{ .kinds = &x.f.kinds }, &x.w.players[1].cpu, 1) });
+                try testing.expect(x.player().holder == null and x.player().holding == null);
+                if (x.w.camera.x.whole() >= x.w.camera.x_max.whole()) return i;
+            }
+            return null;
+        }
+    }.wall;
+    // Player 1 alone: the camera's wall 448 pixels on, at 3 pixels a tick at most.
+    const alone = blk: {
+        var x = try Round.init();
+        defer x.deinit();
+        x.player().position.x = .pixels(900);
+        for (0..600) |i| {
+            x.step(.{ .pad1 = .{ .right = true } });
+            if (x.w.camera.x.whole() >= x.w.camera.x_max.whole()) break :blk i;
+        }
+        return error.TestUnexpectedResult;
+    };
+    // The CPU behind or ahead: it holds the camera back no more than a moment (its reaction).
+    for ([_]i32{ 40, 80, -60 }) |behind| try testing.expect((try reach(behind)).? <= alone + 30);
+}
+
 test "the CPU keeps its course: a turn round within a third of a second of its last waits" {
     var r = try Round.init();
     defer r.deinit();

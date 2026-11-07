@@ -39,6 +39,9 @@
 //!   it, which would grab it. With two CPUs (0 PLAYERS - 2 CPU), each takes the other for its
 //!   player 1, and CPU 1 leads: it goes on through the round as a CPU alone does, and keeps off
 //!   CPU 2 only as far as not walking into it, while CPU 2 gives way to it as to a person.
+//! - On a free screen (no foe on it) it keeps up with player 1: its place ahead of player 1 or
+//!   level, never where it would hold the camera back (the camera follows both players only as
+//!   the hindmost lets it), and it leaves the foes off the screen behind.
 //! - Nor does it walk into player 1's blows' way while player 1 fights (both CPUs): it goes
 //!   round it, and fights a foe there from the other side; there already, it stays.
 //! - It walks round the holes and the walls of the round's floor (round 4's bridge, round 6's
@@ -256,6 +259,14 @@ const margin_right = 64;
 const linger_ticks = .{ 20, 80 };
 const there_px = .{ 8, 4 };
 const alone_ahead_px = .{ 40, 120 };
+/// On a free screen (`keepsUp`): its places ahead of player 1, at least `band_room` past the
+/// start of the camera's band; a place player 1 has gone `lag_px` past is left, and so is one
+/// the camera has come within `band_least` of (standing near enough to it, the CPU would be at
+/// the start of the band, where it holds the camera).
+const keep_ahead_px = .{ 0, 64 };
+const band_room = 32;
+const band_least = there_px[0] + 2;
+const lag_px = 24;
 /// A walk that has not taken it farther than this from where it stood (either way: a walk that
 /// jitters) for this many ticks is stuck: it looks again, and takes a detour of these ticks
 /// along the way round to its goal (`wayRound`).
@@ -549,13 +560,16 @@ fn lookAround(w: *const World, kinds: *const Kinds, floor: ?*const Floor, m: *Me
 fn goalOf(w: *const World, kinds: *const Kinds, floor: ?*const Floor, m: *Memory, p: *const Entity, partner: ?*const Entity, leads: bool) Goal {
     const left = w.camera.x.whole();
     const share = healthShare(kinds, p);
-    var best: Goal = .{ .roam = roamSpot(w, floor, m, p, if (leads) null else partner) };
+    const free = !foeOnScreen(w, kinds);
+    var best: Goal = .{ .roam = roamSpot(w, floor, m, p, if (leads) null else partner, free) };
     var best_score: i32 = 30 + @as(i32, m.draw(16));
+    const behind = if (free and !leads and partner != null) sideBehind(w) else null;
     for (&w.entities, 0..) |*e, i| {
         if (!e.alive() or e.flags.hidden) continue;
         const x = e.position.x.whole();
         const edge: i32 = if (isFoe(kinds, e)) off_screen else 0;
         if (x < left - edge or x >= left + screen_width + edge) continue;
+        if (behind) |on_left| if (isFoe(kinds, e) and (if (on_left) x < left else x >= left + screen_width)) continue;
         const h = w.handleAt(i) orelse continue;
         if (givenUp(m, h, w.tick)) continue;
         const far: i32 = @intCast(apart(p, e));
@@ -617,34 +631,79 @@ fn upOrDown(w: *const World, p: *const Entity, up: bool) bool {
 /// Its place, roaming: the one it goes to while it has not stayed there its while, nor got stuck,
 /// and it is still on the screen and out of player 1's line; else a new one: across from player 1
 /// (mostly ahead, the way the round goes), out of its line on the CPU's side of it (now and then
-/// the other), within the screen's margins; without player 1, ahead of itself.
-fn roamSpot(w: *const World, floor: ?*const Floor, m: *Memory, p: *const Entity, partner: ?*const Entity) Spot {
+/// the other), within the screen's margins; without player 1, ahead of itself. On a free screen
+/// (`free`: no foe on it) it keeps up with player 1, the camera following both only as the
+/// hindmost lets it: its place is ahead of player 1 or level with it, and past the start of the
+/// camera's band the way the round goes (`keepsUp`), chosen anew, on the same side, once player 1
+/// has gone past it or the camera has.
+fn roamSpot(w: *const World, floor: ?*const Floor, m: *Memory, p: *const Entity, partner: ?*const Entity, free: bool) Spot {
     const left = w.camera.x.whole();
+    const way: i32 = if (w.camera.follows) |rules| (if (rules.leftward) -1 else 1) else 1;
+    const keep_up = free and partner != null;
+    var behind = false;
     if (m.goal == .roam) {
         const s = m.goal.roam;
         const done = m.linger == 0 and there(p, s);
         const off = s.x < left + margin_left or s.x > left + screen_width - margin_right;
         const in_line = if (partner) |q| @abs(q.position.depth.whole() - s.depth) <= line else false;
-        if (!done and !off and !in_line and m.stuck < stuck_ticks and !(s.x == 0 and s.depth == 0)) return s;
+        behind = keep_up and !keepsUp(w, partner.?, s.x, way);
+        if (!done and !off and !in_line and !behind and m.stuck < stuck_ticks and !(s.x == 0 and s.depth == 0)) return s;
     }
-    if (m.stuck >= stuck_ticks) m.above = !m.above else if (m.chance(25)) m.above = !m.above;
+    if (m.stuck >= stuck_ticks) m.above = !m.above else if (!behind and m.chance(25)) m.above = !m.above;
     m.stuck = 0;
     m.linger = @intCast(between(m, linger_ticks));
-    const way: i32 = if (w.camera.follows) |rules| (if (rules.leftward) -1 else 1) else 1;
     var s: Spot = undefined;
     if (partner) |q| {
         const aside = between(m, aside_px);
-        s = .{ .x = q.position.x.whole() + way * between(m, ahead_px), .depth = q.position.depth.whole() + if (m.above) -aside else aside };
+        const ahead = if (keep_up) between(m, keep_ahead_px) else between(m, ahead_px);
+        s = .{ .x = q.position.x.whole() + way * ahead, .depth = q.position.depth.whole() + if (m.above) -aside else aside };
+        // Past the start of the camera's band, and a margin.
+        if (keep_up) if (w.camera.follows) |rules| {
+            const least = left + if (way > 0) rules.band[0] + band_room else rules.band[1] - band_room;
+            if ((s.x - least) * way < 0) s.x = least;
+        };
     } else s = .{ .x = p.position.x.whole() + way * between(m, alone_ahead_px), .depth = p.position.depth.whole() + between(m, .{ -20, 20 }) };
     s.x = std.math.clamp(s.x, left + margin_left, left + screen_width - margin_right);
     if (w.camera.follows) |rules| s.depth = std.math.clamp(s.depth, rules.kept_depth[0], rules.kept_depth[1]);
     return onFloor(floor, s);
 }
 
+/// Whether a place across, `x`, keeps up with player 1 `q` on the round's `way`: no more than
+/// `lag_px` behind it, and `band_least` past the start of the camera's band (the hindmost short
+/// of it holds the camera back).
+fn keepsUp(w: *const World, q: *const Entity, x: i32, way: i32) bool {
+    if ((q.position.x.whole() - x) * way > lag_px) return false;
+    const rules = w.camera.follows orelse return true;
+    const start = w.camera.x.whole() + if (way > 0) rules.band[0] else rules.band[1];
+    return (x - start) * way >= band_least;
+}
+
 /// Whether a foe stands within `close_px` of `p`, across and in depth.
 fn foeClose(w: *const World, kinds: *const Kinds, p: *const Entity) bool {
     for (&w.entities) |*e| {
         if (isFoe(kinds, e) and @abs(e.position.x.whole() - p.position.x.whole()) <= close_px[0] and @abs(e.position.depth.whole() - p.position.depth.whole()) <= close_px[1]) return true;
+    }
+    return false;
+}
+
+/// The side of the screen behind the round's way (its left: true) while the camera may move on
+/// (it is not at its wall); null else. Keeping up with player 1 on a free screen, the CPU leaves
+/// the foes off the screen there: they come in by themselves, and a walk to them would hold the
+/// camera back.
+fn sideBehind(w: *const World) ?bool {
+    const c = &w.camera;
+    const rules = c.follows orelse return null;
+    if (rules.leftward) return if (c.x.whole() > c.x_min.whole()) false else null;
+    return if (c.x.whole() < c.x_max.whole()) true else null;
+}
+
+/// Whether a foe stands on the screen.
+fn foeOnScreen(w: *const World, kinds: *const Kinds) bool {
+    const left = w.camera.x.whole();
+    for (&w.entities) |*e| {
+        if (!isFoe(kinds, e)) continue;
+        const x = e.position.x.whole();
+        if (x >= left and x < left + screen_width) return true;
     }
     return false;
 }
