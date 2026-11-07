@@ -683,7 +683,7 @@ machine in network play; CPUs in the free places and several local players a mac
     as before (cpus-check's 39 games byte-identical, round-check, screens-check, netplay-check).
     A picture of the settings' INPUT CONFIGURATION with players 3 and 4's pair. The status bar
     still shows two players (item 48).
-- [ ] **51 — Network play for up to 4** — Depends: 50.
+- [x] **51 — Network play for up to 4** — Depends: 50.
   - The network options' PLAYERS takes 2 to 4. The host relays every player's pads each tick to
     every machine; clients join until the places are full (at the select, or during a round
     where JOIN IN PROGRESS lets them), then may observe; a player whose machine drops out leaves
@@ -691,6 +691,35 @@ machine in network play; CPUs in the free places and several local players a mac
   - Gate: zig build test; netplay-check with 3 and 4 machines in one process (joins, leaving, a
     dropped connection, a difference found); 3 and 4 agent processes over WebSockets (as
     tools/check_netplay.sh with two) reaching the same state and sound.
+  - [x] Checked 2026-11-07: zig build test (protocol 7's messages and their bounds; a guest in a
+    session under way from its first tick, the host's pads sent from it; the changes of the game
+    queued by tick; the network options' PLAYERS both ways, SAME CHARACTER on and fixed with
+    four; the select's joins and leaves of players 2 to 4, a place before the last left free;
+    a guest's own choice taken back; the host's offer: the first free place, a character taken
+    refused; agent hosts in one process: four joining one after another, each in its place, the
+    same game and each player's pads its own machine's, a fifth in the lobby, the roster ANN -
+    PLAYER 2 to CAT - PLAYER 4; the stats of three on every machine; a client of four quitting,
+    the others on; a dropped connection in three, held and told whose, back, then not back and
+    the others on; a corrupted byte on one client of three named, every machine stopped).
+    netplay-check (Debug): its 25 flows of two machines with the same steps, ticks and notes as
+    before (the state hash and the planted bit's index changed: the set-up's names are in the
+    state), and select_three, select_four (joins at the select one after another; round 1 with
+    every player, its slot named HST, ANN, BOB, CAT; the same state, picture and sound on every
+    machine; the roster and the stats listing every machine; a client's settings holding every
+    game, the others told whose; a fifth machine finding JOIN dimmed and watching), round_three
+    (player 3 joining mid-round, the two characters taken; leaving by Escape, the others told
+    PLAYER 3 LEFT and playing on; joining again in its place), away_four (PLAYER 3 DISCONNECTED
+    counted down on every machine; back in time; then not back, the three others on),
+    difference_three (random.state named by the host and that client, every machine stopped);
+    tools/check_netplay.sh's two processes, and tools/check_netplay_many.sh with 3 and with 4
+    agent processes over WebSockets (the clients joining mid-round as players 2 to 4; the same
+    state at the session's tick 1500 and the same sound from tick 900). zig build web.
+    browser-check (ReleaseFast, Chromium, the ROM's content): its netplay and relay parts pass;
+    its input part fails on the gamepad's state hash, as it does at the item's base commit
+    (the same hashes). Pictures from netplay-check: the network options with PLAYERS 4, a round
+    of four with its slots named, the stats of four, PLAYER 3 DISCONNECTED on a client, player
+    3 dropped in. Not checked: real machines on a network, the input delay grown by a slow
+    link between clients (the checks fix it at 3), a page as one of three or four clients.
 - [ ] **52 — The rounds with 3 and 4 players** — Depends: 47.
   - The two-player spawns again: half of them with 3 players, all of them with 4 (the second
     boss among them not again: as many bosses as with two players); the enemies' health x1.25
