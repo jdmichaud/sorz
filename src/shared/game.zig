@@ -243,7 +243,7 @@ pub const State = struct {
                 .layout = layout,
                 .leads = k == 0 and self.setup.cpu[1],
             }, &r.play.world.players[k].cpu, k),
-            // The clear's name entries are players 1 and 2's (PLAN item 53).
+            // The clear's name entry of each player whose score enters the high scores.
             .round_clear => |*c| if (k >= c.names.len) .{} else if (c.names[k]) |*m| (if (c.named[k]) .{} else world.cpu.entry(m, letters, layout, self.tick % 2 == 0)) else .{},
             else => .{},
         };

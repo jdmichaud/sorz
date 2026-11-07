@@ -10,6 +10,11 @@
 //! players in play have left, the time's for each second the timer has left, the level's for
 //! the options' LEVEL. What the picture shows is the tick before's, as in play.
 //!
+//! The last round's clear counts each player's lives left, its line after player 2's: players 3
+//! and 4's (the port's, DESIGN.md 10.7 E4) are player 2's line again with their digit, two rows
+//! apart as the cartridge's; then each player whose score enters the high scores enters its name
+//! on its part of the status bar, with its own pad.
+//!
 //! Its load (flow.zig) leaves the sound's driver running. Each of its frames writes the status
 //! bar, the scores of the players in play, and what the tick asked for: a line or the header, the
 //! digits of the bonus counted (transfers.zig, the sound's time).
@@ -56,7 +61,7 @@ pub const Act = union(enum) {
 /// A step of the program, and whether it is the counting's: START held on a counting step adds
 /// the bonuses left at once and goes on from the first step after the counting (the original's
 /// steps $14 to $51, then $52).
-pub const Step = struct { act: Act, counting: bool = false, player: ?u1 = null };
+pub const Step = struct { act: Act, counting: bool = false, player: ?input.Player = null };
 
 fn step(act: Act) Step {
     return .{ .act = act };
@@ -67,7 +72,7 @@ fn counting(act: Act) Step {
 }
 
 /// A step of player `k`'s lives, skipped when it is out of play.
-fn lives(k: u1, act: Act) Step {
+fn lives(k: input.Player, act: Act) Step {
     return .{ .act = act, .player = k };
 }
 
@@ -103,7 +108,7 @@ pub const program = [_]Step{
 
 /// The steps of the last round's clear: its players left's lines after the level's, each
 /// player's lives counted into its score after the level's bonus (a player out of play skips its
-/// line and its count); START does not skip its counting.
+/// line and its count: players 3 and 4 in a game of two); START does not skip its counting.
 pub const last_program = [_]Step{
     step(.fade_in),
     step(.header),
@@ -114,6 +119,8 @@ pub const last_program = [_]Step{
     step(.{ .line = 3 }),
     lives(0, .{ .line = 4 }),
     lives(1, .{ .line = 5 }),
+    lives(2, .{ .line = 6 }),
+    lives(3, .{ .line = 7 }),
     step(.wait),
     step(.{ .counted = 0 }),
     step(.{ .count = 0 }),
@@ -137,6 +144,14 @@ pub const last_program = [_]Step{
     lives(1, .wait),
     lives(1, .{ .count = 4 }),
     lives(1, .{ .normal = 5 }),
+    lives(2, .{ .counted = 6 }),
+    lives(2, .wait),
+    lives(2, .{ .count = 5 }),
+    lives(2, .{ .normal = 6 }),
+    lives(3, .{ .counted = 7 }),
+    lives(3, .wait),
+    lives(3, .{ .count = 6 }),
+    lives(3, .{ .normal = 7 }),
     step(.names),
     step(.wait),
     step(.fade_out),
@@ -152,13 +167,28 @@ fn bonusOf(line: u3) ?u3 {
     };
 }
 
-/// The player whose lives a line or a bonus is (player 1's, player 2's), when it is one.
-fn livesOf(line: u3) ?u1 {
-    return switch (line) {
-        4 => 0,
-        5 => 1,
-        else => null,
-    };
+/// The player whose lives a line is (players 1 to 4's), when it is one.
+fn livesOf(line: u3) ?input.Player {
+    return if (line >= 4) @intCast(line - 4) else null;
+}
+
+/// The lines of the clear: the content's (the last two players 1 and 2's lives'), then players 3
+/// and 4's.
+const lines = 8;
+const cartridge_lines = 6;
+
+/// Line `k` of the clear: the content's, or (players 3 and 4's lives') player 2's line with the
+/// player's digit for its first one, two rows on for each player after player 2 (its text in
+/// `buf`).
+fn lineOf(c: *const records.Clear, k: usize, buf: *[64]u8) records.ClearLine {
+    if (k < cartridge_lines) return c.lines[k];
+    const second = c.lines[cartridge_lines - 1];
+    const n = @min(second.text.len, buf.len);
+    @memcpy(buf[0..n], second.text[0..n]);
+    const player: u8 = @intCast(k - cartridge_lines + 2);
+    if (std.mem.indexOfAny(u8, buf[0..n], "0123456789")) |d| buf[d] = '1' + player;
+    const rows: u8 = @intCast(2 * (k - cartridge_lines + 1));
+    return .{ .text = buf[0..n], .at = .{ .x = second.at.x, .y = second.at.y + rows } };
 }
 
 /// The first step after the counting, where START held goes. The counting's steps are one run.
@@ -184,7 +214,7 @@ pub const Line = struct {
 /// What the picture shows.
 pub const Shown = struct {
     header: bool = false,
-    lines: [6]Line = @splat(.{}),
+    lines: [lines]Line = @splat(.{}),
     bar: round_screen.Bar = .{},
 };
 
@@ -198,14 +228,14 @@ pub const RoundClear = struct {
     round: u8 = 1,
     /// The last round's (its lives counted); the players out of play.
     last: bool = false,
-    out: [2]bool = .{ false, false },
+    out: [input.max_players]bool = @splat(false),
     /// The last round's name entries: a player's whose score enters the high scores, running
     /// (as a waiting player's), and entered; the pads of the last tick.
-    names: [2]?player_waiting.Mind = .{ null, null },
-    named: [2]bool = .{ false, false },
-    last_pads: [2]input.Pad = .{ .{}, .{} },
+    names: [input.max_players]?player_waiting.Mind = @splat(null),
+    named: [input.max_players]bool = @splat(false),
+    last_pads: [input.max_players]input.Pad = @splat(.{}),
     /// The bonuses left to count: the clear's, the time's, the level's, each player's lives'.
-    bonuses: [5]u32 = .{ 0, 0, 0, 0, 0 },
+    bonuses: [3 + input.max_players]u32 = @splat(0),
     /// The line a count draws its bonus's digits on at each tick.
     counting: ?u3 = null,
     now: Shown = .{},
@@ -399,7 +429,7 @@ pub const RoundClear = struct {
         const letters: u8 = @intCast(a.screen.name_entry.letters.len);
         const blink = blinkOf(a);
         for (&self.names, &self.named, 0..) |*m_, *done, k| {
-            const pad = if (k == 0) turn.pads.pad1 else turn.pads.pad2;
+            const pad = turn.pads.of(k);
             defer self.last_pads[k] = pad;
             const m = &(m_.* orelse continue);
             if (done.*) continue;
@@ -412,7 +442,7 @@ pub const RoundClear = struct {
                 .round = g.round,
                 .name = round_screen.nameOf(a.screen.name_entry.letters, m.name),
                 .level = setup.level,
-            });
+            }, party_bar.shows(setup));
             setup.high_scores = table;
         }
     }
@@ -486,7 +516,7 @@ pub const RoundClear = struct {
             specials += p.specials;
         };
         self.last = g.round == c.last_round;
-        self.out = .{ !g.players[0].in_play, !g.players[1].in_play };
+        for (&self.out, g.players) |*o, p| o.* = !p.in_play;
         // The last round's lives: each player's, a bonus a life by LEVEL (none for a player on
         // its last life: the original's count of a life less than none, 65536 of them, is not
         // taken).
@@ -495,9 +525,10 @@ pub const RoundClear = struct {
             c.clear_bonus * (1 + specials),
             c.time_bonus * g.timer,
             c.level_bonus * turn.setup.level,
-            if (self.last and g.players[0].in_play) life * g.players[0].lives else 0,
-            if (self.last and g.players[1].in_play) life * g.players[1].lives else 0,
-        };
+        } ++ @as([input.max_players]u32, @splat(0));
+        for (self.bonuses[3..], g.players) |*b, p| {
+            if (self.last and p.in_play) b.* = life * p.lives;
+        }
         self.colours.palettes = .{};
         self.colours.aim(a.players_colours);
         self.colours.aim(a.end_colours);
@@ -551,7 +582,8 @@ const HighScores = @import("high_scores.zig").HighScores;
 /// A bonus's line: its text in its colours, its digits over the text's zeros.
 fn drawLine(v: *view.View, a: *const RoundClear.Assets, k: usize, l: Line) !void {
     const c = &a.screen.clear;
-    const line = c.lines[k];
+    var text_buf: [64]u8 = undefined;
+    const line = lineOf(c, k, &text_buf);
     const look: render.Look = .{ .palette = if (l.counted) c.counted else c.normal };
     try v.write(.a, a.text, line.at.x, line.at.y, line.text, look);
     if (l.digits) |d| {
@@ -562,7 +594,8 @@ fn drawLine(v: *view.View, a: *const RoundClear.Assets, k: usize, l: Line) !void
 
 /// A bonus's digits: as many as its line's zeros there.
 fn digitsOf(c: *const records.Clear, k: usize) u8 {
-    const text = c.lines[k].text;
+    var buf: [64]u8 = undefined;
+    const text = lineOf(c, k, &buf).text;
     var width: u8 = 0;
     while (c.digits + width < text.len and text[c.digits + width] == '0') width += 1;
     return width;
@@ -570,7 +603,8 @@ fn digitsOf(c: *const records.Clear, k: usize) u8 {
 
 /// A bonus's line written: a row of its letters.
 fn lineWrites(c: *const records.Clear, k: usize) RoundClear.Writes {
-    return .{ .rows = 1, .cells = @intCast(c.lines[k].text.len) };
+    var buf: [64]u8 = undefined;
+    return .{ .rows = 1, .cells = @intCast(lineOf(c, k, &buf).text.len) };
 }
 
 /// `points` to a player's score, which holds at `most` (play's record's `score_most`).
@@ -600,7 +634,7 @@ test "the steps: the counting from the wait after the lines, a skip to the wait 
 }
 
 test "START held at the counting's first wait: the bonuses at once, held at the most, the lines' zeros" {
-    var r: RoundClear = .{ .act = 6, .bonuses = .{ 20000, 4500, 10000, 0, 0 } };
+    var r: RoundClear = .{ .act = 6, .bonuses = .{ 20000, 4500, 10000, 0, 0, 0, 0 } };
     r.now.lines[0] = .{ .shown = true, .digits = 20000 };
     var g: setup_mod.Progress = .{ .round = 1, .timer = 45 };
     g.players[0] = .{ .in_play = true, .score = 995_000 };
@@ -630,4 +664,29 @@ test "the clear's status bar: the cartridge's for two players, the four slots fo
     try std.testing.expectEqualStrings("CPU", &b.party.?[2]);
     try std.testing.expectEqual(round_screen.PlayerBar.Playing{ .score = 300, .lives = 3, .specials = 1, .health = 50 }, b.players[2].playing);
     try std.testing.expect(b.players[3] == .none);
+}
+
+test "the last round's lives: players 3 and 4's lines after player 2's, their digit, two rows on" {
+    var lines_: [6]records.ClearLine = @splat(.{ .text = "", .at = .{ .x = 8, .y = 12 } });
+    lines_[5] = .{ .text = "        2UP  000000 PTS", .at = .{ .x = 8, .y = 23 } };
+    const c: records.Clear = .{ .header = "", .header_at = .{ .x = 7, .y = 7 }, .number = .{ .x = 13, .y = 0 }, .lines = lines_, .digits = 13, .normal = 1, .counted = 2, .wait = 32, .clear_bonus = 10000, .time_bonus = 100, .level_bonus = 10000, .count = 100, .colours = "" };
+    var buf: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("        2UP  000000 PTS", lineOf(&c, 5, &buf).text);
+    const third = lineOf(&c, 6, &buf);
+    try std.testing.expectEqualStrings("        3UP  000000 PTS", third.text);
+    try std.testing.expectEqual(records.Cell{ .x = 8, .y = 25 }, third.at);
+    const fourth = lineOf(&c, 7, &buf);
+    try std.testing.expectEqualStrings("        4UP  000000 PTS", fourth.text);
+    try std.testing.expectEqual(records.Cell{ .x = 8, .y = 27 }, fourth.at);
+    try std.testing.expectEqual(@as(u8, 6), digitsOf(&c, 7));
+    try std.testing.expectEqual(@as(?input.Player, 3), livesOf(7));
+    try std.testing.expectEqual(@as(?u3, 6), bonusOf(7));
+    // Each player's line, count and name entry in the program; players out of play skip theirs.
+    var r: RoundClear = .{ .last = true, .out = .{ false, true, false, true } };
+    var seen: [input.max_players]bool = @splat(false);
+    while (last_program[r.act].act != .names) {
+        if (last_program[r.act].player) |k| seen[k] = true;
+        r.next();
+    }
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true, false }, &seen);
 }

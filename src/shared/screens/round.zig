@@ -497,7 +497,7 @@ pub const Round = struct {
                 .name = nameOf(a.screen.name_entry.letters, name),
                 .level = setup.level,
             } else null;
-            rankIn(&table, r.player, entry);
+            rankIn(&table, r.player, entry, party_bar.shows(setup));
         }
         if (setup.high_scores != null or !std.meta.eql(table, was)) setup.high_scores = table;
     }
@@ -1681,12 +1681,15 @@ fn naming(p: world.Player, m: *const world.behaviours.player_waiting.Mind) Playe
 
 /// A player ranked in the high-score table: its marks leave it; its entry, when it entered its
 /// name, takes the last one's place, marked as its player's new one, and the table is sorted
-/// again.
-pub fn rankIn(table: []Score, player: input.Player, entry: ?Score) void {
+/// again. In a game of three or four players (`party`), an entry that no longer beats the last
+/// one (other players' entered since it was ranked) takes no place: the cartridge's, made for
+/// two, would put it over a better one, which four entering one after another make likely.
+pub fn rankIn(table: []Score, player: input.Player, entry: ?Score, party: bool) void {
     for (table) |*e| if (e.new == player) {
         e.new = null;
     };
     var x = entry orelse return;
+    if (party and !HighScores.beats(x, table[table.len - 1])) return;
     x.new = player;
     table[table.len - 1] = x;
     HighScores.sort(table);
@@ -1967,16 +1970,26 @@ test "a name entered in the high-score table: the last entry's place, marked, so
     const letters = [_][]const u8{ "A", "B", "C", "(ED)" };
     const name = nameOf(&letters, .{ 2, 3, null });
     try std.testing.expectEqualStrings("C  ", &name);
-    rankIn(&t, 0, .{ .score = 55_000, .round = 2, .level = 1, .name = name });
+    rankIn(&t, 0, .{ .score = 55_000, .round = 2, .level = 1, .name = name }, false);
     try std.testing.expectEqual(@as(u32, 55_000), t[5].score);
     try std.testing.expectEqual(@as(?input.Player, 0), t[5].new);
     try std.testing.expectEqual(@as(?input.Player, null), t[3].new);
     try std.testing.expectEqual(@as(?input.Player, 1), t[4].new);
     try std.testing.expectEqual(@as(u32, 20_000), t[9].score);
     // Ranked without an entry: its marks only leave.
-    rankIn(&t, 1, null);
+    rankIn(&t, 1, null, false);
     try std.testing.expectEqual(@as(?input.Player, null), t[4].new);
     try std.testing.expectEqual(@as(?input.Player, 0), t[5].new);
+    // A score below the last entry (another's entered since): in a game of two it takes the last
+    // place all the same, as the cartridge's; in a game of four it takes none.
+    var party = t;
+    rankIn(&t, 3, .{ .score = 15_000, .round = 1, .level = 1 }, false);
+    try std.testing.expectEqual(@as(u32, 15_000), t[9].score);
+    rankIn(&party, 3, .{ .score = 15_000, .round = 1, .level = 1 }, true);
+    try std.testing.expectEqual(@as(u32, 20_000), party[9].score);
+    for (party) |e| try std.testing.expect(e.new != 3);
+    rankIn(&party, 3, .{ .score = 25_000, .round = 1, .level = 1 }, true);
+    try std.testing.expectEqual(@as(?input.Player, 3), party[9].new);
 }
 
 test "a number's digits: its last ones, zeros first" {

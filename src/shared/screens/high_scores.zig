@@ -109,7 +109,7 @@ pub const HighScores = struct {
         };
     }
 
-    fn beats(a: Score, b: Score) bool {
+    pub fn beats(a: Score, b: Score) bool {
         if (a.score != b.score) return a.score > b.score;
         if (a.level != b.level) return a.level > b.level;
         return a.round > b.round;
