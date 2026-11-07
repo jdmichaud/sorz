@@ -410,8 +410,8 @@ The toolchain is pinned (`build.zig.zon`, `build.zig`). The modules, and what ea
 ## 9. Networking
 
 The original's two players share one console. Network play is an addition (plan items A1, A2 and
-26): the players of several machines play the same game as if on one console, two players today
-(more players are a later work), and others may watch.
+26): the players of several machines play the same game as if on one console, up to four, one
+player a machine (section 10.7, E4), and others may watch.
 
 **The ways to play** (the user, 2026-10-01 and 2026-10-08). Two players on one machine use the
 native game; a browser always has one player.
@@ -420,12 +420,12 @@ native game; a browser always has one player.
 | --- | --- | --- |
 | `sorz DATA` | 1 or 2 players; or NETWORK PLAY, the host | as on the console; the host's player is player 1 |
 | `sorz DATA --netplay PORT` | as `sorz DATA`, NETWORK PLAY at PORT (8000 without) | as above |
-| `sorz DATA --join ws://ADDRESS:PORT` | a client of that host, 1 player | player 2 once it joins, or an observer |
+| `sorz DATA --join ws://ADDRESS:PORT` | a client of that host, 1 player | the next free player's place (2 to 4) once it joins, or an observer |
 | `sorz DATA --server PORT` | none on the server; 1 player a browser | the first page is the host, the others its clients |
 
 A machine with one player shows that player's input alone in its settings; network play sends that
 player's pad. A player who opens the settings during a network game pauses every game of it, and
-the others are told why.
+each other machine says which player is in the settings.
 
 **Each machine its own menus; the players meet in the game** (the user, 2026-10-05 and
 2026-10-08). Each machine runs its own front end: the Sega logo, the title, its menus and OPTIONS
@@ -449,19 +449,20 @@ are its own, driven by its player alone. The host and its clients:
   menu's bright and dim tones: legible, not a line to choose), and the host's front end screens at
   the bottom left in white over the picture, list who is connected: LOCAL - PLAYER 1, and each
   client by its name and what it does (MENU, SELECT: at its own character select to join, PLAYER
-  2, OBSERVING).
+  2 to PLAYER 4, OBSERVING).
 - **A client** is a page of that host or server (not the first), or `--join`: it connects as it
   starts, and its player gives a name of three letters, kept in the settings. Its menu: JOIN, when
-  the host's session is open and a player's place is free; OBSERVE, when it is open, the host
-  takes observers and has a game; OPTIONS. A line it cannot take is dimmed. With the host at its
-  menu, JOIN's player chooses a character and waits for the host's game; its own select names its
-  cursor 2PLAYER, the player it joins as. The host's select takes it once it shows: the client
-  sees player 1's cursor come, its own screen, cursor and choice as they were (a choice made keeps
-  its portrait, player 1's cursor moving on).
-- **JOIN** goes to the client's own character select, and joins the host's game as player 2: at
-  the host's select, the two meet there and each sees the other's cursor; in play, the client's
-  player chooses a character on its own machine while the host plays on, and drops in once chosen,
-  as the original's second player joins a game (its PRESS 2UP START).
+  the host's session is open and a player's place is free; OBSERVE, when it is open, the host takes
+  observers and has a game; OPTIONS. A line it cannot take is dimmed. With the host at its menu,
+  JOIN's player chooses a character and waits for the host's game; its own select names its cursor
+  by the player it joins as (2PLAYER to 4PLAYER). The host's select takes it once it shows: the
+  client sees player 1's cursor come, its own screen, cursor and choice as they were (a choice made
+  keeps its portrait, player 1's cursor moving on).
+- **JOIN** goes to the client's own character select, and joins the host's game in the first free
+  place among its PLAYERS (player 2, then 3, then 4); a game whose places are all taken offers no
+  JOIN, only OBSERVE. At the host's select, the players meet there and each sees the others'
+  cursors; in play, the client's player chooses a character on its own machine while the host plays
+  on, and drops in once chosen, as the original's second player joins a game (its PRESS 2UP START).
 - **OBSERVE** shows the host's game on the client: it takes the host's game and then each tick's
   pads (below), and holds no one. START leaves it, back to the client's menu; at the game's end
   the client plays on to its own front end.
@@ -490,15 +491,19 @@ are its own, driven by its player alone. The host and its clients:
   open or watched; the observers go back to their menus.
 
 **The join.** The host's game holds for a moment while its state crosses (its canonical form,
-section 6); the client loads it, and from that tick on both run the same game in lockstep.
+section 6); the client loads it, and from that tick on both run the same game in lockstep. In a
+session under way, a newcomer joins at a tick the host chooses that no machine has run yet; every
+machine adds its player at that tick, and the newcomer loads the host's game there.
 
 **Delay-based input lockstep.** From the join, the host and its player run the same deterministic
-game; what crosses the network in play is each player's pad. Every display tick, a player's
-machine samples its pad and sends it for tick N + D, where the input delay D is chosen at the
-session's start from the measured round trip (2 to 6 ticks); tick N runs when every player's pad
-for N is in. The loads' waits are ticks like any other (section 10.2), so the machines stay in
-step through them. Rollback (predicting a pad and re-running the ticks it changes) is not planned:
-a co-operative beat-'em-up tolerates a few ticks of delay, and re-running ticks would replay the
+game; what crosses the network in play is each player's pad. Every display tick, a player's machine
+samples its pad and sends it for tick N + D, where the input delay D is chosen at the session's
+start from the measured round trip (2 to 6 ticks); tick N runs when every player's pad for N is in.
+The host relays each client's pads to the other clients, so with several clients D suits the two
+slowest links: their one-way times, in ticks rounded up, plus one; a newcomer may lengthen it from
+its join's tick. The loads' waits are ticks like any other (section 10.2), so the machines stay in
+step through them. Rollback (predicting a pad and re-running the ticks it changes) is not planned: a
+co-operative beat-'em-up tolerates a few ticks of delay, and re-running ticks would replay the
 sound. It is the upgrade if the delay is felt.
 
 - **Observers.** The host sends an observer its game, then the pads of each tick as it runs
@@ -521,8 +526,8 @@ sound. It is the upgrade if the delay is felt.
   machine shows at the bottom left over the picture, outlined in black, the frame's stats in any
   scene: FPS, the frames presented a second, and TPF, the milliseconds an update works on its
   frame. During a session's rounds, network play's lines show above them, the same lines as the
-  other: the host's (HOST), then the client's (its name), each with those numbers, its ping and
-  the input delay. A
+  others: the host's (HOST), then each client's (its name), by its player, each with those
+  numbers, its ping and the input delay. A
   machine busy near 100 % is the slow one; waits while neither is busy are the link's, its ping
   near or past what the delay covers.
 - **Game data.** A page loads the game's files of the native game that serves it (section 5.3):
@@ -533,9 +538,10 @@ sound. It is the upgrade if the delay is felt.
 
 **Leaving.** A host that leaves ends the session: each client goes back to its own menu, told why.
 A player's connection that drops holds the game on the host and on its observers, with a count of
-five seconds (PLAYER 2 DISCONNECTED, the seconds left); a client that comes back in time resumes
-it; otherwise the host decides the tick at which its player leaves the game (its character goes
-and does not come back), and plays on. The client may join again later. A client in its menu or
+five seconds (PLAYER n DISCONNECTED, the seconds left); a client that comes back in time resumes
+it; otherwise its player leaves the game at the tick its pads ran out (its character goes and does
+not come back), the others told ahead, and they play on. The client may join again later. A
+mismatch with any client stops every machine's game. A client in its menu or
 observing leaves as it pleases.
 
 The layers:
@@ -546,7 +552,7 @@ The layers:
   (protocol and build versions, data identity, the client's name, the input delay), the host's
   word on its session (open, a player's place free, observers taken), the inputs by tick, pings,
   state hashes, the hold, and reconnection. It is outside the simulation. The host keeps one
-  session of the protocol for each client.
+  session of the protocol for each client, and merges their pads with its own.
 - The platform transport moves whole messages, reliably and in order, while a connection lives:
   `connect`, `listen`, `send` (accepted into a bounded queue) and `close`, and the events
   `connected`, `disconnected` and `received` through `pollEvents`. The transport is WebSocket
@@ -763,25 +769,41 @@ that it never holds another back; a page silent for 15 seconds is dropped.
 - **E4 Three and four players** (the user, 2026-11-07), outside the original. Games of 1 or 2
   players stay the cartridge's; from 3 players:
   - **The menu:** right on 2 PLAYERS goes to 3 and 4 PLAYERS, then to the CPU's readings; a local
-    game needs as many input methods (the keyboard's two pads, the gamepads), else the line
-    skips them. In network play the host's PLAYERS (2 to 4) sets the places, one player a
-    machine; several local players a machine come later, as do CPUs in the free places.
-  - **The select:** a cursor each, 1P to 4P; 4 PLAYERS turns SAME CHARACTER on. A character's
-    third and fourth players take colour sets of the port's own, beside the cartridge's duplicate.
+    game needs as many input methods (the keyboard's pads: players 1 and 2, and players 3 and 4
+    once the settings give them keys; a gamepad each, which INPUT CONFIGURATION gives a player),
+    else the line skips them. In network play the host's PLAYERS (2 to 4) sets the places, one
+    player a machine (section 9); several local players a machine come later, as do CPUs in the
+    free places.
+  - **The select:** a cursor each, 1P to 4P (players 3 and 4 start on Axel); 4 PLAYERS turns SAME
+    CHARACTER on. A character's third and fourth players take colour sets of the port's own,
+    beside the cartridge's duplicate: a player's colours by how many before it took its character.
   - **The status bar:** four compact slots in a row, the round's timer between the second and the
     third. Each slot: the player's name (its network name, else 1P to 4P, or CPU), the police
     special's icon on one line and its count; under them, the health bar and the lives. The score
-    is not shown (it still counts for the high scores); the bosses' bar stays below.
+    is not shown (it still counts for the high scores); the bosses' bar stays below. A slot of a
+    player not in the game is empty. Out of lives, a slot asks CONTINUE over the cursor, YES or NO
+    and the continues left; the name entry shows the score over NAME and the letters; out of the
+    game, the name and a blinking GAME OVER.
   - **The rounds:** the cartridge's two-player spawns (records that come only with two players:
-    enemies, a second boss, breakables) come again: half of them with 3 players, all of them with
-    4. The enemies' health is x1.25 with 3 players and x1.5 with 4. The bosses are as many as
-    with two players, their health x1.5 and x2. The numbers are a start, tuned by measurement
-    (CPUs playing every place).
-  - **Mr. X's last room:** players 1 and 2 alone get his offer, and it plays as two players until
-    he rises from his chair; the others then come in.
-  - **The rest is every player's:** lives, specials, continues, the high scores, holds and
-    friendly hits between any two players, the camera keeping all of them in view. A player whose
-    machine drops out leaves after the network's wait, as player 2 does today.
+    enemies, a second boss, breakables) come again: every other one with 3 players, all of them
+    with 4, a placed one a little behind its first. The enemies' health is x1.25 with 3 players and
+    x1.5 with 4. The bosses are as many as with two players, their health x1.5 with 3 and with 4
+    (their bars in two players' measure): measured with CPUs in every place, x2 made four players'
+    rounds harder per player than two's. With 3 or 4 players an enemy gone far off the screen
+    calls the reserve as one knocked out does.
+  - **Mr. X's last room:** players 1 and 2 alone get his offer (players 3 and 4 when neither of
+    them is in the room), and it plays as two players until he rises from his chair: as the walk
+    in begins the others walk away, back the way the round came; as he rises (or once neither of
+    the offer's players fights) they drop into the room as a new life does, their lives, specials
+    and scores as they were. The trapdoors open under the offer's players.
+  - **The high scores:** players 3 and 4's new entries in their own colours, green and blue; in a
+    game of three or four, an entry that no longer beats the last one takes no place.
+  - **The rest is every player's:** lives, specials (player 3's police special is player 1's kind,
+    player 4's player 2's), continues, holds and friendly hits between any two players (each pair
+    meets in turn, players 1 and 2 first), the camera keeping all of them in view; an enemy goes
+    for the nearest player across, a tie for the later. Players 3 and 4 start a life between
+    players 1's and 2's depths; a CPU in their place follows player 1. A player whose machine drops
+    out leaves after the network's wait, as player 2 does.
 
 ## 11. Verification
 
