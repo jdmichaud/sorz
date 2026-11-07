@@ -80,6 +80,16 @@
 //!   for the client; player 1 dies out of it at one tick on both machines (the same game); RETURN
 //!   TO GAME: player 1 drops back in on both; JOIN IN PROGRESS off: no way back; EXIT shows the
 //!   game, which runs on; the client quits: the game the host left is over, its lobby again.
+//! - select_three, select_four (PLAN item 51): the host's PLAYERS 3 (4), its clients joining at
+//!   its select one after the other, each in its place; round 1 with every player, each slot
+//!   named; the same state, picture and sound on every machine; the roster and the stats list
+//!   every machine; a client's settings hold every game, the others told whose; with four, a
+//!   fifth machine finds JOIN dimmed, and watches.
+//! - round_three: a third client joining round 1 as player 3 (the two players' characters
+//!   taken), leaving by Escape (the others play on, told), joining again in its place.
+//! - away_four: player 3's connection down in a game of four: every machine holds, told whose,
+//!   counting down; back in time; then not back: the others play on without it.
+//! - difference_three: a planted difference with three machines: named, every machine stops.
 //!
 //! Prints a JSON line per flow, and exits with 1 when a step fails; with `--pictures`, two pictures
 //! that differ are written there (host.png, guest.png), and the host's at a few steps, its own
@@ -1743,6 +1753,34 @@ fn rosterListsEvery(f: *Flow, m: *const Many) !void {
     try f.check(players == m.in - 1, "the roster lists every client of the session as its player");
 }
 
+/// The last client's player's START in the round: its settings; every machine holds, each other
+/// told that player is in its settings; it leaves them, and all go on.
+fn settingsHoldEvery(f: *Flow, r: *Room, m: *const Many) !void {
+    const k = m.in - 1;
+    const who = m.at(k);
+    try r.press(who, .enter);
+    try r.step(12);
+    try f.check(who.game.settingsOpen(), "the last client's START opens its settings");
+    var told = true;
+    for (0..m.in) |j| if (j != k) {
+        const o = m.at(j).game.overlays.find(.peer_settings);
+        told = told and o != null and o.?.peer_settings == k;
+    };
+    try f.check(told, "every other machine says that player is in its settings");
+    try shot(r, m.host, if (m.in == 4) "settings_four.png" else "settings_three.png");
+    var held: [4]u32 = undefined;
+    for (0..m.in) |j| held[j] = m.at(j).game.state.tick;
+    try r.step(60);
+    var still = true;
+    for (0..m.in) |j| still = still and m.at(j).game.state.tick <= held[j] + 4;
+    try f.check(still, "every machine holds");
+    try r.press(who, .escape);
+    try r.step(12);
+    var on = !who.game.settingsOpen();
+    for (0..m.in) |j| on = on and m.at(j).game.overlays.find(.peer_settings) == null;
+    try f.check(on, "all go on");
+}
+
 fn selectThree(f: *Flow, r: *Room) !void {
     try selectMany(f, r, 3);
 }
@@ -1754,7 +1792,8 @@ fn selectFour(f: *Flow, r: *Room) !void {
 /// select_three, select_four: the host's PLAYERS 3 (4), its clients joining at its select one
 /// after the other, each cursor its own machine's; round 1 with every player, each slot named;
 /// the same state, picture and sound on every machine; the roster and the stats list every
-/// machine.
+/// machine; the last client's settings hold every game, the others told whose; with four, a
+/// fifth machine finds JOIN dimmed, and watches.
 fn selectMany(f: *Flow, r: *Room, n: usize) !void {
     var m = try manyRoom(r, n);
     try hostPlayers(f, r, m.host, n);
@@ -1767,6 +1806,19 @@ fn selectMany(f: *Flow, r: *Room, n: usize) !void {
     try shot(r, m.clients[n - 2], if (n == 4) "round_four_client.png" else "round_three_client.png");
     try rosterListsEvery(f, &m);
     try statsListEvery(f, r, &m);
+    try settingsHoldEvery(f, r, &m);
+    // With every place taken, a client finds JOIN dimmed, and watches.
+    if (n == 4) {
+        const watcher = try r.addNamed(.guest, "OBS".*);
+        try toMenu(f, r, watcher);
+        try r.step(10);
+        try f.check(watcher.game.state.scenes.base.menu.dimmed == 0b0010, "every place taken: JOIN dimmed, OBSERVE lit");
+        while (menuChoice(watcher) != .observe) try r.press(watcher, .down);
+        try r.press(watcher, .z);
+        try f.until(r, watcher, observing, 600, "the fifth machine watches");
+        try r.step(30);
+        try same(f, r, m.host, watcher, "the observer's game the host's, four players");
+    }
     try sameAllFor(f, r, &m, 120);
     f.note("\"session_tick\":{d},\"state_hash\":\"{x:0>16}\",\"delay\":{d}", .{ m.host.np().tick(), m.host.game.stateHash(), m.host.np().delay() });
 }
