@@ -595,7 +595,7 @@ Outside the original; games of 1 or 2 players stay as they are at every step. On
 machine in network play; CPUs in the free places and several local players a machine come later
 (the CPU's play will want tuning for them).
 
-- [ ] **47 — The engine for four players** — Depends: 46.
+- [x] **47 — The engine for four players** — Depends: 46.
   - The pads (`input.Pads`), the world's players, their records (lives, specials, scores,
     continues), the canonical form and network play's messages carry four players. What pairs
     the two players today takes any two: holds and throws between players, friendly hits, an
@@ -604,6 +604,22 @@ machine in network play; CPUs in the free places and several local players a mac
   - Gate: zig build test; the recorded round and the scenarios equal to sor-remaster's traces as
     before (round-check, similar-check); netplay-check; a 4-player world in unit tests (four
     players fight, hold each other, each loses its lives).
+  - [x] Checked 2026-11-07: zig build test (500 tests: four players moving by their own pads,
+    player 3 striking player 4, holds and throws between players 3 and 4, 2 and 3, 1 and 4, each
+    losing its own lives, the camera keeping the four in view, an enemy going for the nearest of
+    any, player 4's special attack; protocol 6's new fields; a guest in player 4's place; an
+    observer of four). cpus-check (ReleaseFast) built before and after, 39 games (the nine
+    pairings at level 3, 7 lives, seeds 1 and 2; the nine `--player1 bot` to round 7, seeds 1
+    and 2; the defaults, seeds 1 to 3): every JSON line and its stderr byte-identical.
+    round-check (its nine scenes equal, its report identical), the attract demo at every display
+    tick (equal to its end, 7659 ticks, the same accepted difference), similar-check (71 moves
+    equal of 71, its report identical), screens-check and variants-check (their output
+    identical), netplay-check (its 25 flows and its two processes pass; the state hashes and the
+    planted difference's bit differ, the form's layout changed): all as before the change.
+    Players 3 and 4 have their places past the effects', start half a step from players 1 and 2,
+    call player 1's and player 2's shots; their CPU follows player 1; round 8's offer stays
+    players 1 and 2's; the status bar, the select and the menu stay two players' (items 48 to
+    53).
 - [ ] **48 — The status bar for 3 and 4 players** — Depends: 47.
   - Four compact slots in a row, the timer between the second and the third: the name (its
     network name, else 1P to 4P, or CPU), the police icon on one line and its count; the health
