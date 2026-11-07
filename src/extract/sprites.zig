@@ -12,6 +12,7 @@ const blocks = @import("blocks.zig");
 const vram_mod = @import("vram.zig");
 const screens = @import("screens.zig");
 const builder_mod = @import("builder.zig");
+const fonts = @import("fonts.zig");
 const Builder = builder_mod.Builder;
 const Vram = vram_mod.Vram;
 
@@ -522,6 +523,83 @@ pub fn extract(b: *Builder) !void {
             b.notes.frames += 1;
         }
     }
+    try playerLabels(b);
+}
+
+/// The character select's labels of players 3 and 4 (DESIGN.md 10.7, E4), the port's own: the
+/// cartridge's has two, 1PLAYER and 2PLAYER (`select/label_00`, `_01`). Each is 2PLAYER with its
+/// digit the main font's (the same slanted style: its letter, its shade), two pixels on as the
+/// cartridge's digits sit, outlined as they are.
+fn playerLabels(b: *Builder) !void {
+    const select = try b.set("select");
+    const second = for (select.frames.items) |f| {
+        if (std.mem.eql(u8, f.name, "label_01")) break f;
+    } else return error.BadData;
+    const sheet = try b.sheet((blocks.findName("fonts/main") orelse return error.UnknownBlock).*);
+    for ([_][]const u8{ "3", "4" }, 2..) |digit, k| {
+        const tile = for (fonts.main_glyphs) |g| {
+            if (std.mem.eql(u8, g.text, digit)) break g.tile;
+        } else return error.BadData;
+        if (tile >= sheet.tiles.len) return error.BadData;
+        var f = second;
+        f.pixels = try relabel(b.arena, second, &sheet.tiles[tile]);
+        f.file = try std.fmt.allocPrint(b.arena, "label_{d:0>2}.png", .{k});
+        f.provenance = try std.fmt.allocPrint(b.arena, "the port's own (PLAN item 49), not the ROM's: label_01 (2PLAYER) with its digit the main font's {s} (its tile {d}), two pixels on, outlined", .{ digit, tile });
+        try b.frame(try std.fmt.allocPrint(b.arena, "select/label_{d:0>2}", .{k}), f);
+    }
+}
+
+/// The columns of a label's digit, before its first letter.
+const label_digit_columns = 10;
+
+/// `label`'s pixels with its digit (`label_digit_columns`) replaced by `digit`, a font's tile:
+/// its letter (1) and its shade (12) from column 2, its ground dropped; then the outline (2) on
+/// the clear pixels next to them, up or down or across, up to the first letter's.
+fn relabel(arena: std.mem.Allocator, label: art.Frame, digit: *const art.Tile) ![]u8 {
+    const w = label.width;
+    const px = try arena.dupe(u8, label.pixels);
+    var body: [8][label_digit_columns]bool = @splat(@splat(false));
+    for (0..@min(label.height, 8)) |y| {
+        for (0..label_digit_columns) |x| px[y * w + x] = 0;
+        for (0..8) |x| {
+            const v = digit[y * 8 + x];
+            if (v != 1 and v != 12) continue;
+            px[y * w + x + 2] = v;
+            body[y][x + 2] = true;
+        }
+    }
+    for (0..@min(label.height, 8)) |y| for (0..label_digit_columns + 1) |x| {
+        if (px[y * w + x] != 0) continue;
+        const next = (x > 0 and body[y][x - 1]) or (x < label_digit_columns and body[y][x]) or
+            (x + 1 < label_digit_columns and body[y][x + 1]) or
+            (x < label_digit_columns and ((y > 0 and body[y - 1][x]) or (y < 7 and body[y + 1][x])));
+        if (next) px[y * w + x] = 2;
+    };
+    return px;
+}
+
+test "a player's label: the second's art, its digit another's, outlined" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // A label of 12 pixels by 8: its digit's columns 1s, its letter at columns 10 and 11.
+    var pixels: [12 * 8]u8 = undefined;
+    for (0..8) |y| for (0..12) |x| {
+        pixels[y * 12 + x] = if (x < label_digit_columns) 1 else 5;
+    };
+    const label: art.Frame = .{ .name = "label_01", .file = "label_01.png", .width = 12, .height = 8, .origin_x = 0, .origin_y = 0, .pixels = &pixels };
+    // The digit: a letter pixel at (1, 3), its shade at (2, 3), its ground everywhere else.
+    var digit: art.Tile = @splat(2);
+    digit[3 * 8 + 1] = 1;
+    digit[3 * 8 + 2] = 12;
+    const out = try relabel(arena.allocator(), label, &digit);
+    // Two pixels on: (3, 3) and (4, 3); outlined left, right, above and below; the rest clear,
+    // the letter kept.
+    try std.testing.expectEqual(@as(u8, 1), out[3 * 12 + 3]);
+    try std.testing.expectEqual(@as(u8, 12), out[3 * 12 + 4]);
+    for ([_][2]usize{ .{ 2, 3 }, .{ 5, 3 }, .{ 3, 2 }, .{ 4, 2 }, .{ 3, 4 }, .{ 4, 4 } }) |at| try std.testing.expectEqual(@as(u8, 2), out[at[1] * 12 + at[0]]);
+    try std.testing.expectEqual(@as(u8, 0), out[0]);
+    try std.testing.expectEqual(@as(u8, 0), out[2 * 12 + 2]);
+    try std.testing.expectEqual(@as(u8, 5), out[3 * 12 + 10]);
 }
 
 test "a frame composes with its origin, its pieces' flips and order" {

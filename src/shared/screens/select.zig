@@ -8,8 +8,9 @@
 //! portraits in the second, and the picture of both at the next (the original shows nothing new
 //! between the two halves: the colours the cursors set in the first show with the rest). Each
 //! player's presses of both display ticks count. Left, up and down move a cursor to the portrait
-//! on its left, right to the one on its right, round the ends and past the other player's; A, B,
-//! C or START chooses the character, once. The presses before the first such tick are lost.
+//! on its left, right to the one on its right, round the ends and past the other players' (where
+//! the rule says a character is taken); A, B, C or START chooses the character, once. The presses
+//! before the first such tick are lost.
 //! When every player has chosen, the picture holds for 18 ticks, fades out, and the select ends
 //! with "stop": round 1 follows (the options' first round; one the content does not have, its
 //! stand-in).
@@ -17,6 +18,12 @@
 //! Network play (DESIGN.md 9): a second player may come to a select of one (`join`), its cursor
 //! on the first portrait free from Blaze's, and go (`leave`); a character another machine's
 //! player plays (`Turn.taken`) is passed and cannot be chosen.
+//!
+//! Three and four players (DESIGN.md 10.7, E4): a cursor each, its label 1P to 4P (the
+//! cartridge's two, and the port's own for players 3 and 4: `select/label_02`, `_03`), players 3
+//! and 4 on Axel's portrait at first. With four, any may choose the character another has (four
+//! cannot all differ out of three): SAME CHARACTER is on. The labels on one portrait take turns
+//! in front.
 //!
 //! 1 PLAYER - 1 CPU (PLAN item 30, `Setup.cpu`): player 1 chooses alone; as the fade out ends,
 //! the select comes again (`cpu_pass`), its music playing on, and player 1 chooses the CPU's
@@ -68,8 +75,11 @@ const pose_wait = 18;
 const chosen_wait = 18;
 const eye_open_ticks = 300;
 const eye_closed_ticks = 8;
-/// The port's: the display ticks each of two players' labels on one portrait is in front.
+/// The port's: the display ticks each of the players' labels on one portrait is in front.
 const label_turn = 32;
+/// The cursors' first places: player 1's Adam's, player 2's Blaze's (the cartridge's), players 3
+/// and 4's Axel's (the port's).
+const first_places = [setup_mod.max_players]Character{ .adam, .blaze, .axel, .axel };
 /// The CPUs' labels, and their place in a label's 64 pixels (in the middle); the colour of the
 /// game's font around its letters (black in the menus), which the labels keep only as their
 /// letters' outline, as the cartridge's labels have it.
@@ -211,7 +221,7 @@ pub const Cursor = struct {
 
 /// The sprites a picture shows: each player's label at its place, each portrait's frame.
 pub const Listing = struct {
-    labels: [2]?Character = .{ null, null },
+    labels: [setup_mod.max_players]?Character = @splat(null),
     portraits: [3]?Shown = .{ null, null, null },
 
     pub const Shown = struct { pose: Pose = .stand, step: u8 = 0, y: i16 = 0 };
@@ -223,7 +233,11 @@ pub const Select = struct {
     phase: Phase = .setup,
     colours: Colours = .{},
     players: setup_mod.Players = .one,
-    cursors: [2]Cursor = .{ .{ .place = .adam }, .{ .place = .blaze } },
+    cursors: [setup_mod.max_players]Cursor = blk: {
+        var c: [setup_mod.max_players]Cursor = undefined;
+        for (&c, first_places) |*x, place| x.* = .{ .place = place };
+        break :blk c;
+    },
     /// The player a lone cursor's label names: player 2 on a client of network play, whose
     /// player joins the host's game as player 2.
     seat: u1 = 0,
@@ -267,7 +281,8 @@ pub const Select = struct {
         adam_lit: *const art.Palette,
         axel_lit: *const art.Palette,
         blaze_lit: *const art.Palette,
-        labels: [2]*const art.Frame,
+        /// 1P, 2P (the cartridge's), 3P and 4P (the port's).
+        labels: [setup_mod.max_players]*const art.Frame,
         /// The CPU's label's letters.
         text: library.Text,
         poses: library.Poses,
@@ -352,7 +367,9 @@ pub const Select = struct {
                 self.seat = if (turn.net.role == .client and self.players == .one) 1 else 0;
                 if (!self.cpu_pass) turn.setup.characters = @splat(null);
                 self.colours.aim(a.colours);
-                self.colours.aim(if (self.players == .two) a.two_players else a.one_player);
+                self.colours.aim(if (self.players == .one) a.one_player else a.two_players);
+                // Players 3 and 4's portrait lit too.
+                if (self.count() > 2) self.colours.aim(a.lit(self.cursors[2].place));
                 // Alone, the cursor starts on the first character no other machine's player has.
                 if (turn.taken) |t| if (self.players == .one and self.cursors[0].place == t) {
                     self.cursors[0].place = next(t, true);
@@ -378,8 +395,7 @@ pub const Select = struct {
             },
             .first_half => {
                 self.eye();
-                const pressed: [2]input.Pad = .{ either(self.kept.pad1, turn.pressed.pad1), either(self.kept.pad2, turn.pressed.pad2) };
-                for (0..self.count()) |i| self.cursor(@intCast(i), pressed[i], turn, a);
+                for (0..self.count()) |i| self.cursor(@intCast(i), either(self.kept.of(i), turn.pressed.of(i)), turn, a);
                 self.phase = .second_half;
                 turn.frame = null;
                 return null;
@@ -423,7 +439,7 @@ pub const Select = struct {
     }
 
     fn count(self: *const Select) usize {
-        return if (self.players == .two) 2 else 1;
+        return self.players.count();
     }
 
     fn either(x: input.Pad, y: input.Pad) input.Pad {
@@ -438,9 +454,10 @@ pub const Select = struct {
         self.eye_left = if (self.eye_closed) eye_closed_ticks else eye_open_ticks;
     }
 
-    /// Player `i`'s cursor, with its presses: a choice, or a move to the next portrait that the
-    /// other player is not on, its frame lit and the old one's dimmed.
-    fn cursor(self: *Select, i: u1, pressed: input.Pad, turn: *scene.Turn, a: *const Assets) void {
+    /// Player `i`'s cursor, with its presses: a choice, or a move to the next portrait that no
+    /// other player is on (where the rule says a character is taken), its frame lit and the old
+    /// one's dimmed.
+    fn cursor(self: *Select, i: input.Player, pressed: input.Pad, turn: *scene.Turn, a: *const Assets) void {
         const c = &self.cursors[i];
         if (c.chosen or @as(u8, @bitCast(pressed)) == 0) return;
         if (pressed.a or pressed.b or pressed.c or pressed.start) {
@@ -453,14 +470,15 @@ pub const Select = struct {
         // Any direction but right is left.
         const from = c.place;
         var to = next(from, pressed.right);
-        // A character the variant's rule says is taken (the other player's, in the cartridge), or
+        // A character the variant's rule says is taken (another player's, in the cartridge), or
         // another machine's player's.
-        if (self.players == .two and taken(turn, self.cursors[1 - i].place, to)) to = next(to, pressed.right);
+        var tries: usize = 0;
+        while (tries < places.len and self.takenFrom(turn, i, to)) : (tries += 1) to = next(to, pressed.right);
         if (turn.taken == to) to = next(to, pressed.right);
         c.place = to;
-        // A portrait the other player's cursor stays on stays lit (when the variant lets both
-        // be on one).
-        if (self.players != .two or self.cursors[1 - i].place != from) {
+        // A portrait another player's cursor stays on stays lit (when the variant lets two be on
+        // one).
+        if (!self.onBy(from, i)) {
             self.portraits[@backingInt(from)].cursor = false;
             self.colours.show(a.dim(from));
         }
@@ -469,14 +487,28 @@ pub const Select = struct {
         turn.play(a.move);
     }
 
-    /// Whether a second player may come to this select: one plays it, and it has not ended.
-    /// Whether `wanted` is taken for a player, the other's cursor on `other`: by the host's
+    /// Whether `wanted` is taken for player `i`: another player's cursor on it, by the rule
+    /// (`taken`); never with four players, who cannot all play different characters.
+    fn takenFrom(self: *const Select, turn: *const scene.Turn, i: usize, wanted: Character) bool {
+        if (self.count() == setup_mod.max_players) return false;
+        for (self.cursors[0..self.count()], 0..) |o, k| if (k != i and taken(turn, o.place, wanted)) return true;
+        return false;
+    }
+
+    /// Whether a player's cursor but player `i`'s is on `place`.
+    fn onBy(self: *const Select, place: Character, i: usize) bool {
+        for (self.cursors[0..self.count()], 0..) |o, k| if (k != i and o.place == place) return true;
+        return false;
+    }
+
+    /// Whether `wanted` is taken for a player, another's cursor on `other`: by the host's
     /// network options in a game of NETWORK PLAY, else by the variant's rule.
     fn taken(turn: *const scene.Turn, other: Character, wanted: Character) bool {
         if (turn.setup.same_character) |same| return !same and other == wanted;
         return turn.policies.characterTaken(other, wanted);
     }
 
+    /// Whether a second player may come to this select: one plays it, and it has not ended.
     pub fn joinable(self: *const Select) bool {
         // Not where player 1 chooses for the CPU.
         return self.players == .one and !self.cpu_pass and switch (self.phase) {
@@ -612,6 +644,37 @@ pub const Select = struct {
         return t;
     }
 
+    /// The labels' order, back to front: the labels behind another on their portrait first, then
+    /// the one in front on each, the last player's first in both. On a portrait of several, the
+    /// one in front turns every `label_turn` display ticks, player 1's first.
+    fn labelOrder(self: *const Select) [setup_mod.max_players]usize {
+        const n = setup_mod.max_players;
+        var front: [n]bool = @splat(false);
+        for (self.shown.labels, 0..) |l, i| {
+            const place = l orelse continue;
+            // The players on its portrait, and its rank among them.
+            var on: usize = 0;
+            var rank: usize = 0;
+            for (self.shown.labels, 0..) |o, k| if (o == place) {
+                if (k < i) rank += 1;
+                on += 1;
+            };
+            front[i] = rank == (self.ticks / label_turn) % on;
+        }
+        var order: [n]usize = undefined;
+        var at: usize = 0;
+        for ([_]bool{ false, true }) |in_front| {
+            var i: usize = n;
+            while (i > 0) {
+                i -= 1;
+                if (front[i] != in_front) continue;
+                order[at] = i;
+                at += 1;
+            }
+        }
+        return order;
+    }
+
     pub fn draw(self: *const Select, prev: ?*const Select, v: *view.View, a: *const Assets) !void {
         if (prev == null) {
             try v.board(.b).drawMapAtPlace(a.frame);
@@ -623,11 +686,9 @@ pub const Select = struct {
             try v.board(.b).drawMapAtPlace(if (self.shown_eye_closed) a.eye_closed else a.eye_open);
         }
         v.screen.colours = self.colours.shown;
-        // Back to front: player 2's label, player 1's (on one portrait, when the variant lets
-        // both players choose it, they take turns in front), Blaze, Axel, Adam.
-        const one_place = self.shown.labels[0] != null and self.shown.labels[0] == self.shown.labels[1];
-        const back_first: [2]usize = if (one_place and (self.ticks / label_turn) % 2 == 1) .{ 0, 1 } else .{ 1, 0 };
-        for (back_first) |i| {
+        // Back to front: the players' labels, the last player's first (on one portrait, when the
+        // variant lets players choose one, they take turns in front), Blaze, Axel, Adam.
+        for (self.labelOrder()) |i| {
             const place = self.shown.labels[i] orelse continue;
             if (self.cpu_label != 0) {
                 try v.sprites.append(v.gpa, .of(try v.outlinedText(a.text, cpu_labels[self.cpu_label - 1], font_ground), label_x.get(place) + cpu_label_x, label_y));
@@ -699,7 +760,7 @@ fn testAssets(tp: *const TestPoses) Select.Assets {
         .adam_lit = &test_palette,
         .axel_lit = &test_palette,
         .blaze_lit = &test_palette,
-        .labels = .{ &tp.frame, &tp.frame },
+        .labels = @splat(&tp.frame),
         .text = .{ .font = &test_font, .sheet = &test_sheet },
         .poses = tp.poses,
         .music = 1,
@@ -867,4 +928,74 @@ test "0 PLAYERS - 2 CPU: player 1's pad chooses for CPU 1, then, the select agai
         _ = s.tick(&turn, &a);
     }
     try testing.expectEqual([4]?Character{ .adam, .axel, null, null }, setup.characters);
+}
+
+/// A select's tick with player `k`'s presses `pad`, by the variant's rules `policies`.
+fn pressOf(s: *Select, setup: *Setup, a: *const Select.Assets, policies: *const @import("../variant.zig").Policies, k: usize, pad: input.Pad) void {
+    var turn: scene.Turn = .{ .setup = setup, .policies = policies };
+    turn.pressed.at(k).* = pad;
+    _ = s.tick(&turn, a);
+}
+
+test "four players: a cursor each, any character for any, their labels taking turns in front" {
+    var tp: TestPoses = .{};
+    tp.init();
+    const a = testAssets(&tp);
+    const original = &@import("../variant.zig").original.policies;
+    var setup: Setup = .{ .players = .four };
+    var s: Select = .start(&setup);
+    var turn: scene.Turn = .{ .setup = &setup, .policies = original };
+    for (0..66) |_| _ = s.tick(&turn, &a);
+    try testing.expectEqual(@as(usize, 4), s.count());
+    try testing.expectEqual([4]?Character{ .adam, .blaze, .axel, .axel }, s.listed.labels);
+    try testing.expect(s.portraits[0].cursor and s.portraits[1].cursor and s.portraits[2].cursor);
+    // Even by the cartridge's rule, four may share: player 3 right onto player 2's Blaze, player
+    // 4 left onto player 1's Adam; Axel's frame dims, its cursors gone.
+    pressOf(&s, &setup, &a, original, 2, .{ .right = true });
+    pressOf(&s, &setup, &a, original, 2, .{});
+    pressOf(&s, &setup, &a, original, 3, .{ .left = true });
+    pressOf(&s, &setup, &a, original, 3, .{});
+    try testing.expectEqual([4]?Character{ .adam, .blaze, .blaze, .adam }, s.listed.labels);
+    try testing.expect(!s.portraits[1].cursor and s.portraits[0].cursor and s.portraits[2].cursor);
+    // On Adam's portrait, players 1 and 4: player 1's label in front, then player 4's; on
+    // Blaze's, player 2's, then player 3's.
+    s.shown = s.listed;
+    s.ticks = 0;
+    try testing.expectEqualSlices(usize, &.{ 3, 2, 1, 0 }, &s.labelOrder());
+    s.ticks = label_turn;
+    try testing.expectEqualSlices(usize, &.{ 1, 0, 3, 2 }, &s.labelOrder());
+    // Each chooses: the four characters, then the wait.
+    for (0..4) |k| {
+        pressOf(&s, &setup, &a, original, k, .{ .a = true });
+        pressOf(&s, &setup, &a, original, k, .{});
+    }
+    try testing.expectEqual([4]?Character{ .adam, .blaze, .blaze, .adam }, setup.characters);
+    try testing.expectEqual(Select.Phase.wait, s.phase);
+}
+
+test "three players by the cartridge's rule: a move passes the others' portraits" {
+    var tp: TestPoses = .{};
+    tp.init();
+    const a = testAssets(&tp);
+    const original = &@import("../variant.zig").original.policies;
+    var setup: Setup = .{ .players = .three };
+    var s: Select = .start(&setup);
+    var turn: scene.Turn = .{ .setup = &setup, .policies = original };
+    for (0..66) |_| _ = s.tick(&turn, &a);
+    try testing.expectEqual([4]?Character{ .adam, .blaze, .axel, null }, s.listed.labels);
+    // Every portrait taken: player 1 stays on Adam's. Player 3 chosen, player 2 left: Axel's is
+    // still player 3's, Adam's player 1's: Blaze's again.
+    pressOf(&s, &setup, &a, original, 0, .{ .right = true });
+    pressOf(&s, &setup, &a, original, 0, .{});
+    try testing.expectEqual(Character.adam, s.cursors[0].place);
+    pressOf(&s, &setup, &a, original, 1, .{ .left = true });
+    pressOf(&s, &setup, &a, original, 1, .{});
+    try testing.expectEqual(Character.blaze, s.cursors[1].place);
+    // Two players by the cartridge's rule as before: one portrait passed at most.
+    setup = .{ .players = .two };
+    s = .start(&setup);
+    for (0..66) |_| _ = s.tick(&turn, &a);
+    pressOf(&s, &setup, &a, original, 0, .{ .left = true });
+    pressOf(&s, &setup, &a, original, 0, .{});
+    try testing.expectEqual(Character.axel, s.cursors[0].place);
 }
