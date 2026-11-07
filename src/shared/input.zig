@@ -1,5 +1,5 @@
-//! The players' controls: the platform's keys and gamepads turned into the two 3-button pads the
-//! game reads (`Pad`). The pads are sampled once per display tick, as the original reads its pads
+//! The players' controls: the platform's keys and gamepads turned into the 3-button pads the game
+//! reads (`Pad`). The pads are sampled once per display tick, as the original reads its pads
 //! once a frame. A lost focus releases every held control.
 //!
 //! Each player has its input method, the keyboard or a gamepad, its keys and its autofire, which
@@ -42,10 +42,40 @@ pub const Pad = packed struct(u8) {
     }
 };
 
-/// The two pads of a display tick.
+/// The players a game may have: the cartridge's two, and the port's third and fourth (DESIGN.md
+/// 10.7, E4). A machine's controls keep a layout for each.
+pub const max_players = 4;
+
+/// A player's number in the game, from 0 (player 1) to `max_players - 1`.
+pub const Player = std.math.IntFittingRange(0, max_players - 1);
+
+/// The pads of a display tick, a pad for each player (a player not in the game: none held).
 pub const Pads = struct {
     pad1: Pad = .{},
     pad2: Pad = .{},
+    pad3: Pad = .{},
+    pad4: Pad = .{},
+
+    /// Player `k`'s pad.
+    pub fn of(self: Pads, k: usize) Pad {
+        return switch (k) {
+            0 => self.pad1,
+            1 => self.pad2,
+            2 => self.pad3,
+            3 => self.pad4,
+            else => unreachable,
+        };
+    }
+
+    pub fn at(self: *Pads, k: usize) *Pad {
+        return switch (k) {
+            0 => &self.pad1,
+            1 => &self.pad2,
+            2 => &self.pad3,
+            3 => &self.pad4,
+            else => unreachable,
+        };
+    }
 };
 
 comptime {
@@ -54,10 +84,6 @@ comptime {
 
 /// The buttons a controller's buttons are chosen for; the directions are its d-pad and left stick.
 pub const face_buttons = [_]Button{ .a, .b, .c, .start };
-
-/// The players a machine's controls keep a layout for: the game has two, but network play may
-/// bring more.
-pub const max_players = 4;
 
 /// A key setting without a key (players 3 and 4 have none at first).
 pub const no_key: platform.Key = .unknown;
@@ -365,7 +391,9 @@ pub const Controls = struct {
         for (0..max_controllers) |slot| {
             if (self.playerOfSlot(slot)) |p| bits[p] |= self.pad_buttons[slot] | self.stick[slot];
         }
-        return .{ .pad1 = @bitCast(bits[0]), .pad2 = @bitCast(bits[1]) };
+        var out: Pads = .{};
+        for (bits, 0..) |b, p| out.at(p).* = @bitCast(b);
+        return out;
     }
 
     /// The pads as the game reads them at display tick `tick`: `pads`, the attack button
@@ -373,8 +401,8 @@ pub const Controls = struct {
     /// while it is held.
     pub fn read(self: *Controls, tick: u32, attack: Button) Pads {
         var out = self.pads();
-        for ([_]*Pad{ &out.pad1, &out.pad2 }, 0..) |pad_, p| {
-            const bits: *u8 = @ptrCast(pad_);
+        for (0..max_players) |p| {
+            const bits: *u8 = @ptrCast(out.at(p));
             const mask: u8 = @as(u8, 1) << @backingInt(attack);
             if (!self.layout.players[p].autofire or bits.* & mask == 0) {
                 self.autofire_since[p] = null;
