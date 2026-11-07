@@ -667,11 +667,22 @@ machine in network play; CPUs in the free places and several local players a mac
     report identical), screens-check (its 23 scenarios as before, none differing),
     variants-check's six flows of before as before, netplay-check (its 25 flows and its two
     processes pass, as before).
-- [ ] **50 — 3 and 4 PLAYERS in the menu** — Depends: 48, 49.
+- [x] **50 — 3 and 4 PLAYERS in the menu** — Depends: 48, 49.
   - Right on 2 PLAYERS: 3 PLAYERS, 4 PLAYERS, then the CPU's readings; skipped without as many
     input methods (the keyboard's two pads, the gamepads).
   - Gate: zig build test; variants-check's flow from the menu to a round of 4 players on one
     machine (the agent's pads).
+  - [x] Checked 2026-11-07: zig build test (the machine's players, the keyboard's two, a
+    gamepad each, players 3 and 4 by a key of theirs; pads 3 and 4 from their gamepads and keys;
+    the settings' four columns, two at once; the menu's readings both ways, 4 PLAYERS passed with
+    three input methods, 3 PLAYERS back to 2 as a gamepad goes, a game of four chosen and kept).
+    variants-check's `extended_four`: two gamepads plugged, players 3 and 4 given them in INPUT
+    CONFIGURATION, 4 PLAYERS, the four cursors chosen by their own pads, round 1 with four
+    fighters (player 4 in Blaze's duplicate colours, player 3 walking by its gamepad); its six
+    other flows with the steps and ticks of before. The same games of 1 and 2 as item 49's check,
+    as before (cpus-check's 39 games byte-identical, round-check, screens-check, netplay-check).
+    A picture of the settings' INPUT CONFIGURATION with players 3 and 4's pair. The status bar
+    still shows two players (item 48).
 - [ ] **51 — Network play for up to 4** — Depends: 50.
   - The network options' PLAYERS takes 2 to 4. The host relays every player's pads each tick to
     every machine; clients join until the places are full (at the select, or during a round
