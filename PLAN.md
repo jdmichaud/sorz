@@ -620,12 +620,26 @@ machine in network play; CPUs in the free places and several local players a mac
     call player 1's and player 2's shots; their CPU follows player 1; round 8's offer stays
     players 1 and 2's; the status bar, the select and the menu stay two players' (items 48 to
     53).
-- [ ] **48 — The status bar for 3 and 4 players** — Depends: 47.
+- [x] **48 — The status bar for 3 and 4 players** — Depends: 47.
   - Four compact slots in a row, the timer between the second and the third: the name (its
     network name, else 1P to 4P, or CPU), the police icon on one line and its count; the health
     bar and the lives under them. No score shown (it counts still); the bosses' bar below.
   - Gate: zig build test; pictures of the bar with 3 and 4 players, their health, lives and
     specials changing; 1 and 2 players' bar as before.
+  - [x] Checked 2026-11-07: zig build test (507 tests: the slots' places, a name of each kind,
+    the health's scale, the port's police icon, a bar of four drawn on a board with a slot
+    changed alone and a blink, the round clear's bar for two and three; a scenario's start of
+    four and its pads 3 and 4). Pictures of rounds of 3 and 4 players from the agent's scenarios
+    (`start` now takes up to four characters): health falling under the Galsias' blows, lives
+    lost to them and to time overs, a special called and given back with a new life, the
+    continue's question on three slots, a NO and its blinking GAME OVER. screens-check (its 23
+    runs' lines identical, none differing), round-check (its report identical), cpus-check
+    (ReleaseFast, 9 games: the three pairings at level 3, 7 lives, seeds 1 and 2, to round 3;
+    Adam twice; the bot to round 7; the defaults: JSON and stderr byte-identical) and
+    netplay-check (its 25 flows pass): as before the change. The slot of a player not in the game
+    is empty; the continue's question, the name entry and the game over have short forms on a
+    slot until item 53; the setup's network names are given by item 51; the round clear of 3 or
+    4 players was not pictured.
 - [ ] **49 — The select for 4** — Depends: 47.
   - A cursor each, 1P to 4P; with 4 players SAME CHARACTER on. A character's third and fourth
     players take colour sets of the port's own (shown to the user first).
