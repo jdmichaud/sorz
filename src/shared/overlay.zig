@@ -246,20 +246,23 @@ fn drawRoster(r: *const Roster, p: *Panel) Panel.Error!void {
 }
 
 /// Network play's stats at the bottom left, in white over the picture, outlined in black as the
-/// frame's (`textOutlined`), the same on both machines:
-/// the host's line (HOST), then the client's (its name; GUEST without one), each with the ticks
-/// its game ran over its last second, the percent of it that it was busy and that it waited for
-/// the other's pads, the round trip it measured in milliseconds, and the input delay in ticks;
+/// frame's (`textOutlined`), the same on every machine of the session: the host's line (HOST),
+/// then each client's by its player (its name; GUEST without one), each with the ticks its game
+/// ran over its last second, the percent of it that it was busy and that it waited for the
+/// others' pads, the round trip it measured in milliseconds, and the input delay in ticks;
 /// `raised`, a line higher, over the frame's stats.
 fn drawStats(s: *const netplay.Stats, p: *Panel, raised: bool) Panel.Error!void {
-    const top = panel_mod.rows - 4 - @as(usize, @intFromBool(raised));
+    var n: usize = 0;
+    for (s.machines) |m| n += @intFromBool(m.in);
+    const top = panel_mod.rows - 2 - n - @as(usize, @intFromBool(raised));
     try p.textOutlined(1, top, "      TICKS BUSY WAIT PING DELAY", .bright);
     var buf: [40]u8 = undefined;
-    const host = if (s.host) s.local else s.peer;
-    const client = if (s.host) s.peer else s.local;
-    try p.textOutlined(1, top + 1, statsLine(&buf, "HOST", host, s.delay), .bright);
-    const name: []const u8 = if (s.client[0] == ' ') "GUEST" else &s.client;
-    try p.textOutlined(1, top + 2, statsLine(&buf, name, client, s.delay), .bright);
+    var row = top + 1;
+    for (s.machines, 0..) |m, k| if (m.in) {
+        const name: []const u8 = if (k == 0) "HOST" else if (m.name[0] == ' ') "GUEST" else &m.name;
+        try p.textOutlined(1, row, statsLine(&buf, name, m.load, s.delay), .bright);
+        row += 1;
+    };
 }
 
 /// A machine's line of the stats, under the header's columns: its name and its load (blank before

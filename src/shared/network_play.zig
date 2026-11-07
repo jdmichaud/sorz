@@ -514,7 +514,12 @@ pub fn stats(g: *Game) void {
         }
         return;
     };
-    const shown_now: @FieldType(overlay.Overlay, "net_stats") = .{ .stats = now, .raised = g.overlays.find(.frame_stats) != null };
+    // The other clients' names are the game's (their sessions are the host's).
+    var with_names = now;
+    for (with_names.machines[1..], g.state.setup.names[1..]) |*m, name| if (m.in) if (name) |x| {
+        m.name = x;
+    };
+    const shown_now: @FieldType(overlay.Overlay, "net_stats") = .{ .stats = with_names, .raised = g.overlays.find(.frame_stats) != null };
     if (g.overlays.find(.net_stats)) |o| if (std.meta.eql(o.net_stats, shown_now)) return;
     g.overlays.push(.{ .net_stats = shown_now });
     g.overlay_dirty = true;
