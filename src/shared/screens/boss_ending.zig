@@ -1,6 +1,7 @@
 //! The ending in the boss's chair, when a player kept Mr. X's offer to the last
 //! (`screens/boss_ending`): the room fades in with the character in the chair (player 1's, or
-//! player 2's when player 1 is out); its two lines are typed a letter at a time, each letter
+//! the first player's in play after it when player 1 is out: player 2's, then in a game of three
+//! or four players 3's and 4's); its two lines are typed a letter at a time, each letter
 //! lit in a grey that rises before it takes the font's own colours, held, then erased so, the
 //! grey falling; the credits roll up the plane, written a row below the view as their rows come;
 //! the character turns in the chair; the colours darken in steps to the light on it; BAD END is
@@ -15,7 +16,14 @@ const art = @import("../content/art.zig");
 const records = @import("../content/screens.zig");
 const setup_mod = @import("../setup.zig");
 const Colours = @import("colours.zig").Colours;
+const input = @import("../input.zig");
 const Setup = setup_mod.Setup;
+
+/// The player in the chair: the first in play (player 1 when none is).
+fn chairOf(g: *const setup_mod.Progress) input.Player {
+    for (g.players, 0..) |p, k| if (p.in_play) return @intCast(k);
+    return 0;
+}
 
 /// The plane's rows the credits cycle through (16 pixels each), and the pixels a credit's row
 /// is written below the view's top.
@@ -59,7 +67,8 @@ pub const BossEnding = struct {
     kept: bool = false,
     leave_due: bool = false,
     who: setup_mod.Character = .axel,
-    pad2: bool = false,
+    /// The player in the chair, whose START counts.
+    player: input.Player = 0,
     step: Step = .fade_in,
     /// The line's code under way, and whether it is lit (else the next is to come); the lit
     /// letter's level; the ticks a step counts down; the colours' steps taken.
@@ -105,9 +114,8 @@ pub const BossEnding = struct {
     pub const layout: view.Layout = .{ .a = .{ .width = 64, .height = 32 }, .b = .{ .width = 64, .height = 32 } };
 
     pub fn start(setup: *const Setup) BossEnding {
-        const p = setup.progress.players;
-        const k: usize = if (p[0].in_play or !p[1].in_play) 0 else 1;
-        return .{ .who = setup.characters[k] orelse .axel, .pad2 = k == 1 };
+        const k = chairOf(&setup.progress);
+        return .{ .who = setup.characters[k] orelse .axel, .player = k };
     }
 
     fn chair(self: *const BossEnding, d: *const records.BossEnding) *const records.Chair {
@@ -116,7 +124,7 @@ pub const BossEnding = struct {
     }
 
     pub fn tick(self: *BossEnding, turn: *scene.Turn, a: *const Assets) ?flow.Exit {
-        const pressed = if (self.pad2) turn.pressed.pad2 else turn.pressed.pad1;
+        const pressed = turn.pressed.of(self.player);
         if (self.second) {
             self.second = false;
             self.kept = pressed.start;
@@ -348,3 +356,14 @@ pub const BossEnding = struct {
         try v.write(.a, a.italic, d.credit_column, y, cells[0..d.credit_cells], .{ .priority = true });
     }
 };
+
+test "the chair: player 1's, else the first player's in play after it" {
+    var g: setup_mod.Progress = .{};
+    try std.testing.expectEqual(@as(input.Player, 0), chairOf(&g));
+    g.players[3].in_play = true;
+    try std.testing.expectEqual(@as(input.Player, 3), chairOf(&g));
+    g.players[1].in_play = true;
+    try std.testing.expectEqual(@as(input.Player, 1), chairOf(&g));
+    g.players[0].in_play = true;
+    try std.testing.expectEqual(@as(input.Player, 0), chairOf(&g));
+}
