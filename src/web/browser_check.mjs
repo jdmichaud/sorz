@@ -46,6 +46,12 @@
 //      name, chooses JOIN, a character on its own select (Axel taken), and joins the host's game
 //      mid-round. One tick per update, the two games' states must be the same at the session's
 //      tick 600, both in the round with two players.
+//   netplay_three (with --content): three machines (DESIGN.md 10.7, E4): the agent host with the
+//      network options' PLAYERS at 3, the page, and an agent host its client (`--join`): the host
+//      plays round 1 alone; the page joins it mid-round as player 2 (Adam, Axel taken); then the
+//      agent client, started once the page is in, joins as player 3 (Blaze, the one left). One tick
+//      per update on the page, the agents waiting for it: at the session's tick 900 the three
+//      games' states are the same, all in the round with three players.
 //   relay (with --content): two pages of the relay (`sorz-server DIR --server`), in two Chromiums
 //      with their own profiles, each on the relay as it loads: the first is the host (player 1)
 //      and plays round 1 alone; the second, its client, chooses JOIN later, its character on
@@ -59,7 +65,7 @@
 // passed. Everything made here stays in a temporary directory that is removed at the end (with
 // --keep, the pictures and screenshots are copied there). `--only relay` runs the relay's parts
 // alone, `--only page` the page's look (and with --content its flow), `--only netplay` network
-// play with the agent host.
+// play with the agent host (two machines, then three).
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -425,6 +431,78 @@ async function netplaySession(browser) {
     await page.close();
     if (host.exitCode === null) host.kill();
     await hostDone;
+  }
+}
+
+// Three machines: the agent host (PLAYERS 3), the page, which joins first as player 2, and an
+// agent host its client, started once the page is in, which joins as player 3 (see the file's
+// comment). The page in, the session goes as fast as the page is stepped, so that the agents wait
+// for it.
+async function netplayThree(browser) {
+  const ticks = 900;
+  const port = await freePort();
+  // NETWORK PLAY; PLAYERS: up from PORT, right once (3); START GAME; Axel; round 1 alone.
+  const hostKeys = ['500:enter:3', '560:enter:3', '620:down:3', '640:z:3', '740:up:3', '770:right:3', '820:enter:3', '1160:right:3', '1180:z:3', '1800:right:60', '2000:x:3'];
+  const guestKeys = ['500:enter:3', '560:enter:3', '760:enter:3', 'place+300:z:3', 'place+600:z:3'];
+  const run = (args) => {
+    const child = spawn(options.agent, [options.content, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const p = { child, out: '', log: '', done: new Promise((resolve) => child.on('exit', resolve)) };
+    child.stdout.on('data', (d) => { p.out += d; });
+    child.stderr.on('data', (d) => { p.log += d; });
+    return p;
+  };
+  const host = run(['--netplay', `127.0.0.1:${port}`, '--delay', '3', '--frames', '200000', '--until-session', String(ticks), ...hostKeys.flatMap((k) => ['--key', k])]);
+  let guest = null;
+  const page = await Page.open(browser.cdp);
+  try {
+    for (let tries = 0; !host.log.includes('hosting at'); tries++) {
+      if (tries > 300 || host.child.exitCode !== null) throw new Error('the agent host did not start: ' + host.log.slice(-400));
+      await sleep(100);
+    }
+    await openGame(page, `http://127.0.0.1:${port}/`, true);
+    const began = Date.now();
+    const pages = [page];
+    await clientJoins(pages, 0);
+    // Its own select, the host's game in play by then: Adam (the cursor's first, Axel taken).
+    await stepUntil(pages, (t) => t[0] >= 1300, { stride: 10 });
+    const select = await page.evaluate('sorz.inspect()');
+    await holdAt(pages, 0, keyEvents.z, 1300);
+    const [, joinedAt] = (await stepUntil(pages, (t) => t[1] !== null))[0];
+    // The agent client now: its own front end, then JOIN and the first character left (Blaze).
+    guest = run(['--join', `ws://127.0.0.1:${port}`, '--frames', '200000', '--until-session', String(ticks), ...guestKeys.flatMap((k) => ['--key', k])]);
+    await stepUntil(pages, (t) => t[1] !== null && t[1] >= ticks, { freeze: true, limit: 900 });
+    const state = await page.evaluate('sorz.inspect()');
+    const codes = await Promise.race([Promise.all([host.done, guest.done]), sleep(60000).then(() => ['timeout'])]);
+    const last = (p) => JSON.parse(p.out.trim().split('\n').pop() || '{}');
+    const h = last(host);
+    const g = last(guest);
+    const hostGame = h.host || {};
+    const guestGame = g.guest || {};
+    const errors = page.console.filter((m) => m.type === 'error' || m.type === 'exception');
+    return {
+      pass: codes.every((c) => c === 0) && h.verdict === 'ok' && g.verdict === 'ok' && select.scene === 'select' && joinedAt !== null &&
+        state.state_hash === hostGame.state_hash && guestGame.state_hash === hostGame.state_hash && state.net.tick === ticks &&
+        hostGame.session_tick === ticks && guestGame.session_tick === ticks && state.scene === 'round' && hostGame.scene === 'round' &&
+        state.players === 'three' && hostGame.players === 'three' && guestGame.players === 'three' && errors.length === 0 &&
+        /joins as player 3/.test(host.log),
+      fields: {
+        ticks,
+        seconds: Math.round((Date.now() - began) / 100) / 10,
+        host: hostGame,
+        guest: guestGame,
+        page: { ticks: state.ticks, state_hash: state.state_hash, net: state.net, scene: state.scene, players: state.players, select_before: select.scene },
+        host_log: host.log.trim().split('\n').filter((line) => line.includes('joins')).slice(-4),
+        codes,
+        errors: errors.slice(0, 5),
+      },
+    };
+  } catch (e) {
+    throw new Error(e.message + '\nthe host: ' + host.log.slice(-1200) + (guest ? '\nthe agent client: ' + guest.log.slice(-1200) : ''));
+  } finally {
+    await page.close();
+    for (const p of [host, guest]) if (p && p.child.exitCode === null) p.child.kill();
+    await host.done;
+    if (guest) await guest.done;
   }
 }
 
@@ -804,6 +882,8 @@ async function main() {
       browser = await launch(chromium, path.join(scratch, 'profile'));
       const result = await netplaySession(browser);
       report('netplay', result.pass, result.fields);
+      const three = await netplayThree(browser);
+      report('netplay_three', three.pass, three.fields);
       return;
     }
     if (options.only === 'page') {
@@ -998,11 +1078,13 @@ async function main() {
       gamepad: { ticks: afterPad.ticks, state_hash: afterPad.state_hash, agent: keyed[1].state_hash },
     });
 
-    // Network play on the real game: a page joining the agent host's round, two pages through the
-    // relay.
+    // Network play on the real game: a page joining the agent host's round, a page as the third of
+    // three machines, two pages through the relay.
     if (options.content) {
       const result = await netplaySession(browser);
       report('netplay', result.pass, result.fields);
+      const three = await netplayThree(browser);
+      report('netplay_three', three.pass, three.fields);
       for (const [part, pass, fields] of await relayCheck(browser, chromium, path.join(scratch, 'profile-relay'))) report(part, pass, fields);
     }
 
