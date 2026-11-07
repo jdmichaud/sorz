@@ -127,7 +127,7 @@ const Peer = struct {
         peer.np.clearNotes();
         if (peer.np.role == .host and !peer.np.inSession()) if (peer.np.joinAsked()) |ask| {
             var form: [canonical.maxSize(FakeState)]u8 = undefined;
-            peer.np.begin(&p, ask.peer, canonical.write(FakeState, &peer.state, &form));
+            peer.np.begin(&p, ask.peer, 1, canonical.write(FakeState, &peer.state, &form));
             peer.pads.clearRetainingCapacity();
         };
         if (!peer.np.inSession()) {
@@ -208,7 +208,7 @@ test "two agent hosts: the guest joins the host's game, and both play it with th
     try expectSameGame(host, guest, 600);
     // Twenty checks passed; no hold after the start.
     try std.testing.expectEqual(net.session.Phase.playing, host.np.phase());
-    try std.testing.expect(host.np.player.?.session.own[0] != null);
+    try std.testing.expect(host.np.player().?.session.own[0] != null);
 }
 
 test "with latency, the round trip picks the delay and the game holds when a pad is late" {
@@ -284,7 +284,7 @@ test "a dropped connection holds both games; the guest reconnects and the same s
     defer guest.destroy();
     try runUntil(host, guest, 200, 300);
     const endpoint: *net.memory.Endpoint = @ptrCast(@alignCast(host.backend.transport.?.context));
-    network.breakLink(endpoint, host.np.player.?.connection.?);
+    network.breakLink(endpoint, host.np.player().?.connection.?);
     const at = host.np.tick();
     // For half a second of updates, neither runs more than the pads it already had.
     for (0..30) |_| {
@@ -292,7 +292,7 @@ test "a dropped connection holds both games; the guest reconnects and the same s
         try guest.update();
     }
     try std.testing.expect(host.np.tick() <= at + 4 and guest.np.tick() <= at + 4);
-    try std.testing.expect(host.np.player.?.connection == null and host.np.lostFor() != null);
+    try std.testing.expect(host.np.player().?.connection == null and host.np.lostFor() != null);
     // The guest tries again after a second, and both go on.
     try runUntil(host, guest, 600, 800);
     try std.testing.expectEqual(@as(u32, 1), host.np.sessions);
@@ -328,7 +328,7 @@ test "a byte corrupted on one side is found within a second and its field is nam
     try std.testing.expectEqual(net.session.Phase.desynced, host.np.phase());
     try std.testing.expectEqual(net.session.Phase.desynced, guest.np.phase());
     // The corruption before tick 131 is seen at the check before tick 150: 19 ticks.
-    const at = host.np.player.?.session.desync_at.?;
+    const at = host.np.player().?.session.desync_at.?;
     try std.testing.expectEqual(@as(u32, 150), at);
     for ([_]*Peer{ host, guest }) |peer| {
         const d = peer.np.difference.?;

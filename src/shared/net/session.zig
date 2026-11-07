@@ -1,9 +1,11 @@
-//! The netplay session of one peer (DESIGN.md 9): two machines, each running its own game, whose
-//! players meet in one: a host (player 1) and a guest (player 2, its `place`: the game holds up to
-//! four players, DESIGN.md 10.7, E4), outside the simulation and without I/O. The driver
-//! (netplay.zig) gives it the connection's events and messages, the game's
-//! status, pads and state checks; it answers with the merged pads of each display tick of a
-//! session, the messages to send (`outbox`) and what happened (`notes`).
+//! The netplay session of one connection (DESIGN.md 9): two machines, each running its own game,
+//! whose players meet in one: a host (player 1) and a guest (its `place`, player 2 to 4: the game
+//! holds up to four players, DESIGN.md 10.7, E4), outside the simulation and without I/O. The
+//! host keeps one for each client, and its driver (netplay.zig) merges their pads; a guest's
+//! session also holds the pads of the session's other clients, which the host relays. The driver
+//! gives it the connection's events and messages, the game's status, pads and state checks; it
+//! answers with the merged pads of each display tick of a session, the messages to send
+//! (`outbox`) and what happened (`notes`).
 //!
 //! - **Handshake.** The guest connects when its player wants to join, and sends `hello`
 //!   (versions, data identity, the session it had). The host pings to measure the round trip,
@@ -13,12 +15,16 @@
 //! - **The lobby.** Welcomed, each machine plays its own game. The host says what its game is
 //!   (`status`, `setStatus`); the guest asks to join (`askJoin`, with its player's character or
 //!   none), and the host's game decides when (a note `join_asked`, then `begin` or `declineJoin`).
-//! - **The join.** `begin` starts a session with the host's game's canonical form: a new id, the
-//!   guest's player in it (`place`), its form in `game` chunks, then the session's pads; the guest
-//!   gathers the chunks (a note `joined`: its game loads `gameForm`). From that tick, both run the
-//!   same game, each machine's pad its own player's.
-//! - **Pads.** Before tick N runs, the peer samples its pad for tick N + D and sends it; the pads
-//!   of ticks 0 to D - 1 are empty on both sides. Tick N runs once both pads for N are in; until
+//! - **The join.** `begin` starts a session with the host's game's canonical form: its id, the
+//!   guest's player in it (`place`), its first tick and the players in it then, its form in
+//!   `game` chunks, then the session's pads; the guest gathers the chunks (a note `joined`: its
+//!   game loads `gameForm`). From that tick, both run the same game, each machine's pad its own
+//!   player's. A session's ticks count from its first client's join: a client that joins a
+//!   session under way starts at the tick the host chose (a join `event` for the others).
+//! - **Pads.** Before tick N runs, the peer samples its pad for tick N + D and sends it; a
+//!   client's pads of the session's first D ticks are empty on every machine, and the host sends
+//!   its own from the first (empty in a new session). Tick N runs once every player's pad for N is
+//!   in (the host's, this machine's, and on a guest the other clients', relayed: `relay`); until
 //!   then the game holds (`pads` returns null).
 //! - **State checks.** Every `check_interval` ticks each peer sends the hash of its state's
 //!   canonical form before that tick, and keeps the form. A hash that differs from the peer's stops
@@ -28,10 +34,11 @@
 //!   (`stretchPpm`) until they are level.
 //! - **Stats.** Every second of a session, each peer says what its game did over the last one
 //!   (`sayLoad`: the driver's measure), and keeps the other's (`peer_load`).
-//! - **The settings screen.** A game whose player opens it holds, and sends no pads: the other
-//!   holds too once the pads it has run out (D ticks at most). Each side says when its player
-//!   opens or closes the screen (`inSettings`), so that the other can tell its player why it holds
-//!   (`peer_settings`); a connection that comes back or a new session says it again.
+//! - **The settings screen.** A game whose player opens it holds, and sends no pads: the others
+//!   hold too once the pads they have run out (D ticks at most). Each side says when its player
+//!   opens or closes the screen (`inSettings`), and the host relays a client's to the others, so
+//!   that each can tell its player who holds it (`peer_settings`, `settings_of`); a connection
+//!   that comes back or a new session says it again.
 //! - **The end.** Both games end the session at the same tick, when their game ends (`end`); a
 //!   peer that leaves says goodbye (`bye`), and the ticks whose pads are in run, then the session
 //!   ends (a note `ended`). A dropped connection holds the session while it is down; the guest
@@ -147,7 +154,7 @@ pub const Note = union(enum) {
     /// The observer has the host's game (again): its form is `gameForm`, which it loads.
     observing,
     /// A player's dropped connection: the seconds before it leaves the game (0: over).
-    away: u8,
+    away: protocol.Away,
     /// The host refused the guest, or was refused.
     refused: protocol.RejectReason,
     /// The states differed at the check before tick `tick`.
@@ -162,8 +169,29 @@ pub const Note = union(enum) {
     /// The client's watch of the host's game ended from the host's side (the host left the game,
     /// or its connection went).
     watch_ended,
-    /// The peer's player opened the settings screen (true) or closed it.
-    settings: bool,
+    /// A player of the session opened the settings screen or closed it.
+    settings: protocol.Settings,
+    /// The host's driver (netplay.zig): a client's session of play ended (its `ended`), the
+    /// client player `player`; `made`, its leave was a change of the game the others made at
+    /// its tick (the session went on without it), else the game makes it now.
+    member_ended: struct { player: input.Player, why: End, made: bool },
+};
+
+/// The changes of the game a session keeps at once (`schedule`).
+pub const max_events = 8;
+
+/// Another client's pads in a guest's session, as the host relays them: in the session from tick
+/// `from` (null: not in it), out of it from `until`, in hand for the ticks before `count`.
+pub const Relayed = struct {
+    from: ?u32 = null,
+    until: ?u32 = null,
+    count: u32 = 0,
+    pads: [window]u8 = @splat(0),
+
+    pub fn active(r: *const Relayed, t: u32) bool {
+        const from = r.from orelse return false;
+        return t >= from and (r.until == null or t < r.until.?);
+    }
 };
 
 /// A state's canonical form, kept for a check or gathered from chunks (owned room for the
@@ -202,11 +230,17 @@ pub const Session = struct {
     /// client last said (the client's; null: not said on this connection).
     peer_where: protocol.Where = .{},
     where_said: ?protocol.Where = null,
-    /// A change of the game at a tick to come (the host's player leaving or coming back): the
-    /// host's, as it scheduled it, kept until the client has the pads past its tick (a resumed
-    /// connection gets it again); the client's, as it heard it, and the tick of the last it made.
-    event: ?protocol.Event = null,
-    event_made: ?u32 = null,
+    /// The changes of the game at ticks to come (a player leaving, coming back or joining, the
+    /// rules), in their ticks' order: the host's, as it scheduled them, each kept until the client
+    /// has the pads past its tick (a resumed connection gets them again); the client's, as it
+    /// heard them, and the last it made (a resumed connection's again are duplicates).
+    events: [max_events]protocol.Event = undefined,
+    events_len: u8 = 0,
+    made: [max_events]?protocol.Event = @splat(null),
+    made_at: u8 = 0,
+    /// The host: this client leaves the session once its pads run out (it said goodbye, or its
+    /// connection did not come back in time while others play on), and why.
+    leaving: ?End = null,
     /// The client asked to watch (on both sides, until the host's game comes or it stops); the
     /// host also hears it from a client that watches already, which asks for its game again.
     observe_asked: bool = false,
@@ -241,6 +275,16 @@ pub const Session = struct {
     /// The guest's player in the session's game (from 0: player 2 is 1): the host's choice, the
     /// guest's as the game's chunks said.
     place: input.Player = 1,
+    /// The session's first tick, and the players in it then (a bit each), as the host's `begin`
+    /// said.
+    start: u32 = 0,
+    players: u8 = 0b11,
+    /// The guest: the session's other clients' pads, by player, as the host relays them.
+    others: [input.max_players]Relayed = @splat(.{}),
+    /// The host: by player, the next tick of another client's pads to relay to this one, and the
+    /// first of them this one needs.
+    relay_next: [input.max_players]u32 = @splat(0),
+    relay_from: [input.max_players]u32 = @splat(0),
 
     /// The next tick to run.
     next: u32 = 0,
@@ -256,17 +300,22 @@ pub const Session = struct {
     remote: [window]u8 = @splat(0),
     have: std.StaticBitSet(window) = .empty,
 
-    /// The peer's game over its last second of this session (its `load`), for the stats.
+    /// The peer's game over its last second of this session (its `load`), for the stats; on a
+    /// guest, each player's machine's as the host said (the host's own, player 1's, the same as
+    /// `peer_load`).
     peer_load: ?protocol.Load = null,
+    loads: [input.max_players]?protocol.Load = @splat(null),
 
     /// The balancing: our slack and the peer's, in 1/256 tick.
     slack: i32 = 0,
     peer_slack: ?i32 = null,
 
     /// Our player is on the settings screen, and the peer's (as it last said, on this
-    /// connection).
+    /// connection); on a guest, any other player of the session (by player in `settings_of`, as
+    /// the host said).
     local_settings: bool = false,
     peer_settings: bool = false,
+    settings_of: u8 = 0,
 
     ping_seq: u32 = 0,
     last_ping_ns: u64 = 0,
@@ -376,6 +425,7 @@ pub const Session = struct {
         self.connected = false;
         self.welcomed = false;
         self.peer_settings = false;
+        self.settings_of = 0;
         self.close_requested = false;
         self.join_asked = null;
         self.game_chunks = 0;
@@ -454,9 +504,10 @@ pub const Session = struct {
             .ticks => |t| self.onTicks(t),
             .event => |e| self.onEvent(e),
             .load => |l| self.onLoad(l),
-            .away => |seconds| blk: {
+            .relay => |r| self.onRelay(r),
+            .away => |a| blk: {
                 if (self.config.role != .guest or !self.welcomed) break :blk .unexpected;
-                self.note(.{ .away = seconds });
+                self.note(.{ .away = a });
                 break :blk .accepted;
             },
             // After its hello, on the same connection.
@@ -473,6 +524,15 @@ pub const Session = struct {
                 break :blk .accepted;
             },
             .bye => |r| blk: {
+                // The host stopped the session at another client's mismatch: this game stops too.
+                if (r == .desync and self.config.role == .guest and self.phase == .playing) {
+                    self.phase = .desynced;
+                    self.desync_at = self.next;
+                    self.peer_chunks = done_chunks;
+                    self.note(.{ .desync = self.next });
+                    self.note(.{ .diagnosed = null });
+                    break :blk .accepted;
+                }
                 self.note(.{ .left = r });
                 // A player who left the game alone (`ended`): the connection stays, the client in
                 // the host's lobby.
@@ -500,8 +560,12 @@ pub const Session = struct {
     /// the guest is apart until it asks to join again).
     fn over(self: *Session, why: End) void {
         self.peer_left = false;
-        self.event = null;
-        self.event_made = null;
+        self.events_len = 0;
+        self.made = @splat(null);
+        self.leaving = null;
+        self.others = @splat(.{});
+        self.settings_of = 0;
+        self.loads = @splat(null);
         self.lost_at = null;
         self.id = 0;
         self.next = 0;
@@ -531,7 +595,7 @@ pub const Session = struct {
             return .refused;
         }
         self.peer_name = h.name;
-        const resumable = h.session != 0 and h.session == self.id and self.phase == .playing and
+        const resumable = h.session != 0 and h.session == self.id and self.phase == .playing and self.leaving == null and
             h.resume_from <= self.local_count and self.local_count - h.resume_from < window;
         if (resumable) {
             self.send(.{ .welcome = .{ .session = self.id, .delay = self.delay, .resume_from = self.remote_count } });
@@ -653,17 +717,31 @@ pub const Session = struct {
     }
 
     /// The host's game takes the guest: a session starts at the next tick, the guest's game
-    /// loading `form`, the host's game's canonical form now.
+    /// loading `form`, the host's game's canonical form now: a new session (`at` null), or the
+    /// host's session under way (the tick, its players with the guest's, and the host's
+    /// pads it sent the others for the tick and those after it).
     pub fn begin(self: *Session, form: []const u8, now_ns: u64) void {
+        self.beginAt(form, now_ns, null);
+    }
+
+    pub const At = struct { tick: u32, delay: u8, players: u8, host_pads: []const u8 };
+
+    pub fn beginAt(self: *Session, form: []const u8, now_ns: u64, at: ?At) void {
         std.debug.assert(self.config.role == .host and self.phase == .lobby and form.len <= protocol.max_state_len);
         self.join_asked = null;
         const id = self.newId(now_ns);
+        const tick_ = if (at) |x| x.tick else 0;
+        if (at) |x| self.delay = x.delay;
+        const players = if (at) |x| x.players | @as(u8, 1) << self.place else 1 | @as(u8, 1) << self.place;
         var offset: u32 = 0;
         const length: u32 = @intCast(form.len);
         while (offset < length) : (offset += protocol.chunk_size) {
-            self.send(.{ .game = .{ .session = id, .delay = self.delay, .place = self.place, .length = length, .offset = offset, .bytes = form[offset..][0..protocol.chunkLen(length, offset)] } });
+            self.send(.{ .game = .{ .session = id, .delay = self.delay, .place = self.place, .tick = tick_, .players = players, .length = length, .offset = offset, .bytes = form[offset..][0..protocol.chunkLen(length, offset)] } });
         }
-        self.startSession(id);
+        self.startSession(id, tick_, players);
+        if (at) |x| for (x.host_pads, 0..) |b, i| {
+            self.local[(tick_ + @as(u32, @intCast(i))) % window] = b;
+        };
     }
 
     /// This machine's player in the session's game: the host's player 1, the guest's `place`.
@@ -699,7 +777,7 @@ pub const Session = struct {
             self.startWatching(g.session);
             return .accepted;
         }
-        self.startSession(g.session);
+        self.startSession(g.session, g.tick, g.players);
         self.note(.joined);
         return .accepted;
     }
@@ -770,7 +848,7 @@ pub const Session = struct {
         var offset: u32 = 0;
         const length: u32 = @intCast(form.len);
         while (offset < length) : (offset += protocol.chunk_size) {
-            self.send(.{ .game = .{ .session = self.id, .delay = protocol.min_delay, .observe = true, .length = length, .offset = offset, .bytes = form[offset..][0..protocol.chunkLen(length, offset)] } });
+            self.send(.{ .game = .{ .session = self.id, .delay = protocol.min_delay, .observe = true, .players = 0, .length = length, .offset = offset, .bytes = form[offset..][0..protocol.chunkLen(length, offset)] } });
         }
         self.phase = .observing;
         self.ticks_sent = 0;
@@ -828,9 +906,9 @@ pub const Session = struct {
 
     /// The host says a player's connection is down, the seconds before it leaves the game (0:
     /// over), to a client that waits for it.
-    pub fn sayAway(self: *Session, seconds: u8) void {
+    pub fn sayAway(self: *Session, seconds: u8, player: input.Player) void {
         if (self.config.role != .host or !self.welcomed) return;
-        self.send(.{ .away = seconds });
+        self.send(.{ .away = .{ .seconds = seconds, .player = player } });
     }
 
     /// The observer starts from the host's game: its ticks count from 0.
@@ -902,24 +980,48 @@ pub const Session = struct {
         return self.game_form.slice();
     }
 
-    /// Both sides start the session from the same game, with empty pads for the first `delay`
-    /// ticks.
-    fn startSession(self: *Session, id: u64) void {
+    /// Both sides start the session from the same game at tick `tick_`, the client's pads empty
+    /// for the first `delay` ticks; the host's for those ticks are sent (empty in a new session,
+    /// the host's `beginAt` gives those it sampled for one under way). On a guest, the other
+    /// clients in the session then (`players`) have their pads relayed from that tick.
+    fn startSession(self: *Session, id: u64, tick_: u32, players: u8) void {
         self.id = id;
         self.phase = .playing;
-        self.event = null;
-        self.event_made = null;
+        self.events_len = 0;
+        self.made = @splat(null);
+        self.leaving = null;
         self.peer_left = false;
         self.lost_at = null;
-        self.next = 0;
-        self.local_count = self.delay;
-        self.remote_count = self.delay;
-        self.peer_ack = self.delay;
-        self.sent_upto = self.delay;
+        self.start = tick_;
+        self.players = players;
+        self.next = tick_;
         self.local = @splat(0);
         self.remote = @splat(0);
         self.have = .empty;
-        for (0..self.delay) |i| self.have.set(i);
+        self.others = @splat(.{});
+        self.relay_next = @splat(tick_);
+        self.relay_from = @splat(tick_);
+        self.settings_of = 0;
+        self.loads = @splat(null);
+        const ahead = tick_ + self.delay;
+        switch (self.config.role) {
+            .host => {
+                self.local_count = ahead;
+                self.sent_upto = tick_;
+                self.peer_ack = tick_;
+                self.remote_count = ahead;
+                for (tick_..ahead) |i| self.have.set(i % window);
+            },
+            .guest => {
+                self.local_count = ahead;
+                self.sent_upto = ahead;
+                self.peer_ack = ahead;
+                self.remote_count = tick_;
+                for (1..input.max_players) |k| if (k != self.place and players & @as(u8, 1) << @intCast(k) != 0) {
+                    self.others[k] = .{ .from = tick_, .count = tick_ };
+                };
+            },
+        }
         self.slack = 0;
         self.peer_slack = null;
         self.peer_load = null;
@@ -929,8 +1031,8 @@ pub const Session = struct {
         self.desync_at = null;
         self.peer_chunks = 0;
         self.early_tick = null;
-        if (self.local_settings) self.send(.{ .settings = true });
-        self.note(.{ .started = .{ .resumed = false, .delay = self.delay, .tick = 0 } });
+        if (self.local_settings) self.send(.{ .settings = .{ .open = true, .player = self.localPlayer() } });
+        self.note(.{ .started = .{ .resumed = false, .delay = self.delay, .tick = tick_ } });
     }
 
     /// The same session goes on: the pads the peer lacks, and our recent hashes, again.
@@ -939,11 +1041,11 @@ pub const Session = struct {
         self.lost_at = null;
         self.peer_ack = @max(self.peer_ack, peer_has);
         self.sent_upto = peer_has;
-        // A change of the game the client may not have heard: before the pads of its tick.
-        if (self.event) |e| self.send(.{ .event = e });
+        // The changes of the game the client may not have heard: before the pads of their ticks.
+        for (self.events[0..self.events_len]) |e| self.send(.{ .event = e });
         self.flushPads();
         for (self.own) |h| if (h) |x| self.send(.{ .hash = x.hash });
-        if (self.local_settings) self.send(.{ .settings = true });
+        if (self.local_settings) self.send(.{ .settings = .{ .open = true, .player = self.localPlayer() } });
         self.note(.{ .started = .{ .resumed = true, .delay = self.delay, .tick = self.next } });
     }
 
@@ -969,14 +1071,25 @@ pub const Session = struct {
 
     /// What our game did over its last second of the session: the peer is told.
     pub fn sayLoad(self: *Session, l: protocol.Load) void {
-        if (self.welcomed and self.phase == .playing) self.send(.{ .load = l });
+        self.sayLoadOf(self.localPlayer(), l);
+    }
+
+    /// The host tells its client another client's load (player `player`'s machine's).
+    pub fn sayLoadOf(self: *Session, player: input.Player, l: protocol.Load) void {
+        if (self.welcomed and self.phase == .playing) self.send(.{ .load = .{ .player = player, .load = l } });
     }
 
     /// One that crosses the session's end is of no use any more.
-    fn onLoad(self: *Session, l: protocol.Load) Verdict {
+    fn onLoad(self: *Session, pl: protocol.PlayerLoad) Verdict {
         if (!self.welcomed) return .unexpected;
         if (self.phase != .playing) return .stale;
-        self.peer_load = l;
+        switch (self.config.role) {
+            .host => self.peer_load = pl.load,
+            .guest => {
+                self.loads[pl.player] = pl.load;
+                if (pl.player == 0) self.peer_load = pl.load;
+            },
+        }
         return .accepted;
     }
 
@@ -986,14 +1099,33 @@ pub const Session = struct {
     pub fn inSettings(self: *Session, open: bool) void {
         if (open == self.local_settings) return;
         self.local_settings = open;
-        if (self.welcomed and self.phase == .playing) self.send(.{ .settings = open });
+        if (self.welcomed and self.phase == .playing) self.send(.{ .settings = .{ .open = open, .player = self.localPlayer() } });
     }
 
-    fn onSettings(self: *Session, open: bool) Verdict {
+    /// The host tells its client that another client's player (`player`) opened the settings
+    /// screen or closed it.
+    pub fn relaySettings(self: *Session, open: bool, player: input.Player) void {
+        if (self.config.role == .host and self.welcomed and self.phase == .playing) self.send(.{ .settings = .{ .open = open, .player = player } });
+    }
+
+    /// A client says its own player's (whatever player it names); the host, its own or another
+    /// client's.
+    fn onSettings(self: *Session, x: protocol.Settings) Verdict {
         if (!self.welcomed or self.phase != .playing) return .unexpected;
-        if (open == self.peer_settings) return .duplicate;
-        self.peer_settings = open;
-        self.note(.{ .settings = open });
+        switch (self.config.role) {
+            .host => {
+                if (x.open == self.peer_settings) return .duplicate;
+                self.peer_settings = x.open;
+                self.note(.{ .settings = .{ .open = x.open, .player = self.place } });
+            },
+            .guest => {
+                const bit = @as(u8, 1) << @intCast(x.player);
+                if ((self.settings_of & bit != 0) == x.open) return .duplicate;
+                if (x.open) self.settings_of |= bit else self.settings_of &= ~bit;
+                self.peer_settings = self.settings_of != 0;
+                self.note(.{ .settings = x });
+            },
+        }
         return .accepted;
     }
 
@@ -1045,7 +1177,7 @@ pub const Session = struct {
     }
 
     /// Sends the local pads this connection has not carried yet.
-    fn flushPads(self: *Session) void {
+    pub fn flushPads(self: *Session) void {
         if (!self.welcomed) return;
         while (self.sent_upto < self.local_count) {
             const n = @min(self.local_count - self.sent_upto, protocol.max_pads);
@@ -1066,22 +1198,99 @@ pub const Session = struct {
     pub fn pads(self: *Session, local: input.Pad) ?input.Pads {
         if (self.phase == .observing and self.config.role == .guest) return self.observedPads();
         if (self.phase != .playing) return null;
-        const target = self.next + self.delay;
-        if (self.local_count == target and self.local_count - self.peer_ack < window - 1) {
-            self.local[target % window] = @bitCast(local);
-            self.local_count += 1;
-            self.flushPads();
-        }
+        // A join at this tick may make the delay longer from now on (the host's driver sets its
+        // own).
+        if (self.config.role == .guest) for (self.events[0..self.events_len]) |e| {
+            if (e.tick == self.next and e.what == .join and e.delay > self.delay) self.delay = e.delay;
+        };
+        self.sample(local);
         if (self.remote_count <= self.next or self.local_count <= self.next) {
             // The peer left, and its last pads ran out.
-            if (self.peer_left) self.over(.left);
+            if (self.peer_left or self.leaving != null) self.over(self.leaving orelse .left);
             return null;
         }
+        for (&self.others) |*o| if (o.active(self.next) and o.count <= self.next) return null;
         const slot = self.next % window;
         var out: input.Pads = .{};
         out.at(self.localPlayer()).* = @bitCast(self.local[slot]);
         out.at(self.peerPlayer()).* = @bitCast(self.remote[slot]);
+        for (&self.others, 0..) |*o, k| if (o.active(self.next)) {
+            out.at(k).* = @bitCast(o.pads[slot]);
+        };
         return out;
+    }
+
+    /// The local player's pad `local` is the pad of the ticks from the last sampled to tick
+    /// `next + delay` (one a tick; more when the delay grew), and the peer gets them.
+    pub fn sample(self: *Session, local: input.Pad) void {
+        if (self.phase != .playing) return;
+        const target = self.next + self.delay;
+        var sampled = false;
+        while (self.local_count <= target and self.local_count - self.peer_ack < window - 1) {
+            self.local[self.local_count % window] = @bitCast(local);
+            self.local_count += 1;
+            sampled = true;
+        }
+        if (sampled or self.sent_upto < self.local_count) self.flushPads();
+    }
+
+    /// The host's own pad of tick `t` as this session has it (sampled, `t` before
+    /// `local_count`).
+    pub fn localPad(self: *const Session, t: u32) u8 {
+        return self.local[t % window];
+    }
+
+    /// The host: this client leaves the session once its pads run out (`why`: it said goodbye,
+    /// or did not come back in time), at the tick its pads reach (`remote_count`).
+    pub fn leaveWhenOut(self: *Session, why: End) void {
+        if (self.config.role != .host or self.phase != .playing) return;
+        self.leaving = why;
+        self.lost_at = null;
+    }
+
+    /// The host relays player `player`'s pads, as `src` (that client's session) has them, from
+    /// the first this client lacks.
+    pub fn relayOf(self: *Session, player: input.Player, src: *const Session) void {
+        if (self.config.role != .host or self.phase != .playing or !self.welcomed) return;
+        const n_ = &self.relay_next[player];
+        // What `src` no longer keeps is past this client's need (both run the same ticks).
+        n_.* = @max(n_.*, src.next -| keep);
+        while (n_.* < src.remote_count) {
+            const n = @min(src.remote_count - n_.*, protocol.max_pads);
+            var run: [protocol.max_pads]u8 = undefined;
+            for (0..n) |k| run[k] = src.remote[(n_.* + @as(u32, @intCast(k))) % window];
+            self.send(.{ .relay = .{ .player = player, .first = n_.*, .pads = run[0..n] } });
+            n_.* += n;
+        }
+    }
+
+    /// The host relays player `player`'s pads to this client from tick `from` on (its first
+    /// `delay` pads there empty for each machine when it joined after this client).
+    pub fn relayFrom(self: *Session, player: input.Player, from: u32) void {
+        self.relay_from[player] = from;
+        self.relay_next[player] = from;
+    }
+
+    /// A connection that came back gets the other clients' pads again, from those it may lack.
+    pub fn relayAgain(self: *Session) void {
+        for (&self.relay_next, self.relay_from) |*n_, from| n_.* = @max(from, @min(n_.*, self.next -| self.delay -| 1));
+    }
+
+    fn onRelay(self: *Session, r: protocol.Relay) Verdict {
+        if (self.config.role != .guest or self.phase != .playing or r.player == self.place) return .unexpected;
+        const o = &self.others[r.player];
+        if (o.from == null) return .unexpected;
+        const count: u32 = @intCast(r.pads.len);
+        if (r.first + count <= o.count) return .duplicate;
+        if (r.first > o.count) return .out_of_order;
+        var i = o.count - r.first;
+        while (i < count) : (i += 1) {
+            const t = r.first + i;
+            if (t >= self.next + window - 1) return .ahead;
+            o.pads[t % window] = r.pads[i];
+            o.count = t + 1;
+        }
+        return .accepted;
     }
 
     /// The host changes the game at the first tick whose pads it has not sent (`change`, its tick
@@ -1089,30 +1298,75 @@ pub const Session = struct {
     /// before those pads. Returns the tick, or null when no session runs or a change is still to
     /// come.
     pub fn schedule(self: *Session, change: protocol.Event) ?u32 {
-        if (self.config.role != .host or self.phase != .playing or self.event != null) return null;
+        return self.scheduleAt(change, self.local_count);
+    }
+
+    /// The same at tick `at`, which no machine of the session has run yet (the host's driver
+    /// chooses it: a player who leaves goes at the tick its pads ran out).
+    pub fn scheduleAt(self: *Session, change: protocol.Event, at: u32) ?u32 {
+        if (self.config.role != .host or self.phase != .playing or at < self.next) return null;
         var e = change;
-        e.tick = self.local_count;
-        self.event = e;
+        e.tick = at;
+        if (!self.keepEvent(e)) return null;
         self.send(.{ .event = e });
         return e.tick;
     }
 
+    /// `e` among the changes to come, in their ticks' order (after those of its tick); false
+    /// when there is no room.
+    fn keepEvent(self: *Session, e: protocol.Event) bool {
+        if (self.events_len == max_events) return false;
+        var i: usize = self.events_len;
+        while (i > 0 and self.events[i - 1].tick > e.tick) : (i -= 1) self.events[i] = self.events[i - 1];
+        self.events[i] = e;
+        self.events_len += 1;
+        return true;
+    }
+
+    fn dropEvent(self: *Session, i: usize) void {
+        std.mem.copyForwards(protocol.Event, self.events[i .. self.events_len - 1], self.events[i + 1 .. self.events_len]);
+        self.events_len -= 1;
+    }
+
     fn onEvent(self: *Session, e: protocol.Event) Verdict {
         if (self.config.role != .guest or self.phase != .playing) return .unexpected;
-        if (self.event) |was| if (std.meta.eql(was, e)) return .duplicate;
+        for (self.events[0..self.events_len]) |was| if (std.meta.eql(was, e)) return .duplicate;
         // Sent again on a resumed connection, after its tick ran here.
-        if (self.event_made == e.tick) return .duplicate;
+        for (self.made) |m| if (m) |x| if (std.meta.eql(x, e)) return .duplicate;
         // Its tick ran already: the games would differ.
-        if (e.tick < self.next or self.event != null) return .malformed;
-        self.event = e;
+        if (e.tick < self.next or !self.keepEvent(e)) return .malformed;
+        switch (e.what) {
+            // Another client joins: in the session from its tick, its first pads empty.
+            .join => if (e.player != self.place) {
+                const o = &self.others[e.player];
+                o.* = .{ .from = e.tick, .count = e.tick + e.delay };
+            },
+            // Another client leaves: its pads are not needed from its tick.
+            .leave, .cpu => if (e.player != 0 and e.player != self.place) {
+                self.others[e.player].until = e.tick;
+            },
+            else => {},
+        }
         return .accepted;
     }
 
-    /// The change of the game before the next tick, if any (the game makes it, then runs the
-    /// tick).
+    /// The first change of the game before the next tick, if any (the game makes it, then runs
+    /// the tick).
     pub fn eventAt(self: *const Session) ?protocol.Event {
-        const e = self.event orelse return null;
-        return if (e.tick == self.next and self.phase == .playing) e else null;
+        if (self.events_len == 0 or self.phase != .playing) return null;
+        const e = self.events[0];
+        return if (e.tick == self.next) e else null;
+    }
+
+    /// The same, taken: the guest's game makes each change before the next tick in turn.
+    pub fn takeEvent(self: *Session) ?protocol.Event {
+        const e = self.eventAt() orelse return null;
+        if (self.config.role == .guest) {
+            self.dropEvent(0);
+            self.made[self.made_at] = e;
+            self.made_at = (self.made_at + 1) % max_events;
+        }
+        return e;
     }
 
     /// Tick `next` ran with the pads that `pads` gave.
@@ -1121,19 +1375,24 @@ pub const Session = struct {
             self.next += 1;
             return;
         }
-        if (self.event) |e| if (e.tick <= self.next) switch (self.config.role) {
-            // The host keeps it until the client has its pads past its tick.
-            .host => if (self.peer_ack > e.tick) {
-                self.event = null;
-            },
-            .guest => {
-                self.event = null;
-                self.event_made = e.tick;
-            },
-        };
+        var i: usize = 0;
+        while (i < self.events_len) {
+            const e = self.events[i];
+            // The host keeps one until the client has its pads past its tick; the guest made it.
+            const done = e.tick <= self.next and (self.config.role == .guest or self.peer_ack > e.tick);
+            if (!done) {
+                i += 1;
+                continue;
+            }
+            self.dropEvent(i);
+            if (self.config.role == .guest) {
+                self.made[self.made_at] = e;
+                self.made_at = (self.made_at + 1) % max_events;
+            }
+        }
         // The slack: the peer's pads in hand beyond this tick, averaged over about 16.
-        const sample: i32 = @as(i32, @intCast(self.remote_count - self.next - 1)) * 256;
-        self.slack += @divFloor(sample - self.slack, 16);
+        const in_hand: i32 = @as(i32, @intCast(self.remote_count - self.next - 1)) * 256;
+        self.slack += @divFloor(in_hand - self.slack, 16);
         self.next += 1;
         // The slot that leaves the window's bottom is the one its top takes next.
         if (self.next > keep) self.have.unset((self.next - keep - 1) % window);
@@ -1280,6 +1539,15 @@ pub const Session = struct {
     /// The farewell of a game that quits.
     pub fn leave(self: *Session, reason: protocol.ByeReason) void {
         if (self.welcomed) self.send(.{ .bye = reason });
+    }
+
+    /// The host stops this session at another client's mismatch: its client is told, and stops.
+    pub fn stopAtDesync(self: *Session) void {
+        if (self.config.role != .host or self.phase != .playing) return;
+        self.send(.{ .bye = .desync });
+        self.phase = .desynced;
+        self.desync_at = self.next;
+        self.peer_chunks = done_chunks;
     }
 };
 
@@ -1556,10 +1824,12 @@ test "a guest in player 4's place: the game's chunks say it, and each machine's 
     try testing.expectEqual(@as(input.Player, 3), guest.place);
     try testing.expectEqual(@as(input.Player, 3), guest.localPlayer());
     try testing.expectEqual(@as(input.Player, 0), guest.peerPlayer());
-    // Past the delay, each side's pad of tick 2 is in player 1's and player 4's places alike.
+    // Past the delay, each side's pad of tick 2 is in player 1's and player 4's places alike (the
+    // host's first two pads, empty, reach the guest with its third).
     for (0..2) |_| {
         _ = host.pads(.{ .a = true }) orelse return error.Held;
         host.ran();
+        _ = pump(&host, &guest, 5);
         _ = guest.pads(.{ .c = true }) orelse return error.Held;
         guest.ran();
     }
@@ -1982,7 +2252,7 @@ test "the settings screen: the peer is told, holds once its pads run out, and bo
     try testing.expectEqual(host.next + 3, guest.next);
     // A duplicate or a word out of place.
     var buf: [protocol.max_len]u8 = undefined;
-    try testing.expectEqual(Verdict.duplicate, guest.receive(encodeMsg(.{ .settings = true }, &buf), 0));
+    try testing.expectEqual(Verdict.duplicate, guest.receive(encodeMsg(.{ .settings = .{ .open = true } }, &buf), 0));
     // A connection lost and back: the guest forgets, and the host says it again.
     host.disconnected(0);
     guest.disconnected(0);
@@ -2007,7 +2277,7 @@ test "the settings screen: the peer is told, holds once its pads run out, and bo
     // Before the handshake, the word is out of place.
     var fresh = try testSession(.guest, null);
     defer fresh.deinit();
-    try testing.expectEqual(Verdict.unexpected, fresh.receive(encodeMsg(.{ .settings = true }, &buf), 0));
+    try testing.expectEqual(Verdict.unexpected, fresh.receive(encodeMsg(.{ .settings = .{ .open = true } }, &buf), 0));
 }
 
 test "an event: the host schedules its player's leave ahead of its pads; both make it at one tick" {
@@ -2019,8 +2289,8 @@ test "an event: the host schedules its player's leave ahead of its pads; both ma
     try runBoth(&host, &guest, 10);
     const at = host.schedule(.{ .tick = 0, .what = .leave }).?;
     try testing.expect(at > host.next);
-    // One change at a time.
-    try testing.expectEqual(@as(?u32, null), host.schedule(.{ .tick = 0, .what = .back, .character = 1 }));
+    // A second change before the same tick comes after the first.
+    try testing.expectEqual(@as(?u32, at), host.schedule(.{ .tick = 0, .what = .back, .character = 1 }));
     var seen: [2]?u32 = .{ null, null };
     for (0..10) |_| {
         const t = host.next;
@@ -2035,7 +2305,7 @@ test "an event: the host schedules its player's leave ahead of its pads; both ma
     }
     try testing.expectEqual(@as(?u32, at), seen[0]);
     try testing.expectEqual(@as(?u32, at), seen[1]);
-    try testing.expect(host.event == null and guest.event == null);
+    try testing.expect(host.events_len == 0 and guest.events_len == 0);
     // A change whose tick ran already is refused.
     var buf: [protocol.max_len]u8 = undefined;
     try testing.expectEqual(Verdict.malformed, guest.receive(encodeMsg(.{ .event = .{ .tick = 2, .what = .leave } }, &buf), 0));

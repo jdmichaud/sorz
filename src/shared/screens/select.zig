@@ -15,8 +15,9 @@
 //! with "stop": round 1 follows (the options' first round; one the content does not have, its
 //! stand-in).
 //!
-//! Network play (DESIGN.md 9): a second player may come to a select of one (`join`), its cursor
-//! on the first portrait free from Blaze's, and go (`leave`); a character another machine's
+//! Network play (DESIGN.md 9): another player may come to the select (`join`: player 2 on the
+//! first portrait free from Blaze's, players 3 and 4 from Axel's) and go (`leave`: a player
+//! before the last leaves its place free, its cursor gone, `gone`); a character another machine's
 //! player plays (`Turn.taken`) is passed and cannot be chosen.
 //!
 //! Three and four players (DESIGN.md 10.7, E4): a cursor each, its label 1P to 4P (the
@@ -238,9 +239,12 @@ pub const Select = struct {
         for (&c, first_places) |*x, place| x.* = .{ .place = place };
         break :blk c;
     },
-    /// The player a lone cursor's label names: player 2 on a client of network play, whose
-    /// player joins the host's game as player 2.
-    seat: u1 = 0,
+    /// The player a lone cursor's label names: on a client of network play, the player it joins
+    /// the host's game as (player 2, or the host's next free place).
+    seat: u2 = 0,
+    /// The players gone from the select before the last (a bit each): their cursors are not
+    /// shown, nor wait for a choice (network play's player who left).
+    gone: u8 = 0,
     /// The select's second time in a game with the CPU: player 1 chooses the CPU's character
     /// (player 2's).
     cpu_pass: bool = false,
@@ -364,8 +368,13 @@ pub const Select = struct {
                 // With the CPU, player 1 chooses alone, each time; for a CPU, under its label.
                 self.players = if (turn.setup.cpu[1]) .one else turn.setup.players;
                 self.cpu_label = if (self.cpu_pass) (if (turn.setup.cpu[0]) 2 else 1) else if (turn.setup.cpu[0]) 1 else 0;
-                self.seat = if (turn.net.role == .client and self.players == .one) 1 else 0;
-                if (!self.cpu_pass) turn.setup.characters = @splat(null);
+                self.seat = if (turn.net.role == .client and self.players == .one) turn.net.seat else 0;
+                self.gone = 0;
+                if (!self.cpu_pass) {
+                    turn.setup.characters = @splat(null);
+                    // A new game: network play's names come with its players' joins.
+                    turn.setup.names = @splat(null);
+                }
                 self.colours.aim(a.colours);
                 self.colours.aim(if (self.players == .one) a.one_player else a.two_players);
                 // Players 3 and 4's portrait lit too.
@@ -390,12 +399,14 @@ pub const Select = struct {
                 self.phase = .fade_in;
             },
             .fade_in => if (self.colours.stepFade()) {
-                for (self.cursors[0..self.count()]) |c| self.portraits[@backingInt(c.place)].cursor = true;
+                for (self.cursors[0..self.count()], 0..) |c, i| if (self.present(i)) {
+                    self.portraits[@backingInt(c.place)].cursor = true;
+                };
                 self.phase = .first_half;
             },
             .first_half => {
                 self.eye();
-                for (0..self.count()) |i| self.cursor(@intCast(i), either(self.kept.of(i), turn.pressed.of(i)), turn, a);
+                for (0..self.count()) |i| if (self.present(i)) self.cursor(@intCast(i), either(self.kept.of(i), turn.pressed.of(i)), turn, a);
                 self.phase = .second_half;
                 turn.frame = null;
                 return null;
@@ -405,7 +416,7 @@ pub const Select = struct {
                 for (&self.portraits, places) |*p, who| p.tick(who, turn, a);
                 self.list();
                 var chosen: usize = 0;
-                for (self.cursors[0..self.count()]) |c| chosen += @intFromBool(c.chosen);
+                for (self.cursors[0..self.count()], 0..) |c, i| chosen += @intFromBool(c.chosen or !self.present(i));
                 if (chosen == self.count()) {
                     self.wait_left = chosen_wait;
                     self.phase = .wait;
@@ -440,6 +451,11 @@ pub const Select = struct {
 
     fn count(self: *const Select) usize {
         return self.players.count();
+    }
+
+    /// Whether player `i`'s cursor is at the select (not gone from it).
+    fn present(self: *const Select, i: usize) bool {
+        return self.gone & @as(u8, 1) << @intCast(i) == 0;
     }
 
     fn either(x: input.Pad, y: input.Pad) input.Pad {
@@ -491,13 +507,13 @@ pub const Select = struct {
     /// (`taken`); never with four players, who cannot all play different characters.
     fn takenFrom(self: *const Select, turn: *const scene.Turn, i: usize, wanted: Character) bool {
         if (self.count() == setup_mod.max_players) return false;
-        for (self.cursors[0..self.count()], 0..) |o, k| if (k != i and taken(turn, o.place, wanted)) return true;
+        for (self.cursors[0..self.count()], 0..) |o, k| if (k != i and self.present(k) and taken(turn, o.place, wanted)) return true;
         return false;
     }
 
     /// Whether a player's cursor but player `i`'s is on `place`.
     fn onBy(self: *const Select, place: Character, i: usize) bool {
-        for (self.cursors[0..self.count()], 0..) |o, k| if (k != i and o.place == place) return true;
+        for (self.cursors[0..self.count()], 0..) |o, k| if (k != i and self.present(k) and o.place == place) return true;
         return false;
     }
 
@@ -508,10 +524,16 @@ pub const Select = struct {
         return turn.policies.characterTaken(other, wanted);
     }
 
-    /// Whether a second player may come to this select: one plays it, and it has not ended.
+    /// Whether another player may come to this select (one plays it, or network play's players
+    /// up to `places`), and it has not ended.
     pub fn joinable(self: *const Select) bool {
+        return self.joinableUpTo(2);
+    }
+
+    pub fn joinableUpTo(self: *const Select, most: usize) bool {
         // Not where player 1 chooses for the CPU.
-        return self.players == .one and !self.cpu_pass and switch (self.phase) {
+        const room = self.players == .one or self.gone != 0 or self.count() < most;
+        return room and !self.cpu_pass and switch (self.phase) {
             .setup, .placing, .fade_in, .first_half, .second_half => true,
             .wait, .fade_out, .leaving => false,
         };
@@ -522,20 +544,42 @@ pub const Select = struct {
         return self.phase == .first_half or self.phase == .second_half;
     }
 
-    /// A second player comes to the select (`joinable`): its cursor where it was (`at`: network
-    /// play's client's, at its own select, `chosen` there), else on the first portrait from
-    /// Blaze's; not on player 1's unless both may choose one: a choice made keeps its portrait,
-    /// player 1's cursor (its choice not made) moving on, else the newcomer's moves on; its frame
-    /// lit; two players choose from now on.
-    pub fn join(self: *Select, setup: *Setup, a: *const Assets, at: ?Character, chosen: bool) void {
-        setup.players = .two;
+    /// Whether player `i` is at the select (its cursor shown).
+    pub fn has(self: *const Select, i: usize) bool {
+        return i < self.count() and self.present(i);
+    }
+
+    /// The first player's place free at the select, below `places` (network play's), if any.
+    pub fn freePlace(self: *const Select, most: usize) ?input.Player {
+        for (1..most) |k| if (!self.has(k)) return @intCast(k);
+        return null;
+    }
+
+    /// Player `k` comes to the select (`joinable`): its cursor where it was (`at`: network
+    /// play's client's, at its own select, `chosen` there), else on its first portrait (player
+    /// 2's Blaze's, 3's and 4's Axel's); player 2 not on player 1's unless both may choose one: a
+    /// choice made keeps its portrait, player 1's cursor (its choice not made) moving on, else the
+    /// newcomer's moves on; players 3 and 4 move on past another's where the rule says it is
+    /// taken; its frame lit; it chooses with the others from now on (the wait for the last choice
+    /// over, if it had begun).
+    pub fn join(self: *Select, k: input.Player, setup: *Setup, a: *const Assets, at: ?Character, chosen: bool) void {
+        const players: setup_mod.Players = .of(@max(@as(usize, setup.players.count()), @as(usize, k) + 1));
+        setup.players = players;
         // Before its set-up, the set-up does it all.
         if (self.phase == .setup) return;
-        self.players = .two;
-        var place: Character = at orelse .blaze;
+        self.players = .of(@max(self.count(), @as(usize, k) + 1));
+        self.gone &= ~(@as(u8, 1) << k);
+        var place: Character = at orelse first_places[k];
         var keep = at != null and chosen;
         const same = setup.same_character orelse false;
-        if (!same and place == self.cursors[0].place) {
+        if (k >= 2) {
+            // Past the others' portraits where one character is not for two.
+            var tries: usize = 0;
+            while (!same and self.count() < setup_mod.max_players and tries < places.len and self.otherOn(place, k)) : (tries += 1) {
+                place = next(place, true);
+                keep = false;
+            }
+        } else if (!same and place == self.cursors[0].place) {
             if (keep and !self.cursors[0].chosen) {
                 const to = next(place, true);
                 self.cursors[0].place = to;
@@ -551,8 +595,8 @@ pub const Select = struct {
                 keep = false;
             }
         }
-        self.cursors[1] = .{ .place = place, .chosen = keep };
-        if (keep) setup.characters[1] = place;
+        self.cursors[k] = .{ .place = place, .chosen = keep };
+        if (keep) setup.characters[k] = place;
         switch (self.phase) {
             // The fade in takes the frame lit, and lights its portrait at its end.
             .placing, .fade_in => self.colours.aim(a.lit(place)),
@@ -561,51 +605,78 @@ pub const Select = struct {
                 self.colours.show(a.lit(place));
             },
         }
+        // A player more to choose: the wait for the last choice is over.
+        if (self.phase == .wait and !keep) self.phase = .first_half;
         self.list();
     }
 
-    /// The second player goes: its cursor, its frame lit and its choice with it; one player
-    /// chooses from now on.
-    pub fn leave(self: *Select, setup: *Setup, a: *const Assets) void {
-        setup.players = .one;
-        setup.characters[1] = null;
-        if (self.players == .one) return;
-        self.players = .one;
-        const place = self.cursors[1].place;
-        if (self.cursors[0].place != place) {
+    /// Whether a cursor of another present player than `k` is on `place`.
+    fn otherOn(self: *const Select, place: Character, k: usize) bool {
+        for (self.cursors[0..self.count()], 0..) |o, i| if (i != k and self.present(i) and o.place == place) return true;
+        return false;
+    }
+
+    /// Player `k` goes: its cursor, its frame lit and its choice with it; the players after it
+    /// choose on, its place free (`gone`), or one player fewer when it was the last.
+    pub fn leave(self: *Select, k: input.Player, setup: *Setup, a: *const Assets) void {
+        setup.characters[k] = null;
+        if (!self.has(k)) {
+            if (k == 1 and self.count() <= 2) setup.players = .one;
+            return;
+        }
+        const place = self.cursors[k].place;
+        self.cursors[k] = .{ .place = first_places[k] };
+        if (k + 1 == self.count()) {
+            // The last: one fewer, and those gone before it with it.
+            var n: usize = k;
+            while (n > 1 and !self.present(n - 1)) n -= 1;
+            self.players = .of(n);
+            self.gone &= (@as(u8, 1) << @intCast(n)) - 1;
+        } else self.gone |= @as(u8, 1) << k;
+        setup.players = self.players;
+        if (!self.onBy(place, k)) {
             self.portraits[@backingInt(place)].cursor = false;
             switch (self.phase) {
                 .setup, .placing, .fade_in => self.colours.aim(a.dim(place)),
                 else => self.colours.show(a.dim(place)),
             }
         }
-        self.cursors[1] = .{ .place = .blaze };
         self.list();
     }
 
-    /// Player 1 goes and player 2 stays, alone (network play's client whose host's player left
-    /// the select they shared): its cursor, as it was, the only one, named player 2's; chosen, it
-    /// waits. False past the choice (the select fading out).
-    pub fn keepSecond(self: *Select, a: *const Assets) bool {
-        if (self.players != .two) return false;
+    /// Player `k` stays, alone, and the others go (network play's client whose host's player
+    /// left the select they shared): its cursor, as it was, the only one, named player k's;
+    /// chosen, it waits. False past the choice (the select fading out).
+    pub fn keepOnly(self: *Select, k: input.Player, a: *const Assets) bool {
+        if (self.players == .one or !self.has(k)) return false;
         switch (self.phase) {
             .setup, .fade_out, .leaving => return false,
             else => {},
         }
-        const first = self.cursors[0].place;
-        if (first != self.cursors[1].place) {
-            self.portraits[@backingInt(first)].cursor = false;
-            switch (self.phase) {
-                .placing, .fade_in => self.colours.aim(a.dim(first)),
-                else => self.colours.show(a.dim(first)),
+        const kept = self.cursors[k];
+        for (self.cursors[0..self.count()], 0..) |c, i| if (i != k and self.present(i) and c.place != kept.place) {
+            if (!self.otherOnBut(c.place, i, k)) {
+                self.portraits[@backingInt(c.place)].cursor = false;
+                switch (self.phase) {
+                    .placing, .fade_in => self.colours.aim(a.dim(c.place)),
+                    else => self.colours.show(a.dim(c.place)),
+                }
             }
-        }
-        self.cursors[0] = self.cursors[1];
-        self.cursors[1] = .{ .place = .blaze };
+        };
+        for (&self.cursors, first_places) |*c, place| c.* = .{ .place = place };
+        self.cursors[0] = kept;
         self.players = .one;
-        self.seat = 1;
+        self.gone = 0;
+        self.seat = k;
         self.list();
         return true;
+    }
+
+    /// Whether a present cursor but players `i`'s and `k`'s, whose cursors go at once, is on
+    /// `place`, and already dimmed by one of the earlier ones (each portrait dimmed once).
+    fn otherOnBut(self: *const Select, place: Character, i: usize, k: usize) bool {
+        for (self.cursors[0..i], 0..) |o, j| if (j != k and self.present(j) and o.place == place) return true;
+        return false;
     }
 
     /// The character the only player chose (a guest's own select, before it joins).
@@ -628,7 +699,9 @@ pub const Select = struct {
     /// The sprites as the tick leaves them.
     fn list(self: *Select) void {
         var l: Listing = .{};
-        for (self.cursors[0..self.count()], 0..) |c, i| l.labels[if (self.players == .one) self.seat else i] = c.place;
+        for (self.cursors[0..self.count()], 0..) |c, i| if (self.present(i)) {
+            l.labels[if (self.players == .one) self.seat else i] = c.place;
+        };
         for (self.portraits, 0..) |p, i| l.portraits[i] = .{ .pose = p.pose, .step = p.step, .y = p.y() };
         self.listed = l;
     }

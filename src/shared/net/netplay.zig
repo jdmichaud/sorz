@@ -2,26 +2,35 @@
 //! over the platform's transport.
 //!
 //! - **The host** keeps a session for each client that connects (`Peer`), up to `max_clients`:
-//!   in its menu, its player (one at a time, in lockstep with the host's game: `player`), or an
-//!   observer. It listens once its session opens (`open`, NETWORK PLAY's START; a page behind a
-//!   relay has its connections brought by the page). The game gives the host's status
-//!   (`setStatus`: the driver adds whether the session is open, a place free, observers taken and
-//!   the same character allowed), takes a join (`joinAsked`, then `begin` or `declineJoin`) or a
+//!   in its menu, one of its players (up to three, each in its place of the game, player 2 to 4:
+//!   `members`, in lockstep with the host's game), or an observer. It listens once its session
+//!   opens (`open`, NETWORK PLAY's START; a page behind a relay has its connections brought by the
+//!   page). The game gives the host's status (`setStatus`: the driver adds whether the session is
+//!   open, a place free, observers taken and the same character allowed), takes a join
+//!   (`joinAsked`, then `begin`, `scheduleJoin` in a session under way, or `declineJoin`) or a
 //!   wish to watch (`observeAsked`, then `beginObserve`), gives each tick's pads to the observers
-//!   (`observed`) and its game again when it changed otherwise (`resync`), and ends the player's
-//!   session (`end`). A player whose connection comes back (its hello names the session) takes
+//!   (`observed`) and its game again when it changed otherwise (`resync`), and ends its players'
+//!   sessions (`end`). A player whose connection comes back (its hello names the session) takes
 //!   up its session again.
+//! - **The host's session of play**: its clients' sessions run the same ticks. The host merges
+//!   their pads with its own (`pads`), relays each client's pads to the others (`relay`), and
+//!   changes the game at a tick no machine has run yet, the same change on each (`schedule`: a
+//!   player leaving or coming back, the rules; a client that joins a session under way joins at
+//!   such a tick, `scheduleJoin`, and its session begins there, `beginJoin`). The session's input
+//!   delay suits its slowest links: a client's pads reach another through the host. A client
+//!   that leaves (its goodbye, or its connection not back in time) goes at the tick its pads ran
+//!   out, the others told ahead; the last goes as the session ends.
 //! - **A client** connects as it starts, and again every second while it is apart: it is in the
 //!   host's lobby from then on. Its game asks to join (`askJoin`) or to watch (`askObserve`,
 //!   `stopObserve`), and hears the host's status (`hostStatus`).
-//! - **The session in play** (the host's with its player, the client's with its host) gives each
-//!   display tick's pads (`pads`), the tick's end (`ran`) and the state checks (`checkDue`,
-//!   `check`); what happened comes to the game as notes (`pending`, which the game clears), the
-//!   notes of that session alone.
+//! - **The session in play** gives each display tick's pads (`pads`), the changes before it
+//!   (`takeEvent`), the tick's end (`ran`) and the state checks (`checkDue`, `check`); what
+//!   happened comes to the game as notes (`pending`, which the game clears), the notes of the
+//!   sessions of play alone.
 //! - **The stats** (DESIGN.md 9): in a session of play, each second, the ticks this machine's game
 //!   ran, the percent of the time it worked (the game's `worked`) and the percent it held for the
-//!   other's pads, with the round trip it measured last, told to the other machine; `stats` gives
-//!   both, and the input delay.
+//!   others' pads, with the round trip it measured last, told to the other machines (the host
+//!   tells each client the others'); `stats` gives every machine's, and the input delay.
 //!
 //! What happens is logged (`std.log`, scope `netplay`): the connections, the welcomes and their
 //! delays, the sessions, the holds, a refusal, a mismatch and its first differing field.
@@ -62,11 +71,15 @@ const hold_log_ns: u64 = std.time.ns_per_s / 2;
 const max_backlog = 1024;
 /// The clients a host keeps at once (a client past them is turned away, `busy`).
 pub const max_clients = 16;
+/// The players of a game (the host's and its clients').
+pub const max_players = input.max_players;
 
 /// A client of the host (on a client: its host), its connection and its session.
 pub const Peer = struct {
     connection: ?platform.ConnectionId = null,
     session: Session,
+    /// The host: this client's leave is a change of the game the others make at its tick.
+    leave_made: bool = false,
 };
 
 /// What a client of the host does, as the host lists it.
@@ -76,14 +89,17 @@ pub const Doing = enum { menu, select, player, observing };
 pub const Entry = struct {
     name: protocol.Name,
     doing: Doing,
+    /// Its player in the game (from 0: player 2 is 1), when it plays.
+    place: u8 = 1,
 
     /// Its line on the host's screens: NAME - MENU (PLAYER 2, OBSERVING). The font has no
     /// parentheses.
     pub fn line(e: *const Entry, buf: *[24]u8) []const u8 {
+        var player_buf: [8]u8 = undefined;
         const doing: []const u8 = switch (e.doing) {
             .menu => "MENU",
             .select => "SELECT",
-            .player => "PLAYER 2",
+            .player => std.fmt.bufPrint(&player_buf, "PLAYER {d}", .{@as(u8, e.place) + 1}) catch unreachable,
             .observing => "OBSERVING",
         };
         return std.fmt.bufPrint(buf, "{s} - {s}", .{ &e.name, doing }) catch unreachable;
@@ -105,20 +121,57 @@ const Meter = struct {
 };
 
 /// Network play's stats of the session of play (DESIGN.md 9): this machine's last second and the
-/// other's as it said it (none before its first), each with the round trip it measured; the input
-/// delay; whether this machine is the host; and the client's name.
+/// others' as they (or the host) said them (none before their first), each with the round trip it
+/// measured; the input delay; whether this machine is the host; and the client's name.
 pub const Stats = struct {
     local: protocol.Load,
+    /// The other machine's: the host's on a client, a client's on the host (its first).
     peer: ?protocol.Load,
     delay: u8,
     host: bool,
     client: protocol.Name,
+    /// Each player's machine in the session (by player: the host's first), its last second.
+    machines: [max_players]Machine = @splat(.{}),
+
+    pub const Machine = struct {
+        /// In the session, its load (null before its first second), and the name of a client
+        /// as its session has it (the game's names may say it better).
+        in: bool = false,
+        load: ?protocol.Load = null,
+        name: protocol.Name = .{ ' ', ' ', ' ' },
+    };
 };
 
 /// `part` of `whole`, in percent (at most 100).
 fn percent(part: u64, whole: u64) u8 {
     return @intCast(@min(100, (part * 100 + whole / 2) / whole));
 }
+
+/// The changes of the game the host's own game makes (`schedule`), in their ticks' order.
+const Changes = struct {
+    items: [session_mod.max_events]protocol.Event = undefined,
+    len: u8 = 0,
+
+    fn room(c: *const Changes) bool {
+        return c.len < c.items.len;
+    }
+
+    fn add(c: *Changes, e: protocol.Event) void {
+        var i: usize = c.len;
+        while (i > 0 and c.items[i - 1].tick > e.tick) : (i -= 1) c.items[i] = c.items[i - 1];
+        c.items[i] = e;
+        c.len += 1;
+    }
+
+    fn drop(c: *Changes, i: usize) void {
+        std.mem.copyForwards(protocol.Event, c.items[i .. c.len - 1], c.items[i + 1 .. c.len]);
+        c.len -= 1;
+    }
+
+    fn slice(c: *const Changes) []const protocol.Event {
+        return c.items[0..c.len];
+    }
+};
 
 pub const Netplay = struct {
     allocator: std.mem.Allocator,
@@ -129,8 +182,17 @@ pub const Netplay = struct {
     diff: canonical.DiffFn,
     /// The host's clients; a client's host, always there (index 0).
     peers: std.ArrayList(*Peer) = .empty,
-    /// The host: the client that plays (in a session), if any.
-    player: ?*Peer = null,
+    /// The host: the clients that play its game in a session, by their player (1 to 3), and those
+    /// whose join is a change to come (`scheduleJoin`).
+    members: [max_players]?*Peer = @splat(null),
+    joiners: [max_players]?*Peer = @splat(null),
+    /// The host: the player whose place its client took from the CPU (the CPU takes it back as the
+    /// client leaves; the game says it).
+    cpu_place: ?input.Player = null,
+    /// The host: its session's input delay, and the changes of the game its own game makes at
+    /// their ticks (the same as each client's).
+    group_delay: u8 = 0,
+    changes: Changes = .{},
     /// The host's session is open (its server started, or its game: the network options), and
     /// what it takes; stopped (STOP SERVER), it turns clients away until it opens again.
     open: bool = false,
@@ -157,10 +219,12 @@ pub const Netplay = struct {
     difference: ?canonical.Difference = null,
     /// What happened since the game last looked, in order.
     notes: std.ArrayList(Note) = .empty,
-    /// Sessions started so far (a count for the checks).
+    /// Sessions started so far (a count for the checks; on the host, from its first client's
+    /// join).
     sessions: u32 = 0,
-    /// The seconds of a player's drop last said to the others.
+    /// The seconds of a player's drop last said to the others, and that player.
     away_said: u8 = 0,
+    away_player: input.Player = 1,
 
     pub fn init(allocator: std.mem.Allocator, options: Options, diff: canonical.DiffFn) error{OutOfMemory}!Netplay {
         const address = try allocator.dupe(u8, options.address);
@@ -201,7 +265,12 @@ pub const Netplay = struct {
 
     fn removePeer(self: *Netplay, peer: *Peer) void {
         if (std.mem.indexOfScalar(*Peer, self.peers.items, peer)) |i| _ = self.peers.orderedRemove(i);
-        if (self.player == peer) self.player = null;
+        for (&self.members) |*m| if (m.* == peer) {
+            m.* = null;
+        };
+        for (&self.joiners) |*m| if (m.* == peer) {
+            m.* = null;
+        };
         self.destroyPeer(peer);
     }
 
@@ -210,10 +279,56 @@ pub const Netplay = struct {
         return null;
     }
 
-    /// The session of play: the host's with its player, the client's with its host.
+    /// The host's client that plays player `k` in its session, if any.
+    pub fn member(self: *const Netplay, k: usize) ?*Peer {
+        return self.members[k];
+    }
+
+    /// The host's first client in its session of play (the one of player 2, with two machines).
+    pub fn player(self: *const Netplay) ?*Peer {
+        for (self.members) |m| if (m) |x| return x;
+        return null;
+    }
+
+    /// Whether `peer` plays the host's game in a session.
+    fn isMember(self: *const Netplay, peer: *const Peer) bool {
+        for (self.members) |m| if (m == peer) return true;
+        return false;
+    }
+
+    fn placeOf(self: *const Netplay, peer: *const Peer) ?input.Player {
+        for (self.members, 0..) |m, k| if (m == peer) return @intCast(k);
+        return null;
+    }
+
+    /// The host's clients in its session of play (held or stopped at a mismatch too).
+    pub fn memberCount(self: *const Netplay) usize {
+        var n: usize = 0;
+        for (self.members) |m| if (m) |x| {
+            if (x.session.inSession()) n += 1;
+        };
+        return n;
+    }
+
+    /// The host's clients that play on in its session (not leaving it), but `but`.
+    fn stayingBut(self: *const Netplay, but: ?*const Peer) usize {
+        var n: usize = 0;
+        for (self.members) |m| if (m) |x| {
+            if (x != but and x.session.phase == .playing and x.session.leaving == null and !x.session.peer_left) n += 1;
+        };
+        return n;
+    }
+
+    /// Whether player `k`'s place is taken in the host's session (a client plays it, or its
+    /// join is to come).
+    pub fn placeTaken(self: *const Netplay, k: usize) bool {
+        return self.members[k] != null or self.joiners[k] != null;
+    }
+
+    /// The session of play: the host's with its first client, the client's with its host.
     fn main(self: *const Netplay) ?*Session {
         return switch (self.role) {
-            .host => if (self.player) |p| &p.session else null,
+            .host => if (self.player()) |p| &p.session else null,
             .guest => &self.peers.items[0].session,
         };
     }
@@ -303,6 +418,7 @@ pub const Netplay = struct {
             if (peer.connection) |id| p.netClose(id);
             self.removePeer(peer);
         }
+        self.changes = .{};
         if (self.listening) {
             p.netUnlisten();
             self.listening = false;
@@ -374,9 +490,9 @@ pub const Netplay = struct {
                 const peer = self.peerOf(m.connection) orelse return true;
                 // A player whose connection came back: its hello names the session it plays. Its
                 // old connection, not yet seen gone (the player's side broke first), is lost now:
-                // the newer one wins.
-                if (self.role == .host and peer != self.player) if (self.player) |pl| {
-                    if (pl.session.phase == .playing) if (protocol.decode(m.bytes)) |msg| switch (msg) {
+                // the newer one wins. (One that leaves the session already is a new client.)
+                if (self.role == .host and !self.isMember(peer)) for (self.members) |mem| if (mem) |pl| {
+                    if (pl.session.phase == .playing and pl.session.leaving == null) if (protocol.decode(m.bytes)) |msg| switch (msg) {
                         .hello => |h| if (h.session == pl.session.id) {
                             if (pl.connection) |old| {
                                 p.netClose(old);
@@ -399,20 +515,30 @@ pub const Netplay = struct {
     }
 
     fn receive(self: *Netplay, p: *platform.Platform, peer: *Peer, bytes: []const u8) bool {
+        const left_before = peer.session.peer_left;
         const verdict = peer.session.receive(bytes, self.now_ns);
         switch (verdict) {
             .malformed, .conflict, .unexpected, .ahead => if (self.log_enabled) log.warn("a message from {s}: {s}", .{ if (self.role == .host) "a client" else "the host", @tagName(verdict) }),
             else => {},
         }
-        // A client's status: the host tells it what it is once it is welcomed.
-        if (self.role == .host and peer.session.welcomed and peer.session.phase == .lobby) peer.session.setStatus(self.statusFor());
+        if (self.role == .host) {
+            // A client's status: the host tells it what it is once it is welcomed.
+            if (peer.session.welcomed and peer.session.phase == .lobby) peer.session.setStatus(self.statusFor());
+            if (self.placeOf(peer)) |k| {
+                // A player's pads go on to the session's other clients.
+                self.relay(p, k);
+                // A player who said goodbye goes at the tick its pads run out; the others play on,
+                // told ahead.
+                if (!left_before and peer.session.peer_left and peer.session.phase == .playing) self.leaveLater(p, peer, .left);
+            }
+        }
         self.flush(p, peer);
         self.takeNotes(peer);
         return true;
     }
 
     fn lost(self: *Netplay, peer: *Peer, reason: platform.DisconnectReason) void {
-        const was_playing = peer.session.phase == .playing and !peer.session.peer_left;
+        const was_playing = peer.session.phase == .playing and !peer.session.peer_left and peer.session.leaving == null;
         peer.connection = null;
         peer.session.disconnected(self.now_ns);
         if (self.log_enabled) {
@@ -427,9 +553,9 @@ pub const Netplay = struct {
         }
         self.takeNotes(peer);
         switch (self.role) {
-            // The host keeps a player's session while it may come back; a client in its menu or
-            // watching goes.
-            .host => if (!(peer == self.player and peer.session.phase == .playing)) self.removePeer(peer),
+            // The host keeps a player's session while it may come back (or its last pads run);
+            // a client in its menu or watching goes.
+            .host => if (!(self.isMember(peer) and peer.session.phase == .playing)) self.removePeer(peer),
             .guest => if (self.address.len != 0 and peer.session.phase != .ended) {
                 self.reconnect_at = self.now_ns + reconnect_ns;
             },
@@ -457,7 +583,7 @@ pub const Netplay = struct {
                 peer.session.close_requested = false;
                 if (peer.connection) |id| {
                     p.netClose(id);
-                    const gone = self.role == .host and !(peer == self.player and peer.session.phase == .playing);
+                    const gone = self.role == .host and !(self.isMember(peer) and peer.session.phase == .playing);
                     self.lost(peer, .closed);
                     if (gone) continue;
                 }
@@ -466,13 +592,22 @@ pub const Netplay = struct {
         }
     }
 
-    /// The player's dropped connection, counted down to the others in seconds, once a second.
+    /// A player's dropped connection, counted down to the others in seconds, once a second.
     fn sayAway(self: *Netplay, p: *platform.Platform) void {
-        const seconds: u8 = if (self.lostFor()) |t| @intCast((session_mod.rejoin_ns -| t + std.time.ns_per_s - 1) / std.time.ns_per_s) else 0;
-        if (seconds == self.away_said) return;
+        const down = self.lostPlayer();
+        const seconds: u8 = if (down) |d| @intCast((session_mod.rejoin_ns -| d.ns + std.time.ns_per_s - 1) / std.time.ns_per_s) else 0;
+        const who: input.Player = if (down) |d| d.player else self.away_player;
+        if (seconds == self.away_said and who == self.away_player) return;
+        // Another player's count replaces one that ended: its end said first.
+        if (who != self.away_player and self.away_said != 0) self.tellAway(p, 0, self.away_player);
         self.away_said = seconds;
-        for (self.peers.items) |peer| if (peer != self.player) {
-            peer.session.sayAway(seconds);
+        self.away_player = who;
+        self.tellAway(p, seconds, who);
+    }
+
+    fn tellAway(self: *Netplay, p: *platform.Platform, seconds: u8, who: input.Player) void {
+        for (self.peers.items) |peer| if (self.members[who] != peer) {
+            peer.session.sayAway(seconds, who);
             self.flush(p, peer);
         };
     }
@@ -505,12 +640,14 @@ pub const Netplay = struct {
         for (self.peers.items) |peer| self.flush(p, peer);
     }
 
-    /// A peer's notes, logged; those of the session of play (or the client's) for the game. The
+    /// A peer's notes, logged; those of the sessions of play (or the client's) for the game. The
     /// host's player whose session ended is a client in its menu again (or goes, its connection
-    /// down).
+    /// down); the game hears which player it was (`member_ended`).
     fn takeNotes(self: *Netplay, peer: *Peer) void {
-        const for_game = self.role == .guest or peer == self.player;
-        var ended = false;
+        const place = self.placeOf(peer);
+        const for_game = self.role == .guest or place != null;
+        var ended: ?session_mod.End = null;
+        var stop_others = false;
         for (peer.session.notes.items) |n| {
             self.logNote(peer, n);
             // A stopped host's refusal is said once; the client tries again quietly.
@@ -525,19 +662,34 @@ pub const Netplay = struct {
             if (!for_game) continue;
             switch (n) {
                 .started => |s| {
-                    if (!s.resumed) self.sessions += 1;
+                    // The host counts its session from its first client; a client its own.
+                    if (!s.resumed and (self.role == .guest or s.tick == 0)) self.sessions += 1;
                 },
                 .diagnosed => |d| self.difference = d,
-                .ended => ended = true,
+                .desync => stop_others = self.role == .host,
+                // A client's settings screen holds the others too: they are told whose it is.
+                .settings => |x| if (self.role == .host) self.relaySettings(@intCast(x.player), x.open),
+                .ended => |why| {
+                    ended = why;
+                    if (self.role == .host) continue;
+                },
                 else => {},
             }
             self.notes.append(self.allocator, n) catch {};
         }
         peer.session.notes.clearRetainingCapacity();
-        if (ended and self.role == .host and peer == self.player and !peer.session.inSession()) {
-            self.player = null;
+        // A mismatch with one client stops the session for every machine.
+        if (stop_others) for (self.members) |m| if (m) |x| if (x != peer) x.session.stopAtDesync();
+        if (self.role == .host) if (place) |k| if (ended) |why| if (!peer.session.inSession()) {
+            self.members[k] = null;
+            self.notes.append(self.allocator, .{ .member_ended = .{ .player = k, .why = why, .made = peer.leave_made } }) catch {};
+            peer.leave_made = false;
+            // Its settings no longer hold the others.
+            if (peer.session.peer_settings) self.relaySettings(k, false);
+            peer.session.peer_settings = false;
+            if (self.memberCount() == 0) self.changes = .{};
             if (peer.connection == null) self.removePeer(peer);
-        }
+        };
     }
 
     fn logNote(self: *const Netplay, peer: *const Peer, n: Note) void {
@@ -548,12 +700,12 @@ pub const Netplay = struct {
             .welcomed => log.info("{s} welcomed: input delay {d} ticks", .{ if (self.role == .host) who else "this client", s.delay }),
             .started => |st| if (st.resumed) {
                 log.info("the session resumes at tick {d}", .{st.tick});
-            } else log.info("a session starts: the host's game{s}, input delay {d} ticks", .{ if (self.role == .host) "" else ", loaded", st.delay }),
-            .joined => log.info("the host's game is in ({d} bytes)", .{s.gameForm().len}),
+            } else log.info("a session starts at tick {d}: the host's game{s}, input delay {d} ticks", .{ st.tick, if (self.role == .host) "" else ", loaded", st.delay }),
+            .joined => log.info("the host's game is in ({d} bytes): player {d}", .{ s.gameForm().len, @as(u8, s.place) + 1 }),
             .join_asked => |c| log.info("{s} asks to join{s}{s}", .{ who, if (c == protocol.no_character) "" else " as ", if (c == protocol.no_character) "" else characterName(c) }),
             .observe_asked => log.info("{s} asks to watch", .{who}),
             .observing => log.info("watching the host's game ({d} bytes)", .{s.gameForm().len}),
-            .away => |sec| log.debug("the player's connection is down: {d} s left", .{sec}),
+            .away => |a| log.debug("player {d}'s connection is down: {d} s left", .{ @as(u8, a.player) + 1, a.seconds }),
             .status => |st| log.debug("the host's game: {s}", .{@tagName(st.game)}),
             .refused => |r| {
                 if (s.phase == .playing) {
@@ -563,11 +715,12 @@ pub const Netplay = struct {
             .desync => |t| log.err("the games differ at tick {d}: {s}", .{ t, if (s.phase == .desynced and self.role == .guest and s.observe_asked == false) "the game stops" else "both stop; comparing their states" }),
             .diagnosed => |d| if (d) |x| log.err("first difference: {f}", .{x}) else log.err("the states could not be compared", .{}),
             .left => |r| log.info("{s} left ({s})", .{ if (self.role == .host) who else "the host", @tagName(r) }),
-            .ended => |e| log.info("{s} ended ({s})", .{ if (peer == self.player or self.role == .guest) "the session" else "a client's watch", @tagName(e) }),
+            .ended => |e| log.info("{s} ended ({s})", .{ if (self.isMember(peer) or self.role == .guest) "the session" else "a client's watch", @tagName(e) }),
             .watch_ended => log.info("the watch of the host's game ended", .{}),
-            .settings => |open| if (open) {
-                log.info("the other player is on the settings screen: the game holds", .{});
-            } else log.info("the other player left the settings screen", .{}),
+            .settings => |x| if (x.open) {
+                log.info("player {d} is on the settings screen: the game holds", .{@as(u8, x.player) + 1});
+            } else log.info("player {d} left the settings screen", .{@as(u8, x.player) + 1}),
+            .member_ended => {},
         }
     }
 
@@ -607,9 +760,10 @@ pub const Netplay = struct {
     fn statusFor(self: *const Netplay) protocol.Status {
         var s = self.status;
         s.open = self.open;
-        // The game says whether it has room for a second player (`status.place`); a game under
-        // way takes one when joins in progress are allowed.
-        s.place = self.open and self.player == null and self.status.place and (self.status.game != .play or self.join_in_progress);
+        // The game says whether it has room for another player (`status.place`, and the place);
+        // a game under way takes one when joins in progress are allowed.
+        s.place = self.open and self.status.place and (self.status.game != .play or self.join_in_progress);
+        if (!s.place) s.next_place = 0;
         s.observers = self.open and self.observers;
         s.same_character = self.same_character;
         s.join_in_progress = self.join_in_progress;
@@ -630,20 +784,112 @@ pub const Netplay = struct {
         self.sendStatus(p);
     }
 
-    /// The host: a client that asks to join while a place is free, its character, and its
-    /// cursor's place at its own select (`no_character`: none).
+    /// The host: a client that asks to join, its character, and its cursor's place at its own
+    /// select (`no_character`: none); the game decides whether a place is free for it.
     pub fn joinAsked(self: *const Netplay) ?struct { peer: *Peer, character: u8, cursor: u8 } {
-        if (self.role != .host or !self.open or self.player != null) return null;
-        for (self.peers.items) |peer| if (peer.session.phase == .lobby) if (peer.session.join_asked) |c| {
+        if (self.role != .host or !self.open) return null;
+        for (self.peers.items) |peer| if (peer.session.phase == .lobby and !self.isJoining(peer)) if (peer.session.join_asked) |c| {
             return .{ .peer = peer, .character = c, .cursor = peer.session.peer_where.cursor };
         };
         return null;
     }
 
-    /// The host's game takes `peer` as its player: a session from the host's game's form now.
-    pub fn begin(self: *Netplay, p: *platform.Platform, peer: *Peer, form: []const u8) void {
-        self.player = peer;
+    fn isJoining(self: *const Netplay, peer: *const Peer) bool {
+        for (self.joiners) |m| if (m == peer) return true;
+        return false;
+    }
+
+    /// The host's game takes `peer` as its player `place` in a new session: from the host's
+    /// game's form now.
+    pub fn begin(self: *Netplay, p: *platform.Platform, peer: *Peer, place: input.Player, form: []const u8) void {
+        std.debug.assert(self.memberCount() == 0);
+        self.members = @splat(null);
+        self.changes = .{};
+        self.members[place] = peer;
+        peer.session.place = place;
         peer.session.begin(form, self.now_ns);
+        self.group_delay = peer.session.delay;
+        self.flush(p, peer);
+        self.takeNotes(peer);
+        self.sendStatus(p);
+    }
+
+    /// The host's game takes `peer` as its player `place` in the session under way: it joins at
+    /// the first tick whose pads the host has not sent (every machine adds the player then, its
+    /// first pads empty), the delay longer from then if its link needs it; its game comes then
+    /// (`beginJoin`). False when the session cannot take it now.
+    pub fn scheduleJoin(self: *Netplay, p: *platform.Platform, peer: *Peer, place: input.Player, character: u8, cursor: u8, name: protocol.Name) bool {
+        const first = self.player() orelse return false;
+        const join_delay = self.joinDelay(peer);
+        const e: protocol.Event = .{ .tick = 0, .what = .join, .player = place, .character = character, .cursor = cursor, .delay = join_delay, .name = name };
+        if (!self.scheduleOn(p, e, first.session.local_count, null)) return false;
+        self.joiners[place] = peer;
+        peer.session.place = place;
+        peer.session.join_asked = null;
+        self.sendStatus(p);
+        if (self.log_enabled) log.info("{s} joins as player {d} at tick {d}", .{ &peer.session.peer_name, @as(u8, place) + 1, first.session.local_count });
+        return true;
+    }
+
+    /// The input delay a session with `joiner` among its clients needs: a client's pads reach
+    /// another through the host, so the two longest links' one-way times, in ticks rounded up,
+    /// plus one (the given delay instead, when the host has one); never shorter than the
+    /// session's.
+    fn joinDelay(self: *const Netplay, joiner: *const Peer) u8 {
+        if (self.config.delay) |d| return d;
+        var longest: [2]u64 = .{ 0, 0 };
+        var rtts: [max_players]u64 = @splat(0);
+        for (self.members, 0..) |m, k| if (m) |x| {
+            rtts[k] = @max(x.session.rtt_ns, x.session.handshake_rtt_ns);
+        };
+        const joiner_rtt = @max(joiner.session.rtt_ns, joiner.session.handshake_rtt_ns);
+        for (rtts ++ [_]u64{joiner_rtt}) |r| {
+            if (r > longest[0]) {
+                longest[1] = longest[0];
+                longest[0] = r;
+            } else if (r > longest[1]) longest[1] = r;
+        }
+        return @max(self.group_delay, Session.delayFor(longest[0] + longest[1]));
+    }
+
+    /// The join of player `place` was made at this tick on the host's game, whose form is now
+    /// `form` (the player in): its client's session begins here, the host's pads it sent the
+    /// others with it, the other clients' pads relayed to it from now, its pads to them. A client
+    /// gone before its join: the others drop its player once its empty pads are over.
+    pub fn beginJoin(self: *Netplay, p: *platform.Platform, place: input.Player, form: []const u8) void {
+        const first = self.player() orelse return;
+        const tick_ = first.session.next;
+        const peer = self.joiners[place] orelse {
+            const gone: protocol.Event = .{ .tick = 0, .what = .leave, .player = place };
+            _ = self.scheduleOn(p, gone, tick_ + self.group_delay, null);
+            return;
+        };
+        self.joiners[place] = null;
+        if (peer.session.phase != .lobby) {
+            const gone: protocol.Event = .{ .tick = 0, .what = .leave, .player = place };
+            _ = self.scheduleOn(p, gone, tick_ + self.group_delay, null);
+            return;
+        }
+        var players: u8 = 1;
+        for (self.members, 0..) |m, k| if (m) |x| if (x.session.phase == .playing) {
+            players |= @as(u8, 1) << @intCast(k);
+        };
+        var host_pads: [protocol.max_delay + 1]u8 = undefined;
+        const n = first.session.local_count - tick_;
+        for (0..n) |i| host_pads[i] = first.session.localPad(tick_ + @as(u32, @intCast(i)));
+        peer.session.beginAt(form, self.now_ns, .{ .tick = tick_, .delay = self.group_delay, .players = players, .host_pads = host_pads[0..n] });
+        peer.session.local_count = first.session.local_count;
+        peer.session.flushPads();
+        self.members[place] = peer;
+        for (self.members, 0..) |m, k| if (m) |x| if (x != peer) {
+            x.session.relayFrom(place, tick_ + self.group_delay);
+            peer.session.relayFrom(@intCast(k), tick_);
+        };
+        // The changes still to come, which its game's form does not have.
+        for (self.changes.slice()) |e| if (e.tick >= tick_) {
+            _ = peer.session.scheduleAt(e, e.tick);
+        };
+        for (0..max_players) |k| self.relay(p, @intCast(k));
         self.flush(p, peer);
         self.takeNotes(peer);
         self.sendStatus(p);
@@ -659,7 +905,7 @@ pub const Netplay = struct {
     /// host's ticks); the game decides: `beginObserve`, or `declineObserve`.
     pub fn observeAsked(self: *const Netplay) ?*Peer {
         if (self.role != .host or !self.open) return null;
-        for (self.peers.items) |peer| if ((peer.session.phase == .lobby or peer.session.phase == .observing) and peer.session.observe_asked) return peer;
+        for (self.peers.items) |peer| if ((peer.session.phase == .lobby or peer.session.phase == .observing) and peer.session.observe_asked and !self.isJoining(peer)) return peer;
         return null;
     }
 
@@ -711,9 +957,10 @@ pub const Netplay = struct {
         var n: usize = 0;
         for (self.peers.items) |peer| {
             if (n == out.len) break;
-            if (!peer.session.welcomed and peer != self.player) continue;
+            const place = self.placeOf(peer);
+            if (!peer.session.welcomed and place == null) continue;
             const s = &peer.session;
-            out[n] = .{ .name = s.peer_name, .doing = if (peer == self.player) .player else if (s.phase == .observing) .observing else if (s.peer_where.at == .select) .select else .menu };
+            out[n] = .{ .name = s.peer_name, .place = place orelse 1, .doing = if (place != null) .player else if (s.phase == .observing) .observing else if (s.peer_where.at == .select) .select else .menu };
             n += 1;
         }
         return out[0..n];
@@ -798,15 +1045,52 @@ pub const Netplay = struct {
     // --- the session of play ---------------------------------------------------------------
 
     /// The pads of the next tick of the session, or null while the game must hold. `local` is the
-    /// local player's pad.
+    /// local player's pad. The host merges its clients' with its own: a client whose session
+    /// ended here (its last pads ran out) is out of it; with none left, the session is over.
     pub fn pads(self: *Netplay, p: *platform.Platform, local: input.Pad) ?input.Pads {
-        const s = self.main() orelse return null;
-        const merged = s.pads(local);
-        // Read before the notes, which may let the host's player go.
-        const playing = s.phase == .playing;
-        const next = s.next;
-        self.flushAll(p);
-        if (self.role == .host) self.takeNotes(self.player.?) else self.takeNotes(self.hostPeer());
+        var merged: ?input.Pads = null;
+        var playing = false;
+        var next: u32 = 0;
+        switch (self.role) {
+            .guest => {
+                const s = self.main().?;
+                merged = s.pads(local);
+                playing = s.phase == .playing;
+                next = s.next;
+                self.flushAll(p);
+                self.takeNotes(self.hostPeer());
+            },
+            .host => {
+                const first = self.player() orelse return null;
+                next = first.session.next;
+                // A join at this tick makes the delay longer from now on.
+                for (self.changes.slice()) |e| if (e.tick == next and e.what == .join and e.delay > self.group_delay) {
+                    self.group_delay = e.delay;
+                };
+                var out: input.Pads = .{};
+                var ready = true;
+                var any = false;
+                var stopped = false;
+                for (self.members, 0..) |m, k| if (m) |x| {
+                    const s = &x.session;
+                    if (s.phase == .desynced) stopped = true;
+                    if (s.phase != .playing) continue;
+                    s.delay = @max(s.delay, self.group_delay);
+                    const r = s.pads(local);
+                    // Its pads ran out after its goodbye: out of the session from this tick.
+                    if (s.phase != .playing) continue;
+                    any = true;
+                    if (r) |x_| {
+                        out.at(0).* = x_.of(0);
+                        out.at(k).* = x_.of(k);
+                    } else ready = false;
+                };
+                playing = any and !stopped;
+                self.flushAll(p);
+                for (self.members) |m| if (m) |x| self.takeNotes(x);
+                if (playing and ready) merged = out;
+            },
+        }
         if (playing) {
             if (merged == null) {
                 if (self.meter.hold_from == null) self.meter.hold_from = self.now_ns;
@@ -821,7 +1105,7 @@ pub const Netplay = struct {
                 self.hold_logged = false;
             } else if (!self.hold_logged and self.now_ns -| self.held_since.? >= hold_log_ns and playing) {
                 self.hold_logged = true;
-                if (self.log_enabled) log.info("holding at tick {d}: waiting for the other player's pads", .{next});
+                if (self.log_enabled) log.info("holding at tick {d}: waiting for another player's pads", .{next});
             }
         } else {
             if (self.hold_logged and self.log_enabled) log.info("going on after {d} ms", .{(self.now_ns -| self.held_since.?) / std.time.ns_per_ms});
@@ -831,37 +1115,136 @@ pub const Netplay = struct {
         return merged;
     }
 
+    /// The host relays player `k`'s pads (its client's, as they came) to the session's other
+    /// clients.
+    fn relay(self: *Netplay, p: *platform.Platform, k: input.Player) void {
+        const src = self.members[k] orelse return;
+        if (src.session.phase != .playing) return;
+        for (self.members) |m| if (m) |x| if (x != src) {
+            x.session.relayOf(k, &src.session);
+            self.flush(p, x);
+        };
+    }
+
+    /// The host relays client player `k`'s settings screen to the session's other clients.
+    fn relaySettings(self: *Netplay, k: input.Player, open: bool) void {
+        for (self.members) |m| if (m) |x| if (self.members[k] != x) x.session.relaySettings(open, k);
+    }
+
+    /// The host's client `peer` leaves the session at the tick its pads run out (`why`: it said
+    /// goodbye, or its connection did not come back in time), the other clients told ahead; the
+    /// last client of the session goes as the session ends, the host's game told then.
+    fn leaveLater(self: *Netplay, p: *platform.Platform, peer: *Peer, why: session_mod.End) void {
+        const k = self.placeOf(peer) orelse return;
+        if (self.stayingBut(peer) == 0) {
+            if (why == .lost) peer.session.end(.lost);
+            return;
+        }
+        peer.session.leaveWhenOut(why);
+        peer.leave_made = true;
+        const e: protocol.Event = .{ .tick = 0, .what = if (self.cpu_place == k) .cpu else .leave, .player = k };
+        if (!self.scheduleOn(p, e, peer.session.remote_count, peer)) {
+            // No room for the change: the client goes at once, as the last would.
+            peer.leave_made = false;
+            peer.session.leaving = null;
+            peer.session.end(why);
+        }
+        if (self.log_enabled) log.info("player {d} leaves at tick {d}", .{ @as(u8, k) + 1, peer.session.remote_count });
+    }
+
+    /// The host's clients whose dropped connection did not come back in time leave the game.
+    pub fn giveUp(self: *Netplay, p: *platform.Platform) void {
+        for (self.members) |m| if (m) |x| if (x.session.lostFor(self.now_ns)) |t| if (t > session_mod.rejoin_ns) {
+            self.leaveLater(p, x, .lost);
+        };
+        self.flushAll(p);
+        for (self.members) |m| if (m) |x| self.takeNotes(x);
+        self.sendStatus(p);
+    }
+
+    /// `e` at tick `at` on each of the host's clients in its session (but `but`) and on its own
+    /// game: false when one of them has no room for it, or no session runs.
+    fn scheduleOn(self: *Netplay, p: *platform.Platform, e: protocol.Event, at: u32, but: ?*const Peer) bool {
+        if (!self.changes.room()) return false;
+        var any = false;
+        for (self.members) |m| if (m) |x| if (x != but and x.session.phase == .playing) {
+            if (x.session.events_len == session_mod.max_events) return false;
+            any = true;
+        };
+        if (!any and but == null) return false;
+        for (self.members) |m| if (m) |x| if (x != but and x.session.phase == .playing) {
+            _ = x.session.scheduleAt(e, at);
+        };
+        var made = e;
+        made.tick = at;
+        self.changes.add(made);
+        self.flushAll(p);
+        return true;
+    }
+
     /// The host changes the game in its session (its player leaves, or comes back, or the rules
-    /// change: `change`, its tick set by the session) at a tick to come, on both machines; false
+    /// change: `change`) at the first tick whose pads it has not sent, on every machine; false
     /// when it cannot now.
     pub fn schedule(self: *Netplay, p: *platform.Platform, change: protocol.Event) bool {
         if (self.role != .host) return false;
-        const s = self.main() orelse return false;
-        const at = s.schedule(change) orelse return false;
-        self.flushAll(p);
+        const first = self.player() orelse return false;
+        const at = first.session.local_count;
+        if (!self.scheduleOn(p, change, at, null)) return false;
         if (self.log_enabled) log.info("{s} at tick {d}", .{ switch (change.what) {
             .leave => "player 1 leaves the game",
             .back => "player 1 comes back",
             .rules => "the rules change",
+            .join => "a player joins",
+            .cpu => "a player goes back to the CPU",
         }, at });
         return true;
     }
 
-    /// The change of the game before the session's next tick, if any.
+    /// The change of the game before the session's next tick, if any (the first of them).
     pub fn eventAt(self: *const Netplay) ?protocol.Event {
-        const s = self.main() orelse return null;
-        return s.eventAt();
+        switch (self.role) {
+            .guest => return self.main().?.eventAt(),
+            .host => {
+                const first = self.player() orelse return null;
+                if (self.changes.len == 0 or first.session.phase != .playing) return null;
+                const e = self.changes.items[0];
+                return if (e.tick == first.session.next) e else null;
+            },
+        }
+    }
+
+    /// The same, taken: the game makes each change before the next tick in turn.
+    pub fn takeEvent(self: *Netplay) ?protocol.Event {
+        switch (self.role) {
+            .guest => return self.main().?.takeEvent(),
+            .host => {
+                const e = self.eventAt() orelse return null;
+                self.changes.drop(0);
+                return e;
+            },
+        }
     }
 
     /// Whether a change of the game is still to come.
     pub fn eventDue(self: *const Netplay) bool {
-        const s = self.main() orelse return false;
-        return s.event != null;
+        return switch (self.role) {
+            .host => self.changes.len != 0,
+            .guest => self.main().?.events_len != 0,
+        };
     }
 
     /// The tick that `pads` gave the pads of ran.
     pub fn ran(self: *Netplay) void {
-        if (self.main()) |s| s.ran();
+        switch (self.role) {
+            .guest => self.main().?.ran(),
+            .host => {
+                for (self.members) |m| if (m) |x| if (x.session.phase == .playing) x.session.ran();
+                // A change no game took (its tick passed): dropped.
+                if (self.player()) |first| {
+                    while (self.changes.len != 0 and self.changes.items[0].tick < first.session.next) self.changes.drop(0);
+                }
+            },
+        }
         self.meter.ticks += 1;
     }
 
@@ -872,7 +1255,8 @@ pub const Netplay = struct {
     }
 
     /// The stats' second: once one has gone by in a session of play, its measure is kept and told
-    /// to the other machine (sent with the update's messages); outside one, nothing is measured.
+    /// to the other machines (sent with the update's messages; the host tells each client the
+    /// others' too); outside one, nothing is measured.
     fn measure(self: *Netplay) void {
         const s = self.main() orelse {
             self.meter = .{};
@@ -890,43 +1274,84 @@ pub const Netplay = struct {
         const span = self.now_ns -| since;
         if (span < std.time.ns_per_s) return;
         if (m.hold_from) |from| m.wait_ns += self.now_ns -| from;
+        // The host's round trip: its longest link's.
+        var rtt = s.rtt_ns;
+        if (self.role == .host) for (self.members) |x| if (x) |y| {
+            rtt = @max(rtt, y.session.rtt_ns);
+        };
         const l: protocol.Load = .{
             .ticks = @intCast(@min(255, (@as(u64, m.ticks) * std.time.ns_per_s + span / 2) / span)),
             .busy = percent(m.busy_ns, span),
             .wait = percent(m.wait_ns, span),
-            .ping = @intCast(@min(s.rtt_ns / std.time.ns_per_ms, protocol.max_ping)),
+            .ping = @intCast(@min(rtt / std.time.ns_per_ms, protocol.max_ping)),
         };
         m.* = .{ .since_ns = self.now_ns, .hold_from = if (m.hold_from != null) self.now_ns else null, .last = l };
-        s.sayLoad(l);
+        switch (self.role) {
+            .guest => s.sayLoad(l),
+            .host => for (self.members) |x| if (x) |to| {
+                to.session.sayLoad(l);
+                for (self.members, 0..) |y, k| if (y) |from| if (from != to) if (from.session.peer_load) |theirs| {
+                    to.session.sayLoadOf(@intCast(k), theirs);
+                };
+            },
+        }
     }
 
     /// The stats of the session of play, from its first second on (null before, or outside one).
     pub fn stats(self: *const Netplay) ?Stats {
         const s = self.main() orelse return null;
         if (s.phase != .playing) return null;
-        return .{
+        var out: Stats = .{
             .local = self.meter.last orelse return null,
             .peer = s.peer_load,
             .delay = s.delay,
             .host = self.role == .host,
             .client = if (self.role == .host) s.peer_name else s.config.name,
         };
+        switch (self.role) {
+            .host => {
+                out.machines[0] = .{ .in = true, .load = out.local };
+                for (self.members, 0..) |m, k| if (m) |x| if (x.session.phase == .playing) {
+                    out.machines[k] = .{ .in = true, .load = x.session.peer_load, .name = x.session.peer_name };
+                };
+            },
+            .guest => {
+                out.machines[0] = .{ .in = true, .load = s.peer_load };
+                out.machines[s.place] = .{ .in = true, .load = out.local, .name = s.config.name };
+                for (s.others, 0..) |o, k| if (o.active(s.next)) {
+                    out.machines[k] = .{ .in = true, .load = s.loads[k] };
+                };
+            },
+        }
+        return out;
     }
 
     /// Whether the state before the next tick is due for a check (then give it to `check`): the
-    /// session's, or an observer's.
+    /// sessions', or an observer's.
     pub fn checkDue(self: *const Netplay) bool {
-        if (self.main()) |s| if (s.checkDue()) return true;
+        switch (self.role) {
+            .guest => if (self.main().?.checkDue()) return true,
+            .host => for (self.members) |m| if (m) |x| if (x.session.checkDue()) return true,
+        }
         for (self.peers.items) |peer| if (peer.session.observerCheckDue()) return true;
         return false;
     }
 
     /// The state's hash and its canonical form, before the next tick.
     pub fn check(self: *Netplay, p: *platform.Platform, hash: u64, form: []const u8) void {
-        if (self.main()) |s| if (s.checkDue()) s.check(hash, form);
+        switch (self.role) {
+            .guest => {
+                const s = self.main().?;
+                if (s.checkDue()) s.check(hash, form);
+            },
+            .host => for (self.members) |m| if (m) |x| if (x.session.checkDue()) x.session.check(hash, form),
+        }
         for (self.peers.items) |peer| peer.session.observerHash(hash);
         self.flushAll(p);
-        if (self.main() != null) self.takeNotes(if (self.role == .host) self.player.? else self.hostPeer());
+        switch (self.role) {
+            .guest => self.takeNotes(self.hostPeer()),
+            .host => for (self.members) |m| if (m) |x| self.takeNotes(x),
+        }
     }
 
     /// The next tick of the session.
@@ -935,7 +1360,17 @@ pub const Netplay = struct {
         return s.next;
     }
 
+    /// The session of play's phase: on the host, stopped at a mismatch with any client, else
+    /// playing while one plays.
     pub fn phase(self: *const Netplay) session_mod.Phase {
+        if (self.role == .host) {
+            var any: ?session_mod.Phase = null;
+            for (self.members) |m| if (m) |x| {
+                if (x.session.phase == .desynced) return .desynced;
+                if (x.session.inSession()) any = x.session.phase;
+            };
+            return any orelse if (self.open) .lobby else .idle;
+        }
         const s = self.main() orelse return if (self.open) .lobby else .idle;
         return s.phase;
     }
@@ -947,7 +1382,8 @@ pub const Netplay = struct {
         return s.localPlayer();
     }
 
-    /// The other machine's player in the session's game.
+    /// The other machine's player in the session's game (the host's first client's on the
+    /// host).
     pub fn peerPlayer(self: *const Netplay) input.Player {
         const s = self.main() orelse return if (self.role == .host) 1 else 0;
         return s.peerPlayer();
@@ -955,72 +1391,134 @@ pub const Netplay = struct {
 
     /// Whether a session runs (held or not, stopped at a mismatch), or the client watches.
     pub fn inSession(self: *const Netplay) bool {
+        if (self.role == .host) return self.memberCount() != 0;
         const s = self.main() orelse return false;
         return s.inSession();
     }
 
     /// The input delay of the session of play.
     pub fn delay(self: *const Netplay) u8 {
+        if (self.role == .host) return if (self.player() != null) self.group_delay else 0;
         const s = self.main() orelse return 0;
         return s.delay;
     }
 
-    /// Whether the session of play's connection is up.
+    /// Whether the session of play's connections are up.
     pub fn connected(self: *const Netplay) bool {
+        if (self.role == .host) {
+            var any = false;
+            for (self.members) |m| if (m) |x| {
+                if (!x.session.connected) return false;
+                any = true;
+            };
+            return any;
+        }
         const s = self.main() orelse return false;
         return s.connected;
     }
 
-    /// How long the session's connection has been down (null: it is up, or no session).
+    /// How long the session's connection has been down (null: it is up, or no session): on the
+    /// host, the longest of its clients' that may still come back.
     pub fn lostFor(self: *const Netplay) ?u64 {
+        if (self.role == .host) return if (self.lostPlayer()) |d| d.ns else null;
         const s = self.main() orelse return null;
         return s.lostFor(self.now_ns);
     }
 
-    /// The session of play ends on this machine (its game ended, or a player that did not come
-    /// back): the host's player is a client in its menu again (or goes, its connection down).
+    /// The host's client player whose connection has been down longest, and for how long.
+    pub const Lost = struct { player: input.Player, ns: u64 };
+
+    pub fn lostPlayer(self: *const Netplay) ?Lost {
+        var out: ?Lost = null;
+        for (self.members, 0..) |m, k| if (m) |x| if (x.session.lostFor(self.now_ns)) |t| {
+            if (out == null or t > out.?.ns) out = .{ .player = @intCast(k), .ns = t };
+        };
+        return out;
+    }
+
+    /// The session of play ends on this machine (its game ended): the host's players are clients
+    /// in its menu again (or go, their connections down).
     pub fn end(self: *Netplay, p: *platform.Platform, why: session_mod.End) void {
-        const s = self.main() orelse return;
-        s.end(why);
-        self.flushAll(p);
-        if (self.role == .host) {
-            self.takeNotes(self.player.?);
-            self.sendStatus(p);
-        } else self.takeNotes(self.hostPeer());
+        switch (self.role) {
+            .guest => {
+                self.main().?.end(why);
+                self.flushAll(p);
+                self.takeNotes(self.hostPeer());
+            },
+            .host => {
+                for (self.members) |m| if (m) |x| x.session.end(why);
+                self.flushAll(p);
+                for (self.members) |m| if (m) |x| self.takeNotes(x);
+                self.joiners = @splat(null);
+                self.changes = .{};
+                self.sendStatus(p);
+            },
+        }
     }
 
-    /// Our player opened the settings screen (`open`) or closed it: the other player is told.
+    /// Our player opened the settings screen (`open`) or closed it: the other players are told.
     pub fn inSettings(self: *Netplay, p: *platform.Platform, open: bool) void {
-        const s = self.main() orelse return;
-        if (open == s.local_settings) return;
-        s.inSettings(open);
+        switch (self.role) {
+            .guest => {
+                const s = self.main().?;
+                if (open == s.local_settings) return;
+                s.inSettings(open);
+            },
+            .host => for (self.members) |m| if (m) |x| x.session.inSettings(open),
+        }
         self.flushAll(p);
     }
 
-    /// Whether the other player is on the settings screen, as it said on the live connection.
+    /// Whether another player is on the settings screen, as it said on the live connection.
     pub fn peerInSettings(self: *const Netplay) bool {
-        const s = self.main() orelse return false;
-        return s.connected and s.peer_settings;
+        return self.settingsPlayer() != null;
     }
 
-    /// The stretch of the sound for the clock balancing, in parts per million.
+    /// The first other player on the settings screen, if any.
+    pub fn settingsPlayer(self: *const Netplay) ?input.Player {
+        switch (self.role) {
+            .host => {
+                for (self.members, 0..) |m, k| if (m) |x| if (x.session.connected and x.session.peer_settings) return @intCast(k);
+                return null;
+            },
+            .guest => {
+                const s = self.main().?;
+                if (!s.connected or s.settings_of == 0) return null;
+                return @intCast(@ctz(s.settings_of));
+            },
+        }
+    }
+
+    /// The stretch of the sound for the clock balancing, in parts per million: on the host, as
+    /// much as it is ahead of its furthest client.
     pub fn stretchPpm(self: *const Netplay) u32 {
+        if (self.role == .host) {
+            var most: u32 = 0;
+            for (self.members) |m| if (m) |x| {
+                most = @max(most, x.session.stretchPpm());
+            };
+            return most;
+        }
         const s = self.main() orelse return 0;
         return s.stretchPpm();
     }
 
-    /// The game quits: a farewell to each peer, then the connections close.
-    /// This machine's player leaves the game (Escape), not the program: the other player and the
-    /// observers are told, the connections stay.
+    /// This machine's player leaves the game (Escape), not the program: the other players and
+    /// the observers are told, the connections stay.
     pub fn leaveGame(self: *Netplay, p: *platform.Platform) void {
         for (self.peers.items) |peer| {
             peer.session.leaveGame();
             self.flush(p, peer);
             self.takeNotes(peer);
         }
-        if (self.role == .host) self.sendStatus(p);
+        if (self.role == .host) {
+            self.joiners = @splat(null);
+            self.changes = .{};
+            self.sendStatus(p);
+        }
     }
 
+    /// The game quits: a farewell to each peer, then the connections close.
     pub fn quit(self: *Netplay, p: *platform.Platform) void {
         for (self.peers.items) |peer| {
             peer.session.leave(.quit);

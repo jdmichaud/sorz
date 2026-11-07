@@ -59,11 +59,16 @@ pub const Message = enum {
     joining,
     /// The client's connection to its host is down: the game holds.
     player_1_away,
-    /// Player 2's connection is down: the game holds, counting down the seconds before it leaves.
+    /// Player 2's (3's, 4's) connection is down: the game holds, counting down the seconds before
+    /// it leaves.
     player_2_away,
-    /// The other player left: this one plays on, or goes back to its menu (notices).
+    player_3_away,
+    player_4_away,
+    /// Another player left: this one plays on, or goes back to its menu (notices).
     player_1_left,
     player_2_left,
+    player_3_left,
+    player_4_left,
     /// The host has as many clients as it takes (a notice).
     busy,
     /// The other machine plays another build or other game data (a notice).
@@ -81,8 +86,12 @@ pub const Message = enum {
             .joining => "JOINING",
             .player_1_away => "PLAYER 1 CANNOT BE REACHED\nWAITING",
             .player_2_away => "PLAYER 2 DISCONNECTED",
+            .player_3_away => "PLAYER 3 DISCONNECTED",
+            .player_4_away => "PLAYER 4 DISCONNECTED",
             .player_1_left => "PLAYER 1 LEFT",
             .player_2_left => "PLAYER 2 LEFT",
+            .player_3_left => "PLAYER 3 LEFT",
+            .player_4_left => "PLAYER 4 LEFT",
             .busy => "THE HOST HAS NO ROOM FOR YOU",
             .other_game => "THE OTHER GAME IS NOT THIS ONE",
             .desynced => "THE TWO GAMES DIFFER\nTHE GAME STOPPED",
@@ -91,17 +100,36 @@ pub const Message = enum {
         };
     }
 
-    /// Its text with its count of `seconds` (player 2's dropped connection's), in `buf`.
+    /// Player `k`'s (from 0: player 2 is 1) dropped connection, a client's.
+    pub fn away(k: input.Player) Message {
+        return switch (k) {
+            0, 1 => .player_2_away,
+            2 => .player_3_away,
+            3 => .player_4_away,
+        };
+    }
+
+    /// Player `k` left (from 0).
+    pub fn left(k: input.Player) Message {
+        return switch (k) {
+            0 => .player_1_left,
+            1 => .player_2_left,
+            2 => .player_3_left,
+            3 => .player_4_left,
+        };
+    }
+
+    /// Its text with its count of `seconds` (a player's dropped connection's), in `buf`.
     pub fn textWith(m: Message, seconds: u8, buf: *[64]u8) []const u8 {
-        if (m != .player_2_away) return m.text();
+        if (m != .player_2_away and m != .player_3_away and m != .player_4_away) return m.text();
         return std.fmt.bufPrint(buf, "{s}\nWAIT FOR {d} SEC", .{ m.text(), seconds }) catch m.text();
     }
 
     /// Whether the game waits under it; else it is a notice, which goes after `notice_ns`.
     pub fn holds(m: Message) bool {
         return switch (m) {
-            .waiting_for_player_1, .joining, .player_1_away, .player_2_away, .desynced => true,
-            .player_1_left, .player_2_left, .busy, .other_game, .cannot_host, .host_stopped => false,
+            .waiting_for_player_1, .joining, .player_1_away, .player_2_away, .player_3_away, .player_4_away, .desynced => true,
+            .player_1_left, .player_2_left, .player_3_left, .player_4_left, .busy, .other_game, .cannot_host, .host_stopped => false,
         };
     }
 };

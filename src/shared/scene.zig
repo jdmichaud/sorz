@@ -120,6 +120,9 @@ pub const Net = struct {
     observe_wait: bool = false,
     named: bool = true,
     name: [3]u8 = .{ ' ', ' ', ' ' },
+    /// A client: the player it would join the host's game as (from 0: player 2 is 1), which its
+    /// own select names.
+    seat: u2 = 1,
 };
 
 pub const NetRequest = enum { network_options, observe, name };

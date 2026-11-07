@@ -47,13 +47,16 @@
 //! menu. THE HOST STOPPED sends it to its menu from anywhere.
 //!
 //! **The offer**: what the host's game takes (`statusOf`, the status its clients hear, and
-//! `takes`, the join it takes, from one reading): its select once it shows, with one player;
-//! play, its player 2 free in the round, when JOIN IN PROGRESS allows; nothing between rounds,
-//! in a local game of two, nor outside a game. A client asks only what the offer allows; the
-//! host takes it if its game still offers it, else answers with its status, and the client
-//! decides again. The CPU's player 2 (PLAN item 30) is a place: a client that joins takes it
-//! from the CPU (at the select, where player 1 has not yet chosen for the CPU, or in the round,
-//! as a join drops in), and the CPU takes it back as the client leaves.
+//! `takes`, the join it takes, from one reading): a place free among the network options'
+//! PLAYERS (2 to 4: DESIGN.md 10.7, E4), the first (player 2, then 3, then 4) that no client
+//! plays or is about to: at its select once it shows; in play, a place whose fighter is not in
+//! the round, when JOIN IN PROGRESS allows; nothing between rounds, in a local game of two or
+//! more, nor outside a game. A client asks only what the offer allows; the host takes it if its
+//! game still offers it (in a session under way, at a tick every machine shares:
+//! `net.Netplay.scheduleJoin`), else answers with its status, and the client decides again. The
+//! CPU's player 2 (PLAN item 30) is a place: a client that joins takes it from the CPU (at the
+//! select, where player 1 has not yet chosen for the CPU, or in the round, as a join drops in),
+//! and the CPU takes it back as the client leaves.
 const std = @import("std");
 const platform = @import("platform.zig");
 const net = @import("net/root.zig");
@@ -88,8 +91,10 @@ pub const NetPlay = struct {
     cpu_seat: bool = false,
     /// A client's own set-up while its game is the host's.
     own_setup: ?Setup = null,
-    /// A client's count of a player's dropped connection (the seconds left, as the host said).
+    /// A client's count of a player's dropped connection (the seconds left, as the host said),
+    /// and that player.
     away_seconds: u8 = 0,
+    away_player: @import("input.zig").Player = 1,
     /// START held at the last update (an observer leaves with a new press).
     start_held: bool = false,
     /// The host's settings changed the rules of the game its client plays: they change at a tick
@@ -138,16 +143,23 @@ pub fn update(g: *Game, p: *platform.Platform) void {
 fn hostNote(g: *Game, p: *platform.Platform, np: *net.Netplay, n: net.netplay.Note) void {
     switch (n) {
         .started => |st| if (!st.resumed) g.notify(null),
-        // The client left the game (quit, Escape, or not back in time) while the host's player
-        // was in it, or out of it for its client: player 2 dies and is out, or goes back to the
-        // CPU it was taken from; the observers get the game again. (The host's own leaving ends
-        // the session too: nothing to say.)
-        .ended => |why| if (why != .game_over and (g.net.host == .game or g.net.host == .left or g.net.host == .watching) and g.state.inGame()) {
-            if (g.scene_assets) |*a| if (g.net.cpu_seat) g.state.toCpu(1, a) else g.state.dropOut(1, a);
-            g.net.cpu_seat = false;
-            g.notify(.player_2_left);
-            var buf: [Game.join_max]u8 = undefined;
-            np.resync(p, g.joinForm(&buf));
+        // A client left the game (quit, Escape, or not back in time) while the host's player was
+        // in it, or out of it for its clients: its player dies and is out, or goes back to the
+        // CPU it was taken from (at the tick its pads ran out: a change the others made with the
+        // host's game, `made`, while they play on; else now); the observers get the game again.
+        // (The host's own leaving ends the session too: nothing to say.)
+        .member_ended => |x| if (x.why != .game_over and (g.net.host == .game or g.net.host == .left or g.net.host == .watching) and g.state.inGame()) {
+            const cpu = g.net.cpu_seat and np.cpu_place == x.player;
+            if (!x.made) {
+                if (g.scene_assets) |*a| if (cpu) g.state.toCpu(x.player, a) else g.state.dropOut(x.player, a);
+                var buf: [Game.join_max]u8 = undefined;
+                np.resync(p, g.joinForm(&buf));
+            }
+            if (cpu) {
+                g.net.cpu_seat = false;
+                np.cpu_place = null;
+            }
+            g.notify(Message.left(x.player));
         },
         else => {},
     }
@@ -189,7 +201,11 @@ fn clientNote(g: *Game, p: *platform.Platform, np: *net.Netplay, n: net.netplay.
         },
         .refused => |r| if (r != .stopped) g.notify(if (r == .busy) .busy else .other_game),
         .left => |r| return r == .stopped,
-        .away => |seconds| g.net.away_seconds = seconds,
+        .away => |a| {
+            // The end of one player's count, or another's.
+            if (a.seconds != 0 or a.player == g.net.away_player) g.net.away_seconds = a.seconds;
+            if (a.seconds != 0) g.net.away_player = @intCast(a.player);
+        },
         else => {},
     }
     return false;
@@ -236,20 +252,37 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
             g.net.pending_rules = null;
         }
     }
-    np.setStatus(p, statusOf(&g.state, g.net.local_two));
+    const offer = offerOf(g, np);
+    np.setStatus(p, statusOf(&g.state, offer));
     if (np.joinAsked()) |ask_| {
         const character: ?Character = if (ask_.character == protocol.no_character) null else @fromBackingInt(@as(u8, ask_.character));
         const cursor: ?Character = if (ask_.cursor == protocol.no_character) null else @fromBackingInt(@as(u8, ask_.cursor));
-        if (g.net.host == .game and !np.inSession() and takes(&g.state, g.net.local_two, np.join_in_progress, character)) {
-            g.net.cpu_seat = g.state.setup.cpu[1];
-            g.state.join(character, cursor, assets);
-            var buf: [Game.join_max]u8 = undefined;
-            const form = g.joinForm(&buf);
-            np.begin(p, ask_.peer, form);
-            np.resync(p, form);
-            // The client's game starts from this state: the host's next tick is the session's
-            // first.
-            g.redraw = true;
+        const place = statusOf(&g.state, offer).next_place;
+        const name = ask_.peer.session.peer_name;
+        if (g.net.host == .game and place != 0 and takes(&g.state, offer, np.join_in_progress, character)) {
+            const k: @import("input.zig").Player = @intCast(place);
+            const cpu = g.state.setup.cpu[k];
+            if (!np.inSession()) {
+                // A new session: the client's game starts from this state, the host's next tick
+                // the session's first.
+                g.net.cpu_seat = cpu;
+                np.cpu_place = if (cpu) k else null;
+                g.state.join(k, character, cursor, assets);
+                g.state.setup.names[0] = hostName(g);
+                g.state.setup.names[k] = name;
+                var buf: [Game.join_max]u8 = undefined;
+                const form = g.joinForm(&buf);
+                np.begin(p, ask_.peer, k, form);
+                np.resync(p, form);
+                g.redraw = true;
+            } else if (np.scheduleJoin(p, ask_.peer, k, ask_.character, ask_.cursor, name)) {
+                // In the session under way: every machine makes the join at one tick to come
+                // (`applyEvent`).
+                if (cpu) {
+                    g.net.cpu_seat = true;
+                    np.cpu_place = k;
+                }
+            } else np.declineJoin(p, ask_.peer);
         } else np.declineJoin(p, ask_.peer);
     }
     if (np.observeAsked()) |peer| {
@@ -261,32 +294,78 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     }
 }
 
+/// What the host's session offers beside its game: whether its game is a local one of two or
+/// more (no place), its places (the network options' PLAYERS), and the places its clients play
+/// or are about to (a bit each).
+pub const Offer = struct { local_two: bool = false, places: u8 = 2, taken: u8 = 0 };
+
+fn offerOf(g: *const Game, np: *const net.Netplay) Offer {
+    var o: Offer = .{ .local_two = g.net.local_two, .places = g.net.options.places };
+    for (1..net.netplay.max_players) |k| if (np.placeTaken(k)) {
+        o.taken |= @as(u8, 1) << @intCast(k);
+    };
+    return o;
+}
+
+/// The host's player's name in its game: its settings' name, when given.
+fn hostName(g: *const Game) ?[3]u8 {
+    return if (g.settings.named()) g.settings.name else null;
+}
+
 /// What the host's game offers, as its clients hear it: its front end (`none`, a place free for
-/// a client to wait at its own select), its select (a place free once it shows, one player at
-/// it), or play with player 1's character, a place free while player 2 has no fighter in the
-/// round or is the CPU's. Between rounds, in a local game of two, or a select not shown yet: no place now; a
-/// game to watch all the same. (Netplay adds the session's flags: open, a player already in,
-/// JOIN IN PROGRESS.)
-pub fn statusOf(s: *const State, local_two: bool) protocol.Status {
-    if (!s.inGame()) return .{ .place = true };
+/// a client to wait at its own select), its select (a place free once it shows, while a player's
+/// place is free at it), or play with player 1's character, a place free while a player's place
+/// has no fighter in the round or is the CPU's (and no join is under way there); with the place a
+/// join takes (`next_place`, the first free) and the characters the round's players play.
+/// Between rounds, in a local game of two or more, or a select not shown yet: no place now; a
+/// game to watch all the same. (Netplay adds the session's flags: open, JOIN IN PROGRESS.)
+pub fn statusOf(s: *const State, o: Offer) protocol.Status {
+    if (!s.inGame()) return .{ .place = true, .next_place = firstFree(o, null) orelse 1 };
     if (s.scenes.next == null) switch (s.scenes.base) {
         .select => |*sel| if (sel.phase != .wait and sel.phase != .fade_out and sel.phase != .leaving) {
-            return .{ .game = .select, .place = sel.joinable() and sel.settled() and !local_two };
+            const k = if (o.local_two or !sel.joinableUpTo(o.places) or !sel.settled()) null else firstFree(o, sel);
+            return .{ .game = .select, .place = k != null, .next_place = k orelse 0 };
         },
         else => {},
     };
     const c = s.setup.characters[0] orelse return .{};
-    const place = !local_two and switch (s.scenes.base) {
-        .round => |*r| s.scenes.next == null and r.takesJoins() and (r.play.world.players[1].entity == null or s.setup.cpu[1]),
-        else => false,
-    };
-    return .{ .game = .play, .character = @backingInt(c), .place = place };
+    var st: protocol.Status = .{ .game = .play, .character = @backingInt(c) };
+    switch (s.scenes.base) {
+        .round => |*r| {
+            const w = &r.play.world;
+            const open = !o.local_two and s.scenes.next == null and r.takesJoins() and r.join_as == null;
+            if (open) for (1..o.places) |k| {
+                const free = o.taken & @as(u8, 1) << @intCast(k) == 0 and (w.players[k].entity == null or s.setup.cpu[k]);
+                if (free) {
+                    st.place = true;
+                    st.next_place = @intCast(k);
+                    break;
+                }
+            };
+            for (w.players, s.setup.characters, 0..) |pl, ch, k| if (pl.entity != null and k != st.next_place) if (ch) |x| {
+                st.taken |= @as(u8, 1) << @intCast(@backingInt(x));
+            };
+        },
+        else => {},
+    }
+    return st;
+}
+
+/// The first player's place free (1 to 3) among `o`'s places: no client's, nor at the select
+/// `sel`, if there is one.
+fn firstFree(o: Offer, sel: ?*const @import("screens/select.zig").Select) ?u8 {
+    for (1..o.places) |k| {
+        if (o.taken & @as(u8, 1) << @intCast(k) != 0) continue;
+        if (sel) |x| if (x.has(k)) continue;
+        return @intCast(k);
+    }
+    return null;
 }
 
 /// Whether the host's game takes a join now, as `character` (null: none chosen): its offer, the
 /// same reading as `statusOf`'s.
-fn takes(s: *const State, local_two: bool, join_in_progress: bool, character: ?Character) bool {
-    const st = statusOf(s, local_two);
+fn takes(s: *const State, o: Offer, join_in_progress: bool, character: ?Character) bool {
+    const st = statusOf(s, o);
     return switch (st.game) {
         .none => false,
         .select => st.place,
@@ -300,6 +379,7 @@ pub fn openLobby(g: *Game, p: *platform.Platform, over_game: bool) void {
     const np = g.netplay orelse return;
     const o = g.net.options;
     const options: NetOptions = .{
+        .places = o.places,
         .observers = o.observers,
         .same_character = o.same_character,
         .join_in_progress = o.join_in_progress,
@@ -384,7 +464,7 @@ pub fn lists(g: *Game, p: *platform.Platform) void {
     if (lobbyOf(g)) |x| {
         if (!std.meta.eql(x.choice(), g.net.options)) {
             g.net.options = x.choice();
-            if (np.open) np.setOptions(p, x.observers, x.same_character, x.join_in_progress);
+            if (np.open) np.setOptions(p, g.net.options.observers, g.net.options.same_character, g.net.options.join_in_progress);
         }
         const can_return = g.net.host == .left and x.join_in_progress and !np.eventDue() and np.inSession() and switch (g.state.scenes.base) {
             .round => |*r| g.state.scenes.next == null and r.play.world.players[0].entity == null,
@@ -557,7 +637,8 @@ fn toOwnSelect(g: *Game) bool {
         else => return false,
     };
     const a = if (g.scene_assets) |*x| &x.select else return false;
-    if (!sel.keepSecond(a)) return false;
+    const np = g.netplay orelse return false;
+    if (!sel.keepOnly(np.localPlayer(), a)) return false;
     var own = g.net.own_setup orelse g.state.setup;
     own.progress = .{};
     own.players = .one;
@@ -678,6 +759,7 @@ pub fn facts(g: *const Game) scene.Net {
             const st = np.hostStatus();
             n.can_join = st.open and st.place;
             n.can_observe = st.open and st.observers and st.game != .none;
+            if (st.next_place != 0) n.seat = @intCast(st.next_place);
         }
     }
     return n;
@@ -690,10 +772,25 @@ pub fn facts(g: *const Game) scene.Net {
 /// host's observers take the game again.
 pub fn applyEvent(g: *Game, p: *platform.Platform, np: *net.Netplay, e: protocol.Event) void {
     const a = if (g.scene_assets) |*x| x else return;
+    const k: @import("input.zig").Player = @intCast(e.player);
     switch (e.what) {
-        .leave => {
-            g.state.dropOut(@intCast(e.player), a);
-            if (np.role == .guest) g.notify(.player_1_left);
+        // A player leaves, or a client's place goes back to the CPU: the host hears its client's
+        // leave from its session too (`member_ended`).
+        .leave, .cpu => {
+            if (e.what == .cpu) g.state.toCpu(k, a) else g.state.dropOut(k, a);
+            if (np.role == .guest) g.notify(Message.left(k));
+        },
+        // Another client joins: in the game from this tick, its name with it; on the host, its
+        // session begins from the game as it is now.
+        .join => {
+            const character: ?Character = if (e.character < protocol.characters) @fromBackingInt(e.character) else null;
+            const cursor: ?Character = if (e.cursor < protocol.characters) @fromBackingInt(e.cursor) else null;
+            g.state.join(k, character, cursor, a);
+            if (e.name[0] != 0) g.state.setup.names[k] = e.name;
+            if (np.role == .host) {
+                var buf: [Game.join_max]u8 = undefined;
+                np.beginJoin(p, k, g.joinForm(&buf));
+            }
         },
         .back => {
             // In a round that still takes a join (not fading out to its end); else the host's
@@ -720,9 +817,9 @@ pub fn applyEvent(g: *Game, p: *platform.Platform, np: *net.Netplay, e: protocol
 }
 
 /// The waits network play holds the game for, and their messages: a player's dropped connection
-/// counted down (the host gives it up after `rejoin_ns`, the client a second later); a player's
-/// connection down for an observer; the client's watch asked, or its choice made at its own
-/// select before the host's game takes it; two games that differ.
+/// counted down (the host gives it up after `rejoin_ns`, the client a second later); another
+/// player's connection down for the other clients and the observers; the client's watch asked,
+/// or its choice made at its own select before the host's game takes it; two games that differ.
 fn waits(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     var message: ?Message = null;
     var seconds: u8 = 0;
@@ -730,17 +827,17 @@ fn waits(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
         message = .desynced;
     } else if (np.lostFor()) |t| switch (np.role) {
         .host => {
-            message = .player_2_away;
+            message = Message.away(if (np.lostPlayer()) |d| d.player else 1);
             seconds = @intCast((net.session.rejoin_ns -| t + std.time.ns_per_s - 1) / std.time.ns_per_s);
-            if (t > net.session.rejoin_ns) np.end(p, .lost);
+            if (t > net.session.rejoin_ns) np.giveUp(p);
         },
         .guest => {
             message = .player_1_away;
             if (t > net.session.rejoin_ns + std.time.ns_per_s) np.end(p, .lost);
         },
     } else if (np.role == .guest) switch (g.net.client) {
-        .observing => if (g.net.away_seconds != 0) {
-            message = .player_2_away;
+        .observing, .playing => if (g.net.away_seconds != 0 and np.phase() != .lobby) {
+            message = Message.away(g.net.away_player);
             seconds = g.net.away_seconds;
         },
         .watch_asked => message = .joining,
@@ -761,45 +858,53 @@ pub fn ownControl(g: *const Game) u8 {
 
 test "the host's status: its front end, a select once it shows, play with player 1's character; room" {
     var s: State = .{};
-    try std.testing.expectEqual(protocol.Status{ .place = true }, statusOf(&s, false));
+    try std.testing.expectEqual(protocol.Status{ .place = true, .next_place = 1 }, statusOf(&s, .{}));
     // The select: no place before it shows, none with two players at it; a game to watch.
     s.scenes.base = .{ .select = .{} };
-    try std.testing.expectEqual(protocol.Status{ .game = .select }, statusOf(&s, false));
+    try std.testing.expectEqual(protocol.Status{ .game = .select }, statusOf(&s, .{}));
     s.scenes.base.select.players = .two;
     s.scenes.base.select.phase = .first_half;
-    try std.testing.expectEqual(protocol.Status{ .game = .select }, statusOf(&s, false));
+    try std.testing.expectEqual(protocol.Status{ .game = .select }, statusOf(&s, .{}));
+    // With three places, player 3's.
+    try std.testing.expectEqual(protocol.Status{ .game = .select, .place = true, .next_place = 2 }, statusOf(&s, .{ .places = 3 }));
     s.scenes.base.select.players = .one;
-    try std.testing.expectEqual(protocol.Status{ .game = .select, .place = true }, statusOf(&s, false));
-    // A local game of two offers no place.
-    try std.testing.expect(!statusOf(&s, true).place);
+    try std.testing.expectEqual(protocol.Status{ .game = .select, .place = true, .next_place = 1 }, statusOf(&s, .{}));
+    // A local game of two offers no place; a place a client is about to take is not free.
+    try std.testing.expect(!statusOf(&s, .{ .local_two = true }).place);
+    try std.testing.expect(!statusOf(&s, .{ .taken = 0b10 }).place);
+    try std.testing.expectEqual(@as(u8, 3), statusOf(&s, .{ .places = 4, .taken = 0b110 }).next_place);
     s.scenes.base.select.phase = .wait;
     s.setup.characters[0] = .blaze;
-    try std.testing.expectEqual(protocol.Status{ .game = .play, .character = 2 }, statusOf(&s, false));
+    try std.testing.expectEqual(protocol.Status{ .game = .play, .character = 2 }, statusOf(&s, .{}));
     s.scenes.base = .{ .round = .{} };
-    try std.testing.expectEqual(protocol.Status{ .game = .play, .character = 2, .place = true }, statusOf(&s, false));
+    try std.testing.expectEqual(protocol.Status{ .game = .play, .character = 2, .place = true, .next_place = 1 }, statusOf(&s, .{}));
     // The round fading out to its end: no place (a join would be made at no play tick).
     s.scenes.base.round.phase = .leaving;
-    try std.testing.expect(!statusOf(&s, false).place);
+    try std.testing.expect(!statusOf(&s, .{}).place);
     s.scenes.base.round.phase = .play;
-    // Player 2 in the round: no room; between rounds: none now.
+    // Player 2 in the round: no room, but player 3's with three places; Blaze and Axel taken;
+    // between rounds: none now.
+    s.scenes.base.round.play.world.players[0].entity = .{ .index = 0, .generation = 0 };
     s.scenes.base.round.play.world.players[1].entity = .{ .index = 1, .generation = 0 };
-    try std.testing.expect(!statusOf(&s, false).place);
+    s.setup.characters[1] = .axel;
+    try std.testing.expect(!statusOf(&s, .{}).place);
+    try std.testing.expectEqual(protocol.Status{ .game = .play, .character = 2, .place = true, .next_place = 2, .taken = 0b110 }, statusOf(&s, .{ .places = 3 }));
     s.scenes.base = .{ .round_clear = .{} };
-    try std.testing.expect(!statusOf(&s, false).place);
+    try std.testing.expect(!statusOf(&s, .{}).place);
     s.scenes.base = .{ .high_scores = .{} };
-    try std.testing.expectEqual(protocol.Status{ .place = true }, statusOf(&s, false));
+    try std.testing.expectEqual(protocol.Status{ .place = true, .next_place = 1 }, statusOf(&s, .{}));
 }
 
 test "the join the host takes is its offer: its select at once, play with a character when allowed" {
     var s: State = .{};
-    try std.testing.expect(!takes(&s, false, true, .adam));
+    try std.testing.expect(!takes(&s, .{}, true, .adam));
     s.scenes.base = .{ .select = .{ .phase = .first_half } };
-    try std.testing.expect(takes(&s, false, true, null));
+    try std.testing.expect(takes(&s, .{}, true, null));
     s.setup.characters[0] = .axel;
     s.scenes.base = .{ .round = .{} };
-    try std.testing.expect(takes(&s, false, true, .adam));
-    try std.testing.expect(!takes(&s, false, true, null));
-    try std.testing.expect(!takes(&s, false, false, .adam));
+    try std.testing.expect(takes(&s, .{}, true, .adam));
+    try std.testing.expect(!takes(&s, .{}, true, null));
+    try std.testing.expect(!takes(&s, .{}, false, .adam));
 }
 
 test "a client's own select is the select alone" {

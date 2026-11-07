@@ -267,19 +267,19 @@ pub const State = struct {
         };
     }
 
-    /// The second player joins (network play's host's game takes it now, `network_play.takes`):
-    /// at the character select (its cursor where it was at its own select, `cursor`, its choice
-    /// kept), or in the round as `character`. A player 2 of the CPU's is the newcomer's: in the
+    /// Player `who` joins (network play's host's game takes it now, `network_play.takes`): at
+    /// the character select (its cursor where it was at its own select, `cursor`, its choice
+    /// kept), or in the round as `character`. A player of the CPU's is the newcomer's: in the
     /// round, the CPU's fighter goes at the next logic tick, as the newcomer's drops in.
-    pub fn join(self: *State, character: ?setup_mod.Character, cursor: ?setup_mod.Character, assets: *const scene.Assets) void {
+    pub fn join(self: *State, who: input.Player, character: ?setup_mod.Character, cursor: ?setup_mod.Character, assets: *const scene.Assets) void {
         switch (self.scenes.base) {
-            .select => |*s| s.join(&self.setup, &assets.select, cursor orelse character, character != null),
-            .round => |*r| if (self.setup.cpu[1]) r.takeOver(1, character.?) else {
-                _ = r.dropIn(1, character.?);
+            .select => |*s| s.join(who, &self.setup, &assets.select, cursor orelse character, character != null),
+            .round => |*r| if (character) |c| {
+                if (self.setup.cpu[who]) r.takeOver(who, c) else _ = r.dropIn(who, c);
             },
             else => {},
         }
-        self.setup.cpu[1] = false;
+        self.setup.cpu[who] = false;
     }
 
     /// Player `who` goes back to the CPU it was taken from (network play's client who left a
@@ -287,7 +287,7 @@ pub const State = struct {
     /// cursor goes, and player 1 chooses for the CPU once it has chosen.
     pub fn toCpu(self: *State, who: input.Player, assets: *const scene.Assets) void {
         switch (self.scenes.base) {
-            .select => |*s| if (who == 1) s.leave(&self.setup, &assets.select),
+            .select => |*s| if (who != 0) s.leave(who, &self.setup, &assets.select),
             else => {},
         }
         self.setup.players = .of(@max(self.setup.players.count(), @as(usize, who) + 1, 2));
@@ -310,7 +310,7 @@ pub const State = struct {
     /// the second player gone from the character select.
     pub fn dropOut(self: *State, who: input.Player, assets: *const scene.Assets) void {
         switch (self.scenes.base) {
-            .select => |*s| if (who == 1) s.leave(&self.setup, &assets.select),
+            .select => |*s| if (who != 0) s.leave(who, &self.setup, &assets.select),
             .round => |*r| r.dropOut(who),
             .round_clear, .next_round => self.setup.progress.players[who].in_play = false,
             else => {},
@@ -1175,13 +1175,15 @@ pub const Game = struct {
     /// The other player's being in the settings, as the session says it: both games hold, and both
     /// hear the pause's jingle.
     fn peerOverlay(self: *Game, np: *const net.Netplay) void {
-        const in = np.peerInSettings();
-        const shown = self.overlays.find(.peer_settings) != null;
-        if (in == shown) return;
+        const who = np.settingsPlayer();
+        const shown = self.overlays.find(.peer_settings);
+        if (who == null and shown == null) return;
+        if (who != null and shown != null and shown.?.peer_settings == who.?) return;
         self.overlay_dirty = true;
-        if (!in) return self.overlays.remove(.peer_settings);
-        self.overlays.push(.{ .peer_settings = np.peerPlayer() });
-        self.jingle_at = 0;
+        const x = who orelse return self.overlays.remove(.peer_settings);
+        // Another player's in place of one shown: no new jingle.
+        if (shown == null) self.jingle_at = 0;
+        self.overlays.push(.{ .peer_settings = x });
     }
 
     /// The overlays hold the game: no tick runs, the clock does not run ahead, and the sound fades
@@ -1275,7 +1277,8 @@ pub const Game = struct {
             // A client's pad goes by its own CONTROL into the host's game.
             const local = if (np.role == .guest) self.toGameControl(pads.pad1) else pads.pad1;
             pads = np.pads(p, local) orelse return false;
-            if (np.eventAt()) |e| network_play.applyEvent(self, p, np, e);
+            // The changes of the game before this tick, in turn.
+            while (np.takeEvent()) |e| network_play.applyEvent(self, p, np, e);
         } else if (self.netplay) |np| if (np.role == .host and np.open and !self.net.local_two) {
             // The host's server open: its second player is the network's, not this machine's
             // (but in a local game of two).
