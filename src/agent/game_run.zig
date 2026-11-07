@@ -631,6 +631,12 @@ pub const Run = struct {
     /// Player 1's pad at the script's tick `now` by the bot's rule (`bot TICKS`, sor-remaster's
     /// runner's): out of play (the continue's question, a screen), START now and then; in play,
     /// the CPU's fight (world/cpu.zig).
+    /// The script's `cpu N on|off`: the game's CPU plays player `k` from now on, or no more (the
+    /// set-up's CPU players: the runner's write, as players 3 and 4's start is).
+    pub fn cpu(self: *Run, k: u2, on: bool) void {
+        self.state.setup.cpu[k] = on;
+    }
+
     pub fn bot(self: *Run, now: u64) input.Pad {
         const out_of_play: input.Pad = .{ .start = now % 16 == 0 };
         const r = self.round() orelse return out_of_play;

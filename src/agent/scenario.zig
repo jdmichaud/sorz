@@ -111,6 +111,10 @@ pub const Command = struct {
         /// Player 1 played `bot` ticks by the bot's rule (the context's `bot`, as sor-remaster's
         /// runner's): the script goes on after.
         bot: u32,
+        /// The game's CPU plays player `pad` from now on (`on`), or no more: the context's `cpu`
+        /// (the game's set-up's CPU players, sorz's own: the CPUs' rounds of three and four
+        /// players, round 8 among them).
+        cpu: struct { pad: u2, on: bool },
     },
 };
 
@@ -187,6 +191,15 @@ pub fn parse(gpa: std.mem.Allocator, text: []const u8, diag: *Diagnostic) !Scrip
             if (count != 2) return refuse(diag, n, "`wait TICKS`");
             const t = number(w[1]) orelse return refuse(diag, n, "a wait is a number of ticks");
             try commands.append(gpa, .{ .line = n, .op = .{ .wait = t } });
+            continue;
+        }
+        if (std.mem.eql(u8, w[0], "cpu")) {
+            const bad = "`cpu N on` or `cpu N off`, N 1 to 4";
+            if (count != 3) return refuse(diag, n, bad);
+            const which = number(w[1]) orelse 0;
+            const on = std.mem.eql(u8, w[2], "on");
+            if (which < 1 or which > input.max_players or !(on or std.mem.eql(u8, w[2], "off"))) return refuse(diag, n, bad);
+            try commands.append(gpa, .{ .line = n, .op = .{ .cpu = .{ .pad = @intCast(which - 1), .on = on } } });
             continue;
         }
         if (std.mem.eql(u8, w[0], "bot")) {
@@ -325,23 +338,28 @@ pub const Body = struct {
                     self.bot_left = t;
                     self.resume_at = self.now + t;
                 },
+                .cpu => |x| if (comptime hasDecl(@TypeOf(ctx), "cpu")) ctx.cpu(x.pad, x.on),
             }
         }
         var held = self.pads();
         if (self.bot_left != 0) {
             self.bot_left -= 1;
-            const Ctx = switch (@typeInfo(@TypeOf(ctx))) {
-                .pointer => |ptr| ptr.child,
-                else => @TypeOf(ctx),
-            };
-            const has = switch (@typeInfo(Ctx)) {
-                .@"struct", .@"union", .@"enum", .@"opaque" => @hasDecl(Ctx, "bot"),
-                else => false,
-            };
-            if (has) held.pad1 = ctx.bot(self.now);
+            if (comptime hasDecl(@TypeOf(ctx), "bot")) held.pad1 = ctx.bot(self.now);
         }
         self.now += 1;
         return held;
+    }
+
+    /// Whether the context (a pointer to it, or itself) has the declaration `name`.
+    fn hasDecl(comptime T: type, comptime name: []const u8) bool {
+        const Ctx = switch (@typeInfo(T)) {
+            .pointer => |ptr| ptr.child,
+            else => T,
+        };
+        return switch (@typeInfo(Ctx)) {
+            .@"struct", .@"union", .@"enum", .@"opaque" => @hasDecl(Ctx, name),
+            else => false,
+        };
     }
 
     fn set(self: *Body, pad: u2, buttons: u8, until: ?u64) void {
@@ -1849,4 +1867,29 @@ test "a recorded play's start: its pads by display tick, a malformed line refuse
     try std.testing.expectEqual(@as(usize, 2), pads.len);
     try std.testing.expect(pads[1].pad1.start and pads[1].pad1.right and pads[1].pad2.up);
     try std.testing.expectEqual(@as(?[]input.Pads, null), try parsePads(gpa, "000\n"));
+}
+
+test "the CPU's lines: the context told whom the CPU plays from then on" {
+    const gpa = std.testing.allocator;
+    var diag: Diagnostic = .{};
+    var s = try parse(gpa, "start axel blaze adam round 8\ncpu 3 on\ncpu 1 on\nwait 1\ncpu 1 off\n", &diag);
+    defer s.deinit(gpa);
+    const Ctx = struct {
+        cpu_of: [input.max_players]bool = @splat(false),
+        pub fn cpu(self: *@This(), k: u2, on: bool) void {
+            self.cpu_of[k] = on;
+        }
+        fn holds(_: *@This(), _: Condition) bool {
+            return true;
+        }
+    };
+    var ctx: Ctx = .{};
+    var body: Body = .{ .commands = s.commands };
+    _ = body.tick(&ctx, Ctx.holds).?;
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true, false }, &ctx.cpu_of);
+    _ = body.tick(&ctx, Ctx.holds);
+    try std.testing.expectEqualSlices(bool, &.{ false, false, true, false }, &ctx.cpu_of);
+    try std.testing.expectError(error.BadScenario, parse(gpa, "start axel\ncpu 5 on\n", &diag));
+    try std.testing.expectError(error.BadScenario, parse(gpa, "start axel\ncpu 1\n", &diag));
+    try std.testing.expectError(error.BadScenario, parse(gpa, "start axel\ncpu 1 yes\n", &diag));
 }
