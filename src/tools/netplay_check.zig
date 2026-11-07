@@ -1589,14 +1589,17 @@ fn difference(f: *Flow, r: *Room) !void {
 /// The clients' names in the flows of three and four machines.
 const many_names = [3][3]u8{ "ANN".*, "BOB".*, "CAT".* };
 
-/// A room of a host (named HST) and `n - 1` clients (ANN, BOB, CAT).
+/// A room of a host (named HST) and `n - 1` clients (ANN, BOB, CAT); `in` of them play the
+/// host's game (its players, the host's first).
 const Many = struct {
     host: *Machine,
     clients: [3]*Machine = undefined,
     n: usize,
+    in: usize = 1,
 
+    /// The clients in the host's game.
     fn all(m: *const Many) []const *Machine {
-        return m.clients[0 .. m.n - 1];
+        return m.clients[0 .. m.in - 1];
     }
 
     /// Player `k`'s machine (from 0: the host's).
@@ -1625,7 +1628,7 @@ fn hostPlayers(f: *Flow, r: *Room, host: *Machine, n: usize) !void {
     try f.until(r, host, inSelect, 600, "the host's select");
 }
 
-/// Every client's game the host's: at the same tick, the same state and picture.
+/// Every client's game in the session the host's: at the same tick, the same state and picture.
 fn sameAll(f: *Flow, r: *Room, m: *const Many, what: []const u8) !void {
     for (m.all()) |c| try same(f, r, m.host, c, what);
 }
@@ -1643,25 +1646,27 @@ fn sameAllFor(f: *Flow, r: *Room, m: *const Many, n: usize) !void {
     try f.check(agree, "the session's checks agree on every machine");
 }
 
-/// Each client in turn joins the host at its select, in the next place (player 2, 3, 4), its
-/// game the host's from then on; then every machine's select has its players.
-fn manyJoinAtSelect(f: *Flow, r: *Room, m: *const Many) !void {
-    for (m.all(), 1..) |c, place| {
+/// Clients join the host at its select in turn until `players` play, each in the next place
+/// (player 2, 3, 4), its game the host's from then on; then every machine's select has them.
+fn manyJoinAtSelect(f: *Flow, r: *Room, m: *Many, players: usize) !void {
+    while (m.in < players) {
+        const c = m.clients[m.in - 1];
         try clientJoins(f, r, c);
         try f.until(r, c, inSession, 900, "a client joins at the host's select");
         try f.until(r, c, inSelect, 200, "the client at the host's select, shown");
-        try f.check(c.np().localPlayer() == place, "each client in the next place");
-        for (m.clients[0..place]) |x| try same(f, r, m.host, x, "the same select on every machine in the session after a join");
+        try f.check(c.np().localPlayer() == m.in, "each client in the next place");
+        m.in += 1;
+        try sameAll(f, r, m, "the same select on every machine in the session after a join");
     }
-    for (0..m.n) |k| try f.check(selectOf(m.at(k)).?.players.count() == m.n, "every player at every machine's select");
+    for (0..m.in) |k| try f.check(selectOf(m.at(k)).?.players.count() == m.in, "every player at every machine's select");
 }
 
-/// Every machine's player moves its own cursor (right, once) and chooses; round 1 with every
+/// Every player's machine moves its own cursor (right, once) and chooses; round 1 with every
 /// player, the same on every machine. With three players on three characters, one for each, no
 /// cursor has another to go to: each stays; with four, each moves.
 fn manyChooseAndPlay(f: *Flow, r: *Room, m: *const Many) !void {
     const before = selectOf(m.host).?.cursors;
-    for (0..m.n) |k| {
+    for (0..m.in) |k| {
         try r.press(m.at(k), .right);
         try r.step(6);
     }
@@ -1670,23 +1675,72 @@ fn manyChooseAndPlay(f: *Flow, r: *Room, m: *const Many) !void {
     const after = selectOf(m.host).?.cursors;
     var moved = true;
     var apart = true;
-    for (0..m.n) |k| {
+    for (0..m.in) |k| {
         moved = moved and after[k].place != before[k].place;
         for (0..k) |j| apart = apart and after[j].place != after[k].place;
     }
-    try f.check(if (m.n == 4) moved else apart and std.meta.eql(before, after), "each player's cursor its own machine's (four: each moved; three: each on its own character)");
-    for (0..m.n) |k| try r.press(m.at(k), .z);
+    const ok = switch (m.in) {
+        4 => moved,
+        3 => apart and std.meta.eql(before, after),
+        else => moved,
+    };
+    try f.check(ok, "each player's cursor its own machine's (four, two: each moved; three: each on its own character)");
+    for (0..m.in) |k| try r.press(m.at(k), .z);
     try f.until(r, m.host, playing, 2400, "round 1");
     for (m.all()) |c| try f.until(r, c, playing, 100, "round 1 on a client");
     try sameAll(f, r, m, "the same round on every machine");
     const w = &roundOf(m.host).?.play.world;
     var fighters: usize = 0;
-    for (w.players[0..m.n]) |pl| fighters += @intFromBool(pl.entity != null);
-    try f.check(fighters == m.n and m.host.game.state.setup.players.count() == m.n, "every player in the round");
-    const names = m.host.game.state.setup.names;
+    for (w.players[0..m.in]) |pl| fighters += @intFromBool(pl.entity != null);
+    try f.check(fighters == m.in and m.host.game.state.setup.players.count() == m.in, "every player in the round");
+    try f.check(namedSlots(m.host, m.in), "each player's network name in the game, for its slot");
+}
+
+/// Whether the host's game names its first `players` players as their machines do.
+fn namedSlots(host: *const Machine, players: usize) bool {
+    const names = host.game.state.setup.names;
     var named = names[0] != null and std.mem.eql(u8, &names[0].?, "HST");
-    for (1..m.n) |k| named = named and names[k] != null and std.mem.eql(u8, &names[k].?, &many_names[k - 1]);
-    try f.check(named, "each player's network name in the game, for its slot");
+    for (1..players) |k| named = named and names[k] != null and std.mem.eql(u8, &names[k].?, &many_names[k - 1]);
+    return named;
+}
+
+/// Whether player `k` plays a fighter in `m`'s round.
+fn fights(m: *const Machine, k: usize) bool {
+    const x = roundOf(m) orelse return false;
+    return x.play.world.players[k].entity != null;
+}
+
+/// Each machine's STATS on, in the round: a line for each machine of the session on each.
+fn statsListEvery(f: *Flow, r: *Room, m: *const Many) !void {
+    for (0..m.in) |k| m.at(k).game.settings.stats = true;
+    try r.step(150);
+    var every = true;
+    for (0..m.in) |k| {
+        const o = m.at(k).game.overlays.find(.net_stats) orelse {
+            every = false;
+            continue;
+        };
+        const st = o.net_stats.stats;
+        for (st.machines, 0..) |x, j| every = every and x.in == (j < m.in) and (j >= m.in or x.load != null);
+        for (1..m.in) |j| every = every and std.mem.eql(u8, &st.machines[j].name, &many_names[j - 1]);
+    }
+    try f.check(every, "the stats list every machine of the session on every machine, by its name");
+    try shot(r, m.host, if (m.in == 4) "stats_four.png" else "stats_three.png");
+    try shot(r, m.at(m.in - 1), if (m.in == 4) "stats_four_client.png" else "stats_three_client.png");
+    for (0..m.in) |k| m.at(k).game.settings.stats = false;
+}
+
+/// The host's roster lists every client in the session as the player it is.
+fn rosterListsEvery(f: *Flow, m: *const Many) !void {
+    var entries: [8]net.netplay.Entry = undefined;
+    const list = m.host.np().roster(&entries);
+    var players: usize = 0;
+    for (list) |e| if (e.doing == .player) {
+        players += 1;
+        const want = many_names[e.place - 1];
+        if (!std.mem.eql(u8, &e.name, &want)) return f.check(false, "the roster names each client by its place");
+    };
+    try f.check(players == m.in - 1, "the roster lists every client of the session as its player");
 }
 
 fn selectThree(f: *Flow, r: *Room) !void {
@@ -1702,16 +1756,176 @@ fn selectFour(f: *Flow, r: *Room) !void {
 /// the same state, picture and sound on every machine; the roster and the stats list every
 /// machine.
 fn selectMany(f: *Flow, r: *Room, n: usize) !void {
-    const m = try manyRoom(r, n);
+    var m = try manyRoom(r, n);
     try hostPlayers(f, r, m.host, n);
-    try manyJoinAtSelect(f, r, &m);
+    try manyJoinAtSelect(f, r, &m, n);
     try manyChooseAndPlay(f, r, &m);
     for (m.all()) |c| try f.check(song(c) != null and song(c) == song(m.host), "every client plays the round's music");
     try sameAllFor(f, r, &m, 600);
     for (m.all()) |c| try sameSoundTail(f, m.host, c);
     try shot(r, m.host, if (n == 4) "round_four.png" else "round_three.png");
     try shot(r, m.clients[n - 2], if (n == 4) "round_four_client.png" else "round_three_client.png");
+    try rosterListsEvery(f, &m);
+    try statsListEvery(f, r, &m);
+    try sameAllFor(f, r, &m, 120);
     f.note("\"session_tick\":{d},\"state_hash\":\"{x:0>16}\",\"delay\":{d}", .{ m.host.np().tick(), m.host.game.stateHash(), m.host.np().delay() });
+}
+
+/// round_three: the host's PLAYERS 3, a client joining at its select, round 1 with two; the
+/// second client chooses on its own select (the two players' characters taken: one left) and
+/// joins the round as player 3, dropping in on every machine; the same game, picture and sound
+/// on the three; its player leaves (Escape): the others play on, its fighter dying out of the
+/// game on both, both told; it joins again later, in the same place.
+fn roundThree(f: *Flow, r: *Room) !void {
+    var m = try manyRoom(r, 3);
+    try hostPlayers(f, r, m.host, 3);
+    try manyJoinAtSelect(f, r, &m, 2);
+    try manyChooseAndPlay(f, r, &m);
+    try r.step(120);
+    const third = m.clients[1];
+    try clientJoins(f, r, third);
+    try f.until(r, third, inSelect, 600, "the third client's own select");
+    try f.check(selectOf(third).?.seat == 2, "its own select names its player 3");
+    try r.step(30);
+    const taken = [2]sorz.setup.Character{ m.host.game.state.setup.characters[0].?, m.host.game.state.setup.characters[1].? };
+    for (0..3) |_| {
+        try r.press(third, .right);
+        try r.step(4);
+        const at = selectOf(third).?.cursors[0].place;
+        try f.check(at != taken[0] and at != taken[1], "the two players' characters taken");
+    }
+    try r.press(third, .z);
+    try f.until(r, third, inSession, 600, "the third client joins the round");
+    m.in = 3;
+    try f.until(r, m.host, struct {
+        fn in(x: *Machine) bool {
+            return fights(x, 2);
+        }
+    }.in, 200, "player 3 drops in");
+    try f.check(third.np().localPlayer() == 2, "the third client player 3");
+    try sameAll(f, r, &m, "the same round on the three after the join");
+    try f.check(namedSlots(m.host, 3), "player 3's name in the game");
+    try sameAllFor(f, r, &m, 600);
+    for (m.all()) |c| try sameSoundTail(f, m.host, c);
+    try rosterListsEvery(f, &m);
+    try shot(r, m.host, "round_three_joined.png");
+    // Player 3 leaves its game (Escape): the others play on, its fighter dying out of the game.
+    try r.press(third, .escape);
+    m.in = 2;
+    try f.until(r, m.host, struct {
+        fn told(x: *Machine) bool {
+            return x.notice() == .player_3_left;
+        }
+    }.told, 120, "the host told PLAYER 3 LEFT");
+    try f.until(r, m.clients[0], struct {
+        fn told(x: *Machine) bool {
+            return x.notice() == .player_3_left;
+        }
+    }.told, 120, "player 2's machine told PLAYER 3 LEFT");
+    try f.until(r, third, choosing, 900, "the third client back at its menu");
+    try f.until(r, m.host, struct {
+        fn out(x: *Machine) bool {
+            const pl = &roundOf(x).?.play.world.players[2];
+            return pl.entity == null and pl.out;
+        }
+    }.out, 600, "player 3's fighter dead, out of the game");
+    try f.check(m.host.np().memberCount() == 1 and m.clients[0].np().phase() == .playing, "the host and player 2 play on");
+    try sameAllFor(f, r, &m, 240);
+    // It joins again later, in its place again.
+    try toMenu(f, r, third);
+    try clientJoins(f, r, third);
+    try f.until(r, third, inSelect, 600, "its own select again");
+    try r.press(third, .z);
+    try f.until(r, third, inSession, 600, "it joins the round again");
+    m.in = 3;
+    try f.check(third.np().localPlayer() == 2, "in player 3's place again");
+    try f.until(r, m.host, struct {
+        fn in(x: *Machine) bool {
+            return fights(x, 2);
+        }
+    }.in, 200, "player 3 drops in again");
+    try sameAllFor(f, r, &m, 300);
+    f.note("\"joined_at\":{d}", .{m.host.game.state.tick});
+}
+
+/// away_four: four machines in round 1; player 3's connection drops: every machine holds, the
+/// host counting down PLAYER 3 DISCONNECTED, the other clients told the same; back in time, the
+/// same session goes on; dropped again and not back: after the wait, the others play on, player
+/// 3's fighter dying out of the game on the three.
+fn awayFour(f: *Flow, r: *Room) !void {
+    var m = try manyRoom(r, 4);
+    try hostPlayers(f, r, m.host, 4);
+    try manyJoinAtSelect(f, r, &m, 4);
+    try manyChooseAndPlay(f, r, &m);
+    try r.step(60);
+    const third = m.clients[1];
+    const endpoint: *net.memory.Endpoint = @ptrCast(@alignCast(m.host.backend.transport.?.context));
+    r.network.breakLink(endpoint, m.host.np().member(2).?.connection.?);
+    const at = m.host.game.state.tick;
+    try r.step(30);
+    try f.check(m.host.game.state.tick <= at + 4 and m.host.message() == .player_3_away and m.host.seconds() >= 4 and m.host.seconds() <= 5, "the host holds and counts PLAYER 3's seconds down");
+    try f.check(m.clients[0].message() == .player_3_away and m.clients[2].message() == .player_3_away and m.clients[0].seconds() >= 4, "the other clients hold, told whose connection is down");
+    try f.check(third.message() == .player_1_away, "player 3's machine holds, its host out of reach");
+    try shot(r, m.host, "away_four.png");
+    try shot(r, m.clients[0], "away_four_client.png");
+    try f.until(r, m.host, struct {
+        fn back(x: *Machine) bool {
+            return x.game.netplay.?.connected() and x.message() == null;
+        }
+    }.back, 300, "player 3 back in time");
+    try r.step(60);
+    try sameAllFor(f, r, &m, 120);
+    try f.check(m.host.np().sessions == 1 and m.clients[0].message() == null, "the same session goes on");
+    // Dropped again, and its machine away longer than the host waits.
+    r.network.breakLink(endpoint, m.host.np().member(2).?.connection.?);
+    third.frozen = true;
+    const wait: usize = @intCast(net.session.rejoin_ns / frame_ns + 30);
+    try r.step(wait);
+    const rest = Many{ .host = m.host, .clients = .{ m.clients[0], m.clients[2], undefined }, .n = 3, .in = 3 };
+    try f.until(r, m.host, struct {
+        fn out(x: *Machine) bool {
+            const pl = &roundOf(x).?.play.world.players[2];
+            return pl.entity == null and pl.out;
+        }
+    }.out, 600, "player 3's fighter dead, out of the game");
+    try f.check(m.host.np().memberCount() == 2 and m.host.message() == null and m.clients[0].message() == null, "the others play on");
+    try sameAllFor(f, r, &rest, 240);
+    third.frozen = false;
+    try f.until(r, third, choosing, 900, "player 3's machine back: its own menu");
+    f.note("\"held_at\":{d}", .{at});
+}
+
+/// difference_three: three machines in round 1; a bit of the second client's state flipped: the
+/// host and it name the field; every machine stops, saying why.
+fn differenceThree(f: *Flow, r: *Room) !void {
+    var m = try manyRoom(r, 3);
+    try hostPlayers(f, r, m.host, 3);
+    try manyJoinAtSelect(f, r, &m, 3);
+    try manyChooseAndPlay(f, r, &m);
+    try r.step(30);
+    m.clients[1].game.state.random.state ^= 1;
+    try f.until(r, m.host, struct {
+        fn found(x: *Machine) bool {
+            return x.game.netplay.?.difference != null;
+        }
+    }.found, 200, "the host names the difference");
+    try f.until(r, m.clients[1], struct {
+        fn found(x: *Machine) bool {
+            return x.game.netplay.?.difference != null;
+        }
+    }.found, 200, "the client names the difference");
+    try f.until(r, m.clients[0], struct {
+        fn stopped(x: *Machine) bool {
+            return x.message() == .desynced;
+        }
+    }.stopped, 200, "the other client stops");
+    const d = m.host.np().difference.?;
+    try f.check(std.mem.eql(u8, d.name(), "random.state") and std.mem.eql(u8, m.clients[1].np().difference.?.name(), "random.state"), "both name the field");
+    try f.check(m.host.message() == .desynced and m.clients[1].message() == .desynced, "every machine stops and says why");
+    const ticks = .{ m.host.game.state.tick, m.clients[0].game.state.tick };
+    try r.step(60);
+    try f.check(m.host.game.state.tick == ticks[0] and m.clients[0].game.state.tick == ticks[1], "no game runs on");
+    f.note("\"difference\":\"{f}\"", .{d});
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -1773,6 +1987,9 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "friendly", .run = friendly },
         .{ .name = "select_three", .run = selectThree },
         .{ .name = "select_four", .run = selectFour },
+        .{ .name = "round_three", .run = roundThree },
+        .{ .name = "away_four", .run = awayFour },
+        .{ .name = "difference_three", .run = differenceThree },
     }) |e| {
         if (only.items.len != 0) {
             var wanted = false;
