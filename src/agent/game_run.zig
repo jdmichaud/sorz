@@ -7,6 +7,11 @@
 //! play begins. The script's tick 0 is the first logic tick of play; a command runs at a logic
 //! tick's start, and its pads are held over the tick's two display ticks.
 //!
+//! A start of three or four characters (the port's players 3 and 4, DESIGN.md 10.7 E4) passes the
+//! screens as for two, then puts players 3 and 4 in the game as the round loads (their
+//! characters, the game's players): the one write of the runner, as the original variant's menu
+//! offers two players. They play from the round's start as player 2 does, on pads 3 and 4.
+//!
 //! The trace: the scenes, as sor-remaster's trace names them; in a round, play's phases, the
 //! world at each display tick of the round's scenes but at each logic tick in play (the scene's
 //! tick `t` the round's), the scenes' sounds; the probe (the fighters' frames and boxes) as the
@@ -418,6 +423,7 @@ pub const Run = struct {
                 return self.tapping(self.chooser, .right);
             },
             .to_play => {
+                if (!self.morePlayers()) return self.fail("no such character");
                 if (self.round()) |r| if (r.phase == .play) {
                     self.enter(.body);
                     return null;
@@ -426,6 +432,20 @@ pub const Run = struct {
             },
             .pads, .body, .done => unreachable,
         }
+    }
+
+    /// Players 3 and 4 of the start into the game the round's set-up makes (before it: no game
+    /// under way yet); false for a character the game does not have.
+    fn morePlayers(self: *Run) bool {
+        const players = self.script.start.players;
+        const setup = &self.state.setup;
+        if (setup.progress.round != 0) return true;
+        for (players.more, 2..) |name_, k| {
+            const name = name_ orelse break;
+            setup.characters[k] = std.meta.stringToEnum(sorz.setup.Character, name) orelse return false;
+            setup.players = .of(k + 1);
+        }
+        return true;
     }
 
     /// A tap of `button` on pad `pad`: held `tap_on` display ticks, released `tap_off`, again;

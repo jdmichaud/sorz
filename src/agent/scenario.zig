@@ -49,8 +49,9 @@ comptime {
 pub const Start = union(enum) {
     /// One player (or two) of these characters, from the start of play in round `round` (2 to 8:
     /// the options' hidden first round set first, opened by pad 2's code as the menu leaves for
-    /// the options).
-    players: struct { first: []const u8, second: ?[]const u8, round: u8 = 1 },
+    /// the options). Players 3 and 4 (`more`, the port's, DESIGN.md 10.7 E4) come into a game of
+    /// two players chosen so, from the round's start, as player 2 does.
+    players: struct { first: []const u8, second: ?[]const u8, more: [2]?[]const u8 = .{ null, null }, round: u8 = 1 },
     /// A recorded play's pads (a line per display tick from power-on: pad 1's and pad 2's
     /// buttons in hexadecimal, sor-remaster's `--pads` format), for its first `vblanks` display
     /// ticks; the file is named from the scenario's directory.
@@ -92,7 +93,7 @@ pub const Condition = union(enum) {
     state: struct { who: Who, states: [max_states][]const u8, count: u8, negate: bool },
     /// An entity of the kind, out of hiding and not knocked out, within `across` pixels of the
     /// pad's player across, and `depth` in depth (any when null).
-    near: struct { kind: []const u8, across: i32, depth: ?i32, pad: u1 },
+    near: struct { kind: []const u8, across: i32, depth: ?i32, pad: u2 },
     /// The camera's left edge at or past `x` pixels.
     camera: i32,
 };
@@ -101,10 +102,10 @@ pub const Command = struct {
     line: u32,
     op: union(enum) {
         /// The buttons held `ticks` ticks, then released for one: the script goes on after both.
-        press: struct { pad: u1, buttons: u8, ticks: u32 },
+        press: struct { pad: u2, buttons: u8, ticks: u32 },
         /// The buttons held from now (for `ticks` when given): the script goes on at once.
-        hold: struct { pad: u1, buttons: u8, ticks: ?u32 },
-        release: struct { pad: u1, buttons: u8 },
+        hold: struct { pad: u2, buttons: u8, ticks: ?u32 },
+        release: struct { pad: u2, buttons: u8 },
         wait: u32,
         until: struct { cond: Condition, within: u32 },
         /// Player 1 played `bot` ticks by the bot's rule (the context's `bot`, as sor-remaster's
@@ -135,7 +136,7 @@ pub fn parse(gpa: std.mem.Allocator, text: []const u8, diag: *Diagnostic) !Scrip
     var commands: std.ArrayList(Command) = .empty;
     errdefer commands.deinit(gpa);
     var start: ?Start = null;
-    var pad: u1 = 0;
+    var pad: u2 = 0;
     var lines = std.mem.splitScalar(u8, text, '\n');
     var n: u32 = 0;
     while (lines.next()) |raw| {
@@ -169,14 +170,17 @@ pub fn parse(gpa: std.mem.Allocator, text: []const u8, diag: *Diagnostic) !Scrip
                 round = @intCast(r);
                 who = who[0 .. who.len - 2];
             }
-            if (who.len < 1 or who.len > 2) return refuse(diag, n, "a start is `start CHARACTER [CHARACTER] [round N]`, `start pads FILE VBLANKS` or `start power-on`");
-            start = .{ .players = .{ .first = who[0], .second = if (who.len == 2) who[1] else null, .round = round } };
+            if (who.len < 1 or who.len > input.max_players) return refuse(diag, n, "a start is `start CHARACTER [CHARACTER [CHARACTER [CHARACTER]]] [round N]`, `start pads FILE VBLANKS` or `start power-on`");
+            var more: [2]?[]const u8 = .{ null, null };
+            for (who[@min(who.len, 2)..], 0..) |name, k| more[k] = name;
+            start = .{ .players = .{ .first = who[0], .second = if (who.len >= 2) who[1] else null, .more = more, .round = round } };
             continue;
         }
         if (start == null) return refuse(diag, n, "the script begins with its start");
         if (std.mem.eql(u8, w[0], "pad")) {
-            if (count != 2) return refuse(diag, n, "`pad 1` or `pad 2`");
-            pad = if (std.mem.eql(u8, w[1], "1")) 0 else if (std.mem.eql(u8, w[1], "2")) 1 else return refuse(diag, n, "`pad 1` or `pad 2`");
+            const which = if (count == 2) number(w[1]) orelse 0 else 0;
+            if (which < 1 or which > input.max_players) return refuse(diag, n, "`pad 1` to `pad 4`");
+            pad = @intCast(which - 1);
             continue;
         }
         if (std.mem.eql(u8, w[0], "wait")) {
@@ -238,7 +242,7 @@ fn parseButtons(text: []const u8) ?u8 {
     return bits;
 }
 
-fn parseCondition(w: []const []const u8, pad: u1) ?Condition {
+fn parseCondition(w: []const []const u8, pad: u2) ?Condition {
     if (w.len == 0) return null;
     if (std.mem.eql(u8, w[0], "scene") and w.len == 2) return .{ .scene = w[1] };
     if (std.mem.eql(u8, w[0], "phase") and w.len == 2) return .{ .phase = w[1] };
@@ -275,7 +279,7 @@ pub const Body = struct {
     resume_at: u64 = 0,
     waiting: ?struct { cond: Condition, deadline: u64, line: u32 } = null,
     /// By pad and button, the tick at which a hold ends (`forever` until released), or null.
-    holds: [2][8]?u64 = @splat(@splat(null)),
+    holds: [input.max_players][8]?u64 = @splat(@splat(null)),
     /// The line of the condition that did not come in time.
     timed_out: ?u32 = null,
     /// The ticks left to the bot's play (`bot TICKS`).
@@ -340,7 +344,7 @@ pub const Body = struct {
         return held;
     }
 
-    fn set(self: *Body, pad: u1, buttons: u8, until: ?u64) void {
+    fn set(self: *Body, pad: u2, buttons: u8, until: ?u64) void {
         for (0..8) |b| if (buttons >> @intCast(b) & 1 != 0) {
             self.holds[pad][b] = until;
         };
@@ -352,11 +356,15 @@ pub const Body = struct {
     }
 
     pub fn pads(self: *const Body) input.Pads {
-        var bits: [2]u8 = .{ 0, 0 };
-        for (self.holds, 0..) |pad, k| for (pad, 0..) |h, b| {
-            if (h != null) bits[k] |= @as(u8, 1) << @intCast(b);
-        };
-        return .{ .pad1 = @bitCast(bits[0]), .pad2 = @bitCast(bits[1]) };
+        var out: input.Pads = .{};
+        for (self.holds, 0..) |pad, k| {
+            var bits: u8 = 0;
+            for (pad, 0..) |h, b| {
+                if (h != null) bits |= @as(u8, 1) << @intCast(b);
+            }
+            out.at(k).* = @bitCast(bits);
+        }
+        return out;
     }
 };
 
@@ -1760,7 +1768,30 @@ test "a script: its start, presses, holds, waits and conditions" {
     defer later.deinit(gpa);
     try std.testing.expectEqual(@as(u8, 2), later.start.players.round);
     try std.testing.expectEqualStrings("blaze", later.start.players.second.?);
+    try std.testing.expectEqual(@as(?[]const u8, null), later.start.players.more[0]);
     try std.testing.expectError(error.BadScenario, parse(gpa, "start axel round 9\n", &diag));
+}
+
+test "a start of four players, and pads 3 and 4" {
+    const gpa = std.testing.allocator;
+    var diag: Diagnostic = .{};
+    var s = try parse(gpa, "start axel blaze adam axel round 3\npad 4\n+right\npad 3\nattack\n", &diag);
+    defer s.deinit(gpa);
+    const p = s.start.players;
+    try std.testing.expectEqualStrings("blaze", p.second.?);
+    try std.testing.expectEqualStrings("adam", p.more[0].?);
+    try std.testing.expectEqualStrings("axel", p.more[1].?);
+    try std.testing.expectEqual(@as(u8, 3), p.round);
+    var body: Body = .{ .commands = s.commands };
+    const always = struct {
+        fn holds(_: void, _: Condition) bool {
+            return true;
+        }
+    }.holds;
+    const pads = body.tick({}, always).?;
+    try std.testing.expect(pads.pad4.right and pads.pad3.b and !pads.pad1.right and !pads.pad2.b);
+    try std.testing.expectError(error.BadScenario, parse(gpa, "start axel\npad 5\n", &diag));
+    try std.testing.expectError(error.BadScenario, parse(gpa, "start axel blaze adam axel blaze\n", &diag));
 }
 
 test "a start from a recorded play, and the random generator its draws left" {
