@@ -10,7 +10,8 @@
 //!   START during play opening the settings in place of the pause, the same character for both
 //!   players (PLAN item 20: its rule, and the content's colours for the second), the game's
 //!   rules from the settings (the lives, the continues, the friendly hits) in place of the
-//!   options' hidden lives, and the CPU as player 2 (PLAN item 30).
+//!   options' hidden lives, the CPU as player 2 (PLAN item 30), and 3 and 4 PLAYERS on one
+//!   machine (DESIGN.md 10.7, E4).
 //! - **network**: network play and the browser, one player a machine. Each machine runs its own
 //!   front end; its game menu is 2 PLAYERS and OPTIONS: 2 PLAYERS goes to the character select
 //!   with this machine's player alone, and the other machine's player joins there or in the round
@@ -71,6 +72,10 @@ pub const Policies = struct {
     advanced_settings: bool = false,
     /// Left and right on the game menu's 2 PLAYERS make it 1 PLAYER - 1 CPU: player 2 the CPU's.
     cpu_player: bool = false,
+    /// The most players the game menu's 2 PLAYERS puts in the game on one machine: the
+    /// cartridge's two, or up to four (DESIGN.md 10.7, E4: right on it, 3 PLAYERS and 4 PLAYERS,
+    /// as many as the machine's input methods, before the CPU's readings).
+    local_players: u8 = 2,
     /// START during play opens the settings, which hold the game as the pause does, in place of
     /// the pause.
     start_opens_settings: bool = false,
@@ -97,6 +102,7 @@ pub const original: Config = .{ .graph = &flow.original, .policies = .{} };
 pub const extended: Config = .{ .graph = &flow.extended, .policies = .{
     .advanced_settings = true,
     .cpu_player = true,
+    .local_players = 4,
     .start_opens_settings = true,
     .settings_key = false,
     .settings_rules = true,
@@ -167,6 +173,7 @@ test "each variant: its graph, its menu, its options' lines, START and the setti
     try testing.expectEqualSlices(MenuLine, &.{ .one_player, .two_players, .network_play, .options }, e.menuLines(.host));
     try testing.expect(e.advanced_settings and e.start_opens_settings and !e.settings_key);
     try testing.expect(e.cpu_player and !o.cpu_player and !Variant.network.config().policies.cpu_player);
+    try testing.expect(e.local_players == 4 and o.local_players == 2 and Variant.network.config().policies.local_players == 2);
     try testing.expect(!e.characterTaken(.axel, .axel) and o.characterTaken(.axel, .axel));
     try testing.expectEqualStrings("duplicate", e.duplicate_colours.?);
     try testing.expect(o.duplicate_colours == null);

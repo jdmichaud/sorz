@@ -81,7 +81,8 @@ pub const NetPlay = struct {
     host: HostPlayer = .front,
     client: ClientPlayer = .menu,
     options: Options = .{},
-    /// The host's game is a local game of two (its 2 PLAYERS): it offers no place.
+    /// The host's game is a local game of two or more (its 2, 3 or 4 PLAYERS): it offers no
+    /// place.
     local_two: bool = false,
     /// The host's client took player 2 from the CPU: the CPU takes it back as the client leaves.
     cpu_seat: bool = false,
@@ -202,9 +203,9 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
     const assets = if (g.scene_assets) |*a| a else return;
     switch (g.net.host) {
         .front, .starting => if (g.state.inGame()) {
-            // START GAME's game, or a local one from the menu (with two players: no place, but
-            // the CPU's).
-            g.net.local_two = g.net.host == .front and g.state.setup.players == .two and !g.state.setup.cpu[1];
+            // START GAME's game, or a local one from the menu (with two players or more: no
+            // place, but the CPU's).
+            g.net.local_two = g.net.host == .front and g.state.setup.players != .one and !g.state.setup.cpu[1];
             g.net.host = .game;
         },
         .game => if (!g.state.inGame()) {

@@ -7,11 +7,14 @@
 //! out, then leaves for the character select or the options. Without a second pad, 2 PLAYERS is
 //! dimmed (the colours `menu/one_pad`) and the arrow skips it (network play's second player is the
 //! network's: it is never dimmed there); so are a client's JOIN and OBSERVE while the host takes
-//! no player or no observer. Where the variant has the CPU (PLAN item 30), left and right on 2
-//! PLAYERS make it 1 PLAYER - 1 CPU, written in the font, and back; without a second pad it reads
-//! 1 PLAYER - 1 CPU alone. The game then puts player 2 in the CPU's hands. Choosing OPTIONS with pad 2 holding exactly A, B, C and right at the
-//! end of the fade opens the options' hidden lines. Pad 1 drives it: each machine's menu is its
-//! own.
+//! no player or no observer. Where the variant has them (DESIGN.md 10.7, E4), right on 2 PLAYERS
+//! makes it 3 PLAYERS, then 4 PLAYERS, written in the font: as many as the machine's input methods
+//! (scene.Turn `players_here`: the keyboard's two, a gamepad each), else they are passed. Where the
+//! variant has the CPU (PLAN item 30), right goes on to 1 PLAYER - 1 CPU and 0 PLAYERS - 2 CPU,
+//! and round; left goes back; without a second pad it reads 1 PLAYER - 1 CPU at least. The game
+//! then puts player 2 (and player 1) in the CPU's hands. Choosing OPTIONS with pad 2 holding
+//! exactly A, B, C and right at the end of the fade opens the options' hidden lines. Pad 1 drives
+//! it: each machine's menu is its own.
 //!
 //! NETWORK PLAY fades out and asks this machine for its network options (an overlay, game.zig): if
 //! they opened the session, the menu leaves for the character select, the host's player alone;
@@ -33,11 +36,16 @@ const Colours = @import("colours.zig").Colours;
 const blink_ticks = 16;
 /// The arrow's place: two cells left of its line.
 const arrow_cells = 2;
-/// 2 PLAYERS with the CPU as player 2, and as many blanks.
-/// 2 PLAYERS's other readings, by the CPUs they play with (one, two), and the blank that clears
-/// the line at a turn (the longest's length).
+/// 2 PLAYERS's other readings: by the players on this machine (three, four), by the CPUs they
+/// play with (one, two); and the blank that clears the line at a turn (the longest's length).
+const more_texts = [2][]const u8{ "3 PLAYERS", "4 PLAYERS" };
 const cpu_texts = [2][]const u8{ "1 PLAYER - 1 CPU", "0 PLAYERS - 2 CPU" };
 const cpu_blank: [cpu_texts[1].len]u8 = @splat(' ');
+
+/// 2 PLAYERS's readings in the order right turns them: 2, 3 and 4 PLAYERS, then 1 PLAYER - 1 CPU
+/// and 0 PLAYERS - 2 CPU.
+const readings = 5;
+const first_cpu_reading = 3;
 
 pub const Line = variant.MenuLine;
 
@@ -70,6 +78,9 @@ pub const Menu = struct {
     /// The CPUs 2 PLAYERS plays with (the variant's `cpu_player`): none, one (1 PLAYER - 1 CPU),
     /// two (0 PLAYERS - 2 CPU).
     cpus: u2 = 0,
+    /// The players 2 PLAYERS puts in the game on this machine without a CPU: two, or three and
+    /// four where the variant has them (`local_players`); two with a CPU.
+    players: u3 = 2,
 
     pub const Phase = enum(u8) { setup, fade_in, choosing, chosen, fade_out, leaving, network, observing };
 
@@ -149,8 +160,10 @@ pub const Menu = struct {
                 self.previous = lines[0];
                 self.all_lines = turn.second_pad;
                 self.name = turn.net.name;
-                // The CPUs as the last game had them, and one at least without a second pad.
+                // The CPUs as the last game had them, and one at least without a second pad; its
+                // players (three, four) without a CPU, while the machine has them (`dim`).
                 self.cpus = if (!turn.policies.cpu_player) 0 else if (turn.setup.cpu[0]) 2 else if (turn.setup.cpu[1] or !turn.second_pad) 1 else 0;
+                self.players = if (self.cpus == 0) @intCast(@max(2, turn.setup.players.count())) else 2;
                 // A client's lines dim (palette 1): the colours of one pad.
                 self.colours.aim(if (turn.second_pad and turn.net.role != .client) a.two_pads else a.one_pad);
                 self.dim(turn);
@@ -240,8 +253,8 @@ pub const Menu = struct {
                 // Both players here, or this machine's alone: the other machine's joins later (a
                 // client's JOIN: the host's game).
                 .two_players, .join => {
-                    turn.setup.players = if (turn.policies.two_players_here) .two else .one;
                     const two = self.choice == .two_players;
+                    turn.setup.players = if (!turn.policies.two_players_here) .one else if (two) .of(self.players) else .two;
                     turn.setup.cpu = .{ two and self.cpus == 2, two and self.cpus != 0, false, false };
                     turn.setup.rules = if (turn.policies.settings_rules) turn.rules else null;
                     turn.setup.same_character = null;
@@ -278,15 +291,21 @@ pub const Menu = struct {
             const i = self.indexOf(self.choice);
             self.choice = lines[if (p.up) (i + n - 1) % n else (i + 1) % n];
         }
-        // Right on 2 PLAYERS: 1 PLAYER - 1 CPU, then 0 PLAYERS - 2 CPU, and round; left, the other
-        // way. Without a second pad, 2 PLAYERS is passed.
-        if ((p.left or p.right) and self.choice == .two_players and turn.policies.cpu_player) {
-            const least: u8 = if (turn.second_pad) 0 else 1;
-            const count: u8 = 3 - least;
-            const at: u8 = self.cpus - least;
-            self.cpus = @intCast(least + if (p.right) (at + 1) % count else (at + count - 1) % count);
-            turn.play(a.move);
-            self.dim(turn);
+        // Right on 2 PLAYERS: 3 PLAYERS, 4 PLAYERS, 1 PLAYER - 1 CPU, then 0 PLAYERS - 2 CPU, and
+        // round; left, the other way. The readings the variant or the machine does not have are
+        // passed (2 PLAYERS without a second pad, 3 and 4 PLAYERS without as many input methods).
+        if ((p.left or p.right) and self.choice == .two_players) {
+            const now = self.reading();
+            var r = now;
+            for (0..readings - 1) |_| {
+                r = if (p.right) (r + 1) % readings else (r + readings - 1) % readings;
+                if (self.offered(turn, r)) break;
+            } else r = now;
+            if (r != now) {
+                self.read(r);
+                turn.play(a.move);
+                self.dim(turn);
+            }
         }
         self.blink_left -= 1;
         if (self.blink_left == 0) {
@@ -307,16 +326,40 @@ pub const Menu = struct {
         return self.dimmed & (@as(u8, 1) << @intCast(self.indexOf(l))) == 0;
     }
 
+    /// 2 PLAYERS's reading, in the order right turns them (`readings`).
+    fn reading(self: *const Menu) usize {
+        return if (self.cpus == 0) self.players - 2 else first_cpu_reading - 1 + @as(usize, self.cpus);
+    }
+
+    fn read(self: *Menu, r: usize) void {
+        self.cpus = if (r < first_cpu_reading) 0 else @intCast(r + 1 - first_cpu_reading);
+        self.players = if (r < first_cpu_reading) @intCast(r + 2) else 2;
+    }
+
+    /// Whether 2 PLAYERS may read `r` now: 2 PLAYERS with a second pad; 3 and 4 PLAYERS where the
+    /// variant has them and the machine has as many input methods; the CPU's where the variant
+    /// has it.
+    fn offered(self: *const Menu, turn: *const scene.Turn, r: usize) bool {
+        if (r >= first_cpu_reading) return turn.policies.cpu_player;
+        if (r == 0) return self.all_lines;
+        return r + 2 <= turn.policies.local_players and r + 2 <= turn.players_here;
+    }
+
     /// The lines dimmed now: 2 PLAYERS without a second pad, a client's JOIN and OBSERVE by what
-    /// the host takes.
+    /// the host takes. 3 or 4 PLAYERS without as many input methods now (a gamepad gone) reads
+    /// as many as there are; 2 PLAYERS without a second pad, 1 PLAYER - 1 CPU where the variant
+    /// has the CPU.
     fn dim(self: *Menu, turn: *const scene.Turn) void {
         if (!self.all_lines and turn.second_pad) self.all_lines = true;
         if (self.all_lines and !turn.second_pad) self.all_lines = false;
-        if (turn.policies.cpu_player and !turn.second_pad and self.cpus == 0) self.cpus = 1;
+        var r = self.reading();
+        while (r > 0 and r < first_cpu_reading and !self.offered(turn, r)) r -= 1;
+        if (r == 0 and !self.offered(turn, 0) and turn.policies.cpu_player) r = first_cpu_reading;
+        self.read(r);
         var bits: u8 = 0;
         for (self.slice(), 0..) |l, i| {
             const off = switch (l) {
-                .two_players => !self.all_lines and self.cpus == 0,
+                .two_players => !self.offered(turn, self.reading()),
                 .join => !turn.net.can_join,
                 .observe => !turn.net.can_observe,
                 else => false,
@@ -329,10 +372,10 @@ pub const Menu = struct {
     pub fn draw(self: *const Menu, prev: ?*const Menu, v: *view.View, a: *const Assets) !void {
         for (self.slice(), 0..) |l, i| {
             const c = a.cellOf(i);
-            // 2 PLAYERS and its CPUs' readings take turns on one line, its cells cleared at a turn.
-            const turned = l == .two_players and prev != null and prev.?.cpus != self.cpus;
+            // 2 PLAYERS and its other readings take turns on one line, its cells cleared at a turn.
+            const turned = l == .two_players and prev != null and prev.?.reading() != self.reading();
             if (turned) try v.write(.a, a.text, c.x, c.y, &cpu_blank, .{});
-            if (l != .two_players or self.cpus == 0) if (a.map(l)) |m| {
+            if (l != .two_players or self.reading() == 0) if (a.map(l)) |m| {
                 if (prev == null or turned) try v.board(.a).drawMap(m, c.x, c.y);
                 continue;
             };
@@ -341,7 +384,7 @@ pub const Menu = struct {
             const look: render.Look = .{ .palette = if (self.available(l)) 0 else 1 };
             var buf: [16]u8 = undefined;
             const text: []const u8 = switch (l) {
-                .two_players => cpu_texts[self.cpus - 1],
+                .two_players => if (self.cpus == 0) more_texts[self.players - 3] else cpu_texts[self.cpus - 1],
                 .network_play => "NETWORK PLAY",
                 .join => "JOIN",
                 .observe => "OBSERVE",
@@ -549,4 +592,60 @@ test "the extended menu: right on 2 PLAYERS makes it 1 PLAYER - 1 CPU, then 0 PL
     _ = press(&m, &setup, .original, true, .{ .pad1 = .{ .down = true } });
     _ = press(&m, &setup, .original, true, .{ .pad1 = .{ .right = true } });
     try std.testing.expectEqual(@as(u2, 0), m.cpus);
+}
+
+/// A tick of `m` with `pressed`, in the extended variant, the machine's input methods giving
+/// `here` players.
+fn pressHere(m: *Menu, setup: *Setup, here: u8, pressed: input.Pads) ?flow.Exit {
+    var turn: scene.Turn = .{ .setup = setup, .players_here = here, .pressed = pressed, .policies = &variant.Variant.extended.config().policies };
+    return m.tick(&turn, &Fixture.assets);
+}
+
+test "right on 2 PLAYERS: 3 and 4 PLAYERS as the machine has them, then the CPU's; a game of four" {
+    const Players = @import("../setup.zig").Players;
+    var setup: Setup = .{};
+    var m: Menu = .{};
+    _ = pressHere(&m, &setup, 4, .{});
+    while (m.phase != .choosing) _ = pressHere(&m, &setup, 4, .{});
+    _ = pressHere(&m, &setup, 4, .{ .pad1 = .{ .down = true } });
+    // Right: 3 PLAYERS, 4 PLAYERS, the CPU's two, and round; left back.
+    const order = [_]struct { u3, u2 }{ .{ 3, 0 }, .{ 4, 0 }, .{ 2, 1 }, .{ 2, 2 }, .{ 2, 0 } };
+    for (order) |o| {
+        _ = pressHere(&m, &setup, 4, .{ .pad1 = .{ .right = true } });
+        try std.testing.expect(m.players == o[0] and m.cpus == o[1]);
+    }
+    _ = pressHere(&m, &setup, 4, .{ .pad1 = .{ .left = true } });
+    try std.testing.expect(m.cpus == 2);
+    for (0..3) |_| _ = pressHere(&m, &setup, 4, .{ .pad1 = .{ .left = true } });
+    try std.testing.expect(m.players == 3 and m.cpus == 0 and m.available(.two_players));
+    // Three input methods: 4 PLAYERS is passed.
+    _ = pressHere(&m, &setup, 3, .{ .pad1 = .{ .right = true } });
+    try std.testing.expect(m.players == 2 and m.cpus == 1);
+    _ = pressHere(&m, &setup, 3, .{ .pad1 = .{ .left = true } });
+    try std.testing.expect(m.players == 3 and m.cpus == 0);
+    // A gamepad gone: 3 PLAYERS reads 2 PLAYERS.
+    _ = pressHere(&m, &setup, 2, .{});
+    try std.testing.expect(m.players == 2 and m.cpus == 0);
+    // Four, chosen: four players, no CPU; the next menu keeps the reading.
+    _ = pressHere(&m, &setup, 4, .{ .pad1 = .{ .right = true } });
+    _ = pressHere(&m, &setup, 4, .{ .pad1 = .{ .right = true } });
+    try std.testing.expectEqual(@as(u3, 4), m.players);
+    var exit: ?flow.Exit = pressHere(&m, &setup, 4, .{ .pad1 = .{ .start = true } });
+    while (exit == null) exit = pressHere(&m, &setup, 4, .{});
+    try std.testing.expectEqual(flow.Exit.two_players, exit.?);
+    try std.testing.expectEqual(Players.four, setup.players);
+    try std.testing.expectEqual([4]bool{ false, false, false, false }, setup.cpu);
+    m = .{};
+    _ = pressHere(&m, &setup, 4, .{});
+    try std.testing.expectEqual(@as(u3, 4), m.players);
+    // With two input methods, the menu as before: 2 PLAYERS, the CPU's, and round.
+    m = .{};
+    _ = pressHere(&m, &setup, 2, .{});
+    while (m.phase != .choosing) _ = pressHere(&m, &setup, 2, .{});
+    try std.testing.expectEqual(@as(u3, 2), m.players);
+    _ = pressHere(&m, &setup, 2, .{ .pad1 = .{ .down = true } });
+    _ = pressHere(&m, &setup, 2, .{ .pad1 = .{ .right = true } });
+    try std.testing.expect(m.players == 2 and m.cpus == 1);
+    // The cartridge's and network play's menus have no third player.
+    for ([_]variant.Variant{ .original, .network }) |v| try std.testing.expectEqual(@as(u8, 2), v.config().policies.local_players);
 }

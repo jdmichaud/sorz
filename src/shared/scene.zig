@@ -135,6 +135,9 @@ pub const Turn = struct {
     /// Whether a second pad is there (the game menu dims 2 PLAYERS without it): a second player
     /// on this machine, or network play's, whose second player is another machine's.
     second_pad: bool = true,
+    /// The players this machine's input methods can play (input.zig `Controls.players`: the
+    /// keyboard's two, a gamepad each, up to four): the game menu's 3 and 4 PLAYERS need as many.
+    players_here: u8 = 2,
     /// This machine's game takes the game's rules from another machine's (network play's guest):
     /// OPTIONS shows only what is this machine's own.
     guest: bool = false,

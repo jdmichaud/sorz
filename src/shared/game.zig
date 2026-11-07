@@ -158,9 +158,10 @@ pub const State = struct {
         return s;
     }
 
-    /// What this machine tells a tick: whether a second pad is there, whether its game takes the
-    /// game's rules from another machine's (scene.Turn).
-    pub const Machine = struct { second_pad: bool = true, guest: bool = false, taken: ?setup_mod.Character = null, rules: setup_mod.Rules = .{}, net: scene.Net = .{} };
+    /// What this machine tells a tick: whether a second pad is there, the players its input
+    /// methods can play, whether its game takes the game's rules from another machine's
+    /// (scene.Turn).
+    pub const Machine = struct { second_pad: bool = true, players_here: u8 = 2, guest: bool = false, taken: ?setup_mod.Character = null, rules: setup_mod.Rules = .{}, net: scene.Net = .{} };
 
     /// One display tick, with the pads of that tick and whether a second pad is there. Returns
     /// what the tick asks of the sound. Every scene but the test pattern needs `assets`.
@@ -179,6 +180,7 @@ pub const State = struct {
             .pads = pads,
             .pressed = pressed,
             .second_pad = machine.second_pad,
+            .players_here = machine.players_here,
             .guest = machine.guest,
             .taken = machine.taken,
             .rules = machine.rules,
@@ -1279,7 +1281,7 @@ pub const Game = struct {
             // (but in a local game of two).
             pads.pad2 = .{};
         };
-        const machine: State.Machine = .{ .second_pad = self.secondPad(), .guest = self.isClient(), .taken = network_play.taken(self), .rules = self.settings.rules, .net = network_play.facts(self) };
+        const machine: State.Machine = .{ .second_pad = self.secondPad(), .players_here = @intCast(self.controls.players()), .guest = self.isClient(), .taken = network_play.taken(self), .rules = self.settings.rules, .net = network_play.facts(self) };
         const turn = self.state.stepWith(pads, machine, if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
         self.redraw = true;
         if (turn.settings) |who| if (self.plays(who)) self.showSettings(if (turn.settings_fade) p.nowNs() else null);
