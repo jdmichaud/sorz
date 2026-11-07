@@ -648,6 +648,7 @@ pub const Netplay = struct {
         const for_game = self.role == .guest or place != null;
         var ended: ?session_mod.End = null;
         var stop_others = false;
+        var resumed = false;
         for (peer.session.notes.items) |n| {
             self.logNote(peer, n);
             // A stopped host's refusal is said once; the client tries again quietly.
@@ -664,6 +665,7 @@ pub const Netplay = struct {
                 .started => |s| {
                     // The host counts its session from its first client; a client its own.
                     if (!s.resumed and (self.role == .guest or s.tick == 0)) self.sessions += 1;
+                    resumed = resumed or s.resumed;
                 },
                 .diagnosed => |d| self.difference = d,
                 .desync => stop_others = self.role == .host,
@@ -678,6 +680,11 @@ pub const Netplay = struct {
             self.notes.append(self.allocator, n) catch {};
         }
         peer.session.notes.clearRetainingCapacity();
+        // A client back on its connection gets the other clients' pads it may have lost.
+        if (resumed and self.role == .host) if (place) |k| {
+            peer.session.relayAgain();
+            for (self.members, 0..) |m, j| if (m != null and j != k) peer.session.relayOf(@intCast(j), &m.?.session);
+        };
         // A mismatch with one client stops the session for every machine.
         if (stop_others) for (self.members) |m| if (m) |x| if (x != peer) x.session.stopAtDesync();
         if (self.role == .host) if (place) |k| if (ended) |why| if (!peer.session.inSession()) {

@@ -1,8 +1,10 @@
-//! Network play between agent hosts in one process (DESIGN.md 9): two agent backends joined by the
-//! in-memory network, each with its netplay driver and a small deterministic state in place of the
-//! game. Each peer does what game.zig does with the session: the host's game alone until the
-//! guest joins it (its form crossing), then one tick per update, the local pad sampled for tick
-//! N + D, the hold, the state checks. The real game's joins are netplay-check's (the user's ROM).
+//! Network play between agent hosts in one process (DESIGN.md 9): two to four agent backends joined
+//! by the in-memory network, each with its netplay driver and a small deterministic state in place
+//! of the game. Each peer does what game.zig does with the session: the host's game alone until
+//! the first guest joins it (its form crossing), then one tick per update, the local pad sampled
+//! for tick N + D, the changes of the game at their ticks (another guest's join, its session
+//! beginning there), the hold, the state checks. The real game's joins are netplay-check's (the
+//! user's ROM).
 const std = @import("std");
 const sorz = @import("sorz");
 const AgentBackend = @import("backend.zig").AgentBackend;
@@ -23,6 +25,8 @@ const FakeState = struct {
     x: [2]u16 = .{ 100, 200 },
     y: [2]u16 = .{ 50, 50 },
     score: [2]u16 = .{ 0, 0 },
+    /// Players 3 and 4's.
+    more: [2]u16 = .{ 0, 0 },
 
     fn step(s: *FakeState, pads: Pads) void {
         s.frame +%= 1;
@@ -35,6 +39,7 @@ const FakeState = struct {
             if (b.b and (s.seed >> 16) & 3 == 0) s.score[i] +%= 1;
             if (b.start) s.x[i] ^= @truncate(s.seed);
         }
+        for ([2]Pad{ pads.pad3, pads.pad4 }, &s.more) |b, *m| m.* = m.* *% 31 +% @as(u8, @bitCast(b));
     }
 
     fn hash(s: *const FakeState) u64 {
@@ -51,6 +56,14 @@ fn guestScript(t: u32) Pad {
     return @bitCast(@as(u8, @truncate((t / 5 + 11) *% 2246822507 >> 17)));
 }
 
+fn thirdScript(t: u32) Pad {
+    return @bitCast(@as(u8, @truncate((t / 3 + 5) *% 3266489917 >> 11)));
+}
+
+fn fourthScript(t: u32) Pad {
+    return @bitCast(@as(u8, @truncate((t / 4 + 7) *% 668265263 >> 15)) | 1);
+}
+
 const Peer = struct {
     backend: AgentBackend,
     np: net.netplay.Netplay,
@@ -65,8 +78,16 @@ const Peer = struct {
     corrupt_at: ?u32 = null,
     /// The work its game does in each update (the stats' busy share).
     work_ns: u64 = 0,
+    /// The host: its game's players (its network options' PLAYERS).
+    places: u8 = 2,
+    /// The guest: another player's dropped connection the host said (its player, its seconds).
+    away: ?net.protocol.Away = null,
 
     fn create(network: *net.memory.Network, role: net.netplay.Role, delay: ?u8, script: *const fn (u32) Pad) !*Peer {
+        return createAs(network, role, delay, script, .{ ' ', ' ', ' ' });
+    }
+
+    fn createAs(network: *net.memory.Network, role: net.netplay.Role, delay: ?u8, script: *const fn (u32) Pad, name: net.protocol.Name) !*Peer {
         const gpa = std.testing.allocator;
         const peer = try gpa.create(Peer);
         errdefer gpa.destroy(peer);
@@ -79,6 +100,7 @@ const Peer = struct {
                 .data = @splat(7),
                 .delay = delay,
                 .log = false,
+                .name = name,
             }, canonical.diffFn(FakeState)),
             .script = script,
         };
@@ -122,14 +144,32 @@ const Peer = struct {
                 peer.pads.clearRetainingCapacity();
             },
             .welcomed => if (peer.np.role == .guest) peer.np.askJoin(&p, net.protocol.no_character),
+            .away => |a| peer.away = a,
             else => {},
         };
         peer.np.clearNotes();
-        if (peer.np.role == .host and !peer.np.inSession()) if (peer.np.joinAsked()) |ask| {
-            var form: [canonical.maxSize(FakeState)]u8 = undefined;
-            peer.np.begin(&p, ask.peer, 1, canonical.write(FakeState, &peer.state, &form));
-            peer.pads.clearRetainingCapacity();
+        // The host takes a join in its first free place: a new session, or the one under way at a
+        // tick to come.
+        if (peer.np.role == .host) if (peer.np.joinAsked()) |ask| {
+            var place: ?sorz.input.Player = null;
+            for (1..peer.places) |k| if (!peer.np.placeTaken(k)) {
+                place = @intCast(k);
+                break;
+            };
+            if (place) |k| {
+                if (!peer.np.inSession()) {
+                    var form: [canonical.maxSize(FakeState)]u8 = undefined;
+                    peer.np.begin(&p, ask.peer, k, canonical.write(FakeState, &peer.state, &form));
+                    peer.pads.clearRetainingCapacity();
+                } else if (!peer.np.scheduleJoin(&p, ask.peer, k, net.protocol.no_character, net.protocol.no_character, ask.peer.session.peer_name)) {
+                    peer.np.declineJoin(&p, ask.peer);
+                }
+            } else if (!peer.np.inSession()) {
+                peer.np.declineJoin(&p, ask.peer);
+            }
         };
+        // A client's connection not back in time: it leaves the game.
+        if (peer.np.role == .host) if (peer.np.lostFor()) |t| if (t > net.session.rejoin_ns) peer.np.giveUp(&p);
         if (!peer.np.inSession()) {
             // Its own game, alone (the guest's is replaced at the join).
             if (peer.np.role == .host) {
@@ -142,6 +182,11 @@ const Peer = struct {
         const t = peer.np.tick();
         const merged = if (t < limit) peer.np.pads(&p, peer.script(t)) else null;
         if (merged) |pads| {
+            // A join at this tick: on the host, its client's session begins from the game now.
+            while (peer.np.takeEvent()) |e| if (peer.np.role == .host and e.what == .join) {
+                var form: [canonical.maxSize(FakeState)]u8 = undefined;
+                peer.np.beginJoin(&p, @intCast(e.player), canonical.write(FakeState, &peer.state, &form));
+            };
             peer.state.step(pads);
             try peer.pads.append(std.testing.allocator, pads);
             peer.np.ran();
@@ -410,4 +455,196 @@ test "a game without content has no game to join: its network play waits in the 
     try std.testing.expect(games[0].game.state.tick >= 119 and games[1].game.state.tick >= 119);
     try std.testing.expect(!games[0].game.netplay.?.inSession() and games[1].game.netplay.?.phase() == .idle);
     try std.testing.expect(games[1].game.isClient() and !games[0].game.isClient());
+}
+
+// --- three and four machines (PLAN item 51) ------------------------------------------------------
+
+/// Updates every peer in turn (but the frozen) until each ran `ticks` ticks of a session, or
+/// `max_updates` pass.
+fn runAll(peers: []const *Peer, ticks: u32, max_updates: u32) !void {
+    var n: u32 = 0;
+    while (true) : (n += 1) {
+        var done = true;
+        for (peers) |x| done = done and x.np.inSession() and x.np.tick() >= ticks;
+        if (done) return;
+        if (n == max_updates) return error.Timeout;
+        for (peers) |x| try x.updateTo(ticks);
+    }
+}
+
+/// The session's first tick on a guest (its join).
+fn startOf(peer: *const Peer) u32 {
+    return peer.np.peers.items[0].session.start;
+}
+
+/// Every guest ran the host's ticks from its join with the same pads, to the same state.
+fn expectSameGames(host: *Peer, guests: []const *Peer) !void {
+    for (guests) |g| {
+        const from = startOf(g);
+        try std.testing.expectEqual(host.np.tick(), g.np.tick());
+        try std.testing.expectEqual(host.pads.items.len - from, g.pads.items.len);
+        for (host.pads.items[from..], g.pads.items) |a, b| try std.testing.expectEqual(a, b);
+        try std.testing.expectEqual(host.state.hash(), g.state.hash());
+    }
+}
+
+/// Whether player `k`'s pads were ever pressed in the host's ticks from `from` to `to`.
+fn pressed(host: *const Peer, k: usize, from: u32, to: u32) bool {
+    for (host.pads.items[from..to]) |x| if (@as(u8, @bitCast(x.of(k))) != 0) return true;
+    return false;
+}
+
+const Four = struct {
+    network: net.memory.Network,
+    host: *Peer,
+    guests: [3]*Peer,
+
+    fn init(self: *Four, n: usize) !void {
+        self.network = net.memory.Network.init(std.testing.allocator);
+        self.host = try Peer.create(&self.network, .host, 3, hostScript);
+        self.host.places = @intCast(n);
+        const scripts = [3]*const fn (u32) Pad{ guestScript, thirdScript, fourthScript };
+        const names = [3][3]u8{ "ANN".*, "BOB".*, "CAT".* };
+        for (&self.guests, scripts, names, 0..) |*g, sc, name, i| g.* = if (i < n - 1) try Peer.createAs(&self.network, .guest, null, sc, name) else undefined;
+    }
+
+    fn deinit(self: *Four, n: usize) void {
+        for (self.guests[0 .. n - 1]) |g| g.destroy();
+        self.host.destroy();
+        self.network.deinit();
+    }
+};
+
+test "four agent hosts: clients join one after another, each its place; the same game everywhere" {
+    var r: Four = undefined;
+    try r.init(4);
+    defer r.deinit(4);
+    const host = r.host;
+    // The first client alone, then the second joins the session under way, then the third.
+    try runAll(&.{ host, r.guests[0] }, 100, 300);
+    try runAll(&.{ host, r.guests[0], r.guests[1] }, 250, 400);
+    try runAll(&.{ host, r.guests[0], r.guests[1], r.guests[2] }, 450, 500);
+    for (r.guests, 1..) |g, k| try std.testing.expectEqual(@as(sorz.input.Player, @intCast(k)), g.np.localPlayer());
+    try std.testing.expect(startOf(r.guests[0]) == 0 and startOf(r.guests[1]) > 100 and startOf(r.guests[2]) > 250);
+    try expectSameGames(host, &r.guests);
+    // Each player's pads are its own machine's, relayed to the others: players 3 and 4 pressed
+    // nothing before their joins (and their first D ticks), something after.
+    const third = startOf(r.guests[1]);
+    const fourth = startOf(r.guests[2]);
+    try std.testing.expect(!pressed(host, 2, 0, third + 3) and pressed(host, 2, third + 3, fourth));
+    try std.testing.expect(!pressed(host, 3, 0, fourth + 3) and pressed(host, 3, fourth + 3, 450));
+    try std.testing.expectEqual(@as(u32, 1), host.np.sessions);
+    // A fifth game finds no place: welcomed, it waits in the lobby; the others play on.
+    const fifth = try Peer.create(&r.network, .guest, null, guestScript);
+    defer fifth.destroy();
+    try runAll(&.{ host, r.guests[0], r.guests[1], r.guests[2] }, 500, 200);
+    for (0..20) |_| for ([_]*Peer{ host, r.guests[0], r.guests[1], r.guests[2], fifth }) |x| try x.update();
+    try std.testing.expect(fifth.np.welcomed() and !fifth.np.inSession());
+    try std.testing.expectEqual(@as(usize, 3), host.np.memberCount());
+    // The roster: every client by its name and player.
+    var entries: [8]net.netplay.Entry = undefined;
+    const list = host.np.roster(&entries);
+    var buf: [24]u8 = undefined;
+    var lines: [3][]const u8 = undefined;
+    var n: usize = 0;
+    for (list) |e| if (e.doing == .player) {
+        lines[n] = try std.testing.allocator.dupe(u8, e.line(&buf));
+        n += 1;
+    };
+    defer for (lines[0..n]) |l| std.testing.allocator.free(l);
+    try std.testing.expectEqual(@as(usize, 3), n);
+    try std.testing.expectEqualStrings("ANN - PLAYER 2", lines[0]);
+    try std.testing.expectEqualStrings("BOB - PLAYER 3", lines[1]);
+    try std.testing.expectEqualStrings("CAT - PLAYER 4", lines[2]);
+}
+
+test "three agent hosts: the stats list every machine, the host relaying each client's" {
+    var r: Four = undefined;
+    try r.init(3);
+    defer r.deinit(3);
+    r.guests[1].work_ns = 15 * std.time.ns_per_ms;
+    try runAll(&.{ r.host, r.guests[0], r.guests[1] }, 400, 600);
+    const h = r.host.np.stats().?;
+    const a = r.guests[0].np.stats().?;
+    const b = r.guests[1].np.stats().?;
+    for ([_]net.netplay.Stats{ h, a, b }) |x| {
+        for (x.machines[0..3]) |m| try std.testing.expect(m.in and m.load != null);
+        try std.testing.expect(!x.machines[3].in);
+    }
+    // The busy third machine, as itself, the host and the second see it.
+    try std.testing.expect(b.machines[2].load.?.busy >= 88);
+    try std.testing.expect(h.machines[2].load.?.busy >= 88 and a.machines[2].load.?.busy >= 88);
+    try std.testing.expect(a.machines[1].load.?.busy == 0 and std.mem.eql(u8, &h.machines[1].name, "ANN"));
+}
+
+test "a client that leaves a session of four: the others play on, its player out from the tick its pads ran out" {
+    var r: Four = undefined;
+    try r.init(4);
+    const host = r.host;
+    try runAll(&.{ host, r.guests[0], r.guests[1], r.guests[2] }, 200, 600);
+    // Player 3's game quits.
+    var p = r.guests[1].backend.asPlatform();
+    r.guests[1].np.quit(&p);
+    r.guests[1].destroy();
+    const rest = [_]*Peer{ host, r.guests[0], r.guests[2] };
+    try runAll(&rest, 400, 400);
+    try std.testing.expectEqual(@as(usize, 2), host.np.memberCount());
+    try std.testing.expect(!host.np.placeTaken(2));
+    try expectSameGames(host, &.{ r.guests[0], r.guests[2] });
+    // From some tick on, player 3 presses nothing on any machine; players 2 and 4 play on.
+    try std.testing.expect(!pressed(host, 2, 220, 400) and pressed(host, 1, 220, 400) and pressed(host, 3, 220, 400));
+    r.guests[2].destroy();
+    r.guests[0].destroy();
+    host.destroy();
+    r.network.deinit();
+}
+
+test "a dropped connection in a session of three: every machine holds, told whose; back in time, it goes on; not back, the others play on" {
+    var r: Four = undefined;
+    try r.init(3);
+    defer r.deinit(3);
+    const host = r.host;
+    const all = [_]*Peer{ host, r.guests[0], r.guests[1] };
+    try runAll(&all, 200, 400);
+    const endpoint: *net.memory.Endpoint = @ptrCast(@alignCast(host.backend.transport.?.context));
+    r.network.breakLink(endpoint, host.np.member(2).?.connection.?);
+    const at = host.np.tick();
+    for (0..30) |_| for (all) |x| try x.update();
+    for (all) |x| try std.testing.expect(x.np.tick() <= at + 4);
+    try std.testing.expectEqual(@as(sorz.input.Player, 2), host.np.lostPlayer().?.player);
+    // The other client is told whose connection is down, and the seconds left.
+    try std.testing.expect(r.guests[0].away != null and r.guests[0].away.?.player == 2 and r.guests[0].away.?.seconds > 0);
+    // Back a second later: the same session goes on, every machine in step.
+    try runAll(&all, 500, 800);
+    try std.testing.expectEqual(@as(u32, 1), host.np.sessions);
+    try expectSameGames(host, &.{ r.guests[0], r.guests[1] });
+    // Down again, and not back in time (its machine gone quiet): after the wait, the host and the
+    // other client play on without it.
+    r.network.breakLink(endpoint, host.np.member(2).?.connection.?);
+    const two = [_]*Peer{ host, r.guests[0] };
+    var n: u32 = 0;
+    while (host.np.tick() < 700) : (n += 1) {
+        if (n == 1200) return error.Timeout;
+        for (two) |x| try x.update();
+    }
+    try std.testing.expect(n > 290);
+    try runAll(&two, 720, 100);
+    try std.testing.expectEqual(@as(usize, 1), host.np.memberCount());
+    const from = startOf(r.guests[0]);
+    for (host.pads.items[from..720], r.guests[0].pads.items[0..720]) |a, b| try std.testing.expectEqual(a, b);
+    try std.testing.expectEqual(host.state.hash(), r.guests[0].state.hash());
+    try std.testing.expect(r.guests[0].away.?.seconds == 0);
+}
+
+test "a byte corrupted on one client of three is found and named; every machine stops" {
+    var r: Four = undefined;
+    try r.init(3);
+    defer r.deinit(3);
+    r.guests[1].corrupt_at = 131;
+    runAll(&.{ r.host, r.guests[0], r.guests[1] }, 400, 600) catch {};
+    for ([_]*Peer{ r.host, r.guests[0], r.guests[1] }) |x| try std.testing.expectEqual(net.session.Phase.desynced, x.np.phase());
+    try std.testing.expectEqualStrings("score[1]", r.host.np.difference.?.name());
+    try std.testing.expectEqualStrings("score[1]", r.guests[1].np.difference.?.name());
+    // The other client stopped with them, told, with no field of its own to name.
+    try std.testing.expect(r.guests[0].np.difference == null and r.guests[0].np.tick() < 160);
 }
