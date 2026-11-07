@@ -115,7 +115,8 @@ const Machine = struct {
     /// The sound's frames since the session began (none outside one).
     pcm: *std.ArrayList(i16) = undefined,
 
-    fn create(gpa: std.mem.Allocator, assets: platform.AssetSource, network: *net.memory.Network, role: net.netplay.Role, name: ?[3]u8) !*Machine {
+    /// `delay`: the host's input delay (null: from the round trips), a client's none.
+    fn create(gpa: std.mem.Allocator, assets: platform.AssetSource, network: *net.memory.Network, role: net.netplay.Role, name: ?[3]u8, delay: ?u8) !*Machine {
         const m = try gpa.create(Machine);
         errdefer gpa.destroy(m);
         m.backend = agent.AgentBackend.init(gpa, .{});
@@ -134,7 +135,7 @@ const Machine = struct {
             .address = if (role == .host) "7000" else "ws://localhost:7000",
             .build = net.protocol.buildId(sorz.version.build),
             .data = @splat(1),
-            .delay = if (role == .host) 3 else null,
+            .delay = if (role == .host) delay else null,
             .log = false,
         });
         return m;
@@ -211,6 +212,8 @@ const Room = struct {
     assets: platform.AssetSource,
     network: net.memory.Network,
     machines: std.ArrayList(*Machine) = .empty,
+    /// The host's input delay: 3, or null to take it from the round trips (a slow link's flow).
+    host_delay: ?u8 = 3,
 
     fn init(gpa: std.mem.Allocator, assets: platform.AssetSource) Room {
         return .{ .gpa = gpa, .assets = assets, .network = .init(gpa) };
@@ -228,7 +231,7 @@ const Room = struct {
     }
 
     fn addNamed(r: *Room, role: net.netplay.Role, name: ?[3]u8) !*Machine {
-        const m = try Machine.create(r.gpa, r.assets, &r.network, role, name);
+        const m = try Machine.create(r.gpa, r.assets, &r.network, role, name, r.host_delay);
         errdefer m.destroy(r.gpa);
         try r.machines.append(r.gpa, m);
         return m;
@@ -1823,6 +1826,34 @@ fn selectMany(f: *Flow, r: *Room, n: usize) !void {
     f.note("\"session_tick\":{d},\"state_hash\":\"{x:0>16}\",\"delay\":{d}", .{ m.host.np().tick(), m.host.game.stateHash(), m.host.np().delay() });
 }
 
+/// slow_three: every link 30 ms one way (the in-memory network's latency), the host's input delay
+/// taken from the round trips (as measured: a message is seen at the next update after it is
+/// due). With the first client, the delay suits its link; a client's pads reach another through
+/// the host, two links: as the second joins, every machine's delay grows, the same on the three,
+/// and the three games are the same.
+fn slowThree(f: *Flow, r: *Room) !void {
+    r.network.latency_ns = 30 * std.time.ns_per_ms;
+    r.host_delay = null;
+    var m = try manyRoom(r, 3);
+    try hostPlayers(f, r, m.host, 3);
+    const first = m.clients[0];
+    try clientJoins(f, r, first);
+    try f.until(r, first, inSession, 900, "the first client joins at the host's select");
+    try f.until(r, first, inSelect, 200, "the first client at the host's select");
+    m.in = 2;
+    const two = m.host.np().delay();
+    try f.check(first.np().delay() == two, "the host and its client at the same delay");
+    try manyJoinAtSelect(f, r, &m, 3);
+    try manyChooseAndPlay(f, r, &m);
+    const three = m.host.np().delay();
+    var same_delay = true;
+    for (m.all()) |c| same_delay = same_delay and c.np().delay() == three;
+    try f.check(same_delay, "every machine at the same delay");
+    try f.check(three > two, "the delay grown for the path through the host");
+    try sameAllFor(f, r, &m, 600);
+    f.note("\"delay_two\":{d},\"delay_three\":{d},\"session_tick\":{d},\"state_hash\":\"{x:0>16}\"", .{ two, three, m.host.np().tick(), m.host.game.stateHash() });
+}
+
 /// round_three: the host's PLAYERS 3, a client joining at its select, round 1 with two; the
 /// second client chooses on its own select (the two players' characters taken: one left) and
 /// joins the round as player 3, dropping in on every machine; the same game, picture and sound
@@ -2042,6 +2073,7 @@ pub fn main(init: std.process.Init) !void {
         .{ .name = "round_three", .run = roundThree },
         .{ .name = "away_four", .run = awayFour },
         .{ .name = "difference_three", .run = differenceThree },
+        .{ .name = "slow_three", .run = slowThree },
     }) |e| {
         if (only.items.len != 0) {
             var wanted = false;
