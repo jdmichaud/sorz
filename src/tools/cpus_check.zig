@@ -37,8 +37,9 @@
 //! the other CPU. With `--players`, the line names the players, each player's lists hold N, and
 //! each round tells the enemies that came out (`enemies`, the bosses among them) and the health
 //! the players' blows took off them (`enemy_damage`); the lists between players 1 and 2 stay
-//! theirs (the causes, the sides, the turns, the pace, the hits). Build it fast and alone: `zig build
-//! cpus-check-exe -Doptimize=ReleaseFast --prefix DIR`; a whole game takes about a minute then.
+//! theirs (the causes, the sides, the turns, the pace, the hits). Build it fast and alone: `zig
+//! build cpus-check-exe -Doptimize=ReleaseFast --prefix DIR`; a whole game takes about a minute
+//! then.
 const std = @import("std");
 const sorz = @import("sorz");
 const agent = @import("agent");
