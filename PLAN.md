@@ -545,6 +545,57 @@
   - [x] Checked 2026-11-06: netplay-check twice (its 25 flows and the two processes),
     tools/check_netplay.sh alone three times in a row; zig build test.
 
+### Three and four players (DESIGN.md 10.7, E4; the user, 2026-11-07)
+
+Outside the original; games of 1 or 2 players stay as they are at every step. One player a
+machine in network play; CPUs in the free places and several local players a machine come later
+(the CPU's play will want tuning for them).
+
+- [ ] **47 — The engine for four players** — Depends: 46.
+  - The pads (`input.Pads`), the world's players, their records (lives, specials, scores,
+    continues), the canonical form and network play's messages carry four players. What pairs
+    the two players today takes any two: holds and throws between players, friendly hits, an
+    enemy's target, the camera keeping every player in view, the police special, the draw order.
+  - No change seen: games of 1 or 2 players as before.
+  - Gate: zig build test; the recorded round and the scenarios equal to sor-remaster's traces as
+    before (round-check, similar-check); netplay-check; a 4-player world in unit tests (four
+    players fight, hold each other, each loses its lives).
+- [ ] **48 — The status bar for 3 and 4 players** — Depends: 47.
+  - Four compact slots in a row, the timer between the second and the third: the name (its
+    network name, else 1P to 4P, or CPU), the police icon on one line and its count; the health
+    bar and the lives under them. No score shown (it counts still); the bosses' bar below.
+  - Gate: zig build test; pictures of the bar with 3 and 4 players, their health, lives and
+    specials changing; 1 and 2 players' bar as before.
+- [ ] **49 — The select for 4** — Depends: 47.
+  - A cursor each, 1P to 4P; with 4 players SAME CHARACTER on. A character's third and fourth
+    players take colour sets of the port's own (shown to the user first).
+  - Gate: zig build test; pictures of the select with 3 and 4 cursors and of each character's
+    four colour sets in a round.
+- [ ] **50 — 3 and 4 PLAYERS in the menu** — Depends: 48, 49.
+  - Right on 2 PLAYERS: 3 PLAYERS, 4 PLAYERS, then the CPU's readings; skipped without as many
+    input methods (the keyboard's two pads, the gamepads).
+  - Gate: zig build test; variants-check's flow from the menu to a round of 4 players on one
+    machine (the agent's pads).
+- [ ] **51 — Network play for up to 4** — Depends: 50.
+  - The network options' PLAYERS takes 2 to 4. The host relays every player's pads each tick to
+    every machine; clients join until the places are full (at the select, or during a round
+    where JOIN IN PROGRESS lets them), then may observe; a player whose machine drops out leaves
+    after the wait, as player 2 today; the roster and the stats list every machine.
+  - Gate: zig build test; netplay-check with 3 and 4 machines in one process (joins, leaving, a
+    dropped connection, a difference found); 3 and 4 agent processes over WebSockets (as
+    tools/check_netplay.sh with two) reaching the same state and sound.
+- [ ] **52 — The rounds with 3 and 4 players** — Depends: 47.
+  - The two-player spawns again: half of them with 3 players, all of them with 4 (the second
+    boss among them not again: as many bosses as with two players); the enemies' health x1.25
+    and x1.5, the bosses' x1.5 and x2; the breakables among them bring more food and goodies.
+  - Gate: zig build test; the numbers measured with CPUs in every place (a tool's games of 3 and
+    4 players: lives lost, damage taken, rounds' times against 2), tuned, and the user's play.
+- [ ] **53 — Mr. X's room, the continues and the high scores for 4** — Depends: 47, 48.
+  - Mr. X's offer for players 1 and 2 alone, played as two until he rises; then the others come
+    in. Each player's continue's question and name entry on its own slot; the high scores take
+    four entries.
+  - Gate: zig build test; round 8's room and a game over played with 4 players (pictures).
+
 ## Standing rule
 
 - [ ] **S1 — The repository stands alone** — Depends: none.
