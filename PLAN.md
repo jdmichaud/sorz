@@ -545,6 +545,50 @@
   - [x] Checked 2026-11-06: netplay-check twice (its 25 flows and the two processes),
     tools/check_netplay.sh alone three times in a row; zig build test.
 
+- [x] **46 — The CPU's course, and its pace on a free screen** — Depends: 34.
+  - The user saw the CPU partner turn round and walk back within a few ticks for no reason, and
+    in 1 PLAYER - 1 CPU had to wait for it on a free screen: with no foe on the screen the camera
+    follows both players and moves on only as the hindmost lets it (from the start of its band),
+    and the CPU lagged behind. Its place on the floor stayed where player 1 had left it until its
+    while there was over.
+  - cpus-check `--player1 bot`, player 1 played by item 30's rule (Adam or Axel), the CPU each of
+    the three, rounds 1 to 6, level 1, 9 lives, seeds 1 to 3: the CPU turned round within half a
+    second of its last turn 22.7 times a minute (the rule 5.0), with no foe within 120 pixels
+    29.7 times a minute of that time (median of the games 7.7; the rule 1.2). Seen there: in and
+    out of the margin round a press about to come down at every tick; stepping back from a thing
+    too close and turning to it again, each a walk (Blaze's 4 pixels) that undid the other, no
+    blow for minutes; the same against the edge of the view; its step out of player 1's line, or
+    its detour's, undone by its goal's walk at the next tick. On a free screen it held the camera
+    back 17% of the time, trailing player 1 by more than 32 pixels 46% of it.
+  - Its walk keeps its course a while (`settle`): a turn round, or a reversal in depth, within a
+    third of a second of the last is left out, the CPU standing that way a moment, but for a
+    strong reason (a foe close, a turn to strike, out from under a press, out of the way of what
+    comes at it, out of a solid thing). Too close to its foe it steps back until a turn's room
+    past its reach's near end (the other way, past it, at the edge of the view); within the
+    margin round a press it keeps out of the one it walks out from.
+  - On a free screen its place keeps up with player 1: ahead of it or level, past the start of the
+    camera's band the way the round goes, chosen anew on the same side once player 1 or the
+    camera has gone past it. While the camera may move on, it leaves the foes off the screen
+    behind (found after the first change: it walked at them, held at the edge of the view).
+  - cpus-check `--player1 bot` (1 PLAYER - 1 CPU, player 1 played by item 30's rule) and its
+    measures: each CPU's quick turns (`turns`; `--turns on` tells each), player 2's pace on a free
+    screen (`pace`), each player's lives lost and damage taken from the foes.
+  - Gate: cpus-check `--player1 bot` against before: fewer quick turns, less time holding the
+    camera back; cpus-check's nine pairings at the hardest level: no more lives lost nor damage
+    taken beyond noise; the unit tests; the user's play.
+  - [x] Checked 2026-11-07: cpus-check `--player1 bot`, the same 18 games, against before: quick
+    turns 22.7 -> 8.7 a minute, with no foe near 29.7 -> 3.2 (median of the games 7.7 -> 2.6;
+    round 6's Blaze at a press 403 -> 14 in one game), quick reversals in depth 94 -> 42; on a
+    free screen holding the camera back 17.0% -> 6.7% of the time, trailing by more than 32
+    pixels 46% -> 31%, on average 35 pixels behind -> 16 ahead; its lives lost 304 -> 303,
+    damage taken 22643 -> 22384. The nine pairings at the hardest level, 7 lives, seeds 1 and 2:
+    lives lost 47.8 -> 48.3 a game, damage taken 4819 -> 4867 (t 0.3 both), quick turns 15.1 ->
+    6.9 a minute, CPU 2 holding the camera back 19.7% -> 6.3%; all 18 reach the ending. The
+    course held in the fight too, without the foe close as a reason, cost lives (+5.0%, damage
+    +5.5%, t 1.5 and 2.1): dropped. zig build test (a test of each change). Pictures of round 1
+    through the bot's game: the CPU ahead or level as the camera moves on. The user's play is
+    pending.
+
 ### Three and four players (DESIGN.md 10.7, E4; the user, 2026-11-07)
 
 Outside the original; games of 1 or 2 players stay as they are at every step. One player a
@@ -595,50 +639,6 @@ machine in network play; CPUs in the free places and several local players a mac
     in. Each player's continue's question and name entry on its own slot; the high scores take
     four entries.
   - Gate: zig build test; round 8's room and a game over played with 4 players (pictures).
-
-- [x] **46 — The CPU's course, and its pace on a free screen** — Depends: 34.
-  - The user saw the CPU partner turn round and walk back within a few ticks for no reason, and
-    in 1 PLAYER - 1 CPU had to wait for it on a free screen: with no foe on the screen the camera
-    follows both players and moves on only as the hindmost lets it (from the start of its band),
-    and the CPU lagged behind. Its place on the floor stayed where player 1 had left it until its
-    while there was over.
-  - cpus-check `--player1 bot`, player 1 played by item 30's rule (Adam or Axel), the CPU each of
-    the three, rounds 1 to 6, level 1, 9 lives, seeds 1 to 3: the CPU turned round within half a
-    second of its last turn 22.7 times a minute (the rule 5.0), with no foe within 120 pixels
-    29.7 times a minute of that time (median of the games 7.7; the rule 1.2). Seen there: in and
-    out of the margin round a press about to come down at every tick; stepping back from a thing
-    too close and turning to it again, each a walk (Blaze's 4 pixels) that undid the other, no
-    blow for minutes; the same against the edge of the view; its step out of player 1's line, or
-    its detour's, undone by its goal's walk at the next tick. On a free screen it held the camera
-    back 17% of the time, trailing player 1 by more than 32 pixels 46% of it.
-  - Its walk keeps its course a while (`settle`): a turn round, or a reversal in depth, within a
-    third of a second of the last is left out, the CPU standing that way a moment, but for a
-    strong reason (a foe close, a turn to strike, out from under a press, out of the way of what
-    comes at it, out of a solid thing). Too close to its foe it steps back until a turn's room
-    past its reach's near end (the other way, past it, at the edge of the view); within the
-    margin round a press it keeps out of the one it walks out from.
-  - On a free screen its place keeps up with player 1: ahead of it or level, past the start of the
-    camera's band the way the round goes, chosen anew on the same side once player 1 or the
-    camera has gone past it. While the camera may move on, it leaves the foes off the screen
-    behind (found after the first change: it walked at them, held at the edge of the view).
-  - cpus-check `--player1 bot` (1 PLAYER - 1 CPU, player 1 played by item 30's rule) and its
-    measures: each CPU's quick turns (`turns`; `--turns on` tells each), player 2's pace on a free
-    screen (`pace`), each player's lives lost and damage taken from the foes.
-  - Gate: cpus-check `--player1 bot` against before: fewer quick turns, less time holding the
-    camera back; cpus-check's nine pairings at the hardest level: no more lives lost nor damage
-    taken beyond noise; the unit tests; the user's play.
-  - [x] Checked 2026-11-07: cpus-check `--player1 bot`, the same 18 games, against before: quick
-    turns 22.7 -> 8.7 a minute, with no foe near 29.7 -> 3.2 (median of the games 7.7 -> 2.6;
-    round 6's Blaze at a press 403 -> 14 in one game), quick reversals in depth 94 -> 42; on a
-    free screen holding the camera back 17.0% -> 6.7% of the time, trailing by more than 32
-    pixels 46% -> 31%, on average 35 pixels behind -> 16 ahead; its lives lost 304 -> 303,
-    damage taken 22643 -> 22384. The nine pairings at the hardest level, 7 lives, seeds 1 and 2:
-    lives lost 47.8 -> 48.3 a game, damage taken 4819 -> 4867 (t 0.3 both), quick turns 15.1 ->
-    6.9 a minute, CPU 2 holding the camera back 19.7% -> 6.3%; all 18 reach the ending. The
-    course held in the fight too, without the foe close as a reason, cost lives (+5.0%, damage
-    +5.5%, t 1.5 and 2.1): dropped. zig build test (a test of each change). Pictures of round 1
-    through the bot's game: the CPU ahead or level as the camera moves on. The user's play is
-    pending.
 
 ## Standing rule
 
