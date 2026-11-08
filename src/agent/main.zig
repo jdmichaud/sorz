@@ -44,6 +44,8 @@ const usage =
     \\  --wav PATH       write the sound played as a WAV file
     \\  DIR|ROM          the game directory (its content tree), or the user's ROM, whose content
     \\                   is extracted in memory; without either, a test pattern
+    \\  --config DIR     with --saves: where the settings record (settings.json) is kept
+    \\                   (default: --saves's)
     \\  --saves DIR      where saves are kept, the settings record (settings.json) among them;
     \\                   without it, none: they stay in memory for the run
     \\  --original       the cartridge's variant (DESIGN.md 10.7): its game menu, options and
@@ -236,13 +238,17 @@ pub fn main(init: std.process.Init) !void {
     defer memory_storage.deinit();
     var assets: ?sorz.platform.AssetSource = memory_assets.assetSource();
     var storage = memory_storage.storage();
+    var config = storage;
+    // `--config` goes with `--saves`: the agent never opens the user's directories.
+    if (options.config != null and options.saves == null) return fail(io);
     if (options.saves != null) {
-        providers.open(gpa, io, init.environ_map, options) catch |err| {
+        providers.open(gpa, io, init.environ_map, options, .with_saves) catch |err| {
             std.log.err("cannot open the providers: {s}", .{native.cli.openErrorText(err)});
             std.process.exit(2);
         };
         assets = providers.assetSource() orelse assets;
         storage = providers.storage();
+        config = providers.configStorage();
     } else if (options.assets) |path| {
         // Without `--saves`, only the game's data is opened: the user's save directory is not even
         // created.
@@ -310,7 +316,7 @@ pub fn main(init: std.process.Init) !void {
     var backend = agent.AgentBackend.init(gpa, .{});
     defer backend.deinit();
     backend.audio.record = wav_path != null;
-    var game = try sorz.Game.init(gpa, assets, storage);
+    var game = try sorz.Game.initWith(gpa, assets, .{ .saves = storage, .config = config });
     defer game.deinit();
     game.pacing = .per_update;
     game.variant = options.variant();

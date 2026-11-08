@@ -373,9 +373,11 @@ const max_events_per_update = 256;
 
 pub const Game = struct {
     allocator: std.mem.Allocator,
-    /// The game's files, which the content is read from, and the saves.
+    /// The game's files, which the content is read from; the saves (the replays F5 saves); the
+    /// settings' record (`config`: the configuration's storage, or the saves' one).
     assets: ?platform.AssetSource,
     storage: ?platform.Storage,
+    config: ?platform.Storage = null,
     /// The content tree, and the scenes' assets in it; null without a tree (the test pattern).
     content: ?*library.Content = null,
     scene_assets: ?scene.Assets = null,
@@ -501,12 +503,21 @@ pub const Game = struct {
 
     /// The content is read from `assets` when they hold a content tree (a refusal is logged with
     /// the file and the field, and is `BadContent`); without one, the game shows its test
-    /// pattern. The settings are read from `storage` (the defaults without one).
+    /// pattern. The saves and the settings are both in `storage` (`initWith` keeps the settings
+    /// apart); the settings are read from it (the defaults without one).
     pub fn init(allocator: std.mem.Allocator, assets: ?platform.AssetSource, storage: ?platform.Storage) InitError!Game {
-        var game: Game = .{ .allocator = allocator, .assets = assets, .storage = storage, .pic = try .init(allocator), .recording = .init(allocator, join_max) };
+        return initWith(allocator, assets, .{ .saves = storage, .config = storage });
+    }
+
+    /// Where the game keeps its records: the saves (the replays), and the settings' record.
+    pub const Storages = struct { saves: ?platform.Storage, config: ?platform.Storage };
+
+    /// As `init`, the settings read from and written to `storages.config`.
+    pub fn initWith(allocator: std.mem.Allocator, assets: ?platform.AssetSource, storages: Storages) InitError!Game {
+        var game: Game = .{ .allocator = allocator, .assets = assets, .storage = storages.saves, .config = storages.config, .pic = try .init(allocator), .recording = .init(allocator, join_max) };
         errdefer game.deinit();
         if (assets) |a| if (library.hasTree(allocator, a)) try game.loadContent(a);
-        if (storage) |s| game.loadSettings(s);
+        if (storages.config) |s| game.loadSettings(s);
         game.state = game.startState();
         return game;
     }
@@ -614,7 +625,7 @@ pub const Game = struct {
 
     /// Writes `settings` as the record; a failure is told, and the settings stay for this run.
     fn writeSettings(self: *Game, settings: *const settings_mod.Settings) void {
-        const storage = self.storage orelse return;
+        const storage = self.config orelse return;
         settings_mod.record.save(storage, settings) catch |err| {
             std.log.warn("the settings cannot be saved: {s}", .{@errorName(err)});
             self.tell(.not_saved);
@@ -2046,6 +2057,24 @@ test "the settings come from the storage: a whole record is kept, a damaged one 
     bare.settings.window.fullscreen = true;
     bare.fullscreenLeft();
     try testing.expectEqual(@as(u64, 0), bare.saves_written);
+}
+
+test "the settings are read from and written to the configuration's storage, not the saves'" {
+    var saves = memory.MemoryStorage.init(testing.allocator);
+    defer saves.deinit();
+    var config = memory.MemoryStorage.init(testing.allocator);
+    defer config.deinit();
+    var s: settings_mod.Settings = .{};
+    s.window.fullscreen = true;
+    try settings_mod.record.save(config.storage(), &s);
+    var game = try Game.initWith(testing.allocator, null, .{ .saves = saves.storage(), .config = config.storage() });
+    defer game.deinit();
+    try testing.expect(game.settings.window.fullscreen);
+    game.fullscreenLeft();
+    try testing.expectEqual(@as(u64, 1), game.saves_written);
+    const read = settings_mod.record.load(testing.allocator, config.storage());
+    try testing.expect(read.found and !read.settings.window.fullscreen);
+    try testing.expectError(error.NotFound, saves.storage().load(settings_mod.record.name));
 }
 
 test "the volume scales the sound unless the host applies it" {

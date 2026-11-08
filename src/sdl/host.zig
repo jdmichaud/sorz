@@ -41,7 +41,8 @@ pub const usage_options =
     \\                       and quit after that many seconds
     \\  --run-for SECONDS    quit after that many seconds, without the event log
     \\  --fps N              the fallback pacer's rate, 1 to 1000 (default 60)
-    \\  --saves DIR          where the settings and the replays are kept (default: above)
+    \\  --saves DIR          where the replays are kept (default: above)
+    \\  --config DIR         where the settings are kept (default: above)
     \\  --original           the cartridge exactly: its game menu, its options and its pause on
     \\                       START, without the port's additions (ADVANCED SETTINGS in
     \\                       OPTIONS, START opening the settings during play); the settings
@@ -102,15 +103,15 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
     const check = version.checkVersion(&ver_buf);
     std.log.info("SDL2 {s} linked (pinned {s})", .{ check.linked, check.pinned });
 
-    // The providers: the save directory, and the game directory of the positional argument. They
+    // The providers: the save directory, the configuration's, and the game directory of the positional argument. They
     // outlive the game and the backend, which only borrow their interfaces.
     var providers: native.cli.Providers = .empty;
     defer providers.deinit();
-    providers.open(gpa, io, environ, options.providers) catch |e| {
+    providers.open(gpa, io, environ, options.providers, .user) catch |e| {
         std.log.err("cannot open the game's data or saves: {s}", .{native.cli.openErrorText(e)});
         return 1;
     };
-    std.log.info("assets: {s}, saves: {s}", .{ @tagName(providers.kind), providers.saves_path });
+    std.log.info("assets: {s}, saves: {s}, config: {s}", .{ @tagName(providers.kind), providers.saves_path, providers.configPath() });
 
     // Network play: the WebSocket transport outlives the backend that holds it.
     // A client with `--join`; else the native game may host (its menu's NETWORK PLAY), when it
@@ -160,7 +161,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
     defer out.flush() catch {};
     if (options.event_log_ns != null) backend.event_log = out;
 
-    var game = try sorz.Game.init(gpa, providers.assetSource(), providers.storage());
+    var game = try sorz.Game.initWith(gpa, providers.assetSource(), providers.storages());
     defer game.deinit();
     game.variant = options.providers.variant();
     game.data_identity = data_identity;

@@ -10,7 +10,9 @@
 //! one), or the user's ROM, whose content is extracted into memory (`Providers.extractRom`, the
 //! one place where the extraction plugs in); without one, the ROM built into the executable, if
 //! any (sorz-standalone). Both are `AssetSource`s, so the game does not know which it has.
-//! `--saves` defaults to the per-user application data directory, which is created on first use.
+//! `--saves` defaults to the per-user application data directory, `--config` (the settings'
+//! record) to the per-user configuration directory; each is created on first use. A settings
+//! record left in the saves' directory by an older sorz is moved to the configuration's once.
 const std = @import("std");
 const builtin = @import("builtin");
 const sorz = @import("sorz");
@@ -25,7 +27,8 @@ const WebSocketTransport = net.WebSocketTransport;
 pub const usage =
     \\  DIR|ROM              the game directory (its content tree), or the user's ROM, whose
     \\                       content is extracted in memory
-    \\  --saves DIR          where the settings and the replays are kept (default: above)
+    \\  --saves DIR          where the replays are kept (default: above)
+    \\  --config DIR         where the settings are kept (default: above)
     \\  --original           the cartridge exactly: its game menu, its options and its pause on
     \\                       START, without the port's additions (ADVANCED SETTINGS in
     \\                       OPTIONS, START opening the settings during play); the settings
@@ -58,6 +61,8 @@ pub const Options = struct {
     /// game path is given. Not an argument.
     built_in_rom: ?[]const u8 = null,
     saves: ?[]const u8 = null,
+    /// `--config DIR`: where the settings' record is kept.
+    config: ?[]const u8 = null,
     /// Network play (DESIGN.md 9): the address to host at, or the URL to join; server mode's
     /// address.
     netplay: ?[]const u8 = null,
@@ -69,7 +74,7 @@ pub const Options = struct {
     /// `--replay FILE`: the replay file to play (DESIGN.md 10.8, replay.zig).
     replay: ?[]const u8 = null,
 
-    /// Consumes `--saves`, the network's options and the single positional game path. Returns
+    /// Consumes `--saves`, `--config`, the network's options and the single positional game path. Returns
     /// false for any other argument. After `--`, a game path can start with a dash.
     pub fn take(self: *Options, arg: []const u8, args: anytype) TakeError!bool {
         if (std.mem.eql(u8, arg, "--original")) {
@@ -82,10 +87,10 @@ pub const Options = struct {
             self.replay = value;
             return true;
         }
-        if (std.mem.eql(u8, arg, "--saves")) {
+        if (std.mem.eql(u8, arg, "--saves") or std.mem.eql(u8, arg, "--config")) {
             const value = args.next() orelse return error.MissingValue;
             if (value.len == 0) return error.MissingValue;
-            self.saves = value;
+            if (arg[2] == 's') self.saves = value else self.config = value;
             return true;
         }
         // One of `--netplay`, `--join` and `--server`, once.
@@ -288,24 +293,34 @@ pub fn openErrorText(err: OpenError) []const u8 {
 pub const Providers = struct {
     allocator: std.mem.Allocator = undefined,
     kind: AssetKind = .none,
-    /// The save directory in use (owned).
+    /// The save directory in use (owned), and the configuration's (owned; empty when the
+    /// settings are kept with the saves).
     saves_path: []u8 = &.{},
+    config_path: []u8 = &.{},
     assets_directory: ?DirectoryAssetSource = null,
     /// The content extracted from a ROM, in memory: the tree's files, and the source over them.
     rom_tree: ?extract.Tree = null,
     assets_memory: ?sorz.memory.MemoryAssetSource = null,
     saves: ?DirectoryStorage = null,
+    config: ?DirectoryStorage = null,
 
     pub const empty: Providers = .{};
 
-    /// Opens the save directory, and creates it if it does not exist. If the options give a game
-    /// path, also opens the asset source at that path; else the built-in ROM's, if any.
+    /// Where the settings go without `--config`: the per-user configuration directory (the
+    /// interactive host's), or with the saves (the agent's, which never opens the user's
+    /// directories).
+    pub const ConfigDefault = enum { user, with_saves };
+
+    /// Opens the save directory and the configuration's, and creates them if they do not exist
+    /// (a settings record in the first and not the second moves there). If the options give a
+    /// game path, also opens the asset source at that path; else the built-in ROM's, if any.
     pub fn open(
         self: *Providers,
         allocator: std.mem.Allocator,
         io: std.Io,
         environ: *const std.process.Environ.Map,
         options: Options,
+        config_default: ConfigDefault,
     ) OpenError!void {
         self.allocator = allocator;
         errdefer self.deinit();
@@ -314,6 +329,17 @@ pub const Providers = struct {
         else
             try defaultSaveDirectory(allocator, environ);
         self.saves = try mapOpen(DirectoryStorage.open(allocator, io, self.saves_path, true));
+        const config_path: ?[]u8 = if (options.config) |path|
+            try allocator.dupe(u8, path)
+        else switch (config_default) {
+            .user => try defaultConfigDirectory(allocator, environ),
+            .with_saves => null,
+        };
+        if (config_path) |path| {
+            self.config_path = path;
+            self.config = try mapOpen(DirectoryStorage.open(allocator, io, path, true));
+            moveSettings(self.saves.?.storage(), self.config.?.storage(), self.saves_path, path);
+        }
         if (options.assets) |path| return self.openPath(io, path);
         if (options.built_in_rom) |bytes| try self.extractRom(bytes);
     }
@@ -388,7 +414,9 @@ pub const Providers = struct {
         if (self.assets_memory) |*m| m.deinit();
         if (self.rom_tree) |*t| t.deinit();
         if (self.saves) |*s| s.deinit();
+        if (self.config) |*s| s.deinit();
         self.allocator.free(self.saves_path);
+        self.allocator.free(self.config_path);
         self.* = .empty;
     }
 
@@ -405,6 +433,21 @@ pub const Providers = struct {
         return self.saves.?.storage();
     }
 
+    /// The settings' storage: the configuration's, else the saves'.
+    pub fn configStorage(self: *Providers) platform.Storage {
+        return if (self.config) |*c| c.storage() else self.saves.?.storage();
+    }
+
+    /// The game's storages: the saves, the settings.
+    pub fn storages(self: *Providers) sorz.Game.Storages {
+        return .{ .saves = self.storage(), .config = self.configStorage() };
+    }
+
+    /// Where the settings' record is kept (its directory).
+    pub fn configPath(self: *const Providers) []const u8 {
+        return if (self.config != null) self.config_path else self.saves_path;
+    }
+
     /// The game data's identity, which network play's handshake compares (DESIGN.md 9): the
     /// content tree's digest (every file read once), as a page computes it from the files it was
     /// served; zeros without data.
@@ -413,6 +456,45 @@ pub const Providers = struct {
         return sorz.net.identity.ofTree(source, sorz.net.identity.max_file_bytes);
     }
 };
+
+/// A settings record that an older sorz kept with the saves goes to the configuration's
+/// storage, once: only when the configuration has none (one there stands, the other is left).
+/// Told in the log; a failure leaves the record where it was, and the settings start from
+/// the defaults.
+fn moveSettings(saves: platform.Storage, config: platform.Storage, from: []const u8, to: []const u8) void {
+    const name = sorz.settings.record.name;
+    if (config.load(name)) |found| {
+        var f = found;
+        f.deinit();
+        return;
+    } else |_| {}
+    var old = saves.load(name) catch return;
+    defer old.deinit();
+    config.save(name, old.bytes) catch |err| {
+        std.log.warn("the settings in {s} cannot be moved to {s}: {s}", .{ from, to, @errorName(err) });
+        return;
+    };
+    saves.deleteSave(name) catch |err| std.log.warn("the settings left in {s} cannot be deleted: {s}", .{ from, @errorName(err) });
+    std.log.info("the settings moved from {s} to {s}", .{ from, to });
+}
+
+/// The per-user configuration directory for the settings: `$XDG_CONFIG_HOME/sorz`, else
+/// `$HOME/.config/sorz`, and `%APPDATA%\sorz` on Windows. The caller owns the result.
+pub fn defaultConfigDirectory(allocator: std.mem.Allocator, environ: *const std.process.Environ.Map) error{ NoApplicationDirectory, OutOfMemory }![]u8 {
+    if (builtin.os.tag == .windows) {
+        const appdata = environ.get("APPDATA") orelse return error.NoApplicationDirectory;
+        if (appdata.len == 0) return error.NoApplicationDirectory;
+        return std.fmt.allocPrint(allocator, "{s}\\sorz", .{appdata}) catch return error.OutOfMemory;
+    }
+    if (environ.get("XDG_CONFIG_HOME")) |config_home| {
+        if (config_home.len != 0) {
+            return std.fmt.allocPrint(allocator, "{s}/sorz", .{config_home}) catch return error.OutOfMemory;
+        }
+    }
+    const home = environ.get("HOME") orelse return error.NoApplicationDirectory;
+    if (home.len == 0) return error.NoApplicationDirectory;
+    return std.fmt.allocPrint(allocator, "{s}/.config/sorz", .{home}) catch return error.OutOfMemory;
+}
 
 /// The per-user application data directory for the sorz saves:
 /// `$XDG_DATA_HOME/sorz/saves`, else `$HOME/.local/share/sorz/saves`, and
@@ -433,16 +515,35 @@ pub fn defaultSaveDirectory(allocator: std.mem.Allocator, environ: *const std.pr
     return std.fmt.allocPrint(allocator, "{s}/.local/share/sorz/saves", .{home}) catch return error.OutOfMemory;
 }
 
-/// The folders in `--help`, after how the program is called: the saves (and the replays F5
-/// saves) and the settings, at `--saves` when given, else as this machine's environment names
-/// the per-user directory (or `--saves` to give where it names none).
-pub fn writeStorageHelp(w: *std.Io.Writer, allocator: std.mem.Allocator, environ: *const std.process.Environ.Map, saves: ?[]const u8) (std.Io.Writer.Error || error{OutOfMemory})!void {
-    const directory = if (saves) |given| try allocator.dupe(u8, given) else defaultSaveDirectory(allocator, environ) catch |err| switch (err) {
-        error.NoApplicationDirectory => return w.writeAll("\nsave:   none here: give --saves DIR\nconfig: none here: give --saves DIR\n\n"),
+/// The folders in `--help`, after how the program is called: the saves (the replays F5 saves)
+/// and the settings' record, at `--saves` and `--config` when given, else as this machine's
+/// environment names the per-user directories (or the option to give where it names none).
+pub fn writeStorageHelp(w: *std.Io.Writer, allocator: std.mem.Allocator, environ: *const std.process.Environ.Map, saves: ?[]const u8, config: ?[]const u8) (std.Io.Writer.Error || error{OutOfMemory})!void {
+    try w.writeAll("\nsave:   ");
+    try writeFolder(w, allocator, environ, saves, defaultSaveDirectory, "", "--saves");
+    try w.writeAll("config: ");
+    try writeFolder(w, allocator, environ, config, defaultConfigDirectory, std.fs.path.sep_str ++ sorz.settings.record.name, "--config");
+    try w.writeAll("\n");
+}
+
+/// A line of `writeStorageHelp` after its label: the directory given, else the default's, and
+/// `file` in it; or the option to give.
+fn writeFolder(
+    w: *std.Io.Writer,
+    allocator: std.mem.Allocator,
+    environ: *const std.process.Environ.Map,
+    given: ?[]const u8,
+    comptime default: fn (std.mem.Allocator, *const std.process.Environ.Map) error{ NoApplicationDirectory, OutOfMemory }![]u8,
+    comptime file: []const u8,
+    comptime option: []const u8,
+) (std.Io.Writer.Error || error{OutOfMemory})!void {
+    if (given) |directory| return w.print("{s}" ++ file ++ "\n", .{directory});
+    const directory = default(allocator, environ) catch |err| switch (err) {
+        error.NoApplicationDirectory => return w.writeAll("none here: give " ++ option ++ " DIR\n"),
         error.OutOfMemory => return error.OutOfMemory,
     };
     defer allocator.free(directory);
-    try w.print("\nsave:   {s}\nconfig: {s}" ++ std.fs.path.sep_str ++ sorz.settings.record.name ++ "\n\n", .{ directory, directory });
+    try w.print("{s}" ++ file ++ "\n", .{directory});
 }
 
 const contract = @import("contract.zig");
@@ -606,7 +707,7 @@ test "the options open a game directory, or none; a file that is not the ROM is 
     // A game directory: the asset source passes the contract, and the storage keeps a record.
     {
         var providers: Providers = .empty;
-        try providers.open(allocator, io, &env, .{ .assets = paths[0], .saves = paths[1] });
+        try providers.open(allocator, io, &env, .{ .assets = paths[0], .saves = paths[1] }, .with_saves);
         defer providers.deinit();
         try std.testing.expectEqual(AssetKind.directory, providers.kind);
         try contract.assetContract(providers.assetSource().?);
@@ -621,7 +722,7 @@ test "the options open a game directory, or none; a file that is not the ROM is 
     // Without a game path, only the save directory opens, and `open` creates it.
     {
         var providers: Providers = .empty;
-        try providers.open(allocator, io, &env, .{ .saves = paths[1] });
+        try providers.open(allocator, io, &env, .{ .saves = paths[1] }, .with_saves);
         defer providers.deinit();
         try std.testing.expectEqual(AssetKind.none, providers.kind);
         try std.testing.expect(providers.assetSource() == null);
@@ -648,10 +749,10 @@ test "the options open a game directory, or none; a file that is not the ROM is 
         var providers: Providers = .empty;
         const missing = try std.fmt.allocPrint(allocator, "{s}/absent", .{base});
         defer allocator.free(missing);
-        try std.testing.expectError(error.NotFound, providers.open(allocator, io, &env, .{ .assets = missing, .saves = paths[1] }));
+        try std.testing.expectError(error.NotFound, providers.open(allocator, io, &env, .{ .assets = missing, .saves = paths[1] }, .with_saves));
         const a_file = try std.fmt.allocPrint(allocator, "{s}/game/game.cfg", .{base});
         defer allocator.free(a_file);
-        try std.testing.expectError(error.WrongRom, providers.open(allocator, io, &env, .{ .assets = a_file, .saves = paths[1] }));
+        try std.testing.expectError(error.WrongRom, providers.open(allocator, io, &env, .{ .assets = a_file, .saves = paths[1] }, .with_saves));
         const zeros = try allocator.alloc(u8, extract.rom.size);
         defer allocator.free(zeros);
         @memset(zeros, 0);
@@ -666,31 +767,64 @@ test "the options open a game directory, or none; a file that is not the ROM is 
     // A built-in ROM: opened without a game path, and checked as a file's is; a game path wins.
     {
         var providers: Providers = .empty;
-        try std.testing.expectError(error.WrongRom, providers.open(allocator, io, &env, .{ .built_in_rom = "not the ROM", .saves = paths[1] }));
-        try providers.open(allocator, io, &env, .{ .assets = paths[0], .built_in_rom = "not the ROM", .saves = paths[1] });
+        try std.testing.expectError(error.WrongRom, providers.open(allocator, io, &env, .{ .built_in_rom = "not the ROM", .saves = paths[1] }, .with_saves));
+        try providers.open(allocator, io, &env, .{ .assets = paths[0], .built_in_rom = "not the ROM", .saves = paths[1] }, .with_saves);
         defer providers.deinit();
         try std.testing.expectEqual(AssetKind.directory, providers.kind);
     }
 }
 
-test "the help names the save and config folders: --saves's, else the per-user one, else none" {
+test "the help names the save and config folders: the options', else the per-user ones, else none" {
     const allocator = std.testing.allocator;
-    var env = try testEnviron(allocator, &.{ .{ "XDG_DATA_HOME", "/data" }, .{ "APPDATA", "C:\\Users\\player\\AppData\\Roaming" } });
+    var env = try testEnviron(allocator, &.{ .{ "XDG_DATA_HOME", "/data" }, .{ "XDG_CONFIG_HOME", "/conf" }, .{ "APPDATA", "C:\\Users\\player\\AppData\\Roaming" } });
     defer env.deinit();
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-    try writeStorageHelp(&out.writer, allocator, &env, null);
+    try writeStorageHelp(&out.writer, allocator, &env, null, null);
     const want = if (builtin.os.tag == .windows)
-        "\nsave:   C:\\Users\\player\\AppData\\Roaming\\sorz\\saves\nconfig: C:\\Users\\player\\AppData\\Roaming\\sorz\\saves\\settings.json\n\n"
+        "\nsave:   C:\\Users\\player\\AppData\\Roaming\\sorz\\saves\nconfig: C:\\Users\\player\\AppData\\Roaming\\sorz\\settings.json\n\n"
     else
-        "\nsave:   /data/sorz/saves\nconfig: /data/sorz/saves/settings.json\n\n";
+        "\nsave:   /data/sorz/saves\nconfig: /conf/sorz/settings.json\n\n";
     try std.testing.expectEqualStrings(want, out.written());
     out.clearRetainingCapacity();
-    try writeStorageHelp(&out.writer, allocator, &env, "mine");
-    try std.testing.expectEqualStrings("\nsave:   mine\nconfig: mine" ++ std.fs.path.sep_str ++ "settings.json\n\n", out.written());
+    try writeStorageHelp(&out.writer, allocator, &env, "mine", "here");
+    try std.testing.expectEqualStrings("\nsave:   mine\nconfig: here" ++ std.fs.path.sep_str ++ "settings.json\n\n", out.written());
     var none = try testEnviron(allocator, &.{});
     defer none.deinit();
     out.clearRetainingCapacity();
-    try writeStorageHelp(&out.writer, allocator, &none, null);
-    try std.testing.expectEqualStrings("\nsave:   none here: give --saves DIR\nconfig: none here: give --saves DIR\n\n", out.written());
+    try writeStorageHelp(&out.writer, allocator, &none, null, null);
+    try std.testing.expectEqualStrings("\nsave:   none here: give --saves DIR\nconfig: none here: give --config DIR\n\n", out.written());
+}
+
+test "the configuration directory follows the platform's convention" {
+    const allocator = std.testing.allocator;
+    var env = try testEnviron(allocator, &.{ .{ "HOME", "/home/player" }, .{ "APPDATA", "C:\\Users\\player\\AppData\\Roaming" } });
+    defer env.deinit();
+    const path = try defaultConfigDirectory(allocator, &env);
+    defer allocator.free(path);
+    try std.testing.expectEqualStrings(if (builtin.os.tag == .windows) "C:\\Users\\player\\AppData\\Roaming\\sorz" else "/home/player/.config/sorz", path);
+}
+
+test "a settings record kept with the saves moves to the configuration once" {
+    const allocator = std.testing.allocator;
+    var saves = sorz.memory.MemoryStorage.init(allocator);
+    defer saves.deinit();
+    var config = sorz.memory.MemoryStorage.init(allocator);
+    defer config.deinit();
+    const name = sorz.settings.record.name;
+    try saves.storage().save(name, "old");
+    moveSettings(saves.storage(), config.storage(), "s", "c");
+    var moved = try config.storage().load(name);
+    defer moved.deinit();
+    try std.testing.expectEqualStrings("old", moved.bytes);
+    try std.testing.expectError(error.NotFound, saves.storage().load(name));
+    // One in the configuration stands; one left with the saves stays there.
+    try saves.storage().save(name, "older");
+    moveSettings(saves.storage(), config.storage(), "s", "c");
+    var kept = try config.storage().load(name);
+    defer kept.deinit();
+    try std.testing.expectEqualStrings("old", kept.bytes);
+    var left = try saves.storage().load(name);
+    defer left.deinit();
+    try std.testing.expectEqualStrings("older", left.bytes);
 }

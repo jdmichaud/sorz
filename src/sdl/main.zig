@@ -26,18 +26,18 @@ pub fn main(init: std.process.Init) !void {
     };
     // The ROM built into sorz-standalone, played without a game path; sorz has none.
     options.providers.built_in_rom = built_in.rom;
-    if (options.help) return showHelp(init.io, init.arena.allocator(), init.environ_map, options.providers.saves);
+    if (options.help) return showHelp(init.io, init.arena.allocator(), init.environ_map, options.providers);
     const status = try sdl.host.run(init.gpa, init.io, init.environ_map, options, page);
     if (status != 0) std.process.exit(status);
 }
 
 /// `--help`, on standard output: how sorz is called, the folders it keeps its files in (at
-/// `--saves` when given), then the options.
-fn showHelp(io: std.Io, allocator: std.mem.Allocator, environ: *const std.process.Environ.Map, saves: ?[]const u8) !void {
+/// `--saves` and `--config` when given), then the options.
+fn showHelp(io: std.Io, allocator: std.mem.Allocator, environ: *const std.process.Environ.Map, given: native.cli.Options) !void {
     var buf: [4096]u8 = undefined;
     var w = std.Io.File.stdout().writerStreaming(io, &buf);
     try w.interface.writeAll(sdl.host.usage_head);
-    try native.cli.writeStorageHelp(&w.interface, allocator, environ, saves);
+    try native.cli.writeStorageHelp(&w.interface, allocator, environ, given.saves, given.config);
     try w.interface.writeAll(sdl.host.usage_options);
     try w.interface.flush();
 }
