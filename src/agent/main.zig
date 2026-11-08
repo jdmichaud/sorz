@@ -44,7 +44,8 @@ const usage =
     \\  --wav PATH       write the sound played as a WAV file
     \\  DIR|ROM          the game directory (its content tree), or the user's ROM, whose content
     \\                   is extracted in memory; without either, a test pattern
-    \\  --saves DIR      where saves are kept, the settings record (settings.json) among them
+    \\  --saves DIR      where saves are kept, the settings record (settings.json) among them;
+    \\                   without it, none: they stay in memory for the run
     \\  --original       the cartridge's variant (DESIGN.md 10.7): its game menu, options and
     \\                   pause, the settings by the settings key; the default is the extended
     \\                   game, network play's the network variant

@@ -35,8 +35,9 @@ pub const usage =
     \\                       and quit after that many seconds
     \\  --run-for SECONDS    quit after that many seconds, without the event log
     \\  --fps N              the fallback pacer's rate, 1 to 1000 (default 60)
-    \\  --saves DIR          where saves are kept (default: the per-user application data
-    \\                       directory)
+    \\  --saves DIR          where the settings and the replays are kept (default: the
+    \\                       per-user application data directory, named at the end of this
+    \\                       help)
     \\  --original           the cartridge exactly: its game menu, its options and its pause on
     \\                       START, without the port's additions (ADVANCED SETTINGS in
     \\                       OPTIONS, START opening the settings during play); the settings
@@ -54,7 +55,9 @@ pub const usage =
     \\                       the browsers (sorz-server does the same without SDL's libraries)
     \\  --replay FILE        play the replay FILE (F5 saves the last 20 seconds of a game as
     \\                       one in the saves): Space pauses, Right steps a tick while paused,
-    \\                       S plays at full, half and quarter speed in turn, Escape leaves
+    \\                       Left goes back to the previous snapshot (every 5 s), S plays at
+    \\                       full, half and quarter speed in turn, Escape leaves; a gamepad's
+    \\                       START is Space, its D-pad's Left and Right the arrows
     \\
 ;
 
