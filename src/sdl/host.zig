@@ -61,8 +61,9 @@ pub const usage_options =
     \\  --replay FILE        play the replay FILE (F5 saves the last 20 seconds of a game as
     \\                       one in the saves): Space pauses, Right steps a tick while paused,
     \\                       Left goes back to the previous snapshot (every 5 s), S plays at
-    \\                       full, half and quarter speed in turn, Escape leaves; a gamepad's
-    \\                       START is Space, its D-pad's Left and Right the arrows
+    \\                       full, half and quarter speed in turn, F4 hides and shows the pads
+    \\                       and the replay's line, Escape leaves; a gamepad's START is Space,
+    \\                       its D-pad's Left and Right the arrows
     \\
 ;
 

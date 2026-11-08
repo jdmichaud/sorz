@@ -143,6 +143,17 @@ test "a replay plays the recorded ticks: each state the recorded game's, paused,
     try testing.expectEqual(@as(u32, updates), b.game.state.tick);
     // A replay saves none, and its game takes no other key.
     try testing.expect(!b.game.usesKey(.f5));
+    // F4 hides the replay's line (and its pads), and shows them again; the settings unchanged.
+    try testing.expect(b.game.overlays.find(.replay) != null);
+    try b.key(.f4, true);
+    try b.update();
+    try b.key(.f4, false);
+    try testing.expect(!b.game.replay.?.shown);
+    try testing.expect(b.game.overlays.find(.replay) == null);
+    try testing.expect(!b.game.settings.controller_overlay);
+    try b.key(.f4, true);
+    try b.update();
+    try testing.expect(b.game.overlays.find(.replay) != null);
 }
 
 test "a replay goes back to its snapshots, from the keys and the gamepad, and plays on as recorded" {

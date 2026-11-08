@@ -397,6 +397,8 @@ pub const Playback = struct {
     snapshots: std.ArrayList(Snapshot) = .empty,
     /// A gamepad's Right held: the updates since it was pressed (`holdRight`, `heldStep`).
     right_held: ?u16 = null,
+    /// The controller overlay and the replay's line shown (F4 hides them; for this replay only).
+    shown: bool = true,
 
     /// A snapshot every 5 seconds, as the recording keeps its states.
     pub const snapshot_every = state_every;

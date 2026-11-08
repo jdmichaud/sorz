@@ -60,8 +60,8 @@
 //! controller overlay on with the buttons it showed (`shown_override`), the tick's number on the
 //! picture (a line as the stats'). Space pauses, Right steps a tick while paused, Left goes back
 //! to the previous snapshot (the state before every 300th tick, kept as it plays: `replayBack`),
-//! S plays at full, half and quarter speed in turn (the sound slowed with it), Escape leaves; at
-//! its end it holds. A gamepad's START is Space, its D-pad's Left and Right the arrows. The game
+//! S plays at full, half and quarter speed in turn (the sound slowed with it), F4 hides and shows
+//! the pads and the line, Escape leaves; at its end it holds. A gamepad's START is Space, its D-pad's Left and Right the arrows. The game
 //! takes no other key then.
 const std = @import("std");
 const platform = @import("platform.zig");
@@ -1578,7 +1578,7 @@ pub const Game = struct {
 
     /// An event while a replay plays: Space pauses and goes on, Right steps a tick while paused,
     /// Left goes back to the previous snapshot, S turns the speed (full, half, quarter), F3 the
-    /// stats (for this run), Escape leaves. A gamepad's START is Space, its D-pad's Left and
+    /// stats and F4 the pads and the replay's line (for this run), Escape leaves. A gamepad's START is Space, its D-pad's Left and
     /// Right the arrows.
     fn replayEvent(self: *Game, e: platform.Event, p: *platform.Platform, r: *replay_mod.Playback) void {
         switch (e.payload) {
@@ -1616,6 +1616,8 @@ pub const Game = struct {
                 },
                 else => if (k.key == settings_mod.record.stats_key and !k.repeat) {
                     self.settings.stats = !self.settings.stats;
+                } else if (k.key == settings_mod.record.controller_overlay_key and !k.repeat) {
+                    r.shown = !r.shown;
                 },
             },
             else => {},
@@ -1656,6 +1658,13 @@ pub const Game = struct {
     /// when it changes.
     fn replayLine(self: *Game) void {
         const r = self.replay orelse return;
+        if (!r.shown) {
+            if (self.overlays.find(.replay) != null) {
+                self.overlays.remove(.replay);
+                self.overlay_dirty = true;
+            }
+            return;
+        }
         const now: overlay.ReplayLine = .{
             .tick = r.played,
             .ticks = r.replay.header.ticks,
@@ -1874,7 +1883,9 @@ pub const Game = struct {
     /// while no screen of this machine's is open: a pad for each player in the game, its buttons
     /// lit; drawn again when they change.
     fn controllerOverlay(self: *Game) void {
-        const on = (self.settings.controller_overlay or self.replay != null) and self.panel != null and !self.settingsOpen() and !self.modalOpen();
+        // A replay shows its pads unless F4 hid them; a game, as the settings say.
+        const wanted = if (self.replay) |r| r.shown else self.settings.controller_overlay;
+        const on = wanted and self.panel != null and !self.settingsOpen() and !self.modalOpen();
         if (!on) {
             if (self.overlays.find(.controllers) != null) {
                 self.overlays.remove(.controllers);
