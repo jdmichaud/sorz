@@ -894,6 +894,15 @@ machine in network play; CPUs in the free places and several local players a mac
     flows) and variants-check (7) lines identical to the base's, state hashes included;
     screens-check's 23 lines and round-check's report identical; web builds. Not checked: the
     user's play in a window, the sound at slow speeds by ear.
+- [ ] **58 — Back to a snapshot; a replay from the gamepad** — Depends: 57.
+  - While a replay is paused (or held at its end), Left goes back to the previous snapshot: the
+    state before every 300th tick (5 s), kept in memory as the replay plays (network play's
+    join form, its place in the file), the newest before the tick shown; again, the one before.
+    The file's format unchanged. Its line shows the tick gone back to, still paused.
+  - A gamepad drives a replay as the keys do: START as Space, the D-pad's Left and Right as the
+    arrows (the user, 2026-11-08). HELP's and `--replay`'s texts say so.
+  - Gate: zig build test (back to the snapshots, then on: every tick's state hash the recorded
+    game's); replay-check with a step back; a picture of a replay gone back.
 
 ## Standing rule
 
