@@ -941,11 +941,14 @@ machine in network play; CPUs in the free places and several local players a mac
     that; the SDL host (dummy drivers, XDG_DATA_HOME and XDG_CONFIG_HOME in /tmp, a copy of this
     machine's record in the saves' directory): moved, then read ("settings: kept"), a second run
     moving nothing; zig build web. The user's own record moves at their next run.
-- [ ] **61 — F4 in a replay** — Depends: 57.
+- [x] **61 — F4 in a replay** — Depends: 57.
   - F4 hides and shows a replay's pads and its line (the user, 2026-11-08), shown at its start;
     for that replay only, the settings' CONTROLLER OVERLAY unchanged. `--replay`'s texts say so.
   - Gate: zig build test (the line hidden and shown, the setting unchanged); pictures of a
     replay before F4, after it, and after it again.
+  - [x] Checked 2026-11-08: zig build test (F4 hides the replay's line, the setting unchanged;
+    again, shows it); the agent host on the ROM: REPLAY 301 OF 1280 with the 1P pad, then after
+    F4 neither, then after F4 again both (REPLAY 341).
 
 ## Standing rule
 
