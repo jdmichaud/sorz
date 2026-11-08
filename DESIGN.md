@@ -281,9 +281,9 @@ The interactive game on Linux and Windows. The first positional argument names t
 directory. The window's scale and full screen are the settings' (section 7); options select the
 window scale for a run, a software renderer, an event log on standard output
 (JSON lines, so a played session can be replayed headlessly once the agent host reads them), a
-run time, and the saves directory. Its updates are paced by the display when the renderer
-presents in step with it, and by a fallback pacer otherwise: a loop that presents nothing must
-not spin.
+run time, the saves directory and the configuration directory (the settings' record). Its
+updates are paced by the display when the renderer presents in step with it, and by a fallback
+pacer otherwise: a loop that presents nothing must not spin.
 
 The host captures the pointer when the game reads relative motion, with a key chord that releases
 it. On Windows it is a console program, so that its command-line options and messages stay
@@ -358,8 +358,9 @@ the game then disables what needs it.
 - **Saves.** One versioned format per kind of record (settings, a game in progress, ...). A record
   of another version is refused, not converted: no readers for old versions.
 - **Settings.** The cartridge has no saves (decision D2), so the port's one record is its own
-  settings: `settings.json` in the platform's `Storage` (`src/shared/settings/`), with the pads'
-  keys, the controllers' buttons, the volume and the SDL host's window. The game's own options
+  settings: `settings.json` in the platform's `Storage` (the SDL host's per-user configuration
+  directory, apart from the saves; `src/shared/settings/`), with the pads' keys, the
+  controllers' buttons, the volume and the SDL host's window. The game's own options
   stay the original's and reset at power-on, so no record changes the simulation. The player
   changes the settings on a screen of the game (the user, 2026-10-05): ADVANCED SETTINGS, the line
   before EXIT in OPTIONS, and START during the game, which opens them in place of the pause (the
@@ -826,7 +827,7 @@ Local games only; the SDL build first, the browser later.
   into; one never lit, the controller's, its link's or the system's.
 - **The rolling recording:** in a local game the last 20 seconds are kept in memory: the game's
   state every few seconds (its canonical form, section 6), every display tick's pads as the game
-  read them, and the overlay's presses. F5 writes them to a replay file in the settings' storage,
+  read them, and the overlay's presses. F5 writes them to a replay file in the saves' storage,
   told on the screen.
 - **Replay:** `sorz DATA --replay FILE` plays from the file's first state, its ticks driven by
   the recorded pads, exactly as played, the overlay on with its presses as they came. Space
