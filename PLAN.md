@@ -911,13 +911,17 @@ machine in network play; CPUs in the free places and several local players a mac
     on, 0 differing (the cut's state loaded again). The agent host's pictures: REPLAY 900 OF
     1280 PAUSED after Left and a gamepad's Left; 300, then 301 after a step, the fighters as the
     recorded game had them. Not checked: a real gamepad and window.
-- [ ] **59 — A replay of another build plays** — Depends: 57.
+- [x] **59 — A replay of another build plays** — Depends: 57.
   - A replay recorded by another build is no longer refused (the user, 2026-11-08: "too
     restrictive"): it plays, the log telling both builds; where the builds' games differ it may
     go its own way, and a state that does not load ends it, told. Other game data is still
     refused.
   - Gate: zig build test (another build's file read and played, other data's refused);
     replay-check's refusal case as such; the agent host plays a file of the previous build.
+  - [x] Checked 2026-11-08: zig build test (another build's file read, `otherBuild` true; other
+    data's refused); replay-check's identities case (another build's read, other data's
+    refused), fight and cut passing; the agent host played a file saved by build a28e8b0 to its
+    end at game tick 2480 (where F5 came), its log naming both builds.
 
 ## Standing rule
 
