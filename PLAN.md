@@ -869,13 +869,29 @@ machine in network play; CPUs in the free places and several local players a mac
     (Right, B every 12 ticks, a jump, C), F5 at frame 2700: replay-0001.sorzreplay in `--saves`,
     1200 ticks, 15,035 bytes, REPLAY SAVED. over the round. A state kept costs about 0.11 ms in
     Debug (every 300 ticks); the recording's room is about 220 KB, made at its first tick.
-- [ ] **57 — Replays** — Depends: 56.
+- [x] **57 — Replays** — Depends: 56.
   - `sorz DATA --replay FILE` (and the agent host's): the game from the file's first state, its
     ticks driven by the recorded pads, the overlay on with the recorded presses; Space pauses,
     Right steps a tick while paused, S full, half and quarter speed, Escape leaves; the tick's
     number shown; the end holds. A file of another build or other data is refused, told why.
   - Gate: zig build test; a replay reaching the recorded game's states (their hashes) tick by
     tick; pictures of a replay paused, stepped and slowed.
+  - [x] Checked 2026-11-08: zig build test (the playback's states and facts before their ticks;
+    the line's texts; `--replay`'s options; in the agent backend, 2000 ticks saved and replayed
+    with a pause, a step, half and quarter speed: every tick's state hash the recorded game's,
+    held at the tick F5 came at). The new `zig build replay-check -Drom=ROM`: fight (round 1, 30
+    s of walking, blows, jumps and specials, F5) 1267 ticks compared, 0 states and 0 buttons
+    differing; cut (Escape to the menu during the fight, F5 5 s later; from the select through
+    the round's load) 1368 compared, 0 differing, 2 states loaded; in both the pause held with
+    its 3 steps, half speed 150 ticks in 300 updates, quarter 100 in 400; another build's and
+    other data's files refused. Pictures (the agent host's `--shot`): REPLAY 100 OF 1200 PAUSED,
+    then 101 and 102 stepped, HALF SPEED, QUARTER SPEED with the Right arm lit, B lit later, END
+    at 1200 (Axel where the recorded game left him). Refused, told why: the previous build's file
+    (its build and this one's), the test pattern's (the two data identities), in the agent and
+    the SDL host (dummy video and audio), which also played a replay. As before: netplay-check (31
+    flows) and variants-check (7) lines identical to the base's, state hashes included;
+    screens-check's 23 lines and round-check's report identical; web builds. Not checked: the
+    user's play in a window, the sound at slow speeds by ear.
 
 ## Standing rule
 
