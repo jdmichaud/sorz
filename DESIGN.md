@@ -811,6 +811,30 @@ that it never holds another back; a page silent for 15 seconds is dropped.
     players 1's and 2's depths; a CPU in their place follows player 1. A player whose machine drops
     out leaves after the network's wait, as player 2 does.
 
+### 10.8 Replays and the controller overlay
+
+The user, 2026-11-08: to see whether a press reached the game, and what the game made of it.
+Local games only; the SDL build first, the browser later.
+
+- **The controller overlay:** F4 (and a setting) shows over the picture, for each player in the
+  game, a Mega Drive control pad made from a photo of the real one: pixel art in the console's
+  colour levels, outlined as the game's sprites, red letters in its buttons, tagged 1P to 4P in
+  the game's font, semi-transparent. A button is pressed or not: it lights plain yellow while
+  pressed, from the earliest signal the game has, the platform's events (a key or a gamepad's
+  button down until up; a press shorter than a few frames lit for those frames). The game reads
+  every press (section 3.3): a press lit that the game does not answer is the game's to look
+  into; one never lit, the controller's, its link's or the system's.
+- **The rolling recording:** in a local game the last 20 seconds are kept in memory: the game's
+  state every few seconds (its canonical form, section 6), every display tick's pads as the game
+  read them, and the overlay's presses. F5 writes them to a replay file in the settings' storage,
+  told on the screen.
+- **Replay:** `sorz DATA --replay FILE` plays from the file's first state, its ticks driven by
+  the recorded pads, exactly as played, the overlay on with its presses as they came. Space
+  pauses, Right steps a tick while paused, S runs at full, half and quarter speed in turn, Escape
+  leaves; the tick's number shows; at its end the replay holds.
+- F3, F4 and F5 are the game's: no setting takes them, and HELP lists them. All this is this
+  machine's, never the game's state; network play records nothing for now.
+
 ## 11. Verification
 
 - **V1 Unit tests** for each system, on synthetic content.
