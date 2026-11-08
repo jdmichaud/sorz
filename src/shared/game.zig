@@ -1572,13 +1572,21 @@ pub const Game = struct {
     fn replayEvent(self: *Game, e: platform.Event, p: *platform.Platform, r: *replay_mod.Playback) void {
         switch (e.payload) {
             .quit => self.finished = true,
-            .controller_button_down => |b| switch (b.button) {
-                .start => r.paused = !r.paused,
-                .dpad_right => r.holdRight(true),
-                .dpad_left => self.replayBack(p, r),
-                else => {},
-            },
+            .controller_button_down => |b| self.replayButton(p, r, b.button),
             .controller_button_up => |b| if (b.button == .dpad_right) r.holdRight(false),
+            // A pad's d-pad may come as its stick (SDL's generic mapping): as on the screens
+            // over the game, the stick newly held to a side is that d-pad button, and Right
+            // held lets go as the stick leaves the right.
+            .controller_axis => |a| {
+                if (self.controls.stickPress(a)) |b| self.replayButton(p, r, b);
+                const right = @as(u8, 1) << @backingInt(input.Button.right);
+                if (r.right_held != null) if (self.controls.slotOf(a.controller)) |slot| {
+                    if (self.controls.stick[slot] & right == 0) r.holdRight(false);
+                };
+            },
+            // The gamepads still come and go for the controls (their sticks known), untold.
+            .controller_added => |id| _ = self.controls.add(id, p.controllerInfo(id) orelse .{}),
+            .controller_removed => _ = self.controls.handle(e),
             .key_down => |k| switch (k.key) {
                 .escape => self.finished = true,
                 .space => if (!k.repeat) {
@@ -1599,6 +1607,17 @@ pub const Game = struct {
                     self.settings.stats = !self.settings.stats;
                 },
             },
+            else => {},
+        }
+    }
+
+    /// A gamepad's button pressed while a replay plays: START as Space, the d-pad's Left and
+    /// Right as the arrows.
+    fn replayButton(self: *Game, p: *platform.Platform, r: *replay_mod.Playback, button: platform.ControllerButton) void {
+        switch (button) {
+            .start => r.paused = !r.paused,
+            .dpad_right => r.holdRight(true),
+            .dpad_left => self.replayBack(p, r),
             else => {},
         }
     }

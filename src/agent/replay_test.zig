@@ -188,6 +188,7 @@ test "a replay goes back to its snapshots, from the keys and the gamepad, and pl
     try testing.expectEqual(first + newest, b.game.state.tick);
     // The gamepad's Left: the one before.
     const pad: platform.ControllerId = @fromBackingInt(@intCast(1));
+    try b.backend.inject(.{ .time_ns = b.backend.clock_ns, .payload = .{ .controller_added = pad } });
     try b.backend.inject(.{ .time_ns = b.backend.clock_ns, .payload = .{ .controller_button_down = .{ .controller = pad, .button = .dpad_left } } });
     try b.update();
     try testing.expectEqual(newest - every, r.played);
@@ -198,6 +199,21 @@ test "a replay goes back to its snapshots, from the keys and the gamepad, and pl
     try b.backend.inject(.{ .time_ns = b.backend.clock_ns, .payload = .{ .controller_button_up = .{ .controller = pad, .button = .dpad_right } } });
     try b.update();
     try testing.expectEqual(newest - every + 1, r.played);
+    // A d-pad that comes as the stick (SDL's generic mapping): to the left, back to the snapshot;
+    // to the right, a tick; back to the middle, Right no longer held.
+    try b.backend.inject(.{ .time_ns = b.backend.clock_ns, .payload = .{ .controller_axis = .{ .controller = pad, .axis = .left_x, .value = -32768 } } });
+    try b.update();
+    try testing.expectEqual(newest - every, r.played);
+    try testing.expectEqual(hashes[b.game.state.tick], b.game.state.hash());
+    try b.backend.inject(.{ .time_ns = b.backend.clock_ns, .payload = .{ .controller_axis = .{ .controller = pad, .axis = .left_x, .value = 0 } } });
+    try b.backend.inject(.{ .time_ns = b.backend.clock_ns, .payload = .{ .controller_axis = .{ .controller = pad, .axis = .left_x, .value = 32767 } } });
+    try b.update();
+    try b.backend.inject(.{ .time_ns = b.backend.clock_ns, .payload = .{ .controller_axis = .{ .controller = pad, .axis = .left_x, .value = 0 } } });
+    try b.update();
+    try testing.expectEqual(newest - every + 1, r.played);
+    try testing.expect(r.right_held == null);
+    // The gamepad came untold.
+    try testing.expect(b.game.overlays.find(.gamepad) == null);
     // Its START: on again, every tick the recorded game's to the end.
     try b.backend.inject(.{ .time_ns = b.backend.clock_ns, .payload = .{ .controller_button_down = .{ .controller = pad, .button = .start } } });
     var compared: u32 = 0;
