@@ -827,10 +827,12 @@ machine in network play; CPUs in the free places and several local players a mac
     dark red), tagged 1P to 4P in the game's font, semi-transparent (about 75%). Its pixels are
     the port's own, in the repository; its look settled live (its opacity; four players' pads,
     which do not fit across at that width: smaller, or two rows).
-  - [x] Smaller (the user, 2026-11-08: "around 80%"): 83 x 49 for one or two players, 61 x 36
-    for three or four (tools/pad_art.py's `SIZES`; the numbers in the check below were the first
-    sizes). Checked: zig build test; the scenario runner's pictures of two and four players with
-    arms, buttons and START lit, all readable.
+  - [x] Smaller (the user, 2026-11-08: "around 80%", then "4 of them next to each other
+    comfortably"): one pad of 70 x 41 for one to four players, four 12 pixels apart; START
+    drawn (a light slanted pill, plain yellow pressed: the photo's greys lit near white); a
+    pressed part's yellow opaque. The sizes in the check below were the first. Checked: zig
+    build test; the scenario runner's pictures of two and four players with arms, buttons and
+    START lit; a replay's line just above the pads.
   - A button lights while its events hold it (down until up), at least a few display ticks for
     a shorter press: the earliest signal the game has (input.zig's controls, before the reads).
   - F4 not bindable (as F3); HELP lists F4.

@@ -1,7 +1,7 @@
 # The controller overlay's pad (src/shared/pad_art.zig), made from a photo of the Mega
 # Drive control pad: cut out of its white ground, shrunk to pixel size, its colours snapped to the
 # console's 8 levels (greys for the plastic, reds for the marks), outlined in black as the game's
-# sprites are; crisp red letters A, B, C drawn in its buttons; each pixel that a press lights
+# sprites are; crisp red letters A, B, C drawn in its buttons and START drawn; each pixel that a press lights
 # marked with its button (a button, a D-pad arm, START), and each colour's pressed colour (a
 # grey's yellow of its shade, a red's yellow of its light, a letter's dark red).
 #
@@ -17,8 +17,9 @@ PHOTO, OUT = sys.argv[1], sys.argv[2]
 PREVIEW = sys.argv[3] if len(sys.argv) > 3 else None
 LV = [0, 52, 87, 116, 144, 172, 206, 255]
 GAMMA = 0.8
+START_HALF, START_R = 3.2, 0.75
 BOX = (120, 468, 1804, 1456)
-SIZES = [('large', 83), ('small', 61)]
+SIZES = [('pad', 70)]
 
 
 def cut_out():
@@ -61,6 +62,9 @@ FONT = {'A': ["010", "101", "111", "101", "101"], 'B': ["110", "101", "110", "10
         'C': ["011", "100", "100", "100", "011"]}
 RED = (7, 1, 0, 'letter')
 DARK_RED = (4, 0, 0, '')
+START = (5, 5, 5, 'start')
+START_RIM = (1, 1, 1, '')
+START_LIT = (7, 6, 1, '')
 RAMP = [(4, 2, 0), (6, 3, 0), (7, 4, 0), (7, 5, 1), (7, 6, 1), (7, 6, 2), (7, 7, 4), (7, 7, 6)]
 
 
@@ -72,6 +76,8 @@ def pressed(c):
     """A colour's look pressed: a grey's yellow of its shade, a red's of its light."""
     if c[3] == 'letter':
         return DARK_RED
+    if c[3] == 'start':
+        return START_LIT
     return yellow(max(c[0], c[1], c[2]))
 
 
@@ -142,13 +148,26 @@ def make(src, mask, width):
                 p = px[y][x]
                 if 1.5 * k <= along <= 7.5 * k and side <= 2.0 * k and p is not None and p[0] == p[1]:
                     part[y][x] = name
-    # START: its greys.
+    # START: drawn, as the letters are (the photo's shrinks to a smudge, and its light greys'
+    # yellows to near white): a slanted light pill in a dark rim, its pill plain yellow pressed.
     sx, sy = at(1304, 690)
+    ux, uy = math.cos(math.radians(-22)), math.sin(math.radians(-22))
+    half = START_HALF * k
+
+    def from_pill(x, y):
+        ox, oy = x + .5 - sx, y + .5 - sy
+        t = max(-half, min(half, ox * ux + oy * uy))
+        return math.hypot(ox - t * ux, oy - t * uy)
     for y in range(H):
         for x in range(width):
-            p = px[y][x]
-            if abs(x + .5 - sx) <= 3.2 * k and abs(y + .5 - sy) <= 1.4 * k and p is not None and p[0] == p[1]:
+            if px[y][x] is None:
+                continue
+            d = from_pill(x, y)
+            if d <= START_R:
+                px[y][x] = START
                 part[y][x] = 's'
+            elif d <= START_R + 1.0:
+                px[y][x] = START_RIM
     return px, part
 
 
@@ -178,9 +197,9 @@ def main():
     out.append('//! marks), outlined in black as the game\'s sprites are; crisp red letters A, B, C drawn in its\n')
     out.append('//! buttons (the photo\'s shrink to dots). Each pixel a press lights is marked with its button, and\n')
     out.append('//! each colour has its pressed colour: a grey the yellow of its shade, a red the yellow of its\n')
-    out.append('//! light, a letter dark red (the look the user chose, 2026-11-08). Made by tools/pad_art.py from\n')
-    out.append('//! the photo (which the repository does not keep), and kept here as the port\'s own art: `large`\n')
-    out.append('//! for one or two players, `small` (made the same way, narrower) for three or four.\n')
+    out.append('//! light, a letter dark red; START drawn, a light pill lit plain yellow (the look the user chose,\n')
+    out.append('//! 2026-11-08). Made by tools/pad_art.py from the photo (which the repository does not keep), and\n')
+    out.append('//! kept here as the port\'s own art: one size for one to four players (four fit across).\n')
     out.append('//!\n')
     out.append('//! A pixel\'s character in `*_rows`: `.` none, else its colour\'s index in `palette`, `1` to `9`\n')
     out.append('//! then `a` to `z` (10 to 35). In `*_parts`: `.` none, else the button whose press lights it\n')

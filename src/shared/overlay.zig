@@ -186,7 +186,7 @@ pub const ReplayLine = struct {
 };
 
 /// A replay's row: over the controller overlay's pads, clear of the game's status bar.
-const replay_row = panel_mod.rows - 10;
+const replay_row = panel_mod.rows - 8;
 
 /// The host's list of who is connected: its own player, then its clients.
 pub const Roster = struct {

@@ -1,8 +1,8 @@
 //! The controller overlay (DESIGN.md 10.8): over the picture, for each player in the game, a Mega
 //! Drive control pad (pad_art.zig, the port's own pixel art) tagged 1P to 4P in the game's font,
-//! semi-transparent, at the bottom of the screen; a button lights plain yellow while pressed.
-//! One or two players: a pad at each bottom corner; three or four: smaller pads, made the same
-//! way, in a row across the bottom (four at the large width do not fit across the screen).
+//! semi-transparent, at the bottom of the screen; a button lights plain yellow while pressed,
+//! opaque. One pad's size for one to four players: one or two at the bottom corners, three or
+//! four spread across the bottom (four fit side by side, apart).
 //!
 //! A button lights from the earliest signal the game has: the controls' state before the reads
 //! (input.zig `Controls.sampleShown`, taken once a display tick: held now, or pressed since the
@@ -109,9 +109,8 @@ fn decode(comptime rows: []const []const u8, comptime parts: []const []const u8)
     return .{ .width = w, .height = h, .pixels = &p, .parts = &l };
 }
 
-/// The pad of one or two players, and the smaller one of three or four.
-pub const large = decode(&pad_art.large_rows, &pad_art.large_parts);
-pub const small = decode(&pad_art.small_rows, &pad_art.small_parts);
+/// The pad, of every player.
+pub const pad = decode(&pad_art.pad_rows, &pad_art.pad_parts);
 
 /// The pad's colours as RGB bytes, at the game's levels.
 const colours: [pad_art.palette.len][3]u8 = blk: {
@@ -120,8 +119,10 @@ const colours: [pad_art.palette.len][3]u8 = blk: {
     break :blk out;
 };
 
-/// The overlay's opacity, in 256ths: the picture shows through a quarter.
+/// The overlay's opacity, in 256ths: the picture shows through a quarter. A pressed button's
+/// yellow is opaque (256).
 pub const opacity: u16 = 192;
+const lit_opacity: u16 = 256;
 
 /// The tag's height over the pad's top (it overlaps the pad by its lower rows), and the tag's
 /// size: two glyphs of the font, outlined.
@@ -136,10 +137,10 @@ const margin_bottom = 1;
 /// Where a player's pad is: its top left corner (the tag above it) and its art.
 pub const Place = struct { x: i32, y: i32, art: *const Art };
 
-/// The players' pads' places: one or two players, the large pad at the bottom corners (one
-/// alone at the bottom left); three or four, the small one, spread across the bottom.
+/// The players' pads' places: one or two players at the bottom corners (one alone at the
+/// bottom left); three or four spread across the bottom.
 pub fn place(players: u8, k: usize) Place {
-    const a: *const Art = if (players <= 2) &large else &small;
+    const a: *const Art = &pad;
     const n: i32 = @max(players, 1);
     const span: i32 = panel_mod.width - 2 * margin_side - a.width;
     const x: i32 = margin_side + if (n == 1) 0 else @divTrunc(span * @as(i32, @intCast(k)), n - 1);
@@ -170,14 +171,14 @@ pub fn draw(rgba: []u8, s: Shown, look: Look) void {
     }
 }
 
-/// Mixes `c` into the picture's pixel (`x`, `y`) at the overlay's opacity, unless it is off the
+/// Mixes `c` into the picture's pixel (`x`, `y`) at `alpha` (256ths), unless it is off the
 /// screen or one of the panel's own.
-fn mix(rgba: []u8, indices: ?[]const u8, x: i32, y: i32, c: [3]u8) void {
+fn mix(rgba: []u8, indices: ?[]const u8, x: i32, y: i32, c: [3]u8, alpha: u16) void {
     if (x < 0 or y < 0 or x >= panel_mod.width or y >= panel_mod.height) return;
     const i: usize = @intCast(y * panel_mod.width + x);
     if (indices) |ix| if (ix[i] != 0) return;
     const to = rgba[i * 4 ..][0..3];
-    for (to, c) |*t, v| t.* = @intCast((@as(u16, v) * opacity + @as(u16, t.*) * (256 - opacity)) >> 8);
+    for (to, c) |*t, v| t.* = @intCast((@as(u16, v) * alpha + @as(u16, t.*) * (256 - alpha)) >> 8);
 }
 
 fn drawPad(rgba: []u8, indices: ?[]const u8, at: Place, lit: input.Pad) void {
@@ -188,8 +189,9 @@ fn drawPad(rgba: []u8, indices: ?[]const u8, at: Place, lit: input.Pad) void {
         var c = a.pixels[i];
         if (c == 0) continue;
         const part = a.parts[i];
-        if (part != 0 and bits & (@as(u8, 1) << @intCast(part - 1)) != 0) c = pad_art.pressed[c];
-        mix(rgba, indices, at.x + @as(i32, @intCast(x)), at.y + @as(i32, @intCast(y)), colours[c]);
+        const pressed = part != 0 and bits & (@as(u8, 1) << @intCast(part - 1)) != 0;
+        if (pressed) c = pad_art.pressed[c];
+        mix(rgba, indices, at.x + @as(i32, @intCast(x)), at.y + @as(i32, @intCast(y)), colours[c], if (pressed) lit_opacity else opacity);
     };
 }
 
@@ -212,7 +214,7 @@ fn drawTag(rgba: []u8, look: Look, at: Place, k: usize) void {
     for (0..tag_height) |y| for (0..tag_width) |x| {
         const v = cells[y][x];
         const c: [3]u8 = if (v != 0) palettes.rgba(look.colours[v])[0..3].* else if (nextTo(&cells, x, y)) .{ 0, 0, 0 } else continue;
-        mix(rgba, look.kept, x0 + @as(i32, @intCast(x)), y0 + @as(i32, @intCast(y)), c);
+        mix(rgba, look.kept, x0 + @as(i32, @intCast(x)), y0 + @as(i32, @intCast(y)), c, opacity);
     };
 }
 
@@ -255,8 +257,7 @@ test "lit: a tap shown once lights the minimum, a held button until let go" {
 }
 
 test "the layout: one or two players at the bottom corners, three or four across, all on screen" {
-    try testing.expectEqual(@as(u16, 83), large.width);
-    try testing.expect(small.width * 4 + 2 * margin_side <= panel_mod.width);
+    try testing.expectEqual(@as(u16, 70), pad.width);
     for (1..input.max_players + 1) |n| {
         const players: u8 = @intCast(n);
         var right_before: i32 = 0;
@@ -265,28 +266,25 @@ test "the layout: one or two players at the bottom corners, three or four across
             try testing.expect(at.x >= margin_side and at.x + at.art.width <= panel_mod.width - margin_side);
             try testing.expectEqual(@as(i32, panel_mod.height - margin_bottom), at.y + at.art.height);
             try testing.expect(at.y - tag_rise >= 0);
-            // Each to the right of the one before, apart.
-            try testing.expect(k == 0 or at.x > right_before);
+            // Each to the right of the one before, apart by a tag's width at least.
+            try testing.expect(k == 0 or at.x - right_before >= tag_width / 2);
             right_before = at.x + at.art.width;
         }
     }
-    try testing.expectEqual(Place{ .x = margin_side, .y = place(1, 0).y, .art = &large }, place(1, 0));
-    try testing.expectEqual(@as(i32, panel_mod.width - margin_side - 83), place(2, 1).x);
-    try testing.expect(place(3, 0).art == &small and place(4, 3).art == &small);
-    try testing.expectEqual(@as(i32, panel_mod.width - margin_side - small.width), place(4, 3).x);
+    try testing.expectEqual(Place{ .x = margin_side, .y = place(1, 0).y, .art = &pad }, place(1, 0));
+    try testing.expectEqual(@as(i32, panel_mod.width - margin_side - 70), place(2, 1).x);
+    try testing.expectEqual(@as(i32, panel_mod.width - margin_side - pad.width), place(4, 3).x);
 }
 
 test "the art: every button has its pixels, and a pressed one lights yellow" {
-    for ([_]*const Art{ &large, &small }) |a| {
-        var seen: [8]usize = @splat(0);
-        for (a.parts, a.pixels) |pt, c| {
-            if (pt == 0) continue;
-            try testing.expect(c != 0);
-            seen[pt - 1] += 1;
-        }
-        for (seen) |n| try testing.expect(n >= 4);
+    var seen: [8]usize = @splat(0);
+    for (pad.parts, pad.pixels) |pt, c| {
+        if (pt == 0) continue;
+        try testing.expect(c != 0);
+        seen[pt - 1] += 1;
     }
-    // A pressed pixel of B, mixed over black: the yellow of its shade at the opacity.
+    for (seen) |n| try testing.expect(n >= 4);
+    // A pressed pixel of B, over black: the yellow of its shade, opaque.
     var rgba: [panel_mod.width * panel_mod.height * 4]u8 = @splat(0);
     const at = place(2, 0);
     drawPad(&rgba, null, at, .{ .b = true });
@@ -296,7 +294,7 @@ test "the art: every button has its pixels, and a pressed one lights yellow" {
     const y = at.y + @as(i32, @intCast(i / a.width));
     const px = rgba[@as(usize, @intCast(y * panel_mod.width + x)) * 4 ..][0..3];
     const want = colours[pad_art.pressed[a.pixels[i]]];
-    for (px, want) |got, w| try testing.expectEqual(@as(u8, @intCast(@as(u16, w) * opacity >> 8)), got);
+    try testing.expectEqualSlices(u8, &want, px);
     try testing.expect(want[0] > want[2]);
 }
 
