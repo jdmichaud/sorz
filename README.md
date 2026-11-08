@@ -5,6 +5,9 @@ browser, played from your own copy of the ROM.
 
 sorz add network play and AI co-op game.
 
+![sorz: the title, the character select, then the eight rounds with one to four players, played
+by the game's own CPU players](docs/trailer.gif)
+
 ## Starting the game
 
 You need the ROM of the 1991 cartridge (512 KiB, SHA-256 `dd44f120…95c0`). Other versions are
