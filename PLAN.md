@@ -786,6 +786,27 @@ machine in network play; CPUs in the free places and several local players a mac
     passes. Players 3 and 4 come in by dropping in, as Mr. X's room's door and camera leave no
     side to walk in from; the boss ending of four was not pictured (no scenario reaches it).
 
+### Inputs
+
+- [ ] **54 — No press missed by the controls** — Depends: none.
+  - The user sees presses not registered now and then. The controls keep each button's state as
+    the events leave it, and each display tick reads that state: a press whose down and up both
+    come between two reads (a tap shorter than a frame, or a wireless pad's events held back and
+    delivered together) is never read; nor is a release and press again of a button held. The
+    cartridge's pad has the same reads, but its wire never bunches events. Never miss a press by
+    design (the user, 2026-11-08); the controller overlay and the recording wait (the user: back
+    to them if presses are still missed).
+  - Every press reaches a read: each player's buttons (its keys, its gamepad's buttons and
+    stick, together) count their presses (a button newly down) since the last read; a read shows
+    a counted press, then the button as held: a press whose button was let go already shows down
+    at one read and up at the next; a button let go and pressed again while it was down at the
+    last read shows up at one read, then down; several presses come one after another. A press
+    that spans reads reads as before.
+  - Gate: zig build test (taps within one read, a release and press again, several taps, the
+    stick, a held button as before); 1 and 2 players' games as before (cpus-check's JSON
+    identical; round-check, similar-check, screens-check, variants-check and netplay-check as
+    before: their inputs come a frame or more apart).
+
 ## Standing rule
 
 - [ ] **S1 — The repository stands alone** — Depends: none.
