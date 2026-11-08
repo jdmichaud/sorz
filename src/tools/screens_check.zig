@@ -113,7 +113,7 @@ pub const scenarios = [_]Scenario{
         .name = "menu",
         .what = "the title by START, the game menu's fade in, the arrow's blink and moves, 1 PLAYER chosen, its fade out",
         .frames = 760,
-        .keys = &.{ .{ .frame = 500, .key = .enter }, .{ .frame = 560, .key = .enter }, .{ .frame = 565, .key = .down }, .{ .frame = 566, .key = .down }, .{ .frame = 600, .key = .up }, .{ .frame = 627, .key = .z }, .{ .frame = 640, .key = .enter } },
+        .keys = &.{ .{ .frame = 500, .key = .enter }, .{ .frame = 560, .key = .enter }, .{ .frame = 565, .key = .down }, .{ .frame = 567, .key = .down }, .{ .frame = 600, .key = .up }, .{ .frame = 627, .key = .z }, .{ .frame = 640, .key = .enter } },
         .pictures = &.{.{ .from = 500, .to = 759 }},
     },
     .{

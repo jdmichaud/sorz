@@ -332,6 +332,15 @@ pub const Controls = struct {
     labels: [max_controllers]?u16 = @splat(null),
     /// The display tick each player's attack button has been held since, for autofire.
     autofire_since: [max_players]?u32 = @splat(null),
+    /// No press missed (PLAN item 54): each player's pad as the events last left it (`pads`), the
+    /// presses (a button newly down) each of its buttons had since the last read, and the pad the
+    /// last read gave (`read`).
+    seen: [max_players]u8 = @splat(0),
+    presses: [max_players][8]u8 = @splat(@splat(0)),
+    reported: [max_players]u8 = @splat(0),
+
+    /// The most presses a button keeps counted between two reads.
+    const most_presses = 4;
 
     pub const max_controllers = 4;
 
@@ -357,6 +366,26 @@ pub const Controls = struct {
     /// Takes one platform event; returns whether it concerned the controls. A gamepad that comes
     /// unnamed is of no model (`add` names it).
     pub fn handle(self: *Controls, e: platform.Event) bool {
+        const concerned = self.take(e);
+        if (concerned) self.notePresses();
+        return concerned;
+    }
+
+    /// Counts the presses the last changes made: a button of a player's pad newly down, whatever
+    /// pressed it (a key, a gamepad's button, its stick).
+    fn notePresses(self: *Controls) void {
+        const now = self.pads();
+        for (0..max_players) |p| {
+            const bits: u8 = @bitCast(now.of(p));
+            const new = bits & ~self.seen[p];
+            for (0..8) |b| if (new & (@as(u8, 1) << @intCast(b)) != 0) {
+                self.presses[p][b] = @min(self.presses[p][b] + 1, most_presses);
+            };
+            self.seen[p] = bits;
+        }
+    }
+
+    fn take(self: *Controls, e: platform.Event) bool {
         switch (e.payload) {
             .key_down => |k| return self.key(k.key, true),
             .key_up => |k| return self.key(k.key, false),
@@ -396,11 +425,13 @@ pub const Controls = struct {
         return .{ .label = got.label, .new = got.new };
     }
 
-    /// Releases every held control, as a lost focus does.
+    /// Releases every held control, as a lost focus does, and forgets the presses not read yet.
     pub fn release(self: *Controls) void {
         self.keys = @splat(0);
         self.pad_buttons = @splat(0);
         self.stick = @splat(0);
+        self.seen = @splat(0);
+        self.presses = @splat(@splat(0));
     }
 
     /// The pads as the players hold them: each player's keys (while they play it) and its
@@ -418,11 +449,32 @@ pub const Controls = struct {
         return out;
     }
 
-    /// The pads as the game reads them at display tick `tick`: `pads`, the attack button
-    /// (`attack`, by the options' CONTROL) of a player with autofire held and released in turn
-    /// while it is held.
+    /// The pads as the game reads them at display tick `tick`, no press missed (PLAN item 54): a
+    /// button with a press counted since the last read shows down (the press read), unless the
+    /// last read showed it down, when it shows up first, so that the press is a new one at the
+    /// read after (a button let go and pressed again between two reads); without one, the button
+    /// as it is held. A press whose button was let go before the read is so read once, then up;
+    /// several between two reads come one after another; a press that spans reads reads as the
+    /// pads hold it. Then the attack button (`attack`, by the options' CONTROL) of a player with
+    /// autofire held and released in turn while it is held.
     pub fn read(self: *Controls, tick: u32, attack: Button) Pads {
-        var out = self.pads();
+        // A change no event brought (the layout changed by the settings) counts as one.
+        self.notePresses();
+        var out: Pads = .{};
+        for (0..max_players) |p| {
+            var bits: u8 = 0;
+            for (0..8) |b| {
+                const mask = @as(u8, 1) << @intCast(b);
+                if (self.presses[p][b] > 0) {
+                    if (self.reported[p] & mask == 0) {
+                        bits |= mask;
+                        self.presses[p][b] -= 1;
+                    }
+                } else bits |= self.seen[p] & mask;
+            }
+            self.reported[p] = bits;
+            out.at(p).* = @bitCast(bits);
+        }
         for (0..max_players) |p| {
             const bits: *u8 = @ptrCast(out.at(p));
             const mask: u8 = @as(u8, 1) << @backingInt(attack);
@@ -702,4 +754,71 @@ test "autofire: the attack button held is held and let go in turn" {
     // Player 2 has no autofire: its attack stays held.
     _ = c.handle(.{ .time_ns = 0, .payload = .{ .key_down = .{ .key = .g } } });
     for (0..8) |t| try std.testing.expect(c.read(@intCast(t), .b).pad2.b);
+}
+
+/// The controls' event `payload` at time 0.
+fn ev(payload: platform.Event.Payload) platform.Event {
+    return .{ .time_ns = 0, .payload = payload };
+}
+
+/// Player 1's B (key X) at the next `n` reads.
+fn bReads(c: *Controls, comptime n: usize) [n]bool {
+    var out: [n]bool = undefined;
+    for (&out, 0..) |*x, t| x.* = c.read(@intCast(t), .b).pad1.b;
+    return out;
+}
+
+test "no press missed: a tap between two reads is read once, then let go" {
+    var c: Controls = .{};
+    _ = c.handle(ev(.{ .key_down = .{ .key = .x } }));
+    _ = c.handle(ev(.{ .key_up = .{ .key = .x } }));
+    try std.testing.expectEqualSlices(bool, &.{ true, false, false }, &bReads(&c, 3));
+}
+
+test "no press missed: let go and pressed again between two reads, it is let go at one, then down" {
+    var c: Controls = .{};
+    _ = c.handle(ev(.{ .key_down = .{ .key = .x } }));
+    try std.testing.expectEqualSlices(bool, &.{ true, true }, &bReads(&c, 2));
+    _ = c.handle(ev(.{ .key_up = .{ .key = .x } }));
+    _ = c.handle(ev(.{ .key_down = .{ .key = .x } }));
+    try std.testing.expectEqualSlices(bool, &.{ false, true, true }, &bReads(&c, 3));
+}
+
+test "no press missed: several taps between two reads come one after another" {
+    var c: Controls = .{};
+    for (0..3) |_| {
+        _ = c.handle(ev(.{ .key_down = .{ .key = .x } }));
+        _ = c.handle(ev(.{ .key_up = .{ .key = .x } }));
+    }
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true, false, true, false, false }, &bReads(&c, 7));
+}
+
+test "no press missed: a held button and a press spanning reads read as the pads hold them" {
+    var c: Controls = .{};
+    _ = c.handle(ev(.{ .key_down = .{ .key = .x } }));
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true }, &bReads(&c, 3));
+    _ = c.handle(ev(.{ .key_up = .{ .key = .x } }));
+    try std.testing.expectEqualSlices(bool, &.{ false, false }, &bReads(&c, 2));
+    // Each read as `pads` holds them, but for the presses not read yet.
+    _ = c.handle(ev(.{ .key_down = .{ .key = .right } }));
+    for (0..3) |t| try std.testing.expectEqual(@as(u8, @bitCast(c.pads().pad1)), @as(u8, @bitCast(c.read(@intCast(t), .b).pad1)));
+}
+
+test "no press missed: a gamepad's button and its stick, a tap each between two reads" {
+    var c: Controls = .{};
+    const id: platform.ControllerId = @fromBackingInt(@intCast(7));
+    _ = c.add(id, named("pad")).?;
+    _ = c.handle(ev(.{ .controller_button_down = .{ .controller = id, .button = .b } }));
+    _ = c.handle(ev(.{ .controller_button_up = .{ .controller = id, .button = .b } }));
+    _ = c.handle(ev(.{ .controller_axis = .{ .controller = id, .axis = .left_y, .value = -30000 } }));
+    _ = c.handle(ev(.{ .controller_axis = .{ .controller = id, .axis = .left_y, .value = 0 } }));
+    const first = c.read(0, .b).pad1;
+    try std.testing.expect(first.c and first.up);
+    const next = c.read(1, .b).pad1;
+    try std.testing.expect(!next.c and !next.up);
+    // A lost focus forgets the presses not read yet.
+    _ = c.handle(ev(.{ .key_down = .{ .key = .tab } }));
+    _ = c.handle(ev(.{ .key_up = .{ .key = .tab } }));
+    _ = c.handle(ev(.focus_lost));
+    try std.testing.expect(!c.read(2, .b).pad2.start);
 }
