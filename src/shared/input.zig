@@ -338,6 +338,10 @@ pub const Controls = struct {
     seen: [max_players]u8 = @splat(0),
     presses: [max_players][8]u8 = @splat(@splat(0)),
     reported: [max_players]u8 = @splat(0),
+    /// The controller overlay's (DESIGN.md 10.8, `sampleShown`): the buttons each player pressed
+    /// (newly down) since the last sample, counted apart from the reads' presses, so that sampling
+    /// never changes what the game reads.
+    shown_presses: [max_players]u8 = @splat(0),
 
     /// The most presses a button keeps counted between two reads.
     const most_presses = 4;
@@ -381,6 +385,7 @@ pub const Controls = struct {
             for (0..8) |b| if (new & (@as(u8, 1) << @intCast(b)) != 0) {
                 self.presses[p][b] = @min(self.presses[p][b] + 1, most_presses);
             };
+            self.shown_presses[p] |= new;
             self.seen[p] = bits;
         }
     }
@@ -432,6 +437,20 @@ pub const Controls = struct {
         self.stick = @splat(0);
         self.seen = @splat(0);
         self.presses = @splat(@splat(0));
+        self.shown_presses = @splat(0);
+    }
+
+    /// The buttons the controller overlay shows at a display tick (DESIGN.md 10.8), the earliest
+    /// signal the game has: each player's buttons held now (`pads`: its keys, its gamepad's buttons
+    /// and stick, together), and those pressed since the last sample, so that a press whose down
+    /// and up both came between two samples shows at one. Taken once a display tick; it never
+    /// changes what `read` gives.
+    pub fn sampleShown(self: *Controls) Pads {
+        const now = self.pads();
+        var out: Pads = .{};
+        for (0..max_players) |p| out.at(p).* = @bitCast(@as(u8, @bitCast(now.of(p))) | self.shown_presses[p]);
+        self.shown_presses = @splat(0);
+        return out;
     }
 
     /// The pads as the players hold them: each player's keys (while they play it) and its
@@ -821,4 +840,43 @@ test "no press missed: a gamepad's button and its stick, a tap each between two 
     _ = c.handle(ev(.{ .key_up = .{ .key = .tab } }));
     _ = c.handle(ev(.focus_lost));
     try std.testing.expect(!c.read(2, .b).pad2.start);
+}
+
+test "the overlay's sampling: a tap between two samples shown once, a held button while held" {
+    var c: Controls = .{};
+    _ = c.handle(ev(.{ .key_down = .{ .key = .x } }));
+    _ = c.handle(ev(.{ .key_up = .{ .key = .x } }));
+    try std.testing.expect(c.sampleShown().pad1.b);
+    try std.testing.expect(!c.sampleShown().pad1.b);
+    // Held: shown at every sample until let go; player 2's tap at the same time its own.
+    _ = c.handle(ev(.{ .key_down = .{ .key = .right } }));
+    _ = c.handle(ev(.{ .key_down = .{ .key = .g } }));
+    _ = c.handle(ev(.{ .key_up = .{ .key = .g } }));
+    var s = c.sampleShown();
+    try std.testing.expect(s.pad1.right and s.pad2.b and !s.pad1.b);
+    s = c.sampleShown();
+    try std.testing.expect(s.pad1.right and !s.pad2.b);
+    _ = c.handle(ev(.{ .key_up = .{ .key = .right } }));
+    try std.testing.expectEqual(@as(u8, 0), @as(u8, @bitCast(c.sampleShown().pad1)));
+    // A lost focus forgets the presses not shown yet.
+    _ = c.handle(ev(.{ .key_down = .{ .key = .z } }));
+    _ = c.handle(ev(.{ .key_up = .{ .key = .z } }));
+    _ = c.handle(ev(.focus_lost));
+    try std.testing.expect(!c.sampleShown().pad1.a);
+}
+
+test "the overlay's sampling never changes the reads" {
+    // The same taps, read with samples in between and without: the same reads.
+    var with: Controls = .{};
+    var without: Controls = .{};
+    for (0..12) |t| {
+        for ([_]*Controls{ &with, &without }) |c| {
+            if (t % 3 == 0) _ = c.handle(ev(.{ .key_down = .{ .key = .x } }));
+            if (t % 3 != 2) _ = c.handle(ev(.{ .key_up = .{ .key = .x } }));
+            if (t % 4 == 1) _ = c.handle(ev(.{ .key_down = .{ .key = .x } }));
+        }
+        _ = with.sampleShown();
+        try std.testing.expectEqual(without.read(@intCast(t), .b), with.read(@intCast(t), .b));
+        _ = with.sampleShown();
+    }
 }
