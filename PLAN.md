@@ -922,7 +922,7 @@ machine in network play; CPUs in the free places and several local players a mac
     data's refused); replay-check's identities case (another build's read, other data's
     refused), fight and cut passing; the agent host played a file saved by build a28e8b0 to its
     end at game tick 2480 (where F5 came), its log naming both builds.
-- [ ] **60 — The settings in the configuration directory** — Depends: 59.
+- [x] **60 — The settings in the configuration directory** — Depends: 59.
   - The settings record (`settings.json`) leaves the saves' directory (the user, 2026-11-08:
     "should not be in the save folder"): the SDL host keeps it in the per-user configuration
     directory (`$XDG_CONFIG_HOME/sorz`, else `~/.config/sorz`; `%APPDATA%\sorz` on Windows) or
@@ -934,6 +934,13 @@ machine in network play; CPUs in the free places and several local players a mac
     kept when both exist; the settings read and written in the configuration's storage, the
     replays in the saves'); `sorz --help` with and without `--config`; the SDL host moving this
     machine's record.
+  - [x] Checked 2026-11-08: zig build test (the configuration directory by the platform's
+    conventions; the record moved once, one in the configuration standing and one left with the
+    saves kept there; the settings read from and written to the configuration's storage, none
+    in the saves'); `sorz --help` names ~/.config/sorz/settings.json, with `--config /tmp/c`
+    that; the SDL host (dummy drivers, XDG_DATA_HOME and XDG_CONFIG_HOME in /tmp, a copy of this
+    machine's record in the saves' directory): moved, then read ("settings: kept"), a second run
+    moving nothing; zig build web. The user's own record moves at their next run.
 
 ## Standing rule
 
