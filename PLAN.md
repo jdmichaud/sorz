@@ -818,7 +818,7 @@ machine in network play; CPUs in the free places and several local players a mac
 
 ### Replays and the controller overlay (DESIGN.md 10.8; the user, 2026-11-08)
 
-- [ ] **55 — The controller overlay** — Depends: 54.
+- [x] **55 — The controller overlay** — Depends: 54.
   - F4 (and a STATS-like setting, kept in the record) shows over the picture a pad for each
     player in the game: the pixel art made from the photo of the Mega Drive control pad (sor-data's
     pad-mockup: `photo_pad.py`, `states_photo.py`, chosen by the user: the photo's pad at about 104
@@ -832,6 +832,21 @@ machine in network play; CPUs in the free places and several local players a mac
   - F4 not bindable (as F3); HELP lists F4.
   - Gate: zig build test; pictures of the overlay with 1, 2 and 4 players, presses lit; 1 and 2
     players' games as before (the overlay off by default: screens-check, round-check).
+  - [x] Checked 2026-11-08: zig build test (the sampling: a tap between two samples shown once,
+    a held button at every sample, reads the same with and without samples; a tap lit 6 display
+    ticks, a hold lit while held; the places of 1 to 4 players; every button's pixels, a pressed
+    one yellow at 75 %, the panel's text kept over the pads; the row after STATS and F4's HELP
+    line; the record's `controller_overlay` read back, a record without it whole and off, F4 not
+    bindable). The art: src/shared/pad_art.zig (rows of colour indices, parts, 19 colours in
+    levels), made by tools/pad_art.py from the photo; 104 x 61 for one or two players at the
+    bottom corners, 76 x 45 for three or four spread across the bottom. Pictures: the agent host
+    with the ROM, F4 on: 1P over the Sega logo, B tapped one tick lit ticks 152 to 157, Right
+    held lit; round 1 of two players, 1P's Right and B and 2P's Left and C lit; the scenario
+    runner's new `--controller-overlay` on `start axel blaze` and `start adam axel blaze adam`:
+    1P to 4P with their arms and buttons lit. Games of one and two as before (the overlay off):
+    screens-check's 23 lines and round-check's report identical to the base's; netplay-check (31
+    flows), variants-check (7 flows), smoke and web pass. Not checked: network play with the
+    overlay on (it shows this machine's player alone), the browser's page, the user's play.
 - [ ] **56 — The rolling recording (F5)** — Depends: 55.
   - In a local game the last 20 seconds: the game's state every few seconds (its canonical form),
     each display tick's pads as read and the overlay's presses. F5 writes a replay file (the
