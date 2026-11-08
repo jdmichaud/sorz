@@ -851,13 +851,24 @@ machine in network play; CPUs in the free places and several local players a mac
     screens-check's 23 lines and round-check's report identical to the base's; netplay-check (31
     flows), variants-check (7 flows), smoke and web pass. Not checked: network play with the
     overlay on (it shows this machine's player alone), the browser's page, the user's play.
-- [ ] **56 — The rolling recording (F5)** — Depends: 55.
+- [x] **56 — The rolling recording (F5)** — Depends: 55.
   - In a local game the last 20 seconds: the game's state every few seconds (its canonical form),
     each display tick's pads as read and the overlay's presses. F5 writes a replay file (the
     game's build and data identity, the first state, the ticks) to the settings' storage, and a
     notice says so (REPLAY SAVED). F5 not bindable; HELP lists F5.
   - Gate: zig build test (the window kept at 20 s, the file's format read back); a file saved
     from the agent host's game.
+  - [x] Checked 2026-11-08: zig build test (src/shared/replay.zig: over 10,000 ticks and 5,000
+    more the window keeps 1199 to 1499 ticks, 20 s at least, in the same room; the file read back
+    with its first state, a cut's state at its tick, the facts as they change and every tick's
+    pads read and shown; another build, other data, another version, a file cut short or longer
+    refused; the names by date (UTC) and by counter, none taken twice; src/agent/replay_test.zig:
+    the game in the agent backend, 3000 ticks then F5: REPLAY SAVED, replay-0001.sorzreplay, its
+    ticks to the tick F5 came at, Right read as held and the overlay's buttons as shown; a page
+    keeps F5 and records nothing; F5 not bindable). The agent host with the ROM: round 1, a fight
+    (Right, B every 12 ticks, a jump, C), F5 at frame 2700: replay-0001.sorzreplay in `--saves`,
+    1200 ticks, 15,035 bytes, REPLAY SAVED. over the round. A state kept costs about 0.11 ms in
+    Debug (every 300 ticks); the recording's room is about 220 KB, made at its first tick.
 - [ ] **57 — Replays** — Depends: 56.
   - `sorz DATA --replay FILE` (and the agent host's): the game from the file's first state, its
     ticks driven by the recorded pads, the overlay on with the recorded presses; Space pauses,
