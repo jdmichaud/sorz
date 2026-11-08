@@ -788,7 +788,7 @@ machine in network play; CPUs in the free places and several local players a mac
 
 ### Inputs
 
-- [ ] **54 — No press missed by the controls** — Depends: none.
+- [x] **54 — No press missed by the controls** — Depends: none.
   - The user sees presses not registered now and then. The controls keep each button's state as
     the events leave it, and each display tick reads that state: a press whose down and up both
     come between two reads (a tap shorter than a frame, or a wireless pad's events held back and
@@ -806,6 +806,14 @@ machine in network play; CPUs in the free places and several local players a mac
     stick, a held button as before); 1 and 2 players' games as before (cpus-check's JSON
     identical; round-check, similar-check, screens-check, variants-check and netplay-check as
     before: their inputs come a frame or more apart).
+  - [x] Checked 2026-11-08: zig build test (a tap between two reads read once, then let go; let
+    go and pressed again, up at one read, then down; three taps one after another; a held button
+    and a press spanning reads as the pads hold them; a gamepad's button and stick tapped; a lost
+    focus forgetting). round-check (nine scenes equal), similar-check (71 moves equal),
+    variants-check (7 flows), netplay-check (31 flows). screens-check: its menu scenario pressed
+    Down at frames 565 and 566 a frame each, the second's down with the first's up: now two
+    presses, the reference's one hold (an accepted difference from the cartridge); its second
+    press moved to 567, the 23 runs then none differing. The user's play is pending.
 
 ## Standing rule
 
