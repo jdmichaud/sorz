@@ -25,9 +25,7 @@ const WebSocketTransport = net.WebSocketTransport;
 pub const usage =
     \\  DIR|ROM              the game directory (its content tree), or the user's ROM, whose
     \\                       content is extracted in memory
-    \\  --saves DIR          where the settings and the replays are kept (default: the
-    \\                       per-user application data directory, named at the end of this
-    \\                       help)
+    \\  --saves DIR          where the settings and the replays are kept (default: above)
     \\  --original           the cartridge exactly: its game menu, its options and its pause on
     \\                       START, without the port's additions (ADVANCED SETTINGS in
     \\                       OPTIONS, START opening the settings during play); the settings
@@ -435,16 +433,16 @@ pub fn defaultSaveDirectory(allocator: std.mem.Allocator, environ: *const std.pr
     return std.fmt.allocPrint(allocator, "{s}/.local/share/sorz/saves", .{home}) catch return error.OutOfMemory;
 }
 
-/// The end of the host's help: the folder the game keeps its files in without `--saves` (the
-/// settings and the replays), as this machine's environment names it.
-pub fn writeStorageHelp(w: *std.Io.Writer, allocator: std.mem.Allocator, environ: *const std.process.Environ.Map) (std.Io.Writer.Error || error{OutOfMemory})!void {
-    try w.writeAll("\nWithout --saves, the settings (" ++ sorz.settings.record.name ++ ") and the replays F5 saves\n(replay-*" ++ sorz.replay.extension ++ ") are kept in:\n");
-    const directory = defaultSaveDirectory(allocator, environ) catch |err| switch (err) {
-        error.NoApplicationDirectory => return w.writeAll("  no per-user directory here: give --saves DIR\n"),
+/// The folders in `--help`, after how the program is called: the saves (and the replays F5
+/// saves) and the settings, at `--saves` when given, else as this machine's environment names
+/// the per-user directory (or `--saves` to give where it names none).
+pub fn writeStorageHelp(w: *std.Io.Writer, allocator: std.mem.Allocator, environ: *const std.process.Environ.Map, saves: ?[]const u8) (std.Io.Writer.Error || error{OutOfMemory})!void {
+    const directory = if (saves) |given| try allocator.dupe(u8, given) else defaultSaveDirectory(allocator, environ) catch |err| switch (err) {
+        error.NoApplicationDirectory => return w.writeAll("\nsave:   none here: give --saves DIR\nconfig: none here: give --saves DIR\n\n"),
         error.OutOfMemory => return error.OutOfMemory,
     };
     defer allocator.free(directory);
-    try w.print("  {s}\n", .{directory});
+    try w.print("\nsave:   {s}\nconfig: {s}" ++ std.fs.path.sep_str ++ sorz.settings.record.name ++ "\n\n", .{ directory, directory });
 }
 
 const contract = @import("contract.zig");
@@ -675,19 +673,24 @@ test "the options open a game directory, or none; a file that is not the ROM is 
     }
 }
 
-test "the help names the folder kept without --saves, or asks for one" {
+test "the help names the save and config folders: --saves's, else the per-user one, else none" {
     const allocator = std.testing.allocator;
-    var env = try testEnviron(allocator, &.{.{ "HOME", "/home/someone" }});
+    var env = try testEnviron(allocator, &.{ .{ "XDG_DATA_HOME", "/data" }, .{ "APPDATA", "C:\\Users\\player\\AppData\\Roaming" } });
     defer env.deinit();
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-    try writeStorageHelp(&out.writer, allocator, &env);
-    const want = if (builtin.os.tag == .windows) "  no per-user directory here: give --saves DIR\n" else "  /home/someone/.local/share/sorz/saves\n";
-    try std.testing.expect(std.mem.endsWith(u8, out.written(), want));
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "settings.json") != null);
+    try writeStorageHelp(&out.writer, allocator, &env, null);
+    const want = if (builtin.os.tag == .windows)
+        "\nsave:   C:\\Users\\player\\AppData\\Roaming\\sorz\\saves\nconfig: C:\\Users\\player\\AppData\\Roaming\\sorz\\saves\\settings.json\n\n"
+    else
+        "\nsave:   /data/sorz/saves\nconfig: /data/sorz/saves/settings.json\n\n";
+    try std.testing.expectEqualStrings(want, out.written());
+    out.clearRetainingCapacity();
+    try writeStorageHelp(&out.writer, allocator, &env, "mine");
+    try std.testing.expectEqualStrings("\nsave:   mine\nconfig: mine" ++ std.fs.path.sep_str ++ "settings.json\n\n", out.written());
     var none = try testEnviron(allocator, &.{});
     defer none.deinit();
     out.clearRetainingCapacity();
-    try writeStorageHelp(&out.writer, allocator, &none);
-    try std.testing.expect(std.mem.endsWith(u8, out.written(), "  no per-user directory here: give --saves DIR\n"));
+    try writeStorageHelp(&out.writer, allocator, &none, null);
+    try std.testing.expectEqualStrings("\nsave:   none here: give --saves DIR\nconfig: none here: give --saves DIR\n\n", out.written());
 }

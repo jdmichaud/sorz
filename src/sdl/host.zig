@@ -20,9 +20,15 @@ pub const fallback_hz: u32 = 60;
 /// test pattern (game.zig), which the checks run on.
 pub const assets_required = false;
 
-pub const usage =
+/// The help's head: how sorz is called (then `--help` names the folders: native/cli.zig
+/// `writeStorageHelp`), and its options.
+pub const usage_head =
     \\usage: sorz [OPTIONS] [DIR|ROM]
     \\       sorz DIR|ROM --server [ADDRESS:]PORT
+    \\
+;
+
+pub const usage_options =
     \\  DIR|ROM              the game directory (its content tree), or the user's ROM, whose
     \\                       content is extracted in memory; without either, the ROM built
     \\                       into sorz-standalone, else a test pattern
@@ -35,9 +41,7 @@ pub const usage =
     \\                       and quit after that many seconds
     \\  --run-for SECONDS    quit after that many seconds, without the event log
     \\  --fps N              the fallback pacer's rate, 1 to 1000 (default 60)
-    \\  --saves DIR          where the settings and the replays are kept (default: the
-    \\                       per-user application data directory, named at the end of this
-    \\                       help)
+    \\  --saves DIR          where the settings and the replays are kept (default: above)
     \\  --original           the cartridge exactly: its game menu, its options and its pause on
     \\                       START, without the port's additions (ADVANCED SETTINGS in
     \\                       OPTIONS, START opening the settings during play); the settings
@@ -60,6 +64,8 @@ pub const usage =
     \\                       START is Space, its D-pad's Left and Right the arrows
     \\
 ;
+
+pub const usage = usage_head ++ usage_options;
 
 pub const Options = struct {
     help: bool = false,
