@@ -40,6 +40,13 @@
 //! frame's stats (overlay.zig `FrameStats`): the frames presented a second and the time an update
 //! works on its frame before presenting it, over the last second; and network play's in a
 //! session's rounds. They are this machine's, never the game's state.
+//!
+//! The settings' CONTROLLER OVERLAY, which F4 (`controller_overlay_key`) turns on and off too,
+//! shows a pad for each player in the game over the picture (controller_overlay.zig, DESIGN.md
+//! 10.8), its buttons lit from the controls' state before the reads: each display tick the game
+//! takes the buttons shown (`shown`: input.zig `Controls.sampleShown`, or a replay's in their
+//! place, `shown_override`) and lights them (`lit`). In network play it shows this machine's
+//! player's buttons alone. It too is this machine's, never the game's state.
 const std = @import("std");
 const platform = @import("platform.zig");
 const input = @import("input.zig");
@@ -60,6 +67,7 @@ const Setup = setup_mod.Setup;
 const world = @import("world/root.zig");
 const variant = @import("variant.zig");
 const overlay = @import("overlay.zig");
+const controller_overlay = @import("controller_overlay.zig");
 const panel_mod = @import("panel.zig");
 const render = @import("render/root.zig");
 const network_play = @import("network_play.zig");
@@ -431,6 +439,18 @@ pub const Game = struct {
     /// The frame's stats (overlay.zig `FrameStats`) of the last whole second; the second under way:
     /// when it began, its frames and their work.
     frame_stats_last: ?overlay.FrameStats = null,
+    /// The controller overlay (DESIGN.md 10.8): the buttons shown at the last display tick that
+    /// ran, each player's (held, or pressed since the tick before: input.zig
+    /// `Controls.sampleShown`), and the buttons lit from them. `shown` is what a recording of the
+    /// ticks keeps of the overlay.
+    shown: input.Pads = .{},
+    lit: controller_overlay.Lit = .{},
+    /// The buttons shown at the next display ticks in place of the controls' sampling, while set
+    /// (a replay gives each tick's recorded ones here); the controls are not sampled then.
+    shown_override: ?input.Pads = null,
+    /// The controller overlay's buttons lit changed since its pads were drawn: they are drawn
+    /// again over the picture (the panel's text is not).
+    pads_dirty: bool = false,
     /// MOVES, while it runs over the settings, and its clock: from when, the display ticks run.
     moves: ?*moves_mod.Moves = null,
     moves_since_ns: u64 = 0,
@@ -720,12 +740,13 @@ pub const Game = struct {
     }
 
     /// Whether the game takes `key` now: a pad's key, the settings key (where the variant has
-    /// it) or the stats key, or any key while the settings are open (the browser's page keeps
-    /// the other keys for itself).
+    /// it), the stats key or the controller overlay's, or any key while the settings are open (the
+    /// browser's page keeps the other keys for itself).
     pub fn usesKey(self: *const Game, key: platform.Key) bool {
         if (key == .unknown) return false;
         if (self.settingsOpen() or self.modalOpen()) return true;
-        return key == settings_mod.record.stats_key or (self.policies().settings_key and key == self.settings.settings_key) or self.controls.uses(key);
+        if (key == settings_mod.record.stats_key or key == settings_mod.record.controller_overlay_key) return true;
+        return (self.policies().settings_key and key == self.settings.settings_key) or self.controls.uses(key);
     }
 
     /// Whether the settings screen is open (the hosts follow its window's settings).
@@ -1050,6 +1071,12 @@ pub const Game = struct {
                             self.settings.stats = !self.settings.stats;
                             self.writeSettings(&self.settings);
                         }
+                    } else if (k.key == settings_mod.record.controller_overlay_key) {
+                        // The settings' CONTROLLER OVERLAY, kept as the screen keeps it.
+                        if (!k.repeat) {
+                            self.settings.controller_overlay = !self.settings.controller_overlay;
+                            self.writeSettings(&self.settings);
+                        }
                     } else {
                         _ = self.controls.handle(e);
                     },
@@ -1102,6 +1129,7 @@ pub const Game = struct {
         }
         self.playJingle(p);
         self.runMoves(p);
+        self.controllerOverlay();
         try self.present(p);
         return .running;
     }
@@ -1284,6 +1312,7 @@ pub const Game = struct {
             // (but in a local game of two).
             pads.pad2 = .{};
         };
+        self.showPads();
         const machine: State.Machine = .{ .second_pad = self.secondPad(), .players_here = @intCast(self.controls.players()), .guest = self.isClient(), .taken = network_play.taken(self), .rules = self.settings.rules, .net = network_play.facts(self) };
         const turn = self.state.stepWith(pads, machine, if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
         self.redraw = true;
@@ -1520,6 +1549,47 @@ pub const Game = struct {
         self.overlay_dirty = true;
     }
 
+    /// A display tick's buttons for the controller overlay: a replay's (`shown_override`), or the
+    /// controls' sampling; and the buttons lit from them.
+    fn showPads(self: *Game) void {
+        self.shown = self.shown_override orelse self.sampledPads();
+        self.lit.step(self.shown);
+    }
+
+    /// The controls' buttons shown (input.zig `Controls.sampleShown`). In a session of network
+    /// play, this machine's player's alone, in its place (a watcher's none).
+    fn sampledPads(self: *Game) input.Pads {
+        const sampled = self.controls.sampleShown();
+        const np = self.netplay orelse return sampled;
+        if (!np.inSession()) return sampled;
+        var out: input.Pads = .{};
+        if (!np.observing()) out.at(np.localPlayer()).* = sampled.pad1;
+        return out;
+    }
+
+    /// The controller overlay over the picture, with the settings' CONTROLLER OVERLAY on (F4),
+    /// while no screen of this machine's is open: a pad for each player in the game, its buttons
+    /// lit; drawn again when they change.
+    fn controllerOverlay(self: *Game) void {
+        const on = self.settings.controller_overlay and self.panel != null and !self.settingsOpen() and !self.modalOpen();
+        if (!on) {
+            if (self.overlays.find(.controllers) != null) {
+                self.overlays.remove(.controllers);
+                self.overlay_dirty = true;
+            }
+            return;
+        }
+        const now: controller_overlay.Shown = .{ .players = self.state.setup.players.count(), .lit = self.lit.pads() };
+        if (self.overlays.find(.controllers)) |o| {
+            if (std.meta.eql(o.controllers, now)) return;
+            o.controllers = now;
+            self.pads_dirty = true;
+            return;
+        }
+        self.overlays.push(.{ .controllers = now });
+        self.overlay_dirty = true;
+    }
+
     /// The settings' arrow blinks while they wait for a key: on and off every 16 ticks' time.
     const blink_ns: u64 = 16 * sound_out.tick_ps / 1000;
 
@@ -1552,7 +1622,7 @@ pub const Game = struct {
             if (now_ns >= until) {
                 self.overlays.remove(.gamepad);
                 self.overlay_dirty = true;
-            } else if (self.overlays.len == 1 and until - now_ns < overlay.gamepad_fade_ns) {
+            } else if (self.overlays.len - @intFromBool(self.overlays.find(.controllers) != null) == 1 and until - now_ns < overlay.gamepad_fade_ns) {
                 light = @intCast((until - now_ns) * 255 / overlay.gamepad_fade_ns);
             }
         }
@@ -1584,8 +1654,13 @@ pub const Game = struct {
             }
             try p.compose();
         }
-        if (redrawn or self.under_changed) _ = p.blend(under, self.overlays.dims(), light);
+        // The controller overlay's pads over the panel's picture, under its text.
+        if (redrawn or self.under_changed or self.pads_dirty) {
+            _ = p.blend(under, self.overlays.dims(), light);
+            if (self.overlays.find(.controllers)) |o| controller_overlay.draw(p.rgba, o.controllers, .ofPanel(p));
+        }
         self.under_changed = false;
+        self.pads_dirty = false;
         self.overlay_shown = true;
         return self.frame();
     }

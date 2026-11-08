@@ -1,11 +1,12 @@
 //! The machine's own scenes over the game (DESIGN.md 10.4, S3): the settings screen, network play's
 //! screens (the host's network options, a client's name entry) and the host's list of who is
 //! connected, the notice that the other player of network play is in their settings, network
-//! play's messages and stats, the frame's stats, a notice about the settings record, a gamepad's
-//! coming or going. Each is pushed over the game's scenes and holds them or not by its own rule
-//! (`holds`): the settings hold the game, and so does the other player's (both games of network
-//! play wait while either player is in the settings); network play's waits hold it; a notice does
-//! not, nor does a gamepad's message, which fades out as it goes, nor do the stats.
+//! play's messages and stats, the frame's stats, the controller overlay (controller_overlay.zig),
+//! a notice about the settings record, a gamepad's coming or going. Each is pushed over the game's
+//! scenes and holds them or not by its own rule (`holds`): the settings hold the game, and so does
+//! the other player's (both games of network play wait while either player is in the settings);
+//! network play's waits hold it; a notice does not, nor does a gamepad's message, which fades out
+//! as it goes, nor do the stats and the controller overlay.
 //!
 //! They are this machine's, not the game's: the game's canonical state (game.zig), which both
 //! machines of network play keep the same, has the scenes of the flow and their loads
@@ -17,6 +18,7 @@ const std = @import("std");
 const settings_mod = @import("settings/root.zig");
 const panel_mod = @import("panel.zig");
 const input = @import("input.zig");
+const controller_overlay = @import("controller_overlay.zig");
 
 const Panel = panel_mod.Panel;
 const Settings = settings_mod.Settings;
@@ -134,7 +136,7 @@ pub const Message = enum {
     }
 };
 
-pub const Kind = enum { settings, net_options, name_entry, peer_settings, network, net_notice, notice, gamepad, roster, net_stats, frame_stats };
+pub const Kind = enum { settings, net_options, name_entry, peer_settings, network, net_notice, notice, gamepad, roster, net_stats, frame_stats, controllers };
 
 /// The frame's stats over the last second (game.zig), with the settings' STATS: the frames
 /// presented a second, whole, and the milliseconds an update worked on its frame before
@@ -188,11 +190,14 @@ pub const Overlay = union(Kind) {
     net_stats: struct { stats: netplay.Stats, raised: bool = false },
     /// The frame's stats, with the settings' STATS (F3 too turns them on and off).
     frame_stats: FrameStats,
+    /// The controller overlay, with the settings' CONTROLLER OVERLAY (F4 too): its pads are drawn
+    /// over the panel's picture, under its text (game.zig, controller_overlay.zig `draw`).
+    controllers: controller_overlay.Shown,
 
     /// Whether it holds the game under it: no tick runs, the picture stays, the sound fades out.
     pub fn holds(o: *const Overlay) bool {
         return switch (o.*) {
-            .notice, .gamepad, .roster, .net_notice, .net_stats, .frame_stats => false,
+            .notice, .gamepad, .roster, .net_notice, .net_stats, .frame_stats, .controllers => false,
             .network => |n| n.what.holds(),
             else => true,
         };
@@ -229,6 +234,8 @@ pub const Overlay = union(Kind) {
                 var buf: [32]u8 = undefined;
                 _ = try p.message(gamepadText(g.label, g.connected, &buf), panel_mod.rows - 4, true);
             },
+            // Not the panel's: drawn over its picture once mixed.
+            .controllers => {},
         }
     }
 };

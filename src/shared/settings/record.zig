@@ -3,9 +3,9 @@
 //! autofire), the gamepads known (DESIGN.md 3.3: each one's label, its model's key and its name,
 //! the buttons of its model), the settings screen's key, the sound's volume, the window's scale
 //! and full screen (the SDL host's), the game's rules outside the original (the lives, the
-//! continues, the friendly hits: setup.zig), and network play's name and stats. The game's own options (the level, the controls, the
-//! sound test, and the hidden lives and round) are the original's: they reset at power-on, as on
-//! the console.
+//! continues, the friendly hits: setup.zig), network play's name, the stats and the controller
+//! overlay. The game's own options (the level, the controls, the sound test, and the hidden lives
+//! and round) are the original's: they reset at power-on, as on the console.
 //!
 //! The record is one JSON object, `settings.json` in the platform's `Storage`, with a version
 //! (DESIGN.md 7: a record of another version is refused, not converted). The game writes it with
@@ -28,7 +28,8 @@
 //!       "window": { "scale": 3, "fullscreen": false },
 //!       "rules": { "lives": 3, "continues": 3, "friendly_hit": true },
 //!       "name": "BOB",
-//!       "network_stats": false
+//!       "network_stats": false,
+//!       "controller_overlay": false
 //!     }
 //!
 //! Keys are named as `platform.Key` names them (the agent host's `--key` names), "none" for no key,
@@ -36,7 +37,9 @@
 //! ASCII (input.zig `Text`). `name` is this machine's player's in network play (DESIGN.md 9):
 //! three letters or digits, or empty before one is given; `network_stats`, whether the stats show
 //! (the frame's, and network play's in a session's rounds: overlay.zig), named from when they were
-//! network play's alone, so that the records written read.
+//! network play's alone, so that the records written read; `controller_overlay`, whether the
+//! controller overlay shows (controller_overlay.zig), added after the version's other fields: a
+//! record without it reads, the overlay off, and nothing is told.
 //!
 //! A record of another version (an older game's) is not read: `load` writes the defaults over it,
 //! and nothing is told (the user, 2026-10-08).
@@ -82,6 +85,9 @@ pub const Settings = struct {
     /// The stats show over the picture: the frame's, and network play's in a session's rounds
     /// (DESIGN.md 9); the STATS row and F3 (`stats_key`) turn them on and off.
     stats: bool = false,
+    /// The controller overlay shows over the picture (DESIGN.md 10.8); its row and F4
+    /// (`controller_overlay_key`) turn it on and off.
+    controller_overlay: bool = false,
 
     /// Whether the player gave a name.
     pub fn named(self: *const Settings) bool {
@@ -168,10 +174,14 @@ pub const Settings = struct {
 /// The key that shows and hides the stats (`Settings.stats`, game.zig); no setting takes it.
 pub const stats_key: platform.Key = .f3;
 
-/// Escape quits the game (native hosts) or belongs to the browser, and the stats key is the
-/// game's, so no setting takes them.
+/// The key that shows and hides the controller overlay (`Settings.controller_overlay`,
+/// game.zig); no setting takes it.
+pub const controller_overlay_key: platform.Key = .f4;
+
+/// Escape quits the game (native hosts) or belongs to the browser, and the stats key and the
+/// controller overlay's are the game's, so no setting takes them.
 pub fn bindable(k: platform.Key) bool {
-    return k != .unknown and k != .escape and k != stats_key and std.enums.tagName(platform.Key, k) != null;
+    return k != .unknown and k != .escape and k != stats_key and k != controller_overlay_key and std.enums.tagName(platform.Key, k) != null;
 }
 
 /// The d-pad is the pads' directions, and the guide button belongs to the system.
@@ -254,7 +264,7 @@ pub fn parse(gpa: std.mem.Allocator, bytes: []const u8, report: *Report) Setting
     }
     var s: Settings = .{};
     const r: Reader = .{ .report = report };
-    r.unknown(root, &.{ "version", "players", "gamepads", "settings_key", "sound", "window", "rules", "name", "network_stats" }, "");
+    r.unknown(root, &.{ "version", "players", "gamepads", "settings_key", "sound", "window", "rules", "name", "network_stats", "controller_overlay" }, "");
 
     // The gamepads known, then the players (a player's gamepad among them), then one key for one
     // setting.
@@ -330,6 +340,10 @@ pub fn parse(gpa: std.mem.Allocator, bytes: []const u8, report: *Report) Setting
         if (nameOf(got)) |n| s.name = n else report.add("name", "not three letters or digits, or empty");
     }
     if (r.boolean(root, "network_stats", "network_stats")) |b| s.stats = b;
+    // Added after the version's other fields: a record without it reads, the overlay off.
+    if (root.get("controller_overlay") != null) {
+        if (r.boolean(root, "controller_overlay", "controller_overlay")) |b| s.controller_overlay = b;
+    }
     return s;
 }
 
@@ -389,7 +403,7 @@ const Reader = struct {
             if (std.mem.eql(u8, v.string, "none")) return input.no_key;
             if (std.meta.stringToEnum(platform.Key, v.string)) |k| if (bindable(k)) return k;
         }
-        r.report.add(path, "not the name of a key, or none (escape and f3 are the game's)");
+        r.report.add(path, "not the name of a key, or none (escape, f3 and f4 are the game's)");
         return null;
     }
 
@@ -518,7 +532,8 @@ pub fn write(s: *const Settings, w: *std.Io.Writer) std.Io.Writer.Error!void {
     try w.print("  \"window\": {{ \"scale\": {d}, \"fullscreen\": {} }},\n", .{ s.window.scale, s.window.fullscreen });
     try w.print("  \"rules\": {{ \"lives\": {d}, \"continues\": {d}, \"friendly_hit\": {} }},\n", .{ s.rules.lives, s.rules.continues, s.rules.friendly_hit });
     try w.print("  \"name\": \"{s}\",\n", .{if (s.named()) &s.name else ""});
-    try w.print("  \"network_stats\": {}\n}}\n", .{s.stats});
+    try w.print("  \"network_stats\": {},\n", .{s.stats});
+    try w.print("  \"controller_overlay\": {}\n}}\n", .{s.controller_overlay});
 }
 
 fn keyName(k: platform.Key) []const u8 {
@@ -623,6 +638,7 @@ test "the record round-trips, and the defaults are the input's" {
     s.rules = .{ .lives = 9, .continues = 0, .friendly_hit = false };
     s.name = "ZO9".*;
     s.stats = true;
+    s.controller_overlay = true;
     const text = encode(&s, &buf);
     const back = reread(text, &report);
     try testing.expect(report.ok());
@@ -649,6 +665,31 @@ test "the record round-trips, and the defaults are the input's" {
     const quotes: [input.max_model]u8 = @splat('"');
     for (&long.layout.gamepads, 0..) |*g, i| g.* = .{ .label = std.math.maxInt(u16) - @as(u16, @intCast(i)), .model = .of(&quotes), .name = .of(quotes[0..input.max_name]), .buttons = @splat(.right_shoulder) };
     try testing.expect(encode(&long, &buf).len < max_written);
+}
+
+test "a record written before the controller overlay reads whole, the overlay off" {
+    var report: Report = .{};
+    var buf: [max_written]u8 = undefined;
+    var s: Settings = .{ .stats = true };
+    s.sound.volume = 30;
+    const text = encode(&s, &buf);
+    try testing.expect(std.mem.endsWith(u8, text, "\"network_stats\": true,\n  \"controller_overlay\": false\n}\n"));
+    // Its form before the field: the stats last.
+    var old_buf: [max_written]u8 = undefined;
+    const cut = std.mem.indexOf(u8, text, ",\n  \"controller_overlay\"").?;
+    const old = std.fmt.bufPrint(&old_buf, "{s}\n}}\n", .{text[0..cut]}) catch unreachable;
+    const back = reread(old, &report);
+    try testing.expect(report.ok());
+    try testing.expect(back.stats and !back.controller_overlay and back.sound.volume == 30);
+    // On, it reads on; not true or false, it is damaged, off.
+    s.controller_overlay = true;
+    try testing.expect(reread(encode(&s, &buf), &report).controller_overlay);
+    try testing.expect(report.ok());
+    const bad = std.fmt.bufPrint(&old_buf, "{s},\n  \"controller_overlay\": 1\n}}\n", .{text[0..cut]}) catch unreachable;
+    try testing.expect(!reread(bad, &report).controller_overlay);
+    try testing.expect(!report.ok());
+    // F4 is the overlay's: no setting takes it.
+    try testing.expect(!bindable(.f4) and !s.bindKey(.settings, .f4));
 }
 
 test "a damaged field gives its default and the rest is kept" {
@@ -687,7 +728,7 @@ test "a damaged field gives its default and the rest is kept" {
     var w: std.Io.Writer = .fixed(&buf);
     try report.format(&w);
     try testing.expectEqualStrings("(the record): a field the game does not know; gamepads: a gamepad does not read; " ++
-        "players.player1.input: a gamepad not among the gamepads; players.player1.keys.start: not the name of a key, or none (escape and f3 are the game's); " ++
+        "players.player1.input: a gamepad not among the gamepads; players.player1.keys.start: not the name of a key, or none (escape, f3 and f4 are the game's); " ++
         "sound.volume: not a whole number from 0 to 100; window: a field the game does not know; window.fullscreen: not true or false; " ++
         "rules.lives: not a whole number from 1 to 9", w.buffered());
     try testing.expectEqualSlices(u8, "BOB", &s.name);
