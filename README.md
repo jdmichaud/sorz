@@ -5,8 +5,8 @@ browser, played from your own copy of the ROM.
 
 sorz add network play and AI co-op game.
 
-![sorz: the title, the character select, then the eight rounds with one to four players, played
-by the game's own CPU players](docs/trailer.gif)
+![sorz: the title, the character select, then the eight rounds: faithful gameplay, 3 or 4
+players, collaborative AI partners, multiplayer over the network](docs/trailer.gif)
 
 ## Starting the game
 
