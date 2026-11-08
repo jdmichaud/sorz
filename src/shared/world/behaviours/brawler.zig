@@ -118,7 +118,12 @@ pub fn begin(a: Actor) void {
 pub fn think(a: Actor) void {
     defer Common.endTick(a);
     if (!Common.tickStarts(a)) return;
-    if (Common.act(a)) return;
+    if (Common.act(a)) {
+        // A brawler placed in a shutter stays hidden once out, as a Galsia does: the shutter
+        // shows it (the original's variant 1).
+        if (a.mind.state == fights and a.entity.spawn.entrance == .shutter and a.mind.body.target != null) a.entity.flags.hidden = true;
+        return;
+    }
     switch (a.mind.state) {
         .choose => choose(a),
         .follow => follow(a),

@@ -2458,6 +2458,23 @@ test "a knife Galsia closes in, sizes up, stabs near; far it throws its knife, w
     try testing.expectEqual(@as(i16, 75), r2.player().health);
 }
 
+test "a brawler placed in a shutter stays hidden once out, until the shutter shows it" {
+    var r = try Round.init();
+    defer r.deinit();
+    const b = try enemyAt(&r, "brawler", 1000, .left, .appear);
+    r.w.get(b).?.spawn.entrance = .shutter;
+    var out_at: ?usize = null;
+    for (0..12) |i| {
+        r.step(.{});
+        const e = r.w.get(b).?;
+        if (out_at == null and e.mind.brawler.state != .appear) out_at = i;
+        // Out of hiding, never shown before its shutter opens: not even a tick at its place.
+        if (out_at != null) try testing.expect(e.flags.hidden);
+    }
+    try testing.expect(out_at != null);
+    try testing.expectEqual(behaviours.brawler.State.shutter_entry, r.w.get(b).?.mind.brawler.state);
+}
+
 test "a brawler: struck, it reels a tick later; placed to, it shrugs the blow off, then closes in and punches" {
     var r = try Round.init();
     defer r.deinit();
