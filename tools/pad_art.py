@@ -18,7 +18,7 @@ PREVIEW = sys.argv[3] if len(sys.argv) > 3 else None
 LV = [0, 52, 87, 116, 144, 172, 206, 255]
 GAMMA = 0.8
 BOX = (120, 468, 1804, 1456)
-SIZES = [('large', 104), ('small', 76)]
+SIZES = [('large', 83), ('small', 61)]
 
 
 def cut_out():

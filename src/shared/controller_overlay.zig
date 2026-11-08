@@ -255,7 +255,7 @@ test "lit: a tap shown once lights the minimum, a held button until let go" {
 }
 
 test "the layout: one or two players at the bottom corners, three or four across, all on screen" {
-    try testing.expectEqual(@as(u16, 104), large.width);
+    try testing.expectEqual(@as(u16, 83), large.width);
     try testing.expect(small.width * 4 + 2 * margin_side <= panel_mod.width);
     for (1..input.max_players + 1) |n| {
         const players: u8 = @intCast(n);
@@ -271,7 +271,7 @@ test "the layout: one or two players at the bottom corners, three or four across
         }
     }
     try testing.expectEqual(Place{ .x = margin_side, .y = place(1, 0).y, .art = &large }, place(1, 0));
-    try testing.expectEqual(@as(i32, panel_mod.width - margin_side - 104), place(2, 1).x);
+    try testing.expectEqual(@as(i32, panel_mod.width - margin_side - 83), place(2, 1).x);
     try testing.expect(place(3, 0).art == &small and place(4, 3).art == &small);
     try testing.expectEqual(@as(i32, panel_mod.width - margin_side - small.width), place(4, 3).x);
 }
