@@ -101,6 +101,10 @@ pub const Options = struct {
     /// who takes them as they come.
     shots: []const Shot = &.{},
     pictures: ?Pictures = null,
+    /// A run from power-on: its pictures written with the controller overlay over them
+    /// (controller_overlay.zig), its buttons the pads the run gives the game at each display
+    /// tick, as a replay gives the game its recorded ones.
+    controller_overlay: bool = false,
 };
 
 /// Runs the scenario on the content of `assets`; returns whether it ran to its end.
@@ -313,16 +317,29 @@ fn runFromPowerOn(gpa: std.mem.Allocator, io: std.Io, assets: sorz.platform.Asse
     defer if (view) |*v| v.deinit();
     var drawn: sorz.scene.Scene = .{ .load = .{} };
     var shots_written: usize = 0;
+    var lit: sorz.controller_overlay.Lit = .{};
+    var menu_colours = sorz.render.palettes.black;
+    assets_found.menu.one_pad.apply(&menu_colours);
+    const look: sorz.controller_overlay.Look = .{ .font = assets_found.menu.text.font, .sheet = assets_found.menu.text.sheet, .colours = &menu_colours[0] };
+    var shot_rgba: []u8 = &.{};
+    defer gpa.free(shot_rgba);
     // The start's display ticks, then two a logic tick of the script's.
     var ticks: u64 = 0;
     while (ticks < 2 * options.ticks + 10_000) : (ticks += 1) {
         if (!try r.step()) break;
+        if (options.controller_overlay) lit.step(r.given);
         if (view) |*v| {
             v.world_out = r.out;
             try sorz.scene.draw(&r.state.scenes, &drawn, v, r.assets);
             _ = try v.compose();
             for (options.shots) |s| if (s.frame == ticks) {
-                const f = v.frame();
+                var f = v.frame();
+                if (options.controller_overlay) {
+                    if (shot_rgba.len == 0) shot_rgba = try gpa.alloc(u8, f.width * f.height * 4);
+                    for (0..f.height) |y| @memcpy(shot_rgba[y * f.width * 4 ..][0 .. f.width * 4], f.pixels[y * f.stride ..][0 .. f.width * 4]);
+                    sorz.controller_overlay.draw(shot_rgba, .{ .players = r.state.setup.players.count(), .lit = lit.pads() }, look);
+                    f = .{ .width = f.width, .height = f.height, .stride = f.width * 4, .pixels = shot_rgba };
+                }
                 const bytes = try png.encode(gpa, f.width, f.height, f.pixels[0 .. f.stride * f.height]);
                 defer gpa.free(bytes);
                 try cwd.writeFile(io, .{ .sub_path = s.path, .data = bytes });

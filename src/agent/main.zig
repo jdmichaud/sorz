@@ -26,7 +26,7 @@ const usage =
     \\                  [--game-tick N | --take-up] [--level N] [--continues N]] [--trace-events OUT]
     \\                  [--probe OUT]
     \\                  [--reload]
-    \\                  [--form-sizes OUT] [--wav PATH] [--shot FRAME:PATH]...
+    \\                  [--form-sizes OUT] [--wav PATH] [--shot FRAME:PATH]... [--controller-overlay]
     \\       sorz-agent trace-compare FIRST SECOND [--ticks M] [--pos PIXELS] [--tol FIELD=N]...
     \\                  [--ignore EV[,EV...]] [--scene NAME] [--after TICK] [--ignore-kind K[,K...]]
     \\                  [--ignore-field F[,F...]] [--sounds SOUNDS_JSON] [--renumber] [--close-ids]
@@ -83,7 +83,9 @@ const usage =
     \\                   from its canonical form at each display tick and goes on from the state
     \\                   read (a round trip: it must be the state written), --form-sizes writes
     \\                   the form's size at each (tick, scene, entities, bytes), --wav its sound,
-    \\                   --shot its pictures (FRAME the display tick from 0, as without one)
+    \\                   --shot its pictures (FRAME the display tick from 0, as without one),
+    \\                   --controller-overlay with the controller overlay over them (the pads the
+    \\                   run gives as the buttons pressed)
     \\  trace-compare    compare two semantic traces (sor-remaster's docs/traces.md): the first
     \\                   difference and the counts per kind of event; events match within
     \\                   --ticks M ticks, positions and speeds within --pos PIXELS, a field
@@ -141,6 +143,7 @@ pub fn main(init: std.process.Init) !void {
     var probe: ?[]const u8 = null;
     var reload = false;
     var form_sizes: ?[]const u8 = null;
+    var controller_overlay = false;
     var options: native.cli.Options = .{};
     // `iterateAllocator` is the form that Windows needs; the arena keeps the arguments for the
     // whole run.
@@ -201,6 +204,8 @@ pub fn main(init: std.process.Init) !void {
             reload = true;
         } else if (std.mem.eql(u8, arg, "--form-sizes")) {
             form_sizes = args.next() orelse return fail(io);
+        } else if (std.mem.eql(u8, arg, "--controller-overlay")) {
+            controller_overlay = true;
         } else {
             return fail(io);
         }
@@ -263,6 +268,7 @@ pub fn main(init: std.process.Init) !void {
         defer gpa.free(scenario_shots);
         for (scenario_shots, shots.items) |*o, s| o.* = .{ .frame = s.frame, .path = s.path };
         sc.shots = scenario_shots;
+        sc.controller_overlay = controller_overlay;
         sc.reload = reload;
         sc.form_sizes = form_sizes;
         var obuf: [512]u8 = undefined;

@@ -142,6 +142,9 @@ pub const Run = struct {
     chooser: u1 = 0,
     /// The pads held over the logic tick under way.
     current: input.Pads = .{},
+    /// The pads the run gave the game at the last display tick (the controller overlay's buttons
+    /// shown, `--controller-overlay`).
+    given: input.Pads = .{},
     /// The sound, when the run keeps it.
     sound: ?*Sound = null,
     /// The canonical form at each display tick (`--reload`, `--form-sizes`), when the run looks.
@@ -194,6 +197,7 @@ pub const Run = struct {
     pub fn step(self: *Run) !bool {
         if (self.stage == .done) return false;
         const pads = self.next() orelse return false;
+        self.given = pads;
         const turn = self.state.stepWith(pads, .{}, self.assets, &self.out);
         if (self.sound) |s| try s.pcm.appendSlice(s.gpa, sorz.game.tickSound(&s.out, &s.due, &turn, 0));
         if (self.trace) |tw| {
