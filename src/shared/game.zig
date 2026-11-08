@@ -58,9 +58,11 @@
 //! A replay (`playReplay`, the hosts' `--replay`) plays in place of the controls: from the file's
 //! first state, each tick with its recorded pads and facts (`replayTick`), exactly as played, the
 //! controller overlay on with the buttons it showed (`shown_override`), the tick's number on the
-//! picture (a line as the stats'). Space pauses, Right steps a tick while paused, S plays at
-//! full, half and quarter speed in turn (the sound slowed with it), Escape leaves; at its end it
-//! holds. The game takes no other key then.
+//! picture (a line as the stats'). Space pauses, Right steps a tick while paused, Left goes back
+//! to the previous snapshot (the state before every 300th tick, kept as it plays: `replayBack`),
+//! S plays at full, half and quarter speed in turn (the sound slowed with it), Escape leaves; at
+//! its end it holds. A gamepad's START is Space, its D-pad's Left and Right the arrows. The game
+//! takes no other key then.
 const std = @import("std");
 const platform = @import("platform.zig");
 const input = @import("input.zig");
@@ -517,7 +519,7 @@ pub const Game = struct {
         }
         self.recording.deinit();
         if (self.replay) |r| {
-            r.replay.deinit();
+            r.deinit();
             self.allocator.destroy(r);
         }
         self.allocator.free(self.slow_buffer);
@@ -1175,6 +1177,7 @@ pub const Game = struct {
             .per_update => _ = self.runTick(p),
             .clock => self.runDue(p),
         }
+        if (self.replay) |r| r.heldStep();
         self.playJingle(p);
         self.runMoves(p);
         self.replayLine();
@@ -1513,12 +1516,18 @@ pub const Game = struct {
             r.waited = 0;
         }
         r.step_due = false;
+        const before = r.place();
         const t = r.next() orelse return false;
         if (t.state) |form| self.takeGame(p, form) catch |err| {
             std.log.err("the replay's state at its display tick {d} does not load ({s}): it ends there", .{ r.played - 1, @errorName(err) });
             r.played = r.replay.header.ticks;
             return false;
         };
+        // Every 300th tick, the state before it kept, to go back to.
+        if (r.snapshotDue(before)) {
+            var buf: [join_max]u8 = undefined;
+            r.snapshot(before, self.joinForm(&buf)) catch std.log.warn("no snapshot of the replay at its display tick {d}: no memory", .{before.played});
+        }
         self.shown_override = t.shown;
         self.showPads();
         const turn = self.state.stepWith(t.pads, r.machine, if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
@@ -1557,10 +1566,19 @@ pub const Game = struct {
     }
 
     /// An event while a replay plays: Space pauses and goes on, Right steps a tick while paused,
-    /// S turns the speed (full, half, quarter), F3 the stats (for this run), Escape leaves.
+    /// Left goes back to the previous snapshot, S turns the speed (full, half, quarter), F3 the
+    /// stats (for this run), Escape leaves. A gamepad's START is Space, its D-pad's Left and
+    /// Right the arrows.
     fn replayEvent(self: *Game, e: platform.Event, p: *platform.Platform, r: *replay_mod.Playback) void {
         switch (e.payload) {
             .quit => self.finished = true,
+            .controller_button_down => |b| switch (b.button) {
+                .start => r.paused = !r.paused,
+                .dpad_right => r.holdRight(true),
+                .dpad_left => self.replayBack(p, r),
+                else => {},
+            },
+            .controller_button_up => |b| if (b.button == .dpad_right) r.holdRight(false),
             .key_down => |k| switch (k.key) {
                 .escape => self.finished = true,
                 .space => if (!k.repeat) {
@@ -1570,6 +1588,7 @@ pub const Game = struct {
                 .right => if (r.paused) {
                     r.step_due = true;
                 },
+                .left => if (!k.repeat) self.replayBack(p, r),
                 .s => if (!k.repeat) {
                     r.speed = r.speed.next();
                     r.waited = 0;
@@ -1582,6 +1601,25 @@ pub const Game = struct {
             },
             else => {},
         }
+    }
+
+    /// Left while a replay is paused or held at its end: back to the newest snapshot before the
+    /// tick shown, paused there; again, the one before. The sound queued is dropped, the buttons
+    /// shown cleared.
+    fn replayBack(self: *Game, p: *platform.Platform, r: *replay_mod.Playback) void {
+        if (!r.paused and !r.ended()) return;
+        const form = r.back() orelse return;
+        self.takeGame(p, form) catch |err| {
+            std.log.err("the replay's snapshot at its display tick {d} does not load ({s}): it ends there", .{ r.played, @errorName(err) });
+            r.played = r.replay.header.ticks;
+            return;
+        };
+        r.paused = true;
+        self.replay_ended_told = false;
+        self.lit = .{};
+        self.shown_override = .{};
+        self.redraw = true;
+        p.audioClear();
     }
 
     /// A replay's line over the picture: the ticks played of all, and how it plays; drawn again

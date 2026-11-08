@@ -52,7 +52,9 @@ const usage =
     \\                   player (pad 1's keys and every gamepad), the page's own volume
     \\  --replay FILE    play the replay FILE (F5 saves one into --saves) from its first state,
     \\                   a display tick a frame: --key space pauses, right steps a tick while
-    \\                   paused, s turns the speed (full, half, quarter), escape leaves; a
+    \\                   paused, left goes back to the previous snapshot (every 300 ticks), s
+    \\                   turns the speed (full, half, quarter), escape leaves (--button start,
+    \\                   dpad_left and dpad_right as space, left and right); a
     \\                   replay of another build or other data is refused (status 1)
     \\  --netplay, --join  network play over WebSockets, as the host (player 1) or a guest
     \\                   (player 2 to 4): each game plays its own front end with its keys (--key by

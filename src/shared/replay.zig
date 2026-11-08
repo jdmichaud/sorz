@@ -377,7 +377,8 @@ pub const Replay = struct {
 };
 
 /// A replay as the game plays it (`--replay`, game.zig): its next step, the ticks played, the
-/// facts given to them, and the player's controls: paused, a step asked for, the speed.
+/// facts given to them, and the player's controls: paused, a step asked for, the speed; the
+/// snapshots taken as it plays, to go back to.
 pub const Playback = struct {
     replay: Replay,
     at: usize = 0,
@@ -389,6 +390,23 @@ pub const Playback = struct {
     /// The updates waited since the last tick, at a slower speed a tick an update runs at (the
     /// agent host's).
     waited: u8 = 0,
+    /// The state before every `snapshot_every`th tick, taken as it plays (`snapshot`), oldest
+    /// first: Left goes back to them (`back`). The file keeps its first state and its cuts' only.
+    snapshots: std.ArrayList(Snapshot) = .empty,
+    /// A gamepad's Right held: the updates since it was pressed (`holdRight`, `heldStep`).
+    right_held: ?u16 = null,
+
+    /// A snapshot every 5 seconds, as the recording keeps its states.
+    pub const snapshot_every = state_every;
+    /// A gamepad's Right held steps on as a held key repeats: after `repeat_after` updates, a
+    /// step every `repeat_every`.
+    pub const repeat_after = 24;
+    pub const repeat_every = 3;
+
+    /// Where the playback is before a tick: its next step, the ticks played, the facts.
+    pub const Place = struct { at: usize, played: u32, machine: Machine };
+    /// The game's state before the tick at `place` (game.zig `joinForm`), the playback's own.
+    pub const Snapshot = struct { place: Place, form: []u8 };
 
     /// How slow it plays: a tick in 1, 2 or 4 ticks' time.
     pub const Speed = enum(u8) {
@@ -413,8 +431,66 @@ pub const Playback = struct {
     /// A tick to play: the state to load before it (a replay's first, or a cut's), and its pads.
     pub const Next = struct { state: ?[]const u8, pads: input.Pads, shown: input.Pads };
 
+    pub fn deinit(self: *Playback) void {
+        const gpa = self.replay.allocator;
+        for (self.snapshots.items) |s| gpa.free(s.form);
+        self.snapshots.deinit(gpa);
+        self.replay.deinit();
+        self.* = undefined;
+    }
+
     pub fn ended(self: *const Playback) bool {
         return self.played >= self.replay.header.ticks;
+    }
+
+    pub fn place(self: *const Playback) Place {
+        return .{ .at = self.at, .played = self.played, .machine = self.machine };
+    }
+
+    /// Whether the state before the tick at `p` is to be kept: every `snapshot_every`th tick's,
+    /// once (gone back, the ticks played again have theirs).
+    pub fn snapshotDue(self: *const Playback, p: Place) bool {
+        if (p.played % snapshot_every != 0) return false;
+        const items = self.snapshots.items;
+        return items.len == 0 or items[items.len - 1].place.played < p.played;
+    }
+
+    /// Keeps `form`, the state before the tick at `p`.
+    pub fn snapshot(self: *Playback, p: Place, form: []const u8) error{OutOfMemory}!void {
+        const gpa = self.replay.allocator;
+        const own = try gpa.dupe(u8, form);
+        errdefer gpa.free(own);
+        try self.snapshots.append(gpa, .{ .place = p, .form = own });
+    }
+
+    /// Back to the newest snapshot before the ticks played: the playback at its place, its state
+    /// to load; null before the first.
+    pub fn back(self: *Playback) ?[]const u8 {
+        var k = self.snapshots.items.len;
+        while (k > 0) {
+            k -= 1;
+            const s = self.snapshots.items[k];
+            if (s.place.played >= self.played) continue;
+            self.at = s.place.at;
+            self.played = s.place.played;
+            self.machine = s.place.machine;
+            self.step_due = false;
+            return s.form;
+        }
+        return null;
+    }
+
+    /// A gamepad's Right pressed (`down`) or let go: pressed while paused, a step.
+    pub fn holdRight(self: *Playback, down: bool) void {
+        self.right_held = if (down) 0 else null;
+        if (down and self.paused) self.step_due = true;
+    }
+
+    /// An update with a gamepad's Right held: while paused, a step at the repeat's pace.
+    pub fn heldStep(self: *Playback) void {
+        const h = if (self.right_held) |*h| h else return;
+        h.* +|= 1;
+        if (self.paused and h.* >= repeat_after and (h.* - repeat_after) % repeat_every == 0) self.step_due = true;
     }
 
     /// The next tick, the facts before it taken (`machine`); null at the end.
@@ -629,4 +705,50 @@ test "the replays' names: by date and time, else by a counter, never one taken" 
     try testing.expectEqualStrings("replay-0001.sorzreplay", fileName(&buf, null, &.{"settings.json"}));
     try testing.expectEqualStrings("replay-0013.sorzreplay", fileName(&buf, null, &.{ "replay-0004.sorzreplay", "REPLAY-0012.SORZREPLAY" }));
     try std.testing.expect(fileName(&buf, null, &.{}).len <= 64);
+}
+
+test "a replay's snapshots: kept once every 300 ticks, back to the newest before, a gamepad's Right held" {
+    var r: Recording = .init(testing.allocator, 16);
+    defer r.deinit();
+    record(&r, 2000, null);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    try r.write(testHeader(), &out.writer);
+    var pb: Playback = .{ .replay = try Replay.read(testing.allocator, out.written(), test_identity) };
+    defer pb.deinit();
+    // Played to 700: snapshots before ticks 0, 300 and 600 (their played count as the form).
+    while (pb.played < 700) {
+        const before = pb.place();
+        _ = pb.next().?;
+        if (pb.snapshotDue(before)) try pb.snapshot(before, std.mem.asBytes(&before.played));
+    }
+    try testing.expectEqual(@as(usize, 3), pb.snapshots.items.len);
+    try testing.expect(!pb.snapshotDue(.{ .at = 0, .played = 600, .machine = .{} }));
+    // Back: 600, then 300, then 0, then none.
+    for ([_]u32{ 600, 300, 0 }) |want| {
+        const form = pb.back().?;
+        try testing.expectEqual(want, std.mem.bytesToValue(u32, form[0..4]));
+        try testing.expectEqual(want, pb.played);
+    }
+    try testing.expect(pb.back() == null);
+    // On again from 0: the ticks as before, the snapshots not taken twice.
+    const t = pb.next().?;
+    try testing.expectEqual(testTick(pb.replay.header.first_tick).pads, t.pads);
+    try testing.expect(t.state != null);
+    // A gamepad's Right held while paused: a step at its press, then at the repeat's pace.
+    pb.paused = true;
+    pb.holdRight(true);
+    try testing.expect(pb.step_due);
+    pb.step_due = false;
+    var steps: u32 = 0;
+    // Steps at updates 24, 27 and 30 held.
+    for (0..Playback.repeat_after + 2 * Playback.repeat_every) |_| {
+        pb.heldStep();
+        if (pb.step_due) steps += 1;
+        pb.step_due = false;
+    }
+    try testing.expectEqual(@as(u32, 3), steps);
+    pb.holdRight(false);
+    pb.heldStep();
+    try testing.expect(!pb.step_due);
 }

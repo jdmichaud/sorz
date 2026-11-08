@@ -201,6 +201,12 @@ const Result = struct {
     quarter: u32 = 0,
     loads: u64 = 0,
     ended: bool = false,
+    /// Left twice at the end: the tick gone back to (the snapshot before the newest), its
+    /// state the recorded game's; then on again to the end, the ticks compared.
+    back_to: ?u32 = null,
+    back_to_want: u32 = 0,
+    back_same: bool = false,
+    again: u32 = 0,
 };
 
 /// Plays `bytes` in a new game, its keys pausing, stepping, slowing and letting it go, and
@@ -237,32 +243,64 @@ fn replayed(gpa: std.mem.Allocator, assets: platform.AssetSource, bytes: []const
         }
         last_tick = t;
         out.compared += 1;
-        const want = seen.hash.get(t);
-        if (want == null or want.? != r.game.state.hash()) {
-            out.differing += 1;
-            if (out.first_difference == null) {
-                out.first_difference = t;
-                if (seen.form.get(t)) |theirs| {
-                    var buf: [sorz.canonical.maxSize(sorz.game.State)]u8 = undefined;
-                    const ours = sorz.canonical.write(sorz.game.State, &r.game.state, &buf);
-                    out.first_field = sorz.canonical.firstDifference(sorz.game.State, ours, theirs);
-                }
-            }
-        }
-        const shown = seen.shown.get(t);
-        if (shown == null or !std.meta.eql(shown.?, r.game.shown)) out.shown_differing += 1;
+        compare(&out, r, seen);
     }
     out.ended = r.game.replay.?.ended();
+    // Left twice at the end: back to the snapshot before the newest, paused; Space, on again to
+    // the end, every tick compared.
+    const pb = r.game.replay.?;
+    const every = replay.Playback.snapshot_every;
+    out.back_to_want = ((pb.replay.header.ticks - 1) / every - 1) * every;
+    for (0..2) |_| {
+        try r.key(.left, true);
+        try r.update();
+        try r.key(.left, false);
+        try r.update();
+    }
+    out.back_to = pb.played;
+    out.back_same = pb.paused and seen.hash.get(r.game.state.tick) == r.game.state.hash();
+    try r.key(.space, true);
+    n = 0;
+    while (!pb.ended()) : (n += 1) {
+        if (n == 20_000) return error.NotEnded;
+        if (n == 1) try r.key(.space, false);
+        const before = pb.played;
+        try r.update();
+        if (pb.played == before) continue;
+        out.again += pb.played - before;
+        compare(&out, r, seen);
+    }
     out.loads = r.game.loads_done;
     return out;
 }
 
+/// The display tick's state and buttons shown against the recorded game's.
+fn compare(out: *Result, r: *Run, seen: *const Seen) void {
+    const t = r.game.state.tick;
+    const want = seen.hash.get(t);
+    if (want == null or want.? != r.game.state.hash()) {
+        out.differing += 1;
+        if (out.first_difference == null) {
+            out.first_difference = t;
+            if (seen.form.get(t)) |theirs| {
+                var buf: [sorz.canonical.maxSize(sorz.game.State)]u8 = undefined;
+                const ours = sorz.canonical.write(sorz.game.State, &r.game.state, &buf);
+                out.first_field = sorz.canonical.firstDifference(sorz.game.State, ours, theirs);
+            }
+        }
+    }
+    const shown = seen.shown.get(t);
+    if (shown == null or !std.meta.eql(shown.?, r.game.shown)) out.shown_differing += 1;
+}
+
 fn report(w: *std.Io.Writer, case: []const u8, res: Result, bytes: usize) !bool {
     const pass = res.ended and res.differing == 0 and res.shown_differing == 0 and res.compared == res.ticks and res.ticks >= replay.ticks_kept and
-        res.paused == 3 and res.half == 150 and res.quarter == 100;
+        res.paused == 3 and res.half == 150 and res.quarter == 100 and res.back_to == res.back_to_want and res.back_same and
+        res.again == res.ticks - res.back_to_want;
     try w.print("{{\"case\":\"{s}\",\"pass\":{},\"ticks\":{d},\"first_tick\":{d},\"bytes\":{d},\"compared\":{d},\"differing\":{d},\"shown_differing\":{d},\"held_updates\":{d},\"paused_ticks\":{d},\"half_ticks\":{d},\"quarter_ticks\":{d},\"states_loaded\":{d}", .{
         case, pass, res.ticks, res.first_tick, bytes, res.compared, res.differing, res.shown_differing, res.held_updates, res.paused, res.half, res.quarter, res.loads,
     });
+    try w.print(",\"back_to\":{?d},\"back_same\":{},\"again\":{d}", .{ res.back_to, res.back_same, res.again });
     if (res.first_difference) |t| try w.print(",\"first_difference\":{d}", .{t});
     if (res.first_field) |d| try w.print(",\"first_field\":\"{f}\"", .{d});
     try w.writeAll("}\n");

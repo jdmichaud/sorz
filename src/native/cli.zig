@@ -44,8 +44,10 @@ pub const usage =
     \\  --server [ADDRESS:]PORT  server mode, with no game: serve the page and the game's files
     \\                       of DIR|ROM at PORT, and relay network play between the browsers
     \\  --replay FILE        play the replay FILE (F5 saves one in the saves): Space pauses,
-    \\                       Right steps a tick while paused, S plays at full, half and
-    \\                       quarter speed in turn, Escape leaves
+    \\                       Right steps a tick while paused, Left goes back to the previous
+    \\                       snapshot (every 5 s), S plays at full, half and quarter speed in
+    \\                       turn, Escape leaves; a gamepad's START is Space, its D-pad's Left
+    \\                       and Right the arrows
     \\
 ;
 

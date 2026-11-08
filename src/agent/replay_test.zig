@@ -144,3 +144,74 @@ test "a replay plays the recorded ticks: each state the recorded game's, paused,
     // A replay saves none, and its game takes no other key.
     try testing.expect(!b.game.usesKey(.f5));
 }
+
+test "a replay goes back to its snapshots, from the keys and the gamepad, and plays on as recorded" {
+    var a: Run = undefined;
+    try a.init();
+    defer a.deinit();
+    const updates = 2000;
+    var hashes: [updates + 2]u64 = undefined;
+    for (0..updates) |i| {
+        if (rightHeld(i) != (i > 0 and rightHeld(i - 1))) try a.key(.right, rightHeld(i));
+        try a.update();
+        hashes[a.game.state.tick] = a.game.state.hash();
+    }
+    try a.key(.f5, true);
+    try a.update();
+    var bytes = try a.storage.storage().load("replay-0001" ++ replay.extension);
+    defer bytes.deinit();
+
+    var b: Run = undefined;
+    try b.init();
+    defer b.deinit();
+    try b.game.playReplay(try replay.Replay.read(testing.allocator, bytes.bytes, try b.game.replayIdentity()));
+    const r = b.game.replay.?;
+    const first = r.replay.header.first_tick;
+    const ticks = r.replay.header.ticks;
+    const every = replay.Playback.snapshot_every;
+    var n: usize = 0;
+    while (!r.ended()) : (n += 1) {
+        try testing.expect(n < 2 * updates);
+        try b.update();
+    }
+    // Left at the end: the newest snapshot before it, paused there, the recorded game's state.
+    try b.key(.left, true);
+    try b.update();
+    try b.key(.left, false);
+    const newest = (ticks - 1) / every * every;
+    try testing.expectEqual(newest, r.played);
+    try testing.expect(r.paused);
+    try testing.expectEqual(first + newest, b.game.state.tick);
+    try testing.expectEqual(hashes[b.game.state.tick], b.game.state.hash());
+    // Held there while paused.
+    try b.update();
+    try testing.expectEqual(first + newest, b.game.state.tick);
+    // The gamepad's Left: the one before.
+    const pad: platform.ControllerId = @fromBackingInt(@intCast(1));
+    try b.backend.inject(.{ .time_ns = b.backend.clock_ns, .payload = .{ .controller_button_down = .{ .controller = pad, .button = .dpad_left } } });
+    try b.update();
+    try testing.expectEqual(newest - every, r.played);
+    try testing.expectEqual(hashes[b.game.state.tick], b.game.state.hash());
+    // The gamepad's Right: a tick.
+    try b.backend.inject(.{ .time_ns = b.backend.clock_ns, .payload = .{ .controller_button_down = .{ .controller = pad, .button = .dpad_right } } });
+    try b.update();
+    try b.backend.inject(.{ .time_ns = b.backend.clock_ns, .payload = .{ .controller_button_up = .{ .controller = pad, .button = .dpad_right } } });
+    try b.update();
+    try testing.expectEqual(newest - every + 1, r.played);
+    // Its START: on again, every tick the recorded game's to the end.
+    try b.backend.inject(.{ .time_ns = b.backend.clock_ns, .payload = .{ .controller_button_down = .{ .controller = pad, .button = .start } } });
+    var compared: u32 = 0;
+    var last: ?u32 = null;
+    n = 0;
+    while (!r.ended()) : (n += 1) {
+        try testing.expect(n < 2 * updates);
+        try b.update();
+        const t = b.game.state.tick;
+        if (last == t) continue;
+        last = t;
+        try testing.expectEqual(hashes[t], b.game.state.hash());
+        compared += 1;
+    }
+    try testing.expect(compared >= every);
+    try testing.expectEqual(@as(u32, updates), b.game.state.tick);
+}
