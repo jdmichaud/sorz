@@ -144,7 +144,7 @@ pub const Message = enum {
     }
 };
 
-pub const Kind = enum { settings, net_options, name_entry, peer_settings, network, net_notice, notice, gamepad, roster, net_stats, frame_stats, controllers };
+pub const Kind = enum { settings, net_options, name_entry, peer_settings, network, net_notice, notice, gamepad, roster, net_stats, frame_stats, controllers, replay };
 
 /// The frame's stats over the last second (game.zig), with the settings' STATS: the frames
 /// presented a second, whole, and the milliseconds an update worked on its frame before
@@ -162,6 +162,31 @@ pub const FrameStats = struct {
 
 /// The frame's stats' row: the bottom line in the box's place; network play's stats go above them.
 const frame_stats_row = panel_mod.rows - 2;
+
+/// A replay's line (`--replay`, game.zig): the display ticks played of all, and how it plays.
+pub const ReplayLine = struct {
+    tick: u32,
+    ticks: u32,
+    how: How = .playing,
+
+    pub const How = enum { playing, half, quarter, paused, end };
+
+    /// "REPLAY 123 OF 1500", then "HALF SPEED", "QUARTER SPEED", "PAUSED" or "END" (the
+    /// game's font has no slash).
+    pub fn line(r: ReplayLine, buf: *[64]u8) []const u8 {
+        const how: []const u8 = switch (r.how) {
+            .playing => "",
+            .half => "  HALF SPEED",
+            .quarter => "  QUARTER SPEED",
+            .paused => "  PAUSED",
+            .end => "  END",
+        };
+        return std.fmt.bufPrint(buf, "REPLAY {d} OF {d}{s}", .{ r.tick, r.ticks, how }) catch unreachable;
+    }
+};
+
+/// A replay's row: over the controller overlay's pads, clear of the game's status bar.
+const replay_row = panel_mod.rows - 10;
 
 /// The host's list of who is connected: its own player, then its clients.
 pub const Roster = struct {
@@ -201,11 +226,13 @@ pub const Overlay = union(Kind) {
     /// The controller overlay, with the settings' CONTROLLER OVERLAY (F4 too): its pads are drawn
     /// over the panel's picture, under its text (game.zig, controller_overlay.zig `draw`).
     controllers: controller_overlay.Shown,
+    /// A replay's line: its tick, and whether it is paused, slowed or at its end.
+    replay: ReplayLine,
 
     /// Whether it holds the game under it: no tick runs, the picture stays, the sound fades out.
     pub fn holds(o: *const Overlay) bool {
         return switch (o.*) {
-            .notice, .gamepad, .roster, .net_notice, .net_stats, .frame_stats, .controllers => false,
+            .notice, .gamepad, .roster, .net_notice, .net_stats, .frame_stats, .controllers, .replay => false,
             .network => |n| n.what.holds(),
             else => true,
         };
@@ -241,6 +268,10 @@ pub const Overlay = union(Kind) {
             .gamepad => |g| {
                 var buf: [32]u8 = undefined;
                 _ = try p.message(gamepadText(g.label, g.connected, &buf), panel_mod.rows - 4, true);
+            },
+            .replay => |r| {
+                var buf: [64]u8 = undefined;
+                try p.textOutlined(1, replay_row, r.line(&buf), .bright);
             },
             // Not the panel's: drawn over its picture once mixed.
             .controllers => {},
@@ -363,6 +394,17 @@ test "the frame's stats' line: FPS whole, TPF in tenths, three places before the
     try std.testing.expectEqualStrings("FPS  60  TPF   1.2 MS", (FrameStats{ .fps = 60, .tpf_tenths = 12 }).line(&buf));
     try std.testing.expectEqualStrings("FPS 144  TPF  16.7 MS", (FrameStats{ .fps = 144, .tpf_tenths = 167 }).line(&buf));
     try std.testing.expectEqualStrings("FPS   0  TPF 999.9 MS", (FrameStats{ .fps = 0, .tpf_tenths = 123456 }).line(&buf));
+}
+
+test "a replay's line: its tick of all, and how it plays" {
+    var buf: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("REPLAY 0 OF 1500", (ReplayLine{ .tick = 0, .ticks = 1500 }).line(&buf));
+    try std.testing.expectEqualStrings("REPLAY 77 OF 1500  PAUSED", (ReplayLine{ .tick = 77, .ticks = 1500, .how = .paused }).line(&buf));
+    try std.testing.expectEqualStrings("REPLAY 9 OF 1500  HALF SPEED", (ReplayLine{ .tick = 9, .ticks = 1500, .how = .half }).line(&buf));
+    // A replay of 99,999 ticks fits the picture's width; the most a file can say, the buffer.
+    try std.testing.expect((ReplayLine{ .tick = 99_999, .ticks = 99_999, .how = .quarter }).line(&buf).len <= panel_mod.columns - 1);
+    _ = (ReplayLine{ .tick = std.math.maxInt(u32), .ticks = std.math.maxInt(u32), .how = .quarter }).line(&buf);
+    try std.testing.expectEqualStrings("REPLAY 1500 OF 1500  END", (ReplayLine{ .tick = 1500, .ticks = 1500, .how = .end }).line(&buf));
 }
 
 test "the overlays: one of each kind, the settings hold and dim, a notice does neither" {

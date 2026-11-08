@@ -1,9 +1,10 @@
 //! The command-line options that the native hosts take and open for the game: the positional game
 //! path and `--saves DIR` (DESIGN.md 5.2, D8), the variant (`--original`, DESIGN.md 10.7), network
 //! play's `--netplay [ADDRESS:]PORT` or `--join ws://ADDRESS:PORT`, with `--delay N`, and server
-//! mode's `--server [ADDRESS:]PORT` (DESIGN.md 9). Both serve the browser build built into the executable, never files beside it
-//! (DESIGN.md 1), and the game's files from the game path (`served.zig`): the page never asks the
-//! player for them (DESIGN.md 5.3).
+//! mode's `--server [ADDRESS:]PORT` (DESIGN.md 9), and a replay's `--replay FILE` (DESIGN.md
+//! 10.8, `openReplay`). Both network modes serve the browser build built into the executable,
+//! never files beside it (DESIGN.md 1), and the game's files from the game path (`served.zig`):
+//! the page never asks the player for them (DESIGN.md 5.3).
 //!
 //! The game path is a game directory, the content tree on disk (a previous extraction, or a mod of
 //! one), or the user's ROM, whose content is extracted into memory (`Providers.extractRom`, the
@@ -42,6 +43,9 @@ pub const usage =
     \\                       round trip)
     \\  --server [ADDRESS:]PORT  server mode, with no game: serve the page and the game's files
     \\                       of DIR|ROM at PORT, and relay network play between the browsers
+    \\  --replay FILE        play the replay FILE (F5 saves one in the saves): Space pauses,
+    \\                       Right steps a tick while paused, S plays at full, half and
+    \\                       quarter speed in turn, Escape leaves
     \\
 ;
 
@@ -61,12 +65,20 @@ pub const Options = struct {
     delay: ?u8 = null,
     /// `--original`: the cartridge's variant rather than the default (variant.zig).
     original: bool = false,
+    /// `--replay FILE`: the replay file to play (DESIGN.md 10.8, replay.zig).
+    replay: ?[]const u8 = null,
 
     /// Consumes `--saves`, the network's options and the single positional game path. Returns
     /// false for any other argument. After `--`, a game path can start with a dash.
     pub fn take(self: *Options, arg: []const u8, args: anytype) TakeError!bool {
         if (std.mem.eql(u8, arg, "--original")) {
             self.original = true;
+            return true;
+        }
+        if (std.mem.eql(u8, arg, "--replay")) {
+            const value = args.next() orelse return error.MissingValue;
+            if (value.len == 0 or self.replay != null) return error.BadValue;
+            self.replay = value;
             return true;
         }
         if (std.mem.eql(u8, arg, "--saves")) {
@@ -120,9 +132,11 @@ pub const Options = struct {
     /// What the options ask of the network: network play (`--netplay`, its port, or `--join`),
     /// server mode (`--server`, which runs no game and serves the game's data to its pages: the
     /// game path is required, and it keeps no saves), or nothing. `--delay` goes with hosting,
-    /// not `--join`. `--original`, the cartridge's game on one machine, goes with neither.
+    /// not `--join`. `--original`, the cartridge's game on one machine, goes with neither, nor
+    /// does `--replay`, a replay played on this machine.
     pub fn network(self: Options) TakeError!Network {
         if (self.delay != null and (self.join != null or self.server != null)) return error.BadValue;
+        if (self.replay != null and (self.netplay != null or self.join != null or self.server != null)) return error.BadValue;
         if (self.original and (self.netplay != null or self.join != null)) return error.BadValue;
         if (self.server != null) {
             if (self.saves != null) return error.BadValue;
@@ -142,9 +156,9 @@ pub const Options = struct {
     pub const default_port = "8000";
 
     /// Whether the native game may host (DESIGN.md 9: its menu's NETWORK PLAY): not the
-    /// cartridge's, nor a client, nor a server.
+    /// cartridge's, nor a client, nor a server, nor a replay.
     pub fn hosts(self: Options) bool {
-        return !self.original and self.join == null and self.server == null;
+        return !self.original and self.join == null and self.server == null and self.replay == null;
     }
 
     /// The session's options for the game, given the data's identity.
@@ -198,6 +212,44 @@ pub const Netplay = struct {
         self.* = undefined;
     }
 };
+
+/// The largest replay file a host reads (one of 20 seconds is some tens of kilobytes).
+pub const max_replay_bytes = 64 << 20;
+
+/// The replay at `path` (`--replay`), for `game` to play: read, and refused unless it is a whole
+/// replay recorded by this build with this game data, told why in the log. False when refused.
+pub fn openReplay(gpa: std.mem.Allocator, io: std.Io, game: *sorz.Game, path: []const u8) bool {
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(max_replay_bytes)) catch |err| {
+        std.log.err("cannot read the replay {s}: {s}", .{ path, @errorName(err) });
+        return false;
+    };
+    defer gpa.free(bytes);
+    const id = game.replayIdentity() catch |err| {
+        std.log.err("cannot read the game data for its identity: {s}", .{@errorName(err)});
+        return false;
+    };
+    var replay = sorz.replay.Replay.read(gpa, bytes, id) catch |err| {
+        std.log.err("the replay {s} is refused: {s}", .{ path, sorz.replay.refusal(err) });
+        const h = sorz.replay.Header.read(bytes) catch return false;
+        switch (err) {
+            error.OtherBuild => std.log.err("it was recorded by build {s}; this is build {s}", .{ sorz.net.protocol.buildText(&h.build), sorz.version.build }),
+            error.OtherData => {
+                const theirs = sorz.net.identity.hex(&h.data);
+                const ours = sorz.net.identity.hex(&id.data);
+                std.log.err("it was recorded with the data {s}; this game's is {s}", .{ theirs[0..16], ours[0..16] });
+            },
+            else => {},
+        }
+        return false;
+    };
+    game.playReplay(replay) catch {
+        replay.deinit();
+        std.log.err("the replay {s} is refused: {s}", .{ path, sorz.replay.refusal(error.OutOfMemory) });
+        return false;
+    };
+    std.log.info("replay {s}: {d} display ticks from the game's display tick {d}", .{ path, replay.header.ticks, replay.header.first_tick });
+    return true;
+}
 
 /// The kind of asset source, for the host's start-up line and the agent's diagnostics.
 pub const AssetKind = enum { none, rom, directory };
@@ -503,8 +555,16 @@ test "the options of network play" {
         &.{ "game", "--server", "7000", "--saves", "s" },
         // No option points a server at files beside the executable (DESIGN.md 1).
         &.{ "--netplay", "7000", "--web", "w" },
+        // A replay plays on this machine alone.
+        &.{ "game", "--replay", "r", "--netplay", "7000" },
+        &.{ "--join", "ws://h:1", "--replay", "r" },
+        &.{ "game", "--replay", "r", "--replay", "s" },
     }) |items| try std.testing.expectError(error.BadValue, TestArgs.all(items));
     try std.testing.expectError(error.MissingValue, TestArgs.all(&.{"--join"}));
+    try std.testing.expectError(error.MissingValue, TestArgs.all(&.{ "game", "--replay" }));
+    const replay = try TestArgs.all(&.{ "game", "--replay", "replay-0001.sorzreplay" });
+    try std.testing.expectEqualStrings("replay-0001.sorzreplay", replay.replay.?);
+    try std.testing.expect(!replay.hosts());
     try std.testing.expectError(error.MissingValue, TestArgs.all(&.{ "game", "--server" }));
     try std.testing.expectError(error.MissingValue, TestArgs.all(&.{ "--server", "7000" }));
 }

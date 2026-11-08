@@ -92,3 +92,55 @@ test "a page keeps F5: no replay, no recording" {
     try testing.expect(!r.game.usesKey(.f5));
     try testing.expectEqual(@as(u64, 0), r.game.recording.kept());
 }
+
+test "a replay plays the recorded ticks: each state the recorded game's, paused, stepped and slowed" {
+    var a: Run = undefined;
+    try a.init();
+    defer a.deinit();
+    const updates = 2000;
+    var hashes: [updates + 2]u64 = undefined;
+    for (0..updates) |i| {
+        if (rightHeld(i) != (i > 0 and rightHeld(i - 1))) try a.key(.right, rightHeld(i));
+        if (i % 50 == 0) try a.key(.enter, true);
+        if (i % 50 == 1) try a.key(.enter, false);
+        try a.update();
+        hashes[a.game.state.tick] = a.game.state.hash();
+    }
+    try a.key(.f5, true);
+    try a.update();
+    hashes[a.game.state.tick] = a.game.state.hash();
+    var bytes = try a.storage.storage().load("replay-0001" ++ replay.extension);
+    defer bytes.deinit();
+
+    var b: Run = undefined;
+    try b.init();
+    defer b.deinit();
+    try b.game.playReplay(try replay.Replay.read(testing.allocator, bytes.bytes, try b.game.replayIdentity()));
+    const ticks = b.game.replay.?.replay.header.ticks;
+    var n: usize = 0;
+    var compared: u32 = 0;
+    var last: ?u32 = null;
+    while (!b.game.replay.?.ended()) : (n += 1) {
+        try testing.expect(n < 10 * updates);
+        // Paused at 10, a step at 20, on at 30; half speed from 40, a quarter from 60, full at 100.
+        if (n == 10 or n == 30) try b.key(.space, true);
+        if (n == 11 or n == 31) try b.key(.space, false);
+        if (n == 20) try b.key(.right, true);
+        if (n == 21) try b.key(.right, false);
+        if (n == 40 or n == 60 or n == 100) try b.key(.s, true);
+        if (n == 41 or n == 61 or n == 101) try b.key(.s, false);
+        try b.update();
+        const t = b.game.state.tick;
+        if (last == t) continue;
+        last = t;
+        try testing.expectEqual(hashes[t], b.game.state.hash());
+        compared += 1;
+    }
+    try testing.expectEqual(ticks, compared);
+    // Played to the tick F5 came at, and held there.
+    try testing.expectEqual(@as(u32, updates), b.game.state.tick);
+    try b.update();
+    try testing.expectEqual(@as(u32, updates), b.game.state.tick);
+    // A replay saves none, and its game takes no other key.
+    try testing.expect(!b.game.usesKey(.f5));
+}

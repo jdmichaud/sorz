@@ -52,6 +52,9 @@ pub const usage =
     \\  --server [ADDRESS:]PORT  server mode, with no window and no game: serve the page and
     \\                       the game's files of DIR|ROM at PORT, and relay network play between
     \\                       the browsers (sorz-server does the same without SDL's libraries)
+    \\  --replay FILE        play the replay FILE (F5 saves the last 20 seconds of a game as
+    \\                       one in the saves): Space pauses, Right steps a tick while paused,
+    \\                       S plays at full, half and quarter speed in turn, Escape leaves
     \\
 ;
 
@@ -152,6 +155,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
     defer game.deinit();
     game.variant = options.providers.variant();
     game.data_identity = data_identity;
+    // A replay plays in place of the controls, or is refused, told why.
+    if (options.providers.replay) |path| if (!native.cli.openReplay(gpa, io, &game, path)) return 1;
     std.log.info("variant: {s}", .{@tagName(game.variant)});
     if (netplay) {
         backend.transport = net_side.transport.transport();
@@ -385,6 +390,8 @@ test "the host options are parsed, bounded and defaulted" {
     try std.testing.expectEqual(@as(?u8, 4), hosting.providers.delay);
     const joining = try parseArgs(SliceArgs{ .items = &.{ "sorz", "--join", "ws://10.0.0.2:7000" } });
     try std.testing.expectEqualStrings("ws://10.0.0.2:7000", joining.providers.join.?);
+    const replaying = try parseArgs(SliceArgs{ .items = &.{ "sorz", "game", "--replay", "replay-0001.sorzreplay" } });
+    try std.testing.expectEqualStrings("replay-0001.sorzreplay", replaying.providers.replay.?);
     // Server mode serves the game's data to its pages.
     try std.testing.expectError(error.MissingAssets, parseArgs(SliceArgs{ .items = &.{ "sorz", "--server", "7000" } }));
 
@@ -399,6 +406,7 @@ test "the host options are parsed, bounded and defaulted" {
         &.{ "sorz", "game", "--server", "7000", "--saves", "s" },
         &.{ "sorz", "game", "--join", "ws://h:1", "--delay", "3" },
         &.{ "sorz", "game", "--original", "--netplay", "7000" },
+        &.{ "sorz", "game", "--replay", "r", "--join", "ws://h:1" },
     }) |args| try std.testing.expectError(error.BadArguments, parseArgs(SliceArgs{ .items = args }));
 }
 

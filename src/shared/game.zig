@@ -54,6 +54,13 @@
 //! cut (`stateChanged`). F5 (`replay_key`) writes them as a replay file into the settings'
 //! storage (`saveReplay`), and a notice tells it. Nothing of a session of network play is
 //! recorded. It too is this machine's, never the game's state.
+//!
+//! A replay (`playReplay`, the hosts' `--replay`) plays in place of the controls: from the file's
+//! first state, each tick with its recorded pads and facts (`replayTick`), exactly as played, the
+//! controller overlay on with the buttons it showed (`shown_override`), the tick's number on the
+//! picture (a line as the stats'). Space pauses, Right steps a tick while paused, S plays at
+//! full, half and quarter speed in turn (the sound slowed with it), Escape leaves; at its end it
+//! holds. The game takes no other key then.
 const std = @import("std");
 const platform = @import("platform.zig");
 const input = @import("input.zig");
@@ -483,6 +490,10 @@ pub const Game = struct {
     /// The date: the wall clock's seconds since 1970 (UTC) at the platform's time `at_ns`, when
     /// the host gives them; a replay's name has its date and time.
     wall: ?struct { unix_s: i64, at_ns: u64 } = null,
+    /// A replay played in place of the controls (`playReplay`), and its sound slowed.
+    replay: ?*replay_mod.Playback = null,
+    replay_ended_told: bool = false,
+    slow_buffer: []i16 = &.{},
 
     pub const InitError = error{ OutOfMemory, BadContent };
 
@@ -505,6 +516,11 @@ pub const Game = struct {
             self.allocator.destroy(np);
         }
         self.recording.deinit();
+        if (self.replay) |r| {
+            r.replay.deinit();
+            self.allocator.destroy(r);
+        }
+        self.allocator.free(self.slow_buffer);
         if (self.sound) |*s| s.deinit(self.allocator);
         self.allocator.free(self.volume_buffer);
         self.allocator.free(self.fade_buffer);
@@ -1071,6 +1087,10 @@ pub const Game = struct {
             budget -= n;
             for (buf[0..n]) |e| {
                 self.events_consumed += 1;
+                if (self.replay) |r| {
+                    self.replayEvent(e, p, r);
+                    continue;
+                }
                 if (self.netplay) |np| if (np.handle(p, e)) continue;
                 if (self.moves != null) {
                     self.movesEvent(e, p);
@@ -1157,6 +1177,7 @@ pub const Game = struct {
         }
         self.playJingle(p);
         self.runMoves(p);
+        self.replayLine();
         self.controllerOverlay();
         try self.present(p);
         return .running;
@@ -1282,7 +1303,9 @@ pub const Game = struct {
             self.clock_ticks = 0;
             self.clock_ppm = ppm;
         }
-        const due: u64 = (now -| self.clock_base_ns) * 1000 / stretched(ppm);
+        // A replay slowed: its ticks in 2 or 4 ticks' time.
+        const slowness: u64 = if (self.replay) |r| r.speed.slowness() else 1;
+        const due: u64 = (now -| self.clock_base_ns) * 1000 / (stretched(ppm) * slowness);
         while (n < max_ticks_per_update and self.clock_ticks < due) : (n += 1) {
             if (!self.runTick(p)) {
                 // A hold: the clock does not run ahead of it, and the sound fades out.
@@ -1324,6 +1347,7 @@ pub const Game = struct {
     /// menu chose SETTINGS opens them, on the machine of the player who chose.
     fn runTick(self: *Game, p: *platform.Platform) bool {
         if (self.holding()) return false;
+        if (self.replay) |r| return self.replayTick(p, r);
         var pads = self.controls.read(self.state.tick, self.attackButton());
         // The host's player out of the game it left: its pad plays nothing (the lobby takes its
         // keys).
@@ -1463,6 +1487,119 @@ pub const Game = struct {
         self.replays_saved += 1;
         std.log.info("replay saved in the saves as {s}: the last {d} display ticks, {d} bytes", .{ name, self.recording.kept(), out.written().len });
         self.tell(.replay_saved);
+    }
+
+    /// Plays `replay` (read for this build and data: replay.zig `Replay.read`) in place of the
+    /// controls from the next update: its first state loads at its first tick. The game takes it.
+    pub fn playReplay(self: *Game, replay: replay_mod.Replay) error{OutOfMemory}!void {
+        const r = try self.allocator.create(replay_mod.Playback);
+        r.* = .{ .replay = replay };
+        self.replay = r;
+        self.variant = replay.header.variant;
+        self.replays = false;
+    }
+
+    /// A replay's display tick: the state before it loaded when the file has one there (its first,
+    /// a cut's), then the tick with the recorded pads and facts, the buttons shown as recorded.
+    /// False when none runs: paused (but a step asked for), at its end, or between two ticks at a
+    /// slower speed in the agent host. Its sound as the replayed game makes it, slowed with it.
+    fn replayTick(self: *Game, p: *platform.Platform, r: *replay_mod.Playback) bool {
+        if (r.ended()) return false;
+        if (r.paused and !r.step_due) return false;
+        // A tick an update (the agent host's): a slower speed waits for its updates.
+        if (self.pacing == .per_update and !r.step_due and r.speed != .full) {
+            r.waited += 1;
+            if (r.waited < r.speed.slowness()) return false;
+            r.waited = 0;
+        }
+        r.step_due = false;
+        const t = r.next() orelse return false;
+        if (t.state) |form| self.takeGame(p, form) catch |err| {
+            std.log.err("the replay's state at its display tick {d} does not load ({s}): it ends there", .{ r.played - 1, @errorName(err) });
+            r.played = r.replay.header.ticks;
+            return false;
+        };
+        self.shown_override = t.shown;
+        self.showPads();
+        const turn = self.state.stepWith(t.pads, r.machine, if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
+        self.redraw = true;
+        if (self.sound) |*s| {
+            const frames = self.slowed(tickSound(s, &self.transfers_due, &turn, 0), r.speed.slowness());
+            const shaped = if (self.faded) self.fade(frames, .in) else frames;
+            self.faded = false;
+            _ = p.audioQueue(self.atVolume(shaped)) catch {};
+        } else _ = transfersOf(&self.transfers_due, &turn);
+        if (r.ended() and !self.replay_ended_told) {
+            self.replay_ended_told = true;
+            std.log.info("the replay ends at its display tick {d}: it holds there (Escape leaves)", .{r.played});
+        }
+        return true;
+    }
+
+    /// `frames` (interleaved stereo) each `n` times over, in the slow buffer: a tick's sound in
+    /// `n` ticks' time, an octave lower at half speed.
+    fn slowed(self: *Game, frames: []const i16, n: u8) []const i16 {
+        if (n <= 1) return frames;
+        const len = frames.len * n;
+        if (self.slow_buffer.len < len) {
+            self.allocator.free(self.slow_buffer);
+            self.slow_buffer = self.allocator.alloc(i16, len) catch {
+                self.slow_buffer = &.{};
+                return frames;
+            };
+        }
+        const out = self.slow_buffer[0..len];
+        for (0..frames.len / 2) |i| for (0..n) |k| {
+            out[2 * (i * n + k)] = frames[2 * i];
+            out[2 * (i * n + k) + 1] = frames[2 * i + 1];
+        };
+        return out;
+    }
+
+    /// An event while a replay plays: Space pauses and goes on, Right steps a tick while paused,
+    /// S turns the speed (full, half, quarter), F3 the stats (for this run), Escape leaves.
+    fn replayEvent(self: *Game, e: platform.Event, p: *platform.Platform, r: *replay_mod.Playback) void {
+        switch (e.payload) {
+            .quit => self.finished = true,
+            .key_down => |k| switch (k.key) {
+                .escape => self.finished = true,
+                .space => if (!k.repeat) {
+                    r.paused = !r.paused;
+                },
+                // Held, it steps on at the key's repeat.
+                .right => if (r.paused) {
+                    r.step_due = true;
+                },
+                .s => if (!k.repeat) {
+                    r.speed = r.speed.next();
+                    r.waited = 0;
+                    self.clock_base_ns = p.nowNs();
+                    self.clock_ticks = 0;
+                },
+                else => if (k.key == settings_mod.record.stats_key and !k.repeat) {
+                    self.settings.stats = !self.settings.stats;
+                },
+            },
+            else => {},
+        }
+    }
+
+    /// A replay's line over the picture: the ticks played of all, and how it plays; drawn again
+    /// when it changes.
+    fn replayLine(self: *Game) void {
+        const r = self.replay orelse return;
+        const now: overlay.ReplayLine = .{
+            .tick = r.played,
+            .ticks = r.replay.header.ticks,
+            .how = if (r.ended()) .end else if (r.paused) .paused else switch (r.speed) {
+                .full => .playing,
+                .half => .half,
+                .quarter => .quarter,
+            },
+        };
+        if (self.overlays.find(.replay)) |o| if (std.meta.eql(o.replay, now)) return;
+        self.overlays.push(.{ .replay = now });
+        self.overlay_dirty = true;
     }
 
     /// The sound device, stereo at 48 kHz (or the rate the platform gives).
@@ -1669,7 +1806,7 @@ pub const Game = struct {
     /// while no screen of this machine's is open: a pad for each player in the game, its buttons
     /// lit; drawn again when they change.
     fn controllerOverlay(self: *Game) void {
-        const on = self.settings.controller_overlay and self.panel != null and !self.settingsOpen() and !self.modalOpen();
+        const on = (self.settings.controller_overlay or self.replay != null) and self.panel != null and !self.settingsOpen() and !self.modalOpen();
         if (!on) {
             if (self.overlays.find(.controllers) != null) {
                 self.overlays.remove(.controllers);

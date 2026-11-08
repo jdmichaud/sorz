@@ -18,7 +18,7 @@ const web_page = @import("web_page");
 const usage =
     \\usage: sorz-agent [--frames N] [--key FRAME:NAME[:HOLD]]... [--button FRAME:NAME[:HOLD]]...
     \\                  [--axis FRAME:NAME:VALUE[:HOLD]]... [--shot FRAME:PATH]... [--wav PATH]
-    \\                  [DIR|ROM] [--saves DIR] [--original | --page]
+    \\                  [DIR|ROM] [--saves DIR] [--original | --page | --replay FILE]
     \\       sorz-agent [DIR|ROM] (--netplay [ADDRESS:]PORT [--delay N] | --join ws://ADDRESS:PORT)
     \\                  [--frames N] [--until-session N] [--sound-from N] [--key FRAME:NAME[:HOLD]]...
     \\       sorz-agent DIR|ROM --server [ADDRESS:]PORT
@@ -50,6 +50,10 @@ const usage =
     \\                   game, network play's the network variant
     \\  --page           the game as a browser's page runs it alone: the network variant, one
     \\                   player (pad 1's keys and every gamepad), the page's own volume
+    \\  --replay FILE    play the replay FILE (F5 saves one into --saves) from its first state,
+    \\                   a display tick a frame: --key space pauses, right steps a tick while
+    \\                   paused, s turns the speed (full, half, quarter), escape leaves; a
+    \\                   replay of another build or other data is refused (status 1)
     \\  --netplay, --join  network play over WebSockets, as the host (player 1) or a guest
     \\                   (player 2 to 4): each game plays its own front end with its keys (--key by
     \\                   update; a guest's `place+FRAME` counts from the update at which the
@@ -248,7 +252,7 @@ pub fn main(init: std.process.Init) !void {
 
     // A scenario's run, on the game's data.
     if (scenario) |*sc| {
-        if (options.assets == null or until_session != null or presses.items.len != 0) return fail(io);
+        if (options.assets == null or until_session != null or presses.items.len != 0 or options.replay != null) return fail(io);
         // A situation's world alone has no sound and no pictures; one taken up in the whole
         // game has, and no clock of its own.
         if (take_up and (situation == null or game_tick != null)) return fail(io);
@@ -315,6 +319,9 @@ pub fn main(init: std.process.Init) !void {
         game.host_escape = true;
         game.replays = false;
     }
+    // A replay plays in place of the keys (they still pause, step, slow it and leave), or is
+    // refused, told why.
+    if (options.replay) |path| if (!native.cli.openReplay(gpa, io, &game, path)) std.process.exit(1);
     var p = backend.asPlatform();
     var frame: u64 = 0;
     var shots_written: usize = 0;

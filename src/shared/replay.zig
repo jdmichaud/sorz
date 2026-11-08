@@ -1,5 +1,5 @@
 //! Replays (DESIGN.md 10.8): the rolling recording of a local game, the replay file that F5 writes
-//! from it, and the file read back to be played (`--replay`).
+//! from it, and the file read back (`Replay`) to be played (`--replay`: `Playback`, game.zig).
 //!
 //! The recording (`Recording`) keeps the last 20 seconds of display ticks in memory, bounded: the
 //! game's state every 5 seconds, as network play's join carries a game (game.zig `joinForm`: its
@@ -376,6 +376,67 @@ pub const Replay = struct {
     }
 };
 
+/// A replay as the game plays it (`--replay`, game.zig): its next step, the ticks played, the
+/// facts given to them, and the player's controls: paused, a step asked for, the speed.
+pub const Playback = struct {
+    replay: Replay,
+    at: usize = 0,
+    played: u32 = 0,
+    machine: Machine = .{},
+    paused: bool = false,
+    step_due: bool = false,
+    speed: Speed = .full,
+    /// The updates waited since the last tick, at a slower speed a tick an update runs at (the
+    /// agent host's).
+    waited: u8 = 0,
+
+    /// How slow it plays: a tick in 1, 2 or 4 ticks' time.
+    pub const Speed = enum(u8) {
+        full = 1,
+        half = 2,
+        quarter = 4,
+
+        /// The next speed: full, half, quarter, full again.
+        pub fn next(s: Speed) Speed {
+            return switch (s) {
+                .full => .half,
+                .half => .quarter,
+                .quarter => .full,
+            };
+        }
+
+        pub fn slowness(s: Speed) u8 {
+            return @backingInt(s);
+        }
+    };
+
+    /// A tick to play: the state to load before it (a replay's first, or a cut's), and its pads.
+    pub const Next = struct { state: ?[]const u8, pads: input.Pads, shown: input.Pads };
+
+    pub fn ended(self: *const Playback) bool {
+        return self.played >= self.replay.header.ticks;
+    }
+
+    /// The next tick, the facts before it taken (`machine`); null at the end.
+    pub fn next(self: *Playback) ?Next {
+        var state: ?[]const u8 = null;
+        while (self.at < self.replay.steps.len) {
+            const s = self.replay.steps[self.at];
+            self.at += 1;
+            switch (s) {
+                .end => break,
+                .state => |form| state = form,
+                .machine => |m| self.machine = m,
+                .tick => |t| {
+                    self.played += 1;
+                    return .{ .state = state, .pads = t.pads, .shown = t.shown };
+                },
+            }
+        }
+        return null;
+    }
+};
+
 /// The replay's name in the storage: by the date and time it was saved (UTC), when the platform
 /// gives them (`saved_s`), else by a counter past those there (`names`); `-2`, `-3` and on past a
 /// name taken.
@@ -512,6 +573,29 @@ test "a replay file is read back as it was written: its states, facts and ticks"
     };
     try testing.expectEqual(@as(u64, 2000), i);
     try testing.expectEqual(@as(u32, 2), states);
+}
+
+test "a replay played: each tick's pads after the states and facts before it, then the end" {
+    var r: Recording = .init(testing.allocator, 16);
+    defer r.deinit();
+    record(&r, 2000, 1900);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    try r.write(testHeader(), &out.writer);
+    var pb: Playback = .{ .replay = try Replay.read(testing.allocator, out.written(), test_identity) };
+    defer pb.replay.deinit();
+    var i: u64 = pb.replay.header.first_tick;
+    while (pb.next()) |t| : (i += 1) {
+        try testing.expectEqual(i == pb.replay.header.first_tick or i == 1900, t.state != null);
+        if (t.state) |form| try testing.expectEqual(@as(u24, @intCast(i)), std.mem.readInt(u24, form[0..3], .little));
+        try testing.expectEqual(testTick(i).pads, t.pads);
+        try testing.expectEqual(testTick(i).machine, pb.machine);
+    }
+    try testing.expectEqual(@as(u64, 2000), i);
+    try testing.expect(pb.ended());
+    try testing.expect(pb.next() == null);
+    try testing.expectEqual(Playback.Speed.full, Playback.Speed.quarter.next());
+    try testing.expectEqual(@as(u8, 2), Playback.Speed.full.next().slowness());
 }
 
 test "a replay of another build, of other data, of another version or damaged is refused" {
