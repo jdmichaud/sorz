@@ -374,6 +374,32 @@ pub fn build(b: *std.Build) void {
         variants_check_step.dependOn(&b.addFail("variants-check needs the user's ROM: -Drom=PATH").step);
     }
 
+    // `replay-check`, the gate of the replays (PLAN item 57, src/tools/replay_check.zig): games on
+    // the ROM's content saved by F5 and replayed, paused, stepped and slowed, their states'
+    // hashes compared at every display tick.
+    const replay_check_step = b.step("replay-check", "Save replays of games on the content of -Drom=ROM with F5 and play them back: every display tick's state the recorded game's");
+    if (rom_path) |rom| {
+        const replay_exe = b.addExecutable(.{
+            .name = "sorz-replay-check",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/tools/replay_check.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "sorz", .module = shared },
+                    .{ .name = "agent", .module = agent },
+                    .{ .name = "extract", .module = extract },
+                },
+            }),
+        });
+        const check = b.addRunArtifact(replay_exe);
+        check.addArg(rom);
+        check.has_side_effects = true;
+        replay_check_step.dependOn(&check.step);
+    } else {
+        replay_check_step.dependOn(&b.addFail("replay-check needs the user's ROM: -Drom=PATH").step);
+    }
+
     // `cpus-check`, the two CPUs' whole game (PLAN item 34, src/tools/cpus_check.zig): from
     // power-on to the ending or the game's end on the ROM's content, its rounds measured. Build it
     // fast: -Doptimize=ReleaseFast.
