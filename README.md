@@ -5,8 +5,11 @@ browser, played from your own copy of the ROM.
 
 sorz add network play and AI co-op game.
 
-![sorz: the title, the character select, then the eight rounds: faithful gameplay, 3 or 4
-players, collaborative AI partners, multiplayer over the network](docs/trailer.gif)
+<p align="center">
+  <img src="docs/trailer.gif" width="640" alt="sorz: the title, the character select, then the
+  eight rounds: faithful gameplay, 3 or 4 players, collaborative AI partners, multiplayer over the
+  network">
+</p>
 
 ## Starting the game
 
