@@ -894,15 +894,23 @@ machine in network play; CPUs in the free places and several local players a mac
     flows) and variants-check (7) lines identical to the base's, state hashes included;
     screens-check's 23 lines and round-check's report identical; web builds. Not checked: the
     user's play in a window, the sound at slow speeds by ear.
-- [ ] **58 — Back to a snapshot; a replay from the gamepad** — Depends: 57.
+- [x] **58 — Back to a snapshot; a replay from the gamepad** — Depends: 57.
   - While a replay is paused (or held at its end), Left goes back to the previous snapshot: the
     state before every 300th tick (5 s), kept in memory as the replay plays (network play's
     join form, its place in the file), the newest before the tick shown; again, the one before.
     The file's format unchanged. Its line shows the tick gone back to, still paused.
   - A gamepad drives a replay as the keys do: START as Space, the D-pad's Left and Right as the
-    arrows (the user, 2026-11-08). HELP's and `--replay`'s texts say so.
+    arrows (the user, 2026-11-08). `--replay`'s texts say so (HELP lists the game's keys only).
   - Gate: zig build test (back to the snapshots, then on: every tick's state hash the recorded
     game's); replay-check with a step back; a picture of a replay gone back.
+  - [x] Checked 2026-11-08: zig build test (src/shared/replay.zig: snapshots before ticks 0, 300
+    and 600 kept once, back to 600, 300, 0 then none, a gamepad's Right held stepping at 24, 27
+    and 30 updates; src/agent/replay_test.zig: a replay to its end, Left, the gamepad's Left,
+    Right and START, each state the recorded game's on to the end). replay-check on the ROM:
+    fight and cut back from the end to 900, its state the recorded one, then 367 and 468 ticks
+    on, 0 differing (the cut's state loaded again). The agent host's pictures: REPLAY 900 OF
+    1280 PAUSED after Left and a gamepad's Left; 300, then 301 after a step, the fighters as the
+    recorded game had them. Not checked: a real gamepad and window.
 
 ## Standing rule
 
