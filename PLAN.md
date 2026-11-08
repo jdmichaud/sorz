@@ -816,6 +816,37 @@ machine in network play; CPUs in the free places and several local players a mac
     press moved to 567, the 23 runs then none differing. The user's play (2026-11-08), with the
     wireless controller: "It plays so much better."
 
+### Replays and the controller overlay (DESIGN.md 10.8; the user, 2026-11-08)
+
+- [ ] **55 — The controller overlay** — Depends: 54.
+  - F4 (and a STATS-like setting, kept in the record) shows over the picture a pad for each
+    player in the game: the pixel art made from the photo of the Mega Drive control pad (sor-data's
+    pad-mockup: `photo_pad.py`, `states_photo.py`, chosen by the user: the photo's pad at about 104
+    x 61 pixels, greys and reds of the console's levels, a black outline, crisp red A, B, C in the
+    buttons; pressed, a button or a D-pad arm or START plain yellow, its shading kept, its letter
+    dark red), tagged 1P to 4P in the game's font, semi-transparent (about 75%). Its pixels are
+    the port's own, in the repository; its look settled live (its opacity; four players' pads,
+    which do not fit across at that width: smaller, or two rows).
+  - A button lights while its events hold it (down until up), at least a few display ticks for
+    a shorter press: the earliest signal the game has (input.zig's controls, before the reads).
+  - F4 not bindable (as F3); HELP lists F4.
+  - Gate: zig build test; pictures of the overlay with 1, 2 and 4 players, presses lit; 1 and 2
+    players' games as before (the overlay off by default: screens-check, round-check).
+- [ ] **56 — The rolling recording (F5)** — Depends: 55.
+  - In a local game the last 20 seconds: the game's state every few seconds (its canonical form),
+    each display tick's pads as read and the overlay's presses. F5 writes a replay file (the
+    game's build and data identity, the first state, the ticks) to the settings' storage, and a
+    notice says so (REPLAY SAVED). F5 not bindable; HELP lists F5.
+  - Gate: zig build test (the window kept at 20 s, the file's format read back); a file saved
+    from the agent host's game.
+- [ ] **57 — Replays** — Depends: 56.
+  - `sorz DATA --replay FILE` (and the agent host's): the game from the file's first state, its
+    ticks driven by the recorded pads, the overlay on with the recorded presses; Space pauses,
+    Right steps a tick while paused, S full, half and quarter speed, Escape leaves; the tick's
+    number shown; the end holds. A file of another build or other data is refused, told why.
+  - Gate: zig build test; a replay reaching the recorded game's states (their hashes) tick by
+    tick; pictures of a replay paused, stepped and slowed.
+
 ## Standing rule
 
 - [ ] **S1 — The repository stands alone** — Depends: none.
