@@ -122,6 +122,8 @@ pub const Facts = struct {
     rules: bool = false,
     /// Escape is the game's (else the host's: a browser's page keeps it): HELP tells it.
     escape: bool = true,
+    /// F5 saves a replay (else the host keeps it: a browser's page): HELP tells it.
+    replays: bool = true,
     /// The labels of the gamepads connected, the lowest first (input.zig `Controls.connected`):
     /// the input methods a player may take.
     gamepads: [input.Controls.max_controllers]?u16 = @splat(null),
@@ -524,7 +526,13 @@ pub const Screen = struct {
         y += 1;
         try p.text(label_col, y, keyName(record.controller_overlay_key), .bright);
         try p.text(help_col, y, "CONTROLLER OVERLAY", .dim);
-        y += 2;
+        y += 1;
+        if (self.facts.replays) {
+            try p.text(label_col, y, keyName(record.replay_key), .bright);
+            try p.text(help_col, y, "SAVE THE LAST 20 SEC", .dim);
+            y += 1;
+        }
+        y += 1;
         try p.text(label_col, y, "FPS: FRAMES SHOWN A SECOND.", .dim);
         try p.text(label_col, y + 1, "TPF: MS OF WORK A FRAME.", .dim);
         try p.text(label_col, y + 3, "THE PADS' KEYS ARE IN", .dim);
@@ -1032,6 +1040,11 @@ test "CONTROLLER OVERLAY on every machine: after STATS, on and off; HELP tells F
     _ = press(&screen, &s, .z);
     try testing.expect(!s.controller_overlay);
     try testing.expectEqualStrings("f4", keyName(record.controller_overlay_key));
+}
+
+test "HELP tells F5, the replay's key, where the host leaves it to the game" {
+    try testing.expectEqualStrings("f5", keyName(record.replay_key));
+    try testing.expect((Facts{}).replays and !(Facts{ .replays = false }).replays);
 }
 
 test "the rules' rows where the settings give the rules: lives 1 to 9, continues 0 to 9, friendly hits" {

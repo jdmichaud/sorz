@@ -47,6 +47,13 @@
 //! takes the buttons shown (`shown`: input.zig `Controls.sampleShown`, or a replay's in their
 //! place, `shown_override`) and lights them (`lit`). In network play it shows this machine's
 //! player's buttons alone. It too is this machine's, never the game's state.
+//!
+//! The rolling recording (replay.zig, DESIGN.md 10.8) keeps the last 20 seconds of a local game:
+//! its state every few seconds, each display tick's pads as read, the buttons shown and the
+//! machine's facts given to the tick (`record`); a state changed between two ticks is kept as a
+//! cut (`stateChanged`). F5 (`replay_key`) writes them as a replay file into the settings'
+//! storage (`saveReplay`), and a notice tells it. Nothing of a session of network play is
+//! recorded. It too is this machine's, never the game's state.
 const std = @import("std");
 const platform = @import("platform.zig");
 const input = @import("input.zig");
@@ -73,6 +80,8 @@ const render = @import("render/root.zig");
 const network_play = @import("network_play.zig");
 const sound_form = @import("sound_form.zig");
 const moves_mod = @import("moves.zig");
+const replay_mod = @import("replay.zig");
+const version = @import("version.zig");
 
 pub const page_width = picture.width;
 pub const page_height = picture.height;
@@ -463,13 +472,25 @@ pub const Game = struct {
     saves_written: u64 = 0,
     loads_done: u64 = 0,
 
+    /// The rolling recording of the last seconds (replay.zig), and whether the host leaves F5
+    /// and the recording to the game (a browser's page keeps F5 and records nothing yet).
+    recording: replay_mod.Recording,
+    replays: bool = true,
+    replays_saved: u64 = 0,
+    /// The game data's identity (net/identity.zig), that a replay is saved with: the host's, or
+    /// worked out from the asset source when first asked.
+    data_identity: ?net.protocol.DataId = null,
+    /// The date: the wall clock's seconds since 1970 (UTC) at the platform's time `at_ns`, when
+    /// the host gives them; a replay's name has its date and time.
+    wall: ?struct { unix_s: i64, at_ns: u64 } = null,
+
     pub const InitError = error{ OutOfMemory, BadContent };
 
     /// The content is read from `assets` when they hold a content tree (a refusal is logged with
     /// the file and the field, and is `BadContent`); without one, the game shows its test
     /// pattern. The settings are read from `storage` (the defaults without one).
     pub fn init(allocator: std.mem.Allocator, assets: ?platform.AssetSource, storage: ?platform.Storage) InitError!Game {
-        var game: Game = .{ .allocator = allocator, .assets = assets, .storage = storage, .pic = try .init(allocator) };
+        var game: Game = .{ .allocator = allocator, .assets = assets, .storage = storage, .pic = try .init(allocator), .recording = .init(allocator, join_max) };
         errdefer game.deinit();
         if (assets) |a| if (library.hasTree(allocator, a)) try game.loadContent(a);
         if (storage) |s| game.loadSettings(s);
@@ -483,6 +504,7 @@ pub const Game = struct {
             np.deinit();
             self.allocator.destroy(np);
         }
+        self.recording.deinit();
         if (self.sound) |*s| s.deinit(self.allocator);
         self.allocator.free(self.volume_buffer);
         self.allocator.free(self.fade_buffer);
@@ -740,12 +762,14 @@ pub const Game = struct {
     }
 
     /// Whether the game takes `key` now: a pad's key, the settings key (where the variant has
-    /// it), the stats key or the controller overlay's, or any key while the settings are open (the
-    /// browser's page keeps the other keys for itself).
+    /// it), the stats key, the controller overlay's or the replay's (where the host leaves it to
+    /// the game), or any key while the settings are open (the browser's page keeps the other keys
+    /// for itself).
     pub fn usesKey(self: *const Game, key: platform.Key) bool {
         if (key == .unknown) return false;
         if (self.settingsOpen() or self.modalOpen()) return true;
         if (key == settings_mod.record.stats_key or key == settings_mod.record.controller_overlay_key) return true;
+        if (key == settings_mod.record.replay_key and self.replays) return true;
         return (self.policies().settings_key and key == self.settings.settings_key) or self.controls.uses(key);
     }
 
@@ -777,6 +801,7 @@ pub const Game = struct {
             .settings_key = self.policies().settings_key,
             .rules = self.policies().settings_rules and !self.isClient(),
             .escape = !self.host_escape,
+            .replays = self.replays,
             .gamepads = self.controls.connected(),
         }) });
         self.overlay_dirty = true;
@@ -799,6 +824,7 @@ pub const Game = struct {
             const session = if (self.netplay) |np| np.inSession() else false;
             if (!session) {
                 self.state.setup.rules = self.settings.rules;
+                self.stateChanged();
                 // The host's observers run its game: they get it again, its rules with it.
                 if (self.netplay) |np| if (np.watched()) {
                     self.net.resync_due = true;
@@ -1077,6 +1103,8 @@ pub const Game = struct {
                             self.settings.controller_overlay = !self.settings.controller_overlay;
                             self.writeSettings(&self.settings);
                         }
+                    } else if (k.key == settings_mod.record.replay_key and self.replays) {
+                        if (!k.repeat) self.saveReplay(p);
                     } else {
                         _ = self.controls.handle(e);
                     },
@@ -1314,6 +1342,7 @@ pub const Game = struct {
         };
         self.showPads();
         const machine: State.Machine = .{ .second_pad = self.secondPad(), .players_here = @intCast(self.controls.players()), .guest = self.isClient(), .taken = network_play.taken(self), .rules = self.settings.rules, .net = network_play.facts(self) };
+        self.record(pads, machine);
         const turn = self.state.stepWith(pads, machine, if (self.scene_assets) |*a| a else null, if (self.view) |*v| &v.world_out else null);
         self.redraw = true;
         if (turn.settings) |who| if (self.plays(who)) self.showSettings(if (turn.settings_fade) p.nowNs() else null);
@@ -1350,6 +1379,7 @@ pub const Game = struct {
     /// What is this machine's own, made again for a state that did not come from its last tick (a
     /// game loaded, a game sent back to its menu): the picture whole, the sound from silence.
     pub fn rebuild(self: *Game, p: *platform.Platform) void {
+        self.stateChanged();
         self.redraw = true;
         self.pattern_drawn = .{};
         self.transfers_due = .{};
@@ -1365,6 +1395,74 @@ pub const Game = struct {
             };
             p.audioClear();
         }
+    }
+
+    /// The game's state changed between two ticks (a game loaded, sent back to its menu, a
+    /// player's coming or going, the settings' rules taken): the recording keeps it at the next
+    /// tick, as a cut (replay.zig).
+    pub fn stateChanged(self: *Game) void {
+        self.recording.cut();
+    }
+
+    /// Whether this machine's game is recorded: a local game, not a session of network play.
+    fn recordsHere(self: *const Game) bool {
+        const np = self.netplay orelse return true;
+        return !np.inSession() and !np.observing();
+    }
+
+    /// The rolling recording (replay.zig) of the tick to come: the state before it when due, and
+    /// its pads as read, the buttons shown and the machine's facts. A session of network play
+    /// leaves nothing of it.
+    fn record(self: *Game, pads: input.Pads, machine: State.Machine) void {
+        if (!self.replays) return;
+        if (!self.recordsHere()) return self.recording.reset();
+        if (self.recording.stateDue()) if (self.recording.room()) |room| {
+            self.recording.keep(self.joinForm(room).len, self.state.tick);
+        };
+        self.recording.add(.{ .pads = pads, .shown = self.shown, .machine = machine });
+    }
+
+    /// The game data's identity, that a replay goes with: the host's, else the asset source's
+    /// (net/identity.zig, once), zeros without one.
+    pub fn dataIdentity(self: *Game) platform.AssetError!net.protocol.DataId {
+        if (self.data_identity) |d| return d;
+        const a = self.assets orelse return @as(net.protocol.DataId, @splat(0));
+        const d = try net.identity.ofTree(a, net.identity.max_file_bytes);
+        self.data_identity = d;
+        return d;
+    }
+
+    /// What a replay played here must have been recorded with: this build and this data.
+    pub fn replayIdentity(self: *Game) platform.AssetError!replay_mod.Identity {
+        return .{ .build = net.protocol.buildId(version.build), .data = try self.dataIdentity() };
+    }
+
+    /// F5: the last seconds recorded, written as a replay file into the settings' storage, by
+    /// the date and time (UTC) when the host gives them, else by a counter (replay.zig
+    /// `fileName`); a notice tells it, or why not.
+    fn saveReplay(self: *Game, p: *platform.Platform) void {
+        const storage = self.storage orelse return self.tell(.replay_not_saved);
+        if (self.recording.kept() == 0) return self.tell(.no_replay);
+        self.writeReplay(p, storage) catch |err| {
+            std.log.warn("the replay cannot be saved: {s}", .{@errorName(err)});
+            self.tell(.replay_not_saved);
+        };
+    }
+
+    fn writeReplay(self: *Game, p: *platform.Platform, storage: platform.Storage) !void {
+        const now_s: ?i64 = if (self.wall) |w| w.unix_s + @as(i64, @intCast((p.nowNs() -| w.at_ns) / std.time.ns_per_s)) else null;
+        const id = try self.replayIdentity();
+        var out: std.Io.Writer.Allocating = .init(self.allocator);
+        defer out.deinit();
+        try self.recording.write(.{ .build = id.build, .data = id.data, .variant = self.state.start.variant, .ticks = 0, .first_tick = 0, .saved_s = now_s orelse 0 }, &out.writer);
+        var names = try storage.listSaves();
+        defer names.deinit();
+        var buf: [64]u8 = undefined;
+        const name = replay_mod.fileName(&buf, now_s, names.names);
+        try storage.save(name, out.written());
+        self.replays_saved += 1;
+        std.log.info("replay saved in the saves as {s}: the last {d} display ticks, {d} bytes", .{ name, self.recording.kept(), out.written().len });
+        self.tell(.replay_saved);
     }
 
     /// The sound device, stereo at 48 kHz (or the rate the platform gives).

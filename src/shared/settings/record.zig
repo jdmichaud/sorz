@@ -178,10 +178,13 @@ pub const stats_key: platform.Key = .f3;
 /// game.zig); no setting takes it.
 pub const controller_overlay_key: platform.Key = .f4;
 
-/// Escape quits the game (native hosts) or belongs to the browser, and the stats key and the
-/// controller overlay's are the game's, so no setting takes them.
+/// The key that saves the last seconds as a replay (game.zig, replay.zig); no setting takes it.
+pub const replay_key: platform.Key = .f5;
+
+/// Escape quits the game (native hosts) or belongs to the browser, and the stats key, the
+/// controller overlay's and the replay's are the game's, so no setting takes them.
 pub fn bindable(k: platform.Key) bool {
-    return k != .unknown and k != .escape and k != stats_key and k != controller_overlay_key and std.enums.tagName(platform.Key, k) != null;
+    return k != .unknown and k != .escape and k != stats_key and k != controller_overlay_key and k != replay_key and std.enums.tagName(platform.Key, k) != null;
 }
 
 /// The d-pad is the pads' directions, and the guide button belongs to the system.
@@ -690,6 +693,8 @@ test "a record written before the controller overlay reads whole, the overlay of
     try testing.expect(!report.ok());
     // F4 is the overlay's: no setting takes it.
     try testing.expect(!bindable(.f4) and !s.bindKey(.settings, .f4));
+    // F5 is the replay's.
+    try testing.expect(!bindable(.f5) and !s.bindKey(.{ .player = .{ .player = 0, .button = .a } }, .f5));
 }
 
 test "a damaged field gives its default and the rest is kept" {

@@ -107,6 +107,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
     var netplay = asked or (options.providers.hosts() and providers.kind != .none);
     var net_side: native.cli.Netplay = undefined;
     var net_options: sorz.net.netplay.Options = undefined;
+    // The data's identity, worked out once: network play's, and the replays'.
+    var data_identity: ?sorz.net.protocol.DataId = null;
     if (netplay) net: {
         const id = providers.dataIdentity() catch |e| {
             std.log.err("cannot read the game data for its identity: {s}", .{@errorName(e)});
@@ -116,6 +118,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
             }
             return 1;
         };
+        data_identity = id;
         net_options = options.providers.netplayOptions(id);
         // A host serves its own files to a guest's page; a guest serves nothing.
         net_side.init(gpa, io, page, if (net_options.role == .host) providers.assetSource() else null) catch |e| {
@@ -148,6 +151,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
     var game = try sorz.Game.init(gpa, providers.assetSource(), providers.storage());
     defer game.deinit();
     game.variant = options.providers.variant();
+    game.data_identity = data_identity;
     std.log.info("variant: {s}", .{@tagName(game.variant)});
     if (netplay) {
         backend.transport = net_side.transport.transport();
@@ -192,6 +196,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, environ: *const std.process.Envir
         }
         if (backend.event_log != null) try out.flush();
         if (result == .finished) break;
+        // The date, for the replays' names: the wall clock's, once the platform's clock runs.
+        if (game.wall == null and backend.started) game.wall = .{ .unix_s = std.Io.Clock.real.now(io).toSeconds(), .at_ns = p.nowNs() };
         if (window.follow(game.settings.window, game.settingsOpen())) |mode| backend.setWindowMode(mode.scale, mode.fullscreen);
         const now = p.nowNs();
         if (deadline_limit) |limit| {

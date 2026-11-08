@@ -152,6 +152,7 @@ fn hostNote(g: *Game, p: *platform.Platform, np: *net.Netplay, n: net.netplay.No
             const cpu = g.net.cpu_seat and np.cpu_place == x.player;
             if (!x.made) {
                 if (g.scene_assets) |*a| if (cpu) g.state.toCpu(x.player, a) else g.state.dropOut(x.player, a);
+                g.stateChanged();
                 var buf: [Game.join_max]u8 = undefined;
                 np.resync(p, g.joinForm(&buf));
             }
@@ -182,6 +183,7 @@ fn clientNote(g: *Game, p: *platform.Platform, np: *net.Netplay, n: net.netplay.
             // its menu comes.
             .game_over => {
                 g.state.start = g.start();
+                g.stateChanged();
                 g.net.client = .after_game;
             },
             // The host's player left the select they shared: the client keeps it, its own again;
@@ -270,6 +272,7 @@ fn host(g: *Game, p: *platform.Platform, np: *net.Netplay) void {
                 g.state.join(k, character, cursor, assets);
                 g.state.setup.names[0] = hostName(g);
                 g.state.setup.names[k] = name;
+                g.stateChanged();
                 var buf: [Game.join_max]u8 = undefined;
                 const form = g.joinForm(&buf);
                 np.begin(p, ask_.peer, k, form);
@@ -555,6 +558,7 @@ fn client(g: *Game, p: *platform.Platform, np: *net.Netplay, start_new: bool) vo
         } else if (!g.state.inGame()) {
             np.stopObserve(p);
             g.state.start = g.start();
+            g.stateChanged();
             g.net.client = .after_game;
         },
         .playing => {},
@@ -562,6 +566,7 @@ fn client(g: *Game, p: *platform.Platform, np: *net.Netplay, start_new: bool) vo
             if (g.net.own_setup) |own| {
                 g.state.setup = own;
                 g.state.setup.progress = .{};
+                g.stateChanged();
                 g.net.own_setup = null;
             }
             g.net.client = .menu;
@@ -663,6 +668,7 @@ fn toOwnSelect(g: *Game) bool {
     own.same_character = null;
     g.state.setup = own;
     g.state.start = g.start();
+    g.stateChanged();
     g.net.own_setup = null;
     g.net.client = .own_select;
     g.redraw = true;

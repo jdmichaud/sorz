@@ -313,6 +313,7 @@ pub fn main(init: std.process.Init) !void {
         game.setOnePlayer();
         game.host_volume = true;
         game.host_escape = true;
+        game.replays = false;
     }
     var p = backend.asPlatform();
     var frame: u64 = 0;

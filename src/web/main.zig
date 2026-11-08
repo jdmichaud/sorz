@@ -265,10 +265,12 @@ fn startGame() !void {
     errdefer gpa.destroy(g);
     g.* = try sorz.Game.init(gpa, assets.assetSource(), storage.storage());
     // The page's gain is the volume: the game's sound stays at its own level, and Escape is the
-    // page's (`gp_key`). A page has one player: the network variant (DESIGN.md 10.7), whose game
-    // menu's 2 PLAYERS plays with another machine's player.
+    // page's (`gp_key`), as F5 is (the page records no replay yet). A page has one player: the
+    // network variant (DESIGN.md 10.7), whose game menu's 2 PLAYERS plays with another machine's
+    // player.
     g.host_volume = true;
     g.host_escape = true;
+    g.replays = false;
     g.setOnePlayer();
     g.variant = .network;
     game = g;

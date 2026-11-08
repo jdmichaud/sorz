@@ -26,7 +26,7 @@ const net_screens = settings_mod.net_screens;
 const netplay = @import("net/netplay.zig");
 const protocol = @import("net/protocol.zig");
 
-/// What the game has to tell about its settings record.
+/// What the game has to tell about its settings record, or about a replay F5 saved.
 pub const Notice = enum {
     none,
     /// The record was damaged: the rest was kept, and the damaged one kept aside.
@@ -35,6 +35,11 @@ pub const Notice = enum {
     unreadable,
     /// The record could not be written.
     not_saved,
+    /// F5 saved the last seconds as a replay (replay.zig); or could not; or had nothing to save
+    /// (in network play, or before a tick ran).
+    replay_saved,
+    replay_not_saved,
+    no_replay,
 
     pub fn text(n: Notice) []const u8 {
         return switch (n) {
@@ -42,6 +47,9 @@ pub const Notice = enum {
             .damaged => "THE SETTINGS FILE WAS DAMAGED.",
             .unreadable => "THE SETTINGS FILE CANNOT BE READ.",
             .not_saved => "THE SETTINGS COULD NOT BE SAVED.",
+            .replay_saved => "REPLAY SAVED.",
+            .replay_not_saved => "THE REPLAY COULD NOT BE SAVED.",
+            .no_replay => "NO REPLAY: NOTHING RECORDED.",
         };
     }
 };

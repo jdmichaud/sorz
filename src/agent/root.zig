@@ -22,4 +22,6 @@ test {
     @import("std").testing.refAllDecls(@This());
     // Network play between agent hosts.
     _ = @import("netplay_test.zig");
+    // The rolling recording and the replays.
+    _ = @import("replay_test.zig");
 }
