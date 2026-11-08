@@ -143,6 +143,12 @@ the original's filters, sensitivities and key tables in shared code. Relative mo
 request, and an event reports whether it was granted; losing focus or capture releases held
 controls without producing an action.
 
+No press is missed: each player's buttons count their presses between two reads of the
+controls, and a read shows each counted press, a press already let go read once, a button let go
+and pressed again read up, then down; a press that spans reads reads as held (the user,
+2026-11-08; the cartridge reads a release and press again within a frame as held: an accepted
+difference).
+
 The platform names each controller it reports, for the game to know it again (the user,
 2026-10-08): a key of its model, the same for every controller of that model on that platform
 (SDL's GUID; the browser's gamepad id), and a name to show (`controllerInfo`, while it is
