@@ -10,7 +10,8 @@
 //!   attack), F5: the last 20 seconds and more replayed.
 //! - cut: the fight, Escape back to the menu during it (the state changed between two ticks: a
 //!   cut, its state in the file), the menu for 5 seconds, F5: the replay crosses the cut.
-//! - refused: the fight's file with another build's identity, then with other data's.
+//! - identities: the fight's file with another build's identity read (it plays), with other
+//!   data's refused.
 //!
 //! Prints a JSON line per case, and exits with 1 when one fails.
 const std = @import("std");
@@ -365,7 +366,7 @@ pub fn main(init: std.process.Init) !void {
         all = try report(w, "cut", res, bytes.len) and res.loads == 2 and all;
     }
 
-    // Another build's file, other data's: refused.
+    // Another build's file read, other data's refused.
     {
         const r = try Run.create(gpa, assets);
         defer r.destroy(gpa);
@@ -376,19 +377,19 @@ pub fn main(init: std.process.Init) !void {
         const other_data = try gpa.dupe(u8, fight_bytes);
         defer gpa.free(other_data);
         other_data[replay.magic.len + 2 + 32] ^= 1;
-        const build_refused = if (replay.Replay.read(gpa, other_build, id)) |x| blk: {
+        const build_read = if (replay.Replay.read(gpa, other_build, id)) |x| blk: {
             var y = x;
-            y.deinit();
-            break :blk false;
-        } else |err| err == error.OtherBuild;
+            defer y.deinit();
+            break :blk y.otherBuild(id);
+        } else |_| false;
         const data_refused = if (replay.Replay.read(gpa, other_data, id)) |x| blk: {
             var y = x;
             y.deinit();
             break :blk false;
         } else |err| err == error.OtherData;
-        try w.print("{{\"case\":\"refused\",\"pass\":{},\"other_build\":{},\"other_data\":{}}}\n", .{ build_refused and data_refused, build_refused, data_refused });
+        try w.print("{{\"case\":\"identities\",\"pass\":{},\"other_build_read\":{},\"other_data_refused\":{}}}\n", .{ build_read and data_refused, build_read, data_refused });
         try w.flush();
-        all = all and build_refused and data_refused;
+        all = all and build_read and data_refused;
     }
     if (!all) std.process.exit(1);
 }

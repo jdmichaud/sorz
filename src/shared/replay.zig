@@ -100,8 +100,6 @@ pub const ReadError = error{
     NotAReplay,
     /// A replay of another version of the format.
     OtherVersion,
-    /// A replay of another build: its states' forms may be another's.
-    OtherBuild,
     /// A replay of other game data: its game is another's.
     OtherData,
     /// A replay whose records are not whole or not in order.
@@ -114,14 +112,14 @@ pub fn refusal(err: ReadError) []const u8 {
     return switch (err) {
         error.NotAReplay => "it is not a replay file",
         error.OtherVersion => "it is a replay of another version of the format",
-        error.OtherBuild => "it was recorded by another build of the game",
         error.OtherData => "it was recorded with other game data",
         error.Malformed => "it is damaged",
         error.OutOfMemory => "there is not enough memory",
     };
 }
 
-/// The identities a replay must have to be played here.
+/// The identities of a replay played here: its data must be this game's; another build's
+/// plays (`otherBuild`), and may go its own way where the builds' games differ.
 pub const Identity = struct { build: protocol.Build, data: protocol.DataId };
 
 /// A state kept by the recording: before the tick `at` (the count of ticks recorded before it),
@@ -317,10 +315,9 @@ pub const Replay = struct {
     steps: []Step,
 
     /// Reads `bytes` (copied), refused unless it is a whole replay of this format, of `expect`'s
-    /// build and data.
+    /// data (of any build: `otherBuild`).
     pub fn read(allocator: std.mem.Allocator, bytes: []const u8, expect: Identity) ReadError!Replay {
         const header = try Header.read(bytes);
-        if (!std.mem.eql(u8, &header.build, &expect.build)) return error.OtherBuild;
         if (!std.mem.eql(u8, &header.data, &expect.data)) return error.OtherData;
         const own = try allocator.dupe(u8, bytes);
         errdefer allocator.free(own);
@@ -367,6 +364,11 @@ pub const Replay = struct {
         }
         if (at != own.len or ticks != header.ticks or ticks == 0) return error.Malformed;
         return .{ .allocator = allocator, .header = header, .bytes = own, .steps = try steps.toOwnedSlice(allocator) };
+    }
+
+    /// Whether it was recorded by another build than `here`'s.
+    pub fn otherBuild(self: *const Replay, here: Identity) bool {
+        return !std.mem.eql(u8, &self.header.build, &here.build);
     }
 
     pub fn deinit(self: *Replay) void {
@@ -674,7 +676,7 @@ test "a replay played: each tick's pads after the states and facts before it, th
     try testing.expectEqual(@as(u8, 2), Playback.Speed.full.next().slowness());
 }
 
-test "a replay of another build, of other data, of another version or damaged is refused" {
+test "a replay of other data, of another version or damaged is refused; another build's is read" {
     var r: Recording = .init(testing.allocator, 16);
     defer r.deinit();
     record(&r, 50, null);
@@ -682,7 +684,11 @@ test "a replay of another build, of other data, of another version or damaged is
     defer out.deinit();
     try r.write(testHeader(), &out.writer);
     const bytes = out.written();
-    try testing.expectError(error.OtherBuild, Replay.read(testing.allocator, bytes, .{ .build = protocol.buildId("other"), .data = test_identity.data }));
+    const other: Identity = .{ .build = protocol.buildId("other"), .data = test_identity.data };
+    var theirs = try Replay.read(testing.allocator, bytes, other);
+    try testing.expect(theirs.otherBuild(other));
+    try testing.expect(!theirs.otherBuild(test_identity));
+    theirs.deinit();
     try testing.expectError(error.OtherData, Replay.read(testing.allocator, bytes, .{ .build = test_identity.build, .data = @splat(8) }));
     try testing.expectError(error.NotAReplay, Replay.read(testing.allocator, "{ \"version\": 5 }", test_identity));
     const copy = try testing.allocator.dupe(u8, bytes);
@@ -694,7 +700,7 @@ test "a replay of another build, of other data, of another version or damaged is
     const longer = try std.mem.concat(testing.allocator, u8, &.{ bytes, "x" });
     defer testing.allocator.free(longer);
     try testing.expectError(error.Malformed, Replay.read(testing.allocator, longer, test_identity));
-    try testing.expectEqualStrings("it was recorded by another build of the game", refusal(error.OtherBuild));
+    try testing.expectEqualStrings("it was recorded with other game data", refusal(error.OtherData));
 }
 
 test "the replays' names: by date and time, else by a counter, never one taken" {

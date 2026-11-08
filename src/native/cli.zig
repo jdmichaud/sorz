@@ -235,7 +235,6 @@ pub fn openReplay(gpa: std.mem.Allocator, io: std.Io, game: *sorz.Game, path: []
         std.log.err("the replay {s} is refused: {s}", .{ path, sorz.replay.refusal(err) });
         const h = sorz.replay.Header.read(bytes) catch return false;
         switch (err) {
-            error.OtherBuild => std.log.err("it was recorded by build {s}; this is build {s}", .{ sorz.net.protocol.buildText(&h.build), sorz.version.build }),
             error.OtherData => {
                 const theirs = sorz.net.identity.hex(&h.data);
                 const ours = sorz.net.identity.hex(&id.data);
@@ -251,6 +250,7 @@ pub fn openReplay(gpa: std.mem.Allocator, io: std.Io, game: *sorz.Game, path: []
         return false;
     };
     std.log.info("replay {s}: {d} display ticks from the game's display tick {d}", .{ path, replay.header.ticks, replay.header.first_tick });
+    if (replay.otherBuild(id)) std.log.info("it was recorded by build {s}; this is build {s}: where their games differ, it goes its own way", .{ sorz.net.protocol.buildText(&replay.header.build), sorz.version.build });
     return true;
 }
 
