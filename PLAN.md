@@ -813,7 +813,8 @@ machine in network play; CPUs in the free places and several local players a mac
     variants-check (7 flows), netplay-check (31 flows). screens-check: its menu scenario pressed
     Down at frames 565 and 566 a frame each, the second's down with the first's up: now two
     presses, the reference's one hold (an accepted difference from the cartridge); its second
-    press moved to 567, the 23 runs then none differing. The user's play is pending.
+    press moved to 567, the 23 runs then none differing. The user's play (2026-11-08), with the
+    wireless controller: "It plays so much better."
 
 ## Standing rule
 
