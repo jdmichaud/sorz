@@ -949,7 +949,7 @@ machine in network play; CPUs in the free places and several local players a mac
   - [x] Checked 2026-11-08: zig build test (F4 hides the replay's line, the setting unchanged;
     again, shows it); the agent host on the ROM: REPLAY 301 OF 1280 with the 1P pad, then after
     F4 neither, then after F4 again both (REPLAY 341).
-- [ ] **62 — Time to throw after pushing away** — Depends: none.
+- [x] **62 — Time to throw after pushing away** — Depends: none.
   - Holding one from the front, the pad pushed away lets go after 4 ticks (the original's 3 and
     one, `let_go`); B in that time throws. The user lets go where they meant to throw ("I don't
     release so much enemies on the original game"): the port's rules (the extended game, network
@@ -959,6 +959,10 @@ machine in network play; CPUs in the free places and several local players a mac
   - Gate: zig build test (with the port's rules, B 5 ticks after the pad away throws, 6 lets go;
     without, 3 and 4); the scenario runner's grid against sor-remaster unchanged for the
     cartridge's variant.
+  - [x] Checked 2026-11-10: zig build test (the new test: B 3 ticks after the pad away throws and
+    4 lets go without the grace, 5 and 6 with it; it fails without the change); the scenario
+    runner (the cartridge's rules) on 0 and 2 knees, the pad away at once or 6 ticks after, B 0
+    to 6 ticks later: the same as sor-remaster's. Not checked: the user's play.
 
 ## Standing rule
 
