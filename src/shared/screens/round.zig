@@ -467,6 +467,9 @@ pub const Round = struct {
             .levels = a.screen.levels,
             .lives = setup_mod.Progress.livesOf(setup),
             .friendly_hit = if (setup.rules) |r| r.friendly_hit else true,
+            // The port's rules give B time to throw after the pad away; the cartridge and its
+            // demo, the original's.
+            .throw_grace = if (setup.rules != null and !self.demo) 2 else 0,
             .extra_lives = a.screen.status_bar.extra_lives,
             // The demo's pads are read as they are (the cartridge's first layout).
             .buttons = a.screen.buttons.of(if (self.demo) 0 else setup.control),

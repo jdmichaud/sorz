@@ -1492,7 +1492,8 @@ fn caught(a: Actor) bool {
         a.letGo();
         return false;
     }
-    a.mind.let_go = @intCast(n.let_go);
+    // The pushes away before it lets go: the original's, and the port's rules' more.
+    a.mind.let_go = @intCast(@as(u16, n.let_go) + a.tick.throwGrace());
     a.mind.vaulted = false;
     change(a, if (behind) .grab_behind else .grab);
     return true;

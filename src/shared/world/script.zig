@@ -112,6 +112,9 @@ pub const Plan = struct {
     lives: u8 = 3,
     /// The players' blows, and what they throw, land on each other (the original's).
     friendly_hit: bool = true,
+    /// The ticks more that a player holding one from the front pushes away before it lets go:
+    /// time for B to throw (the port's rules: PLAN item 62); 0, the original's.
+    throw_grace: u8 = 0,
     /// The scores that give a player a life more, by the lives its score gave it already (play's
     /// record's; none: no life more).
     extra_lives: []const u32 = &.{},

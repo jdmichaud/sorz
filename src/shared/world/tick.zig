@@ -179,6 +179,13 @@ pub const Tick = struct {
         return plan.friendly_hit;
     }
 
+    /// The ticks more a player holding one pushes away before it lets go (the plan's; none
+    /// without one).
+    pub fn throwGrace(t: *const Tick) u8 {
+        const plan = t.plan orelse return 0;
+        return plan.throw_grace;
+    }
+
     /// `target` takes `damage` from `attacker` (null: no entity's, the special attack's): its
     /// health falls, and the blow is noted for the traces.
     pub fn takeDamage(t: *Tick, target: Handle, attacker: ?Handle, damage: i16) void {

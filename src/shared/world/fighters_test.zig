@@ -1295,6 +1295,35 @@ test "a grab: the walk's reach catches the punk; two knees, and the last knocks 
     try testing.expect(r.player().holding == null);
 }
 
+test "holding from the front, the pad away: B throws for 3 ticks, the port's rules 2 more; then it lets go" {
+    for ([_]u8{ 0, 2 }) |grace| {
+        for ([_]u8{ 3 + grace, 4 + grace }) |away| {
+            var r = try Round.init();
+            defer r.deinit();
+            const plan: script.Plan = .{ .round = &lives_round, .throw_grace = grace };
+            const p = try r.punk(880);
+            r.w.get(p).?.mind.galsia.state = .stand;
+            r.w.get(p).?.mind.galsia.body.fresh = true;
+            var held = false;
+            for (0..40) |_| {
+                r.stepPlan(.{ .pad1 = .{ .right = true } }, &plan);
+                if (std.mem.eql(u8, r.state(), "grab")) {
+                    held = true;
+                    break;
+                }
+            }
+            try testing.expect(held);
+            r.stepPlan(.{}, &plan);
+            // The pad away (left: it faces right) `away` ticks, then B with it.
+            for (0..away) |_| r.stepPlan(.{ .pad1 = .{ .left = true } }, &plan);
+            r.stepPlan(.{ .pad1 = .{ .left = true, .b = true } }, &plan);
+            const threw = std.mem.eql(u8, r.state(), "grab_blow");
+            try testing.expectEqual(away <= 3 + grace, threw);
+            if (!threw) try testing.expect(r.player().holding == null);
+        }
+    }
+}
+
 /// Player 2, of the hero's kind, standing at `x` on player 1's depth, facing `facing`.
 fn secondPlayer(r: *Round, x: i32, facing: entity.Facing) !Handle {
     const kind = r.f.kinds.find("hero").?;
