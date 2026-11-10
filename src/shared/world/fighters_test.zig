@@ -1500,6 +1500,29 @@ test "a punk lifted, grabbed in the air near the ground: it does not shake, its 
     try testing.expectEqual(@as(u8, 2), r.w.get(p).?.animation.frame);
 }
 
+test "the special attack's car comes at its own depth, or at the round's (round 4's)" {
+    for ([_]?i16{ null, 32 }) |own| {
+        var r = try Round.init();
+        defer r.deinit();
+        r.w.script.stage = .stand_in;
+        var round = special_round;
+        round.special.car_depth = own;
+        var plan: script.Plan = .{ .round = &round };
+        var queue: script.ArtQueue = .{};
+        r.stepArt(.{ .pad1 = .{ .a = true } }, &plan, &queue);
+        try testing.expect(r.w.special);
+        var depth: ?i32 = null;
+        for (0..200) |_| {
+            r.stepArt(.{}, &plan, &queue);
+            for (&r.w.entities) |*e| if (e.alive() and e.mind == .police_car and e.mind.police_car.part == .car) {
+                depth = e.position.depth.whole();
+            };
+            if (depth != null) break;
+        }
+        try testing.expectEqual(@as(?i32, own orelse 64), depth);
+    }
+}
+
 test "the special attack: the camera runs back, the car comes, the punk stands without health, the blast's line, the end" {
     var r = try Round.init();
     defer r.deinit();

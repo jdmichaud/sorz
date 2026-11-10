@@ -414,7 +414,7 @@ fn artLoads(arena: std.mem.Allocator, rom: []const u8, kinds: [4]u8, first: u32,
 /// empty), load list 0 (the car's, moveq #0 at 0x59D2) and list 9, or 10 when player 2 called it
 /// ($FFFA1C: moveq #9 at 0x59D8, moveq #10 at 0x59E0), queued together by the car, streamed from
 /// its tick's end.
-fn specialArt(arena: std.mem.Allocator, rom: []const u8) Error!round.Special {
+fn specialArt(arena: std.mem.Allocator, rom: []const u8, r: u32) Error!round.Special {
     if (u16be(rom, 0x59D2) != 0x7000 or u16be(rom, 0x59D8) != 0x7009 or u16be(rom, 0x59E0) != 0x700A or u32be(rom, 0x59DA) != 0x4A38FA1C) return error.BadData;
     const car = try loadStream(arena, rom, 0);
     var both: [2][]const round.Streamed = undefined;
@@ -422,7 +422,15 @@ fn specialArt(arena: std.mem.Allocator, rom: []const u8) Error!round.Special {
         const blocks = try std.mem.concat(arena, []const round.Streamed, &.{ car, try loadStream(arena, rom, n) });
         o.* = try stream.schedule(arena, &.{.{ .after = 0, .blocks = blocks, .before_head = true }});
     }
-    return .{ .provenance = "the police car's art (0x599E): load lists 0 and 9, or 10 when player 2 called the special attack, queued at the car's first update (its queue empty), streamed from that tick's end (0x84BA after the objects, 0x8510)", .streamed = both };
+    // The car's depth in one round, its own (0x18D12: cmpi.w #N,($FF02).w; bne; then the
+    // depth moved to the car).
+    if (u16be(rom, 0x18D12) != 0x0C78 or u16be(rom, 0x18D16) != 0xFF02 or u16be(rom, 0x18D18) != 0x6606 or u16be(rom, 0x18D1A) != 0x3D7C or u16be(rom, 0x18D1E) != 0x0014) return error.BadData;
+    const own: ?i16 = if (r == u16be(rom, 0x18D14)) @bitCast(u16be(rom, 0x18D1C)) else null;
+    return .{
+        .provenance = "the police car's art (0x599E): load lists 0 and 9, or 10 when player 2 called the special attack, queued at the car's first update (its queue empty), streamed from that tick's end (0x84BA after the objects, 0x8510); the car's depth, the round's own in the round of ROM 0x18D14 (cmpi.w at 0x18D12): ROM 0x18D1C's",
+        .streamed = both,
+        .car_depth = own,
+    };
 }
 
 /// A section's art again after the special attack (0x18E3C, as the camera comes back): the boss's
@@ -1201,7 +1209,7 @@ pub fn extract(arena: std.mem.Allocator, rom: []const u8, n: u8) Error!round.Rou
             .pace = @intCast(pace),
         },
         .sections = sections,
-        .special = try specialArt(arena, rom),
+        .special = try specialArt(arena, rom, r),
         .boss = boss_section,
         .room = room,
         .own_sound = try ownSound(arena, rom, r),

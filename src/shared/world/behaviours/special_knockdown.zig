@@ -113,7 +113,9 @@ pub fn think(a: Actor) void {
             if (a.tick.actor(police_car, h)) |car| {
                 const cn = car.numbers();
                 const lower = if (lift) |lf| if (c.lift.special) |s| lf.special_drop - s.y_from else 0 else 0;
-                car.entity.position.depth = .pixels(cn.depth);
+                // The round's own depth for the car (round 4's, nearer the back), else its own.
+                const depth = if (a.tick.plan) |p| p.round.special.car_depth orelse cn.depth else cn.depth;
+                car.entity.position.depth = .pixels(depth);
                 car.entity.position.height = .pixels(cn.height + lower);
                 police_car.arrive(car, m.second);
             }

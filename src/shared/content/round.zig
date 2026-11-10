@@ -349,6 +349,8 @@ pub const OfferStep = enum { free, clear, hold, answer };
 pub const Special = struct {
     provenance: []const u8 = "",
     streamed: [2][]const Streamed = .{ &.{}, &.{} },
+    /// The police car's depth as it comes in this round, its own; null: its definition's.
+    car_depth: ?i16 = null,
 };
 
 pub const Camera = struct {
@@ -1018,9 +1020,9 @@ pub fn value(arena: std.mem.Allocator, r: *const Round) error{OutOfMemory}!json.
     if (r.special.streamed[0].len != 0 or r.special.streamed[1].len != 0) {
         const both = try arena.alloc(json.Value, 2);
         for (both, r.special.streamed) |*o, list| o.* = try streamedValue(arena, list);
-        try fields.append(arena, .{ .key = "special", .value = try withProvenance(arena, r.special.provenance, &.{
-            .{ .key = "streamed", .value = .{ .array = both } },
-        }) });
+        const streamed: json.Field = .{ .key = "streamed", .value = .{ .array = both } };
+        const fs: []const json.Field = if (r.special.car_depth) |d| &.{ streamed, .{ .key = "car_depth", .value = json.Value.num(d) } } else &.{streamed};
+        try fields.append(arena, .{ .key = "special", .value = try withProvenance(arena, r.special.provenance, fs) });
     }
     if (r.animation) |an| {
         const steps = try arena.alloc(json.Value, an.steps.len);
@@ -1408,10 +1410,11 @@ pub fn read(arena: std.mem.Allocator, name: []const u8, root: json.Node, a: ?*co
     r.sections = sections;
 
     if (try root.opt("special")) |sp| {
-        try sp.only(&.{ "provenance", "streamed" });
+        try sp.only(&.{ "provenance", "streamed", "car_depth" });
         const both = try sp.get("streamed");
         if (try both.len() != 2) return both.fail("not the two callers' lists");
         r.special = .{ .provenance = try provenanceOf(sp), .streamed = .{ try readStreamed(arena, try both.at(0)), try readStreamed(arena, try both.at(1)) } };
+        if (try sp.opt("car_depth")) |d| r.special.car_depth = try d.int(i16);
     }
     if (try root.opt("animation")) |an| {
         try an.only(&.{ "provenance", "every", "steps" });
@@ -1668,6 +1671,13 @@ test "a round writes and reads back the same" {
     try testing.expectEqual(@as(?Entrance, .wait), back.sections[0].placed[0].entrance);
     try testing.expectEqual(@as(u16, 32), back.sections[0].reserve[0].arrives_after);
     try testing.expectEqualStrings("antonio", back.boss.?.wave[0].kind);
+    // A round's own police car depth, read back; none stays none.
+    try testing.expectEqual(@as(?i16, null), back.special.car_depth);
+    var own = example;
+    own.special = .{ .streamed = .{ &.{.{ .tiles = 5 }}, &.{.{ .tiles = 5 }} }, .car_depth = 32 };
+    const own_text = try json.write(arena, try value(arena, &own));
+    const own_back = try read(arena, "round1", try json.parse(arena, "rounds/round1.json", own_text, &diag), null);
+    try testing.expectEqual(@as(?i16, 32), own_back.special.car_depth);
 }
 
 test "a refusal names the field" {
