@@ -963,6 +963,14 @@ machine in network play; CPUs in the free places and several local players a mac
     4 lets go without the grace, 5 and 6 with it; it fails without the change); the scenario
     runner (the cartridge's rules) on 0 and 2 knees, the pad away at once or 6 ticks after, B 0
     to 6 ticks later: the same as sor-remaster's. Not checked: the user's play.
+- [ ] **63 — Round 4's police car on firm ground** — Depends: none.
+  - At round 4's boss the special attack's police car drives over the hole (the user,
+    2026-11-10). The original brings it at depth $20 in round 4, $40 elsewhere (ROM 0x18D12:
+    `cmpi.w #3,($FF02).w`, then `move.w #$20,($14,a6)`; sor-remaster's 0x18CD4): the round's
+    content carries its car's depth (`special.car_depth`, extracted), the world takes it.
+  - Gate: zig build test (the content read back with and without it; the car at the round's
+    depth); the extraction gives round 4 depth 32 and no other round one; a picture of round 4's
+    boss with the car, against sor-remaster's at the same tick.
 
 ## Standing rule
 
