@@ -24,7 +24,8 @@ unit:    $unit
 log:     journalctl -u $name
 
   install    copy sorz-server and the game's data (the ROM or the game directory) to the
-             files' folder, write the unit and start it at boot; again, it replaces them
+             files' folder and write the unit; again, it replaces them. It never starts at
+             boot: only start starts it
   start      start the relay now
   stop       stop it
   uninstall  stop it and remove all of the above
@@ -97,13 +98,14 @@ SocketBindDeny=any
 MemoryMax=256M
 TasksMax=256
 
-[Install]
-WantedBy=multi-user.target
+# No [Install] section: it never starts at boot, only by sorz-runner start.
 EOF
 }
 
 install_relay() {
     systemctl stop "$name" 2>/dev/null || true
+    # An install by an earlier sorz-runner started at boot.
+    systemctl disable --quiet "$name" 2>/dev/null || true
     rm -rf "$home"
     mkdir -p "$home"
     cp "$binary" "$home/$name"
@@ -112,7 +114,6 @@ install_relay() {
     chmod -R u=rwX,go=rX "$home"
     write_unit "$address" >"$unit"
     systemctl daemon-reload
-    systemctl enable --quiet "$name"
     echo "installed in $home, listening at $address once started: sorz-runner start"
 }
 
@@ -130,7 +131,8 @@ start_relay() {
 
 uninstall_relay() {
     if [ -f "$unit" ]; then
-        systemctl disable --now --quiet "$name" || true
+        systemctl stop "$name" || true
+        systemctl disable --quiet "$name" 2>/dev/null || true
         rm -f "$unit"
         systemctl daemon-reload
         systemctl reset-failed "$name" 2>/dev/null || true
