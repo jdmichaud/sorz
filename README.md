@@ -24,6 +24,9 @@ sorz sor.md
 NETWORK PLAY in the menu. The other player then opens `http://YOUR-ADDRESS:8000` in a browser, or
 runs `sorz sor.md --join ws://YOUR-ADDRESS:8000`.
 
+To host network play on a Linux server, run the relay as a locked-down systemd service:
+`tools/sorz-runner install sor.md`, then `tools/sorz-runner start|stop|uninstall`.
+
 ## Building
 
 You need Zig 0.17. On Linux you also need SDL2's development files and pkg-config (Debian:
