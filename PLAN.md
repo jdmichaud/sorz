@@ -982,9 +982,9 @@ machine in network play; CPUs in the free places and several local players a mac
     must be stopped by the system. `tools/sorz-runner install|start|stop|uninstall` (the user,
     2026-11-11) runs it as a systemd service whose unit restricts it: a throwaway user without
     privileges, a read-only system and no home, a system call allowlist (io_uring refused, any
-    other call kills it), internet sockets only, its one port, bounded memory and threads. Its
-    files go to /opt/sorz-server (the binary and a copy of the data). The README says it in a few
-    lines.
+    other call kills it), internet sockets only, its one port, bounded memory and threads. It
+    starts by `start` only, never at boot (the user, 2026-11-11). Its files go to
+    /opt/sorz-server (the binary and a copy of the data). The README says it in a few lines.
   - Gate: the generated unit passes `systemd-analyze verify`; the relay under the unit's system
     call, address family and memory rules serves its page and the game's files and relays two
     pages' messages; the four commands on a machine with systemd, as root.
