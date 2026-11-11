@@ -980,14 +980,16 @@ machine in network play; CPUs in the free places and several local players a mac
 - [ ] **64 — The relay as a locked-down service** — Depends: none.
   - sorz-server listens on the network and is not hardened (its own warning): a compromised relay
     must be stopped by the system. `tools/sorz-runner install|start|stop|uninstall` (the user,
-    2026-11-11) runs it as a systemd service whose unit restricts it: a throwaway user without
-    privileges, a read-only system and no home, a system call allowlist (io_uring refused, any
-    other call kills it), internet sockets only, its one port, bounded memory and threads. It
-    starts by `start` only, never at boot (the user, 2026-11-11). Its files go to
-    /opt/sorz-server (the binary and a copy of the data). The README says it in a few lines.
-  - Gate: the generated unit passes `systemd-analyze verify`; the relay under the unit's system
-    call, address family and memory rules serves its page and the game's files and relays two
-    pages' messages; the four commands on a machine with systemd, as root.
+    2026-11-11) runs it as a systemd service whose unit restricts it: no home but its own files,
+    a read-only system, no devices, a system call allowlist (io_uring refused, any other call
+    kills it), internet sockets only, bounded memory and threads. It starts by `start` only, never
+    at boot. A user service by default, without root (the user, 2026-11-11), its files in
+    ~/.local/share/sorz-server; `--system` makes it the system's (root, through sudo, its files
+    in /opt/sorz-server), which adds a throwaway user and its one port. `--help` says what a user
+    service cannot restrict. The README says it in a few lines.
+  - Gate: the generated units pass `systemd-analyze verify`; the four commands as a user: the
+    relay serves its page and the game's files and relays pages' messages under its unit, with
+    its sandbox on; the four commands with `--system` on a machine with systemd, as root.
 
 ## Standing rule
 
