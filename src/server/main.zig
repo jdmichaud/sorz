@@ -20,6 +20,11 @@ pub fn main(init: std.process.Init) !void {
     native.log.program = "sorz-server";
     const io = init.io;
     var buf: [1024]u8 = undefined;
+    {
+        var stdout = std.Io.File.stdout().writerStreaming(io, &buf);
+        try stdout.interface.writeAll("sorz-server is not hardened and should not be running directly on the internet\n");
+        try stdout.interface.flush();
+    }
     var stderr = std.Io.File.stderr().writerStreaming(io, &buf);
     const err = &stderr.interface;
     const options = relay.Options.parse(try init.minimal.args.iterateAllocator(init.arena.allocator())) catch {
