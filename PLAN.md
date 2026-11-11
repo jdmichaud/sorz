@@ -977,6 +977,17 @@ machine in network play; CPUs in the free places and several local players a mac
     bridge's road (the build before: 64, over the hole). Not met: sor-remaster's picture at the
     same tick (its --pads does not replay the bot's file as sorz's scenario does); the ROM's
     instructions and sor-remaster's code stand for it.
+- [ ] **64 — The relay as a locked-down service** — Depends: none.
+  - sorz-server listens on the network and is not hardened (its own warning): a compromised relay
+    must be stopped by the system. `tools/sorz-runner install|start|stop|uninstall` (the user,
+    2026-11-11) runs it as a systemd service whose unit restricts it: a throwaway user without
+    privileges, a read-only system and no home, a system call allowlist (io_uring refused, any
+    other call kills it), internet sockets only, its one port, bounded memory and threads. Its
+    files go to /opt/sorz-server (the binary and a copy of the data). The README says it in a few
+    lines.
+  - Gate: the generated unit passes `systemd-analyze verify`; the relay under the unit's system
+    call, address family and memory rules serves its page and the game's files and relays two
+    pages' messages; the four commands on a machine with systemd, as root.
 
 ## Standing rule
 
