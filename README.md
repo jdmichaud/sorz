@@ -25,7 +25,8 @@ NETWORK PLAY in the menu. The other player then opens `http://YOUR-ADDRESS:8000`
 runs `sorz sor.md --join ws://YOUR-ADDRESS:8000`.
 
 To host network play on a Linux server, run the relay as a locked-down systemd service:
-`tools/sorz-runner install sor.md`, then `tools/sorz-runner start|stop|uninstall`.
+`tools/sorz-runner install sor.md`, then `tools/sorz-runner start|stop|uninstall`. Its `--help`
+says what it restricts, as your service or, with `--system`, the system's.
 
 ## Building
 

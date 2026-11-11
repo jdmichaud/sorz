@@ -1,53 +1,68 @@
 #!/bin/sh
 # sorz-runner: runs sorz-server, the relay of network play, as a systemd service locked down by its
 # unit (PLAN item 64). The relay reads the game's files once, then only answers on its port: the
-# unit lets it do no more. It runs as a throwaway user without privileges, sees a read-only system
-# and no home, may make the system calls of an ordinary service only (any other kills it), open
-# internet sockets only and listen on its one port, with bounded memory and threads.
-#
-# Its files go to /opt/sorz-server: the binary and a copy of the game's data (the ROM or the game
-# directory), readable by the service. The unit is /etc/systemd/system/sorz-server.service; its log
-# is in the journal (journalctl -u sorz-server).
+# unit lets it do little more. A user service by default, without root; the system's with
+# --system. `sorz-runner --help` says what each restricts.
 set -eu
 
 name=sorz-server
-home=/opt/$name
-unit=/etc/systemd/system/$name.service
+user_home=${XDG_DATA_HOME:-$HOME/.local/share}/$name
+user_unit=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$name.service
+system_home=/opt/$name
+system_unit=/etc/systemd/system/$name.service
 
 usage() {
     cat <<EOF
-usage: sorz-runner install DIR|ROM [--server [ADDRESS:]PORT] [--binary SERVER]
-       sorz-runner start|stop|uninstall
+usage: sorz-runner install DIR|ROM [--system] [--server [ADDRESS:]PORT] [--binary SERVER]
+       sorz-runner start|stop|uninstall [--system]
 
-files:   $home
-unit:    $unit
-log:     journalctl -u $name
+files:  $user_home
+unit:   $user_unit
+log:    journalctl --user -u $name
+with --system:
+files:  $system_home
+unit:   $system_unit
+log:    journalctl -u $name
 
-  install    copy sorz-server and the game's data (the ROM or the game directory) to the
-             files' folder and write the unit; again, it replaces them. It never starts at
-             boot: only start starts it
-  start      start the relay now
+Runs sorz-server, the relay of network play, as a systemd service that the system stops from
+doing more than a relay does. It never starts at boot: only start starts it.
+
+  install    copy sorz-server and the game's data (the ROM or the game directory) to the files'
+             folder and write the unit; again, it replaces them
+  start      start the relay
   stop       stop it
-  uninstall  stop it and remove all of the above
+  uninstall  stop it and remove its files and unit
+  --system   the system's service rather than yours: needs root (it runs itself through sudo)
   --server [ADDRESS:]PORT  where it listens (default 8000, all interfaces)
   --binary SERVER          the sorz-server to install (default: zig-out/bin/sorz-server beside
                            this script, else sorz-server on the PATH)
 
-It needs systemd, and root: it runs itself through sudo.
+Either way, the relay
+  - sees no home but its own files, read-only, and writes nowhere but a /tmp of its own;
+  - sees no device and no other process (systemd 257 or later);
+  - runs no other program, and makes only the system calls of an ordinary service: any other
+    call kills it, and it stays stopped;
+  - opens only internet sockets: none to the machine's other programs (D-Bus, X11...);
+  - takes at most 256 MB and 256 threads.
+As a user service (the default), it
+  - runs as you: outside your home, it may read what you may read;
+  - may listen on other ports than its own (forbidding it needs root);
+  - stops when you log out, unless you run once: loginctl enable-linger;
+  - cannot listen on a port below 1024.
+With --system, it runs as a throwaway user that may read what everyone may read, may listen on
+its port only, and runs whether you are logged in or not.
+Neither way stops it from connecting out to other machines.
 EOF
 }
 
 fail() { echo "sorz-runner: $*" >&2; exit 1; }
 
-# Root, through sudo, with the same arguments (paths made absolute before).
-root() { [ "$(id -u)" -eq 0 ] || exec sudo -- "$0" "$@"; }
-
-# The service's unit for `address`, the relay given /opt's copy of the data.
+# The unit for `address`: the relay given the files' copy of the data, with the sandbox that both
+# kinds of service have, and the system's with `system` = 1.
 write_unit() {
-    port=${1##*:}
-    caps=
-    # A port below 1024 needs the one right to bind it.
-    [ "$port" -lt 1024 ] && caps=CAP_NET_BIND_SERVICE
+    address=$1
+    system=$2
+    port=${address##*:}
     cat <<EOF
 # Written by sorz-runner: sorz-server, the relay of network play, locked down.
 [Unit]
@@ -56,26 +71,35 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=$home/$name $home/data --server $1
-Restart=on-failure
-
-# A throwaway user, without privileges.
-DynamicUser=yes
-CapabilityBoundingSet=$caps
-AmbientCapabilities=$caps
+ExecStart=$home/$name $home/data --server $address
 NoNewPrivileges=yes
+# Killed for a forbidden call (SIGSYS), it stays down. The init of its own process namespace, it
+# ignores SIGTERM: systemd stops it with SIGKILL, a clean stop since it writes nothing.
+Restart=on-failure
+RestartPreventExitStatus=SIGSYS
+SuccessExitStatus=SIGKILL
 
-# A read-only system, no home, its own /tmp, no devices, its own processes only.
+# A read-only system, no home but its files (read-only), its own /tmp, no devices nor shared
+# memory, its own processes only (its own process namespace: systemd 257).
 ProtectSystem=strict
-ProtectHome=yes
+ProtectHome=tmpfs
+BindReadOnlyPaths=$home
 PrivateTmp=yes
 PrivateDevices=yes
+InaccessiblePaths=/dev/shm
+PrivatePIDs=yes
 ProtectProc=invisible
 ProcSubset=pid
 
-# The system calls of an ordinary service; any other kills it. io_uring would bypass the filter.
+# No program to run but the relay (static: it needs no loader).
+NoExecPaths=/
+ExecPaths=$home/$name
+
+# The system calls of an ordinary service, less signalling other processes; any other kills it.
+# io_uring would bypass the filter.
 SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources io_uring_setup io_uring_enter io_uring_register
+SystemCallFilter=~@privileged @resources kill pidfd_send_signal
+SystemCallFilter=~io_uring_setup io_uring_enter io_uring_register
 SystemCallArchitectures=native
 MemoryDenyWriteExecute=yes
 RestrictNamespaces=yes
@@ -89,76 +113,121 @@ ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
 
-# Internet sockets only, listening on its port only.
+# Internet sockets only.
 RestrictAddressFamilies=AF_INET AF_INET6
-SocketBindAllow=tcp:$port
-SocketBindDeny=any
 
-# Bounds: some 60 MB and two threads a page (32 pages at most), with room.
+# Bounds: some 80 MB and two threads a page (32 pages at most), with room.
 MemoryMax=256M
 TasksMax=256
+EOF
+    if [ "$system" = 1 ]; then
+        caps=
+        # A port below 1024 needs the one right to bind it.
+        [ "$port" -lt 1024 ] && caps=CAP_NET_BIND_SERVICE
+        cat <<EOF
+
+# The system's service: a throwaway user without privileges, listening on its port only.
+DynamicUser=yes
+CapabilityBoundingSet=$caps
+AmbientCapabilities=$caps
+SocketBindAllow=tcp:$port
+SocketBindDeny=any
+EOF
+    fi
+    cat <<EOF
 
 # No [Install] section: it never starts at boot, only by sorz-runner start.
 EOF
 }
 
 install_relay() {
-    systemctl stop "$name" 2>/dev/null || true
+    ctl stop "$name" 2>/dev/null || true
     # An install by an earlier sorz-runner started at boot.
-    systemctl disable --quiet "$name" 2>/dev/null || true
+    ctl disable --quiet "$name" 2>/dev/null || true
     rm -rf "$home"
-    mkdir -p "$home"
+    mkdir -p "$home" "$(dirname -- "$unit")"
     cp "$binary" "$home/$name"
     cp -R "$data" "$home/data"
-    chown -R root:root "$home"
-    chmod -R u=rwX,go=rX "$home"
-    write_unit "$address" >"$unit"
-    systemctl daemon-reload
-    echo "installed in $home, listening at $address once started: sorz-runner start"
+    if [ "$system" = 1 ]; then
+        chown -R root:root "$home"
+        chmod -R u=rwX,go=rX "$home"
+    else
+        chmod -R u=rwX,go= "$home"
+    fi
+    write_unit "$address" "$system" >"$unit"
+    ctl daemon-reload
+    echo "installed in $home, listening at $address once started: sorz-runner start$flag"
 }
 
 start_relay() {
-    [ -f "$unit" ] || fail "not installed: sorz-runner install DIR|ROM"
-    systemctl start "$name"
+    [ -f "$unit" ] || fail "not installed: sorz-runner install DIR|ROM$flag"
+    ctl start "$name"
     # It fails a moment after it starts when it cannot read its data or listen.
     sleep 1
-    if ! systemctl is-active --quiet "$name"; then
-        journalctl -u "$name" -n 10 --no-pager >&2
+    if ! ctl is-active --quiet "$name"; then
+        journal -n 10 --no-pager >&2
         fail "it stopped"
     fi
-    journalctl -u "$name" -n 1 -o cat --no-pager
+    journal -n 1 -o cat --no-pager
 }
 
 uninstall_relay() {
     if [ -f "$unit" ]; then
-        systemctl stop "$name" || true
-        systemctl disable --quiet "$name" 2>/dev/null || true
+        ctl stop "$name" || true
+        ctl disable --quiet "$name" 2>/dev/null || true
         rm -f "$unit"
-        systemctl daemon-reload
-        systemctl reset-failed "$name" 2>/dev/null || true
+        ctl daemon-reload
+        ctl reset-failed "$name" 2>/dev/null || true
     fi
     rm -rf "$home"
     echo "uninstalled"
 }
 
+# The command, then its arguments; --help anywhere shows the help.
+for a in "$@"; do
+    case $a in -h | --help) usage; exit 0 ;; esac
+done
 [ $# -ge 1 ] || { usage >&2; exit 2; }
 command=$1
 shift
+data=
+address=8000
+binary=
+system=0
 case $command in
 install)
     [ $# -ge 1 ] || { usage >&2; exit 2; }
     case $1 in -*) usage >&2; exit 2 ;; esac
     data=$1
     shift
-    address=8000
-    binary=
-    while [ $# -gt 0 ]; do
-        case $1 in
-        --server) [ $# -ge 2 ] || fail "--server needs [ADDRESS:]PORT"; address=$2; shift 2 ;;
-        --binary) [ $# -ge 2 ] || fail "--binary needs a path"; binary=$2; shift 2 ;;
-        *) usage >&2; exit 2 ;;
-        esac
-    done
+    ;;
+start | stop | uninstall) ;;
+*) usage >&2; exit 2 ;;
+esac
+while [ $# -gt 0 ]; do
+    case $command:$1 in
+    *:--system) system=1; shift ;;
+    install:--server) [ $# -ge 2 ] || fail "--server needs [ADDRESS:]PORT"; address=$2; shift 2 ;;
+    install:--binary) [ $# -ge 2 ] || fail "--binary needs a path"; binary=$2; shift 2 ;;
+    *) usage >&2; exit 2 ;;
+    esac
+done
+
+flag=
+if [ "$system" = 1 ]; then
+    home=$system_home
+    unit=$system_unit
+    flag=" --system"
+    ctl() { systemctl "$@"; }
+    journal() { journalctl -u "$name" "$@"; }
+else
+    home=$user_home
+    unit=$user_unit
+    ctl() { systemctl --user "$@"; }
+    journal() { journalctl --user -u "$name" "$@"; }
+fi
+
+if [ "$command" = install ]; then
     if [ -z "$binary" ]; then
         binary=$(dirname -- "$0")/../zig-out/bin/$name
         [ -x "$binary" ] || binary=$(command -v "$name") || fail "no sorz-server: give --binary SERVER"
@@ -168,14 +237,22 @@ install)
     port=${address##*:}
     case $port in '' | *[!0-9]*) fail "not a port: $address" ;; esac
     [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || fail "not a port: $address"
+    [ "$port" -ge 1024 ] || [ "$system" = 1 ] || fail "a port below 1024 needs --system"
     data=$(realpath -- "$data")
     binary=$(realpath -- "$binary")
-    root install "$data" --server "$address" --binary "$binary"
-    install_relay
-    ;;
-start) root start; start_relay ;;
-stop) root stop; systemctl stop "$name" ;;
-uninstall) root uninstall; uninstall_relay ;;
--h | --help | help) usage ;;
-*) usage >&2; exit 2 ;;
+fi
+
+# The system's service as root, through sudo, with the same arguments (paths made absolute).
+if [ "$system" = 1 ] && [ "$(id -u)" -ne 0 ]; then
+    if [ "$command" = install ]; then
+        exec sudo -- "$0" install "$data" --system --server "$address" --binary "$binary"
+    fi
+    exec sudo -- "$0" "$command" --system
+fi
+
+case $command in
+install) install_relay ;;
+start) start_relay ;;
+stop) ctl stop "$name" ;;
+uninstall) uninstall_relay ;;
 esac
